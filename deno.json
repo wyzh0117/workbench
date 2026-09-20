@@ -1,0 +1,12 @@
+{
+  "tasks": {
+    "check": "deno check app/recovery.js src/domain/index.ts src/ui/model.ts src/ui/contracts.ts tests/core_test.ts tests/ui_test.ts tests/service_test.ts tests/import_export_test.ts tests/acceptance_test.ts tests/completeness_test.ts tests/native_boundary_test.ts tests/recovery_ui_test.ts scripts/dev_server.ts",
+    "test": "deno test --allow-read --allow-write tests/core_test.ts tests/ui_test.ts tests/service_test.ts tests/import_export_test.ts tests/acceptance_test.ts tests/completeness_test.ts tests/native_boundary_test.ts tests/recovery_ui_test.ts",
+    "ui": "deno run --allow-net --allow-read --allow-write --allow-sys scripts/dev_server.ts"
+  },
+  "compilerOptions": {
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "noImplicitOverride": true
+  }
+}

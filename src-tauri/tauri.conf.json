@@ -1,0 +1,18 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "AI Course Workbench",
+  "version": "0.1.0",
+  "identifier": "local.ai-course-workbench",
+  "build": {
+    "frontendDist": "../app",
+    "devUrl": "http://localhost:4173"
+  },
+  "app": {
+    "withGlobalTauri": true,
+    "windows": [
+      { "title": "AI Course Workbench", "width": 1440, "height": 900, "minWidth": 980, "minHeight": 640 }
+    ],
+    "security": { "csp": "default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self'" }
+  },
+  "bundle": { "active": true, "targets": "all" }
+}

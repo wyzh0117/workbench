@@ -1,0 +1,28 @@
+# ---- Build output ----------------------------------------------------------
+# Rust build tree produced by `cargo` / `tauri build` (~4 GB). Never commit it.
+src-tauri/target/
+target/
+
+# Stray compiler output at the repo root (`rustc file.rs` writes ./rust_out).
+rust_out
+
+# ---- Local workbench data --------------------------------------------------
+# The app's own working project: Canonical project.json, imported assets, and
+# the rebuildable .workspace caches (index.json, snapshots, diagnostics) plus
+# the runtime project.lock and project.json.bak auto-backup.
+#
+# This is local user data, not product source. Delete this rule if you *want*
+# your working course project versioned alongside the code.
+.workbench-project/
+
+# ---- OS / editor noise -----------------------------------------------------
+.DS_Store
+**/.DS_Store
+Thumbs.db
+*.swp
+*~
+
+# ---- Local overrides -------------------------------------------------------
+.env
+.env.*
+*.local
