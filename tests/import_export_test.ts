@@ -5,6 +5,7 @@ import {
   addPlacement,
   appendBlock,
   buildBlueprintDraft,
+  buildPublishProjection,
   confirmBlueprint,
   confirmImport,
   createCourseSeed,
@@ -13,7 +14,6 @@ import {
   createLayoutInstance,
   DesktopService,
   ExportBlockedError,
-  ExportCapabilityError,
   exportProject,
   insertPlaceholder,
   ManualPublishAdapter,
@@ -230,8 +230,18 @@ Deno.test("preflight separates warnings from blocking layout/assets issues", asy
   assert(blocked, "blocking preflight issues must prevent damaged output");
 });
 
-Deno.test("full project export excludes private conversation data and PDF is explicit", async () => {
+Deno.test("full project export excludes private conversation data and PDF is readable", async () => {
   const data = courseData();
+  data.conversation_sources.push({
+    id: "s",
+    provider: "imported",
+    display_name: "本地导入",
+    connector_type: "file",
+    account_label: "测试",
+    connection_status: "connected",
+    auth_reference: "local-reference",
+    last_sync_at: null,
+  });
   data.conversations.push({
     id: "c",
     source_id: "s",
@@ -270,14 +280,12 @@ Deno.test("full project export excludes private conversation data and PDF is exp
     output_type: "pdf",
     platform: "PDF",
   });
-  let unsupported = false;
-  try {
-    await exportProject(data, pdfPreset);
-  } catch (caught) {
-    unsupported = caught instanceof ExportBlockedError ||
-      caught instanceof ExportCapabilityError;
-  }
-  assert(unsupported, "unsupported PDF must be explicit");
+  const pdf = await exportProject(data, pdfPreset);
+  const pdfFile = pdf.files.find((file) => file.mime_type === "application/pdf");
+  assert(
+    pdfFile && new TextDecoder("latin1").decode(pdfFile.bytes.slice(0, 8)).startsWith("%PDF-"),
+    "PDF output should be a readable PDF container",
+  );
 });
 
 Deno.test("manual publication adapter records a user-facing publication", async () => {
@@ -409,7 +417,7 @@ Deno.test("folder preview skips circular links and keeps long Unicode names port
   );
 });
 
-Deno.test("blocking preflight cannot be bypassed and HTML asset URLs are escaped", async () => {
+Deno.test("blocking preflight cannot be bypassed and unsafe HTML asset paths are rejected", async () => {
   const data = courseData();
   const item = data.content_items[0]!;
   const malicious = addAsset(data, data.project.id, {
@@ -426,19 +434,17 @@ Deno.test("blocking preflight cannot be bypassed and HTML asset URLs are escaped
     output_type: "html",
     platform: "网页",
   });
-  const html = await exportProject(data, htmlPreset, {
-    content_item_id: item.id,
-    asset_bytes: { [malicious.id]: new Uint8Array([1]) },
-  });
-  const htmlText = new TextDecoder().decode(html.files[0]!.bytes);
-  assert(
-    !htmlText.includes('onerror="alert'),
-    "asset URL attributes must be escaped",
-  );
-  assert(
-    !htmlText.includes("<img"),
-    "unsafe asset paths must not become HTML attributes",
-  );
+  let unsafeBlocked = false;
+  try {
+    await exportProject(data, htmlPreset, {
+      content_item_id: item.id,
+      asset_bytes: { [malicious.id]: new Uint8Array([1]) },
+    });
+  } catch (caught) {
+    unsafeBlocked = caught instanceof ExportBlockedError &&
+      caught.report.blocking.some((issue) => issue.code === "unsafe_path");
+  }
+  assert(unsafeBlocked, "unsafe asset paths must block HTML output");
 
   const layout = createLayoutInstance(data, item.id, {
     name: "网格",
@@ -579,6 +585,128 @@ Deno.test("export refuses a symlink at the final output target", async () => {
     await Deno.readTextFile(outsideFile) === "must-stay-private",
     "an output symlink must not overwrite a file outside the export root",
   );
+});
+
+Deno.test("publish projection keeps scope/order/layout and omits workflow placeholders", () => {
+  const data = courseData();
+  const item = data.content_items[0]!;
+  appendBlock(data, item.id, "heading", "稳定标题", { level: 2 });
+  insertPlaceholder(data, item.id, { type: "text", note: "尚未完成" });
+  const image = addAsset(data, data.project.id, {
+    type: "image",
+    filename: "中文 封面.png",
+    storage_path: "assets/中文 封面.png",
+    mime_type: "image/png",
+    checksum: "projection-image",
+  }).asset;
+  const imageBlock = appendBlock(data, item.id, "image", image.filename, {
+    asset_id: image.id,
+  });
+  addAssetUsage(data, image.id, item.id, { block_id: imageBlock.id });
+  const layout = createLayoutInstance(data, item.id, {
+    name: "课程网格",
+    mode: "grid",
+    grid_definition: { columns: [1], rows: [1] },
+  });
+  addPlacement(data, layout.id, imageBlock.id, {
+    row_start: 0,
+    row_end: 1,
+    column_start: 0,
+    column_end: 1,
+  });
+  const projection = buildPublishProjection(data, { content_item_id: item.id });
+  assert(projection.scope === "lesson" && projection.lessons.length === 1, "lesson scope should be explicit");
+  assert(!projection.lessons[0]!.blocks.some((block) => block.type === "placeholder"), "placeholder workflow state must not enter published prose");
+  assert(projection.lessons[0]!.blocks.filter((block) => block.media?.id === image.id).length === 1, "inline media should occur once");
+  assert(projection.lessons[0]!.attachments.every((media) => media.id !== image.id), "inline media must not be repeated as an attachment");
+  assert(projection.lessons[0]!.layout?.mode === "grid", "layout semantics should survive projection");
+});
+
+Deno.test("static web package is portable and copies only referenced assets", async () => {
+  const data = courseData();
+  const item = data.content_items[0]!;
+  appendBlock(data, item.id, "paragraph", "可搬走的网页正文");
+  const used = addAsset(data, data.project.id, {
+    type: "gif",
+    filename: "演示 动图.gif",
+    storage_path: "assets/演示 动图.gif",
+    mime_type: "image/gif",
+    checksum: "used-gif",
+  }).asset;
+  const unused = addAsset(data, data.project.id, {
+    type: "image",
+    filename: "未使用.png",
+    storage_path: "assets/未使用.png",
+    mime_type: "image/png",
+    checksum: "unused-image",
+  }).asset;
+  const block = appendBlock(data, item.id, "gif", used.filename, { asset_id: used.id });
+  addAssetUsage(data, used.id, item.id, { block_id: block.id });
+  const output = await Deno.makeTempDir({ prefix: "acw-portable-web-" });
+  const preset = createExportPreset(data, {
+    name: "静态网页",
+    output_type: "custom",
+    platform: "网页",
+    settings: { target_type: "web" },
+  });
+  const before = JSON.stringify(data);
+  const result = await exportProject(data, preset, {
+    output_dir: output,
+    asset_bytes: {
+      [used.id]: new Uint8Array([71, 73, 70, 56, 57, 97]),
+      [unused.id]: new Uint8Array([1]),
+    },
+  });
+  assert(result.files.some((file) => file.relative_path === "index.html"), "web package needs an entrypoint");
+  assert(await Deno.stat(`${output}/assets/演示 动图.gif`).then((stat) => stat.isFile), "referenced GIF bytes should be copied");
+  let unusedExists = true;
+  try { await Deno.stat(`${output}/assets/未使用.png`); } catch { unusedExists = false; }
+  assert(!unusedExists, "unused assets should not enter the web package");
+  const moved = `${output}-moved`;
+  await Deno.rename(output, moved);
+  const html = await Deno.readTextFile(`${moved}/index.html`);
+  assert(html.includes("可搬走的网页正文") && html.includes("assets/%E6%BC%94%E7%A4%BA%20%E5%8A%A8%E5%9B%BE.gif"), "moved package should retain relative Unicode asset references");
+  assert(!html.includes(".workspace") && JSON.stringify(data) === before, "export must not leak workspace data or mutate Canonical");
+});
+
+Deno.test("preflight warns about media downgrade and failure leaves no partial artifact", async () => {
+  const data = courseData();
+  const item = data.content_items[0]!;
+  const video = addAsset(data, data.project.id, {
+    type: "video",
+    filename: "lesson video.mp4",
+    storage_path: "assets/lesson video.mp4",
+    mime_type: "video/mp4",
+    checksum: "video-warning",
+  }).asset;
+  const block = appendBlock(data, item.id, "video", video.filename, { asset_id: video.id });
+  addAssetUsage(data, video.id, item.id, { block_id: block.id });
+  const preset = createExportPreset(data, {
+    name: "result",
+    output_type: "markdown",
+    platform: "通用",
+    naming_rule: "result",
+  });
+  const report = await preflightExport(data, preset, {
+    content_item_id: item.id,
+    asset_bytes: { [video.id]: new Uint8Array([1]) },
+  });
+  assert(report.warnings.some((issue) => issue.code === "media_downgrade"), "non-interactive media downgrade should be explained");
+  const output = await Deno.makeTempDir({ prefix: "acw-export-atomic-" });
+  await Deno.writeTextFile(`${output}/result.md`, "keep-existing");
+  const before = JSON.stringify(data);
+  let rejected = false;
+  try {
+    await exportProject(data, preset, {
+      content_item_id: item.id,
+      output_dir: output,
+      asset_bytes: { [video.id]: new Uint8Array([1]) },
+    });
+  } catch { rejected = true; }
+  assert(rejected && await Deno.readTextFile(`${output}/result.md`) === "keep-existing", "existing valid output must not be overwritten silently");
+  const leftovers = [];
+  for await (const entry of Deno.readDir(output)) if (entry.name.startsWith(".acw-export-")) leftovers.push(entry.name);
+  assert(leftovers.length === 0 && JSON.stringify(data) === before, "failed export must clean staging and preserve Canonical bytes");
 });
 
 Deno.test("desktop confirmation installs a confirmed project import", async () => {

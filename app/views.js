@@ -1163,30 +1163,27 @@ export function createViews(store) {
 
   function publishView() {
     const item = store.currentItem();
+    const courseScope = store.ui.publishScope === "course";
     const publications = (store.data.publications || []).filter((publication) =>
-      publication.content_item_id === (item && item.id)
+      courseScope || publication.content_item_id === (item && item.id)
     );
     const view = item ? lessonView(store.data, item.id) : null;
-    return `<section class="page"><div class="page-head"><div><span class="eyebrow">发布中心</span><h1>发布与导出</h1><p class="muted">先做确定性的导出前检查，再记录你已经发布的版本。</p></div><button class="primary" data-action="preflight">导出前检查</button></div><div class="card publish-card"><h2>${
-      esc(item ? `${item.code}｜${item.title}` : "未选择内容")
-    }</h2><p class="muted">${
-      view
-        ? `这一课 ${
-          view.progress.complete ? "已完成" : `完成 ${view.progress.percentage}%`
-        } · 待补 ${view.progress.open_requirements} 项`
-        : "还没有内容"
-    }</p><p class="muted">当前排版：${
-      esc(view && view.lesson.layout ? view.lesson.layout.name : "未设置")
-    } · 发布记录 ${publications.length} 条</p><div class="modal-actions"><button class="secondary" data-action="export-format" data-format="markdown">导出 Markdown</button><button class="secondary" data-action="export-format" data-format="html">导出 HTML</button><button class="primary" data-action="record-publication">记录已发布</button></div></div><div class="version-list">${
-      publications.map((publication) =>
-        `<article class="version-card"><span class="version-icon">↗</span><div><b>${
-          esc(publication.version_label)
-        }</b><p>${esc(publication.platform)} · ${
-          esc(publication.status)
-        }</p><small>${esc(publication.published_at || "")}</small></div></article>`
-      ).join("") ||
-      `<div class="empty-state"><h2>还没有发布记录</h2><p class="muted">完成检查并记录第一个已发布版本。</p></div>`
-    }</div></section>`;
+    const formats = [
+      ["markdown", "Markdown", "可编辑文本与稳定相对素材引用"],
+      ["html", "Semantic HTML", "无需 Workbench 即可独立阅读"],
+      ["web", "Static Web Package", "index.html + 实际使用的素材"],
+      ["pdf", "PDF", "交付、阅读与留档"],
+      ["wechat", "微信 / 富文本", "保守样式与媒体迁移提示"],
+      ["json", "Project JSON", "去除私有会话的结构化备份"],
+      ["asset_package", "素材包", "素材文件与 manifest"],
+      ["full_project", "完整项目包", "可恢复课程数据、正文与素材"],
+    ];
+    const last = store.ui.lastExport;
+    return `<section class="page"><div class="page-head"><div><span class="eyebrow">OUTPUT & PUBLISH</span><h1>发布与导出</h1><p class="muted">从同一份课程内容生成可搬走的结果；导出不会改写正文、排版或素材引用。</p></div><button class="primary" data-action="preflight">运行导出前检查</button></div>
+      <div class="card publish-card"><h2>1. 选择输出范围</h2><div class="segmented"><button class="${courseScope ? "" : "active"}" data-action="publish-scope" data-scope="lesson">当前课${item ? ` · ${esc(item.code)}` : ""}</button><button class="${courseScope ? "active" : ""}" data-action="publish-scope" data-scope="course">整门课程</button></div><p class="muted">${courseScope ? `整门课程 · ${store.data.content_items.filter((candidate) => !candidate.archived).length} 课` : view ? `${esc(item.title)} · 完成 ${view.progress.percentage}% · 待补 ${view.progress.open_requirements} 项` : "尚未选择课程"}</p></div>
+      <div class="card publish-card"><h2>2. 选择格式</h2><div class="format-grid">${formats.map(([key, label, detail]) => `<button class="format-card ${store.ui.publishFormat === key ? "active" : ""}" data-action="publish-format" data-format="${key}"><b>${label}</b><small>${detail}</small></button>`).join("")}</div><div class="modal-actions"><button class="primary" data-action="preflight">检查并导出 ${esc(formats.find(([key]) => key === store.ui.publishFormat)?.[1] || "输出")}</button></div></div>
+      ${last ? `<div class="card publish-card success-card"><h2>最近一次导出</h2><p><b>${esc(last.format)}</b> · ${last.scope === "course" ? "整门课程" : "当前课"} · ${last.files} 个文件</p><p class="muted">实际位置：<code>${esc(last.path)}</code></p><p class="muted">输出不依赖 Workbench 运行。</p>${store.bridge.isNative() ? `<button class="secondary" data-action="reveal-export">在 Finder 中显示</button>` : ""}</div>` : ""}
+      <div class="card publish-card"><h2>发布记录</h2><p class="muted">发布记录只记录用户确认过的发布节点，不是课程内容的第二份真相。</p><button class="secondary" data-action="record-publication">记录已发布</button></div><div class="version-list">${publications.map((publication) => `<article class="version-card"><span class="version-icon">↗</span><div><b>${esc(publication.version_label)}</b><p>${esc(publication.platform)} · ${esc(publication.status)}</p><small>${esc(publication.published_at || "")}</small></div></article>`).join("") || `<div class="empty-state"><h2>还没有发布记录</h2><p class="muted">导出并实际迁移后，可以记录这个发布节点。</p></div>`}</div></section>`;
   }
 
   function simplePage(title, description, icon) {
@@ -2154,36 +2151,19 @@ export function createViews(store) {
       }</option></select></label><div class="modal-actions"><button class="secondary" data-action="close-overlay">取消</button><button class="primary" data-action="submit-capture">放入收件箱</button></div></div></div>`;
     }
     if (store.ui.preflight) {
-      const report = store.exportPreflight();
-      return `<div class="overlay" data-action="close-overlay"><div class="preflight modal" data-stop-click="true"><div class="modal-head"><div><span class="eyebrow">EXPORT PREFLIGHT</span><h2>导出前检查</h2></div><button class="icon-button" data-action="close-overlay">×</button></div><label class="field-label">导出预设<select class="select">${
-        (store.data.export_presets || []).map((preset) =>
-          `<option>${esc(preset.name)} · ${esc(preset.platform)}</option>`
-        ).join("") || "<option>未设置预设</option>"
-      }</select></label><p class="muted">检查是结构化计算，不调用 AI；严重问题必须修复，警告可在确认后继续。</p><div class="check-list">${
-        [
-          ["内容级待补", report.content],
-          ["当前排版待补", report.layout],
-          ["缺失素材文件", report.missingAssets],
-          ["超出画布", report.overflow],
-          ["文字溢出", report.text],
-          ["未加载字体", report.fonts],
-          ["外部引用", report.external],
-        ].map(([label, count]) =>
-          `<div><span class="check ${
-            count ? "warning" : "ok"
-          }">${count ? count : "✓"}</span><span>${label}</span><b>${
-            count
-          }</b></div>`
-        ).join("")
-      }</div><div class="preflight-total">严重问题 <strong>${
-        report.blocking
-      }</strong> · 警告 <strong>${
-        report.warnings
-      }</strong></div><div class="modal-actions"><button class="secondary" data-action="close-overlay">返回修复</button><button class="secondary" data-action="export-anyway">仍然导出 Markdown</button><button class="primary" data-action="export-format" data-format="markdown" ${
-        report.blocking ? "disabled" : ""
-      }>导出 Markdown</button><button class="secondary" data-action="export-format" data-format="html" ${
-        report.blocking ? "disabled" : ""
-      }>导出 HTML</button></div></div></div>`;
+      const report = store.ui.preflightReport || store.exportPreflight();
+      const issues = Array.isArray(report.issues) ? report.issues : [];
+      const formatNames = { markdown: "Markdown", html: "Semantic HTML", web: "Static Web Package", pdf: "PDF", wechat: "微信 / 富文本", json: "Project JSON", asset_package: "素材包", full_project: "完整项目包" };
+      return `<div class="overlay" data-action="close-overlay"><div class="preflight modal" data-stop-click="true"><div class="modal-head"><div><span class="eyebrow">EXPORT PREFLIGHT</span><h2>导出前检查</h2></div><button class="icon-button" data-action="close-overlay">×</button></div><p><b>${store.ui.publishScope === "course" ? "整门课程" : "当前课"}</b> → <b>${esc(formatNames[store.ui.publishFormat] || store.ui.publishFormat)}</b></p><p class="muted">检查只读 Canonical，不调用 AI。BLOCKING 会生成损坏结果，必须修复；WARNING 可确认后继续，并会按说明降级。</p><div class="check-list">${[
+        ["内容级待补", report.content, false],
+        ["当前排版待补", report.layout, false],
+        ["缺失素材文件", report.missingAssets, true],
+        ["超出画布", report.overflow, true],
+        ["空正文 / 文字提醒", report.text, false],
+        ["未加载字体", report.fonts, false],
+        ["外部引用", report.external, false],
+        ["媒体降级", report.mediaDowngrades || 0, false],
+      ].map(([label, count, blocking]) => `<div><span class="check ${count ? blocking ? "danger" : "warning" : "ok"}">${count || "✓"}</span><span>${label}</span><b>${count}</b></div>`).join("")}</div>${issues.length ? `<div class="issue-list">${issues.map((issue) => `<article class="${issue.severity === "blocking" ? "issue-blocking" : "issue-warning"}"><b>${issue.severity === "blocking" ? "BLOCKING" : "WARNING"}</b><span>${esc(issue.message || issue.code || "导出问题")}</span></article>`).join("")}</div>` : ""}<div class="preflight-total">BLOCKING <strong>${report.blocking}</strong> · WARNING <strong>${report.warnings}</strong></div>${report.blocking ? `<p class="error-text">当前不能导出：请返回修复上面的严重问题。不会生成半成品，也不会修改源课程。</p>` : report.warnings ? `<p class="muted">可以继续；待补不会进入正式正文，无法交互的媒体会显示为附件说明。</p>` : `<p class="success-text">检查通过，可以生成完整输出。</p>`}<div class="modal-actions"><button class="secondary" data-action="close-overlay">返回修复</button><button class="primary" data-action="export-format" data-format="${esc(store.ui.publishFormat)}" ${report.blocking ? "disabled" : ""}>${report.warnings ? "确认警告并导出" : "开始导出"}</button></div></div></div>`;
     }
     if (store.ui.snapshot) {
       return `<div class="overlay" data-action="close-overlay"><div class="capture modal" data-stop-click="true"><div class="modal-head"><div><span class="eyebrow">长期历史</span><h2>保存版本</h2></div><button class="icon-button" data-action="close-overlay">×</button></div><label class="field-label">版本名称<input data-snapshot-name placeholder="例如：第一课正文定稿" /></label><label class="field-label">备注<textarea data-snapshot-note placeholder="记录这个节点为什么重要"></textarea></label><div class="modal-actions"><button class="secondary" data-action="close-overlay">取消</button><button class="primary" data-action="submit-snapshot">保存版本</button></div></div></div>`;

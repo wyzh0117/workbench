@@ -19,7 +19,7 @@ import type {
   ProjectData,
   Publication,
 } from "../domain/types.ts";
-import { migrateProject } from "../domain/store.ts";
+import { migrateProject, validateProjectData } from "../domain/store.ts";
 import { renderCourseMap } from "../domain/views.ts";
 import { sha256Bytes } from "../domain/util.ts";
 import {
@@ -27,6 +27,12 @@ import {
   sanitizeHtml,
   sanitizeProjectForExport,
 } from "./security.ts";
+import {
+  buildPublishProjection,
+  renderPublishHtml,
+  renderPublishMarkdown,
+  renderPublishPdf,
+} from "./publish.ts";
 
 /**
  * Import, export, and publication are deliberately kept behind one service
@@ -120,6 +126,8 @@ export type ExportTarget =
   | "pdf"
   | "asset_package"
   | "full_project"
+  | "web"
+  | "wechat"
   | "custom";
 
 export interface ExportIssue {
@@ -133,6 +141,8 @@ export interface ExportIssue {
     | "missing_font"
     | "external_reference"
     | "unsafe_path"
+    | "canonical_invalid"
+    | "media_downgrade"
     | "unsupported_format";
   message: string;
   content_item_id?: string;
@@ -154,6 +164,7 @@ export interface ExportPreflightReport {
     text_overflow: number;
     missing_fonts: number;
     external_references: number;
+    media_downgrades: number;
   };
 }
 
@@ -170,6 +181,7 @@ export interface ExportOptions {
   include_private_conversations?: boolean;
   asset_bytes?: Record<string, Uint8Array>;
   force_warnings?: boolean;
+  replace_existing?: boolean;
 }
 
 export interface ExportResult {
@@ -191,7 +203,7 @@ export class ExportBlockedError extends Error {
 export class ExportCapabilityError extends Error {
   constructor(format: string) {
     super(
-      `${format.toUpperCase()} 导出当前不可用；请先导出 Markdown、HTML 或 SVG。`,
+      `${format.toUpperCase()} 导出当前不可用；请改用 Markdown、HTML、Web Package 或 PDF。`,
     );
     this.name = "ExportCapabilityError";
   }
@@ -1236,6 +1248,8 @@ function resolveTarget(preset: ExportPreset): ExportTarget {
   if (target === "project_json" || target === "json_project") return "json";
   if (target === "asset" || target === "assets") return "asset_package";
   if (target === "package" || target === "full_package") return "full_project";
+  if (target === "static_web" || target === "web_package" || target === "web") return "web";
+  if (target === "rich_text" || target === "wechat" || target === "wechat_html") return "wechat";
   return target as ExportTarget;
 }
 
@@ -1282,6 +1296,7 @@ function emptyReport(): ExportPreflightReport {
       text_overflow: 0,
       missing_fonts: 0,
       external_references: 0,
+      media_downgrades: 0,
     },
   };
 }
@@ -1291,10 +1306,9 @@ async function assetExists(
   asset: ProjectData["assets"][number],
   options: ExportOptions,
 ): Promise<boolean> {
+  if (!relativeSafePath(asset.storage_path)) return false;
   if (options.asset_bytes?.[asset.id]) return true;
-  if (!relativeSafePath(asset.storage_path) || !options.project_root) {
-    return false;
-  }
+  if (!options.project_root) return false;
   if (await hasSymlinkComponent(options.project_root, asset.storage_path)) {
     return false;
   }
@@ -1324,8 +1338,17 @@ export async function preflightExport(
     "pdf",
     "asset_package",
     "full_project",
+    "web",
+    "wechat",
     "custom",
   ];
+  for (const issue of validateProjectData(data)) {
+    reportIssue(report, {
+      severity: "blocking",
+      code: "canonical_invalid",
+      message: `项目数据无法安全导出：${issue.message}`,
+    });
+  }
   if (!allowed.includes(target)) {
     reportIssue(report, {
       severity: "blocking",
@@ -1336,22 +1359,56 @@ export async function preflightExport(
   const presetFormat = preset.format ??
     (preset.settings as Record<string, unknown>).format;
   if (
-    target === "pdf" ||
-    (presetFormat === "png" || presetFormat === "jpg" ||
-      presetFormat === "jpeg")
+    presetFormat === "png" || presetFormat === "jpg" ||
+    presetFormat === "jpeg"
   ) {
     reportIssue(report, {
       severity: "blocking",
       code: "unsupported_format",
-      message: `${
-        target === "pdf" ? "PDF" : "位图"
-      } 导出当前没有可靠的本地渲染能力。`,
+      message: "位图导出当前没有可靠的本地渲染能力。",
     });
   }
   const itemIds = new Set(
     semanticItems(data, options.content_item_id).map((item) => item.id),
   );
   const layoutId = preset.layout_instance_id;
+  const checkedMissingAssets = new Set<string>();
+  if (["markdown", "html", "web", "wechat", "pdf"].includes(target)) {
+    try {
+      const projection = buildPublishProjection(data, {
+        content_item_id: options.content_item_id,
+      });
+      for (const media of projection.media) {
+        const asset = data.assets.find((candidate) => candidate.id === media.id);
+        if (!asset || checkedMissingAssets.has(media.id)) continue;
+        if (!relativeSafePath(asset.storage_path)) {
+          checkedMissingAssets.add(media.id);
+          report.counts.missing_assets += 1;
+          reportIssue(report, {
+            severity: "blocking",
+            code: "unsafe_path",
+            message: `素材路径不安全，无法生成稳定引用：${media.filename}`,
+            asset_id: media.id,
+          });
+        } else if (!(await assetExists(data, asset, options))) {
+          checkedMissingAssets.add(media.id);
+          report.counts.missing_assets += 1;
+          reportIssue(report, {
+            severity: "blocking",
+            code: "missing_asset",
+            message: `引用的素材文件不存在：${media.filename}`,
+            asset_id: media.id,
+          });
+        }
+      }
+    } catch (caught) {
+      reportIssue(report, {
+        severity: "blocking",
+        code: "canonical_invalid",
+        message: caught instanceof Error ? caught.message : "无法建立发布投影",
+      });
+    }
+  }
   for (
     const requirement of data.requirements.filter((candidate) =>
       candidate.status === "open" && itemIds.has(candidate.content_item_id)
@@ -1402,7 +1459,26 @@ export async function preflightExport(
   const referencedAssets = data.asset_usages.filter((usage) =>
     itemIds.has(usage.content_item_id)
   );
-  const checkedMissingAssets = new Set<string>();
+  const warnedMedia = new Set<string>();
+  for (const usage of referencedAssets) {
+    const asset = data.assets.find((candidate) => candidate.id === usage.asset_id);
+    if (!asset || warnedMedia.has(asset.id)) continue;
+    const needsDowngrade =
+      ((target === "markdown" || target === "pdf" || target === "wechat") &&
+        ["video", "audio", "document", "other"].includes(asset.type)) ||
+      (target === "pdf" && asset.type === "gif");
+    if (needsDowngrade) {
+      warnedMedia.add(asset.id);
+      report.counts.media_downgrades += 1;
+      reportIssue(report, {
+        severity: "warning",
+        code: "media_downgrade",
+        message: `${asset.filename} 在当前格式中将以非交互附件说明呈现。`,
+        content_item_id: usage.content_item_id,
+        asset_id: asset.id,
+      });
+    }
+  }
   for (const usage of referencedAssets) {
     const asset = data.assets.find((candidate) =>
       candidate.id === usage.asset_id
@@ -1628,17 +1704,57 @@ function svgForItem(
 async function writeOutput(
   files: ExportFile[],
   outputDir: string | undefined,
+  replaceExisting = false,
 ): Promise<void> {
   if (!outputDir) return;
+  const rootPath = normalize(outputDir);
+  await Deno.mkdir(rootPath, { recursive: true });
+  const rootStat = await Deno.lstat(rootPath);
+  if (rootStat.isSymlink || !rootStat.isDirectory) {
+    throw new Error("导出目录必须是普通文件夹，不能是符号链接");
+  }
   for (const file of files) {
     if (!relativeSafePath(file.relative_path)) {
       throw new Error("导出文件名必须是项目内相对路径");
     }
-    const rootPath = normalize(outputDir);
     await assertNoSymlinkEscape(rootPath, file.relative_path);
     const target = join(rootPath, file.relative_path);
-    await Deno.mkdir(dirname(target), { recursive: true });
-    await Deno.writeFile(target, file.bytes);
+    try {
+      await Deno.lstat(target);
+      if (!replaceExisting) throw new Error(`导出目标已存在：${file.relative_path}`);
+    } catch (caught) {
+      if (!(caught instanceof Deno.errors.NotFound)) throw caught;
+    }
+  }
+  const stagingName = `.acw-export-${crypto.randomUUID()}.tmp`;
+  const staging = join(rootPath, stagingName);
+  await Deno.mkdir(staging);
+  try {
+    for (const file of files) {
+      const target = join(staging, file.relative_path);
+      await Deno.mkdir(dirname(target), { recursive: true });
+      await Deno.writeFile(target, file.bytes);
+    }
+    // All rendering and writes completed before the first final rename.  The
+    // collision pass above prevents replacing an existing valid artifact.
+    for (const file of files) {
+      const target = join(rootPath, file.relative_path);
+      await Deno.mkdir(dirname(target), { recursive: true });
+      if (replaceExisting) {
+        try {
+          await Deno.remove(target, { recursive: true });
+        } catch (caught) {
+          if (!(caught instanceof Deno.errors.NotFound)) throw caught;
+        }
+      }
+      await Deno.rename(join(staging, file.relative_path), target);
+    }
+  } finally {
+    try {
+      await Deno.remove(staging, { recursive: true });
+    } catch (caught) {
+      if (!(caught instanceof Deno.errors.NotFound)) throw caught;
+    }
   }
 }
 
@@ -1679,33 +1795,67 @@ export async function exportProject(
   const preflight = await preflightExport(data, preset, options);
   const presetFormat = preset.format ?? preset.settings.format;
   if (
-    target === "pdf" ||
-    (presetFormat === "png" || presetFormat === "jpg" ||
-      presetFormat === "jpeg")
-  ) throw new ExportCapabilityError(target === "pdf" ? "pdf" : "bitmap");
+    presetFormat === "png" || presetFormat === "jpg" ||
+    presetFormat === "jpeg"
+  ) throw new ExportCapabilityError("bitmap");
   // Warnings may be acknowledged by the caller; a blocking issue must never
   // be bypassed because that would create a known damaged export.
   if (preflight.blocking.length) throw new ExportBlockedError(preflight);
   const files: ExportFile[] = [];
   const items = semanticItems(data, options.content_item_id);
-  if (target === "markdown") {
-    items.forEach((item, index) =>
-      files.push({
-        relative_path: renderName(preset, item, "正文", index, "md"),
-        mime_type: "text/markdown",
-        bytes: textBytes(renderMarkdownWithoutLayoutRequirements(data, item)),
-      })
-    );
-  } else if (target === "html") {
-    items.forEach((item, index) =>
-      files.push({
-        relative_path: renderName(preset, item, "正文", index, "html"),
-        mime_type: "text/html",
-        bytes: textBytes(
-          renderSemanticHtml(data, item, preset.layout_instance_id),
-        ),
-      })
-    );
+  const projectionTargets: ExportTarget[] = ["markdown", "html", "web", "wechat", "pdf"];
+  const projection = projectionTargets.includes(target)
+    ? buildPublishProjection(data, { content_item_id: options.content_item_id })
+    : null;
+  if (target === "markdown" && projection) {
+    files.push({
+      relative_path: options.content_item_id && items[0]
+        ? renderName(preset, items[0], "正文", 0, "md")
+        : renderName(preset, null, "整门课程", 0, "md"),
+      mime_type: "text/markdown",
+      bytes: textBytes(renderPublishMarkdown(projection)),
+    });
+  } else if (target === "html" && projection) {
+    files.push({
+      relative_path: options.content_item_id && items[0]
+        ? renderName(preset, items[0], "正文", 0, "html")
+        : renderName(preset, null, "整门课程", 0, "html"),
+      mime_type: "text/html",
+      bytes: textBytes(renderPublishHtml(projection)),
+    });
+  } else if (target === "web" && projection) {
+    files.push({
+      relative_path: "index.html",
+      mime_type: "text/html",
+      bytes: textBytes(renderPublishHtml(projection)),
+    }, {
+      relative_path: "manifest.json",
+      mime_type: "application/json",
+      bytes: jsonBytes({
+        schema_version: 1,
+        project_id: projection.project_id,
+        title: projection.title,
+        scope: projection.scope,
+        content_item_id: projection.content_item_id,
+        generated_from_updated_at: projection.generated_from_updated_at,
+        entrypoint: "index.html",
+        assets: projection.media.map((media) => media.output_path),
+      }),
+    });
+  } else if (target === "wechat" && projection) {
+    files.push({
+      relative_path: "wechat-rich-text.html",
+      mime_type: "text/html",
+      bytes: textBytes(renderPublishHtml(projection, { migration: true })),
+    });
+  } else if (target === "pdf" && projection) {
+    files.push({
+      relative_path: options.content_item_id && items[0]
+        ? renderName(preset, items[0], "正文", 0, "pdf")
+        : `${cleanName(data.project.title, "course")}-course.pdf`,
+      mime_type: "application/pdf",
+      bytes: renderPublishPdf(projection),
+    });
   } else if (target === "json") {
     const sanitized = sanitizeProjectForExport(
       options.include_private_conversations ? data : (() => {
@@ -1873,9 +2023,26 @@ export async function exportProject(
   } else {
     throw new ExportCapabilityError(String(target));
   }
+  if (projection && target !== "pdf") {
+    for (const media of projection.media) {
+      const asset = data.assets.find((candidate) => candidate.id === media.id);
+      if (!asset || files.some((file) => file.relative_path === media.output_path)) continue;
+      const bytes = await bytesForAsset(data, asset, options);
+      if (!bytes) continue;
+      files.push({
+        relative_path: media.output_path,
+        mime_type: media.mime_type,
+        bytes,
+      });
+    }
+  }
   makeExportPathsUnique(files);
-  files.sort((a, b) => a.relative_path.localeCompare(b.relative_path));
-  await writeOutput(files, options.output_dir);
+  files.sort((a, b) => {
+    const aAsset = a.relative_path.startsWith("assets/") ? 1 : 0;
+    const bAsset = b.relative_path.startsWith("assets/") ? 1 : 0;
+    return (aAsset - bAsset) || a.relative_path.localeCompare(b.relative_path);
+  });
+  await writeOutput(files, options.output_dir, options.replace_existing === true);
   return { files, preflight, target };
 }
 

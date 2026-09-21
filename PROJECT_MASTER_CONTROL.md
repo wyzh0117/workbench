@@ -497,13 +497,13 @@ N1
 
 # 6. 当前项目位置
 
-> 最后更新时间：2026-09-21
+> 最后更新时间：2026-09-22
 >
-> 当前版本：**V0**
+> 当前版本：**V0（已 CLOSED）**
 >
-> 当前任务：**V0-T04 — Output & Publish**
+> 当前任务：**V0-T04 — Output & Publish（VERIFIED）**
 >
-> 当前状态：**READY（V0-T03 已 VERIFIED，NEXT ACTION 已切换）**
+> 当前状态：**V0 四个平级任务全部 VERIFIED；V0 CLOSED，尚未进入 V1**
 
 ---
 
@@ -516,15 +516,15 @@ V0 当前只使用以下四个平级任务。
 | V0-T01 | Desktop 基础闭环 | VERIFIED | 真实桌面运行、项目生命周期、文件/素材、保存恢复安全 |
 | V0-T02 | Course Authoring | VERIFIED | 真正顺手地制作一节课和维护整门课程 |
 | V0-T03 | AI Workflow | VERIFIED | AI 真正进入工作流，同时保持 Diff / Apply 控制 |
-| V0-T04 | Output & Publish | NOT ACTIVE | 将课程可靠迁移到实际使用和发布场景 |
+| V0-T04 | Output & Publish | VERIFIED | 将课程可靠迁移到实际使用和发布场景 |
 
 注意：
 
-> 当前只执行 V0-T04。
+> V0 的四个平级任务已全部 VERIFIED；V0 CLOSED，尚未进入 V1。
 
 V0-T02 已 VERIFIED（含真实 Tauri 窗口内完整 Course Authoring 走查，见 14.4）。
 V0-T03 已 VERIFIED（含最终构建真实 Tauri 窗口内完整 AI 走查，见 §15）。
-NEXT ACTION 已切换为 V0-T04；V0-T04 本轮未开工，保持 NOT ACTIVE。
+V0-T04 已 VERIFIED（含最终构建真实 Tauri 窗口内完整 Output & Publish 走查，见 §16）。
 
 ---
 
@@ -1324,48 +1324,250 @@ cargo build --offline              通过；cargo tauri build --debug 通过，�
 状态：
 
 ```text
-NOT ACTIVE
+VERIFIED
 ```
 
-目前已有：
+本轮目标：
+
+> **Workbench 中的课程可以可靠迁移到真实课程或内容发布场景，且不破坏源项目、不形成第二套课程真相。**
+
+## 16.1 本轮完成内容
 
 ```text
-Markdown
-HTML
-SVG / 分区
-项目包
-素材包
+只读发布投影层 src/service/publish.ts：
+  Canonical → PublishProjection → Adapter；平台标记不进入 Canonical
+桌面壳原生输出链（src-tauri/src/lib.rs）：
+  export.preflight / export.run / export.reveal / publication.record
+  导出前检查 BLOCKING / WARNING 分类；原子暂存 .{name}.acw-<id>.tmp
+  导出包脱敏（移除 conversations / conversation_sources / messages /
+  context_packs / context_pack_items）；素材复制；PDF 1.4 原生写出
+输出格式（当前课 / 整门课程两种范围）：
+  Markdown、Semantic HTML、Static Web Package（index.html + manifest.json +
+  实际使用素材）、PDF（STSong-Light + UniGB-UCS2-H 中文）、
+  微信 / 富文本迁移版 HTML、Project JSON、素材包、完整项目包
+发布与导出中心 UI（app/views.js / app/main.js / app/styles.css）：
+  范围、格式、导出前检查（逐项 ✓ / WARNING / BLOCKING + 问题清单 +
+  「能不能继续 / 继续后会怎样」）、最近一次导出的实际位置与在 Finder 中显示、
+  发布记录（用户确认的发布节点）
+浏览器审查壳：Markdown / HTML / 富文本迁移版下载；Web / PDF / 项目包由桌面壳生成。
+  注意（独立复核发现）：审查壳的 HTML 与富文本迁移版共用同一轻量渲染器
+  （app/main.js 的 browserHtml），其「富文本迁移版」下载与 HTML 下载内容相同、
+  不含迁移提示；带迁移提示的迁移版由桌面壳导出（见 §16.4-3）。
 ```
 
-但最终目标是：
-
-> **Workbench 中的课程可以可靠迁移到真实课程或内容发布场景。**
-
-V0 阶段重点是建立稳定输出链。
-
-后续可能覆盖：
-
-```text
-Semantic HTML
-图片 / 页面输出
-PDF
-必要的 PNG
-微信内容迁移
-网页内容
-其他实际课程场景
-```
-
-平台特有格式必须通过：
+平台特有格式一律通过：
 
 ```text
 统一结构化课程内容
         ↓
-发布适配层
+发布适配层（Publish Projection）
 ```
 
-完成。
+不得让某个平台格式反过来控制 Canonical —— 本轮实测导出严格只读。
 
-不得让某个平台格式反过来控制 Canonical。
+## 16.2 本轮证据（真实 Tauri 窗口走查 + 落盘复核）
+
+```text
+测试项目：/tmp/AI-Course-Workbench-V0-T04-Takeover-20260922
+  4 个真实素材：课程 封面.png(1504B) / 演示 动图.gif(1874B) /
+  讲解 视频.mp4(12083B) / 配套 阅读.md(48B)
+  2 课：S01-01 输出基础（正文/引用/外链/图片/GIF/视频/文档，Grid 排版）、
+  S01-02 迁移实践（含 1 条内容级待补）
+全程使用最终构建的 .app（cargo tauri build --debug）与真实原生保存面板；
+每条结论都用落盘文件复核（sha256 / JSON / PDF 渲染 OCR），不依赖界面自述。
+
+1  单课 Markdown 导出「到项目目录内」（即上一轮踩雷的自拷贝场景，本轮在修复后的
+   构建上复跑）：生成 S01-01-输出基础.md(402B)，标题/段落/引用/外链/图片/GIF/视频/
+   附件引用正确；4 个素材 sha256 与导出前完全一致、大小非零（ASSETS_BYTE_IDENTICAL_OK）。
+   说明：截断缺陷本身的原始现场来自上一轮的验收项目
+   /tmp/AI-Course-Workbench-V0-T04-Final-20260921（其 assets/* 与导出的
+   基础阶段.web/assets/*、course-web-moved/assets/* 均为 0 字节），
+   本轮走查用的是修复后构建，因此本轮不再出现 0 字节，属预期。
+2  Static Web Package：包内 index.html(1138B) / manifest.json(338B) / assets 4 个，
+   素材与源 sha256 逐一相同；整包移出项目目录后在真实 Chromium 打开：
+   图片 naturalWidth 640×360（PNG）与 320×180（GIF）（修复前为 0）、
+   video 带 controls、document 为附件链接，节点顺序
+   H2>H2>P>BLOCKQUOTE>P>FIGURE>FIGURE>FIGURE>ASIDE 与课程一致
+2b Semantic HTML：导出 S01-01-输出基础.html(1138B，与 Web 包的 index.html 同字节数，
+   同一渲染路径），在真实 Chromium 打开：H1 基础阶段 / H2 输出基础 / H2 真实发布链、
+   图片 640×360 与 320×180、video 带 controls、0 个 <script>，正文与外链可读
+3  PDF：194,503B、PDF 1.4、2 页；对渲染结果做 Vision OCR，页面文字为
+   「基础阶段 / 输出基础 / 真实发布链 / 这是一段用于核对 Markdown、HTML、
+   Web 与 PDF 的中文正文。/ 输出只读 Canonical，不反向污染课程内容。/
+   外部参考：https://example.com/course」；第 2 页为媒体降级
+   （GIF 静态帧、视频说明、附件链接）
+4  微信 / 富文本迁移版：真实 Chromium 打开导出的迁移版 HTML（
+   S01-01-输出基础.wechat-migration.html），把其 body 写入系统剪贴板后粘贴进
+   普通 contenteditable 接收页，结构
+   P(migration banner)/H1/H2/H2/P/BLOCKQUOTE/P/FIGURE(IMG)/FIGURE(IMG)/FIGURE(VIDEO)/ASIDE
+   保序、0 个 <script>、0 个 Workbench 私有 class，媒体单独上传提示随内容保留。
+   证据文件：/tmp/acw-t04-takeover/paste-into-contenteditable.json
+   （含接收页 DOM 与逐项观测；粘贴动作本身由 Chromium 真实剪贴板完成）
+5  导出前检查（preflight）实测两态：
+   BLOCKING：把 assets/演示 动图.gif 移走后 → 面板「缺失素材文件 1」、
+   问题清单「BLOCKING 项目素材文件不存在」、BLOCKING 1 · WARNING 3、
+   导出按钮禁用 + 「当前不能导出：请返回修复上面的严重问题。不会生成半成品，
+   也不会修改源课程。」，且不弹出保存面板、磁盘无半成品；恢复文件后字节一致
+   WARNING：仍有待补 / 外部引用 / 媒体降级 → 逐条列出，可「确认警告并导出」
+6  只读性：整轮走查前后素材 sha256 完全相同；Canonical 内容哈希
+   （屏蔽 autosave 的 project.updated_at 与用户显式记录的 publications）不变
+7  发布记录：点「记录已发布」→ project.json 的 publications 增加 1 条
+   （platform=手动发布，status=published，带 content_item_id 与时间戳），
+   UI 显示「手动发布 · published」
+8  关闭 → 重启 → 重开：窗口关闭后 project.lock 释放（仅留 guard），
+   重开回到同一项目与同一课、数据一致，无回归
+9  自动化与构建：deno task check 通过；deno test 223 passed；
+   cargo test 47 passed；cargo tauri build --debug 产出 .app 与 .dmg
+```
+
+## 16.3 本轮验收方式与限制说明
+
+```text
+真实窗口走查由 macOS Accessibility（AX）驱动：对真实窗口执行 AXPress、
+AXValue 写入与键盘事件，并以落盘文件（sha256 / project.json / PDF OCR）复核。
+
+环境限制（已记录，供后续任务参考）：
+  - 本会话进程默认没有 Apple Events / 辅助功能权限，System Events 报
+    -10004 privilege violation；放行后才能驱动真实窗口。
+  - 原生保存面板的「前往文件夹」子表在 AX 下提交不稳定（上一轮同样遇到），
+    本轮改用面板默认目录（项目根目录）导出后 cp -R 移出项目再打开，
+    不影响 DoD「Static Web Package 离开原项目目录后仍可打开」。
+  - 未验证真实微信公众号后台（任务卡 §4.9 允许）：不做登录 / 授权 / 草稿箱 API /
+    自动发布，只做迁移格式本身的复制粘贴结构验证。
+  - cargo tauri build --debug 在应用仍从该 bundle 运行时会在 DMG 步骤失败
+    （首次构建遇到：bundle_dmg.sh 失败）；关闭应用后重跑即产出 .app 与 .dmg。
+  - 上一轮 pi 会话中断时遗留的 Desktop UI 独占锁
+    /tmp/ai-course-workbench-desktop-ui.lock（owner=pi-v0-t04，pid 51244）已确认
+    owner 进程不存在、应用已退出后释放，并在本轮以自己的身份重新取锁、结束时释放。
+  - 关于「导出包不含私有会话数据」：实现是 sanitized_project_package（导出前移除
+    conversations / conversation_sources / messages / context_packs / context_pack_items），
+    本轮测试项目的这些数组本来就是空的，因此「非空数据被移除」这一点由 Deno 回归测试
+    full project export excludes private conversation data 覆盖，本轮未另造真实 AI 数据复验；
+    可直接核实的是导出包内不存在 .workspace / 诊断 / lock / session 文件与任何密钥。
+
+Git 状态（§13.7）：
+  branch = main（全程未 switch / checkout / reset / merge，未新建 worktree）
+  起始 HEAD = 74c3281（merge(v0-t03)）；本轮在其上追加 1 条提交
+  提交主题 = feat(v0-t04): output and publish verified（显式 stage，未用 git add -A；
+  本文件不绑定可能因后续修订而变化的 commit hash，以 git log 主题为准）
+  本轮实际修改：PROJECT_MASTER_CONTROL.md、README.md、app/main.js、app/styles.css、
+  app/views.js、src-tauri/src/lib.rs、src/domain/index.ts、
+  src/service/import_export.ts、src/service/publish.ts（新增）、
+  tests/acceptance_test.ts、tests/import_export_test.ts、tests/native_boundary_test.ts、
+  V0-T04_OUTPUT_PUBLISH_TASK.md（新增，任务卡入库）
+  提交后工作区干净（git status 无输出）；未观察到其他任务混入的改动。
+```
+
+## 16.4 本轮发现并当轮修复的缺陷
+
+```text
+1. BLOCKER — 导出会把源素材截断为 0 字节：把单文件导出到项目目录内时，
+   素材复制目标与源路径相同，fs::copy 自拷贝在 macOS 上截断文件；此后所有导出
+   都引用空素材。原始现场（上一轮验收项目 /tmp/AI-Course-Workbench-V0-T04-Final-20260921）：
+   4 个素材 sha256 均为空文件哈希 e3b0c44…，其导出的基础阶段.web/assets/* 与
+   course-web-moved/assets/* 也都是 0 字节、Web 包图片 naturalWidth=0；
+   独立复核另用单独 Rust 探针确认 fs::copy(same, same) → Ok(0) 在本机确实截断文件。
+   已修：copy_export_assets 增加同文件判定
+   （路径相等或 canonicalize 后相等则跳过复制），导出恢复严格只读；
+   补 Rust 回归测试 exporting_beside_project_never_copies_an_asset_onto_itself。
+   反证（本轮独立复核）：临时把该守卫改成恒假后重跑该测试 → 失败并显示素材被截断为
+   空文件（断言 left: [] vs right: 非空字节），恢复守卫后 47 项全绿，
+   证明缺陷真实存在且回归测试确实能抓住它，而不是同义反复。
+2. 导出前检查面板「缺失素材文件 ✓ 0」与「BLOCKING 1」自相矛盾：磁盘缺文件由原生
+   检查发现，而面板该行只统计引用断链。已修：openPreflight 合并原生
+   missing_asset 计数，面板行与 BLOCKING 总数一致（重跑构建后实测 1 / 0 两态正确）。
+
+未修复但已记录（不阻塞 V0-T04）：
+3. BACKLOG — 同一格式存在多套渲染实现，输出不一致（独立复核已更正归属）：
+   桌面壳用 Rust html_for_project，服务层用 TS renderPublishHtml（class 化迁移提示、
+   视频降级为 <aside> 媒体卡片），浏览器审查壳 app/main.js 用自带的 browserHtml。
+   实测差异：
+   (a) 桌面壳迁移版保留 <video controls> + 行内样式提示；服务层版本把 video 降级为
+       <aside> 卡片 + .migration-note 文案 —— 同一「微信 / 富文本」格式两个实现不同；
+   (b) 审查壳把 wechat 与 html 交给同一个 browserHtml、同名同扩展名下载
+       （app/main.js 的 exportCurrent），因此审查壳的「富文本迁移版」下载与它的
+       HTML 下载完全相同、且不含任何迁移提示。
+   三者都以 Canonical 为唯一来源，不构成第二份内容真相，但应在后续版本收敛到
+   同一投影 / 渲染层；收敛前 README 与本文件 §16.1 已注明该限制。
+4. 观察（非缺陷，fail-closed）：exportCurrent 自身不跑 preflight，拦截由两处保证 ——
+   发布与导出中心的点击路径先调 preflight 并禁用按钮，且 Rust export_run 内部会
+   重新执行 preflight 并以结构化 export_blocked 拒绝写入。即使绕过 UI 直接调用，
+   也不会产生 BLOCKING 输出；仅为审计记录，不需要修改。
+```
+
+§12 Backlog 判定（本轮）：
+
+```text
+纳入 T04 并已完成：video / document 素材在导出中的表达 —— HTML / Web / 迁移版按类型
+输出 img / video(controls) / audio / 附件卡片，Markdown 与 PDF 为非交互附件说明，
+导出前检查对每种降级逐条给出 WARNING（真实窗口与落盘证据见 §16.2）。
+继续留在 Backlog（不属于 T04）：应用内「用系统默认程序打开素材」、键盘快捷键范围、
+浏览器壳阅读位置刷新丢失、系统钥匙串适配器、AI 逐字流式 UI。不需要强行清空。
+```
+
+## 16.5 Definition of Done 对照
+
+```text
+10.1 Architecture
+ [x] Canonical → Publish Projection → Adapter 边界清楚（publish.ts 只读投影；
+     桌面壳原生导出同样只读 Canonical，不写回）
+ [x] 平台格式未反向污染 Canonical（导出后 Canonical 内容哈希不变）
+ [x] Preview / Export 未形成互相漂移的第二套内容真相（两侧都从同一份 Canonical 派生，
+     本轮实测导出未改变任何内容字段；但两壳各自有渲染实现这一差异已记为 §16.4-3 BACKLOG）
+ [x] 未重构 T01/T02/T03 已 VERIFIED 生命周期（223 Deno + 47 Rust 全绿）
+10.2 Preflight
+ [x] 导出前检查真实可运行（真实窗口实测 BLOCKING / WARNING 两态）
+ [x] Blocking / Warning 明确区分（缺素材/非法路径 = BLOCKING；待补/外链/媒体降级 = WARNING）
+ [x] 缺失素材 / 断链不会被错误标为成功（BLOCKING 时按钮禁用 + 不生成半成品）
+ [x] 用户能理解 warning 的后果与下一步（逐条问题 + 「可以继续；…会按说明降级」）
+10.3 Core Outputs
+ [x] 当前课 / 整门课程 Markdown 可真实使用且素材引用稳定
+ [x] Semantic HTML 可独立打开
+ [x] Static Web Package 离开原项目目录后仍可打开（Chromium 实测图片正常渲染）
+ [x] PDF 能生成、打开、阅读（PDF 1.4 / 2 页 / 渲染 OCR 文字正确）
+ [x] 现有 SVG / 分区导出无回归（由 Deno 回归测试 multi-page image export emits
+     stable files per LayoutSection 覆盖，本轮未做人工 SVG 走查，如实记录）
+ [x] Project JSON / 素材包 / 完整项目包无回归（完整项目包实测导出并检查内容；
+     Project JSON / 素材包与「不导出私有会话数据」由 Deno 回归测试覆盖）
+10.4 Media
+ [x] image 不丢失、GIF 不被当普通图片或破图（Web 包 GIF naturalWidth 320×180）
+ [x] video/audio 有正确 HTML 表达与非交互格式降级（Web 保留 controls；PDF/迁移版说明）
+ [x] Markdown / document 不停在错误预览 / 导出状态（附件链接可打开）
+ [x] inline 素材不重复导出、未使用素材不进入正文（selected_export_assets 只取被引用素材）
+10.5 Real Migration
+ [x] 至少一条微信 / 富文本迁移路径可实际完成（迁移版 HTML + contenteditable 粘贴保序）
+ [x] 复制 / 粘贴后标题、段落、图片顺序基本正确（结构实测保序）
+ [x] 不承诺平台无法保证的样式保真（迁移版明确写出）
+ [~] 未验证真实微信后台（任务卡允许，已在 16.3 诚实说明）
+10.6 Safety
+ [x] Export 失败不修改 Canonical（BLOCKING 时无写入；内容哈希不变）
+ [x] Export 失败不谎报成功（明确报错文案 + 按钮禁用）
+ [x] 不留误导性半成品（原子暂存 + 目录已存在时拒绝覆盖）
+ [x] 路径 / 文件名 / 覆盖行为安全（拒绝符号链接、拒绝既有目标目录覆盖）
+ [x] 导出包不含 API Key / secret；不含 AI 执行记录 / 诊断日志 / lock / session 私有文件
+10.7 Runtime
+ [x] Web / Service 路径可用（deno task check / test 全绿）
+ [x] 真实 Tauri Desktop 可编译（.app 与 .dmg 均产出）
+ [x] 最终构建真实 Tauri 窗口完成 Output & Publish 走查
+ [x] 实际输出文件在系统中可打开（Chromium / PDF OCR / Finder 位置）
+ [x] Close / Restart / Reopen 不回归
+10.8 Automated
+ [x] deno task check 通过；deno task test 223 passed；Rust tests 47 passed
+ [x] cargo build / cargo tauri build --debug 通过（.app + .dmg）
+ [x] 新增输出 / preflight / failure-safety 回归测试（含自拷贝回归）
+10.9 Project Control
+ [x] BLOCKER = NONE
+ [x] README 已同步真实输出能力与限制
+ [x] PROJECT_MASTER_CONTROL.md 已按 §21 回写；V0 Task Board: V0-T04 = VERIFIED
+ [x] §16 更新为真实完成内容、证据、限制与 DoD 对照；§17 = V0 CLOSED
+ [x] §22 Change Log 追加；§29 NEXT ACTION 不再指向 V0-T04；§30 总控摘要同步
+
+PNG / 图片输出：按任务卡 §4.8，V0 只要求「若确有独立必要性才实现」；审计结论是
+Markdown / HTML / Web / PDF 已覆盖本轮真实迁移场景，复杂 PNG 生成器列为
+REJECTED for V0（导出中心不提供 png / jpg 格式卡片；服务层 preflightExport 对
+png / jpg 报 unsupported_format，桌面壳原生导出对未知格式直接返回「当前原生导出
+不支持这个格式」；SVG / 分区导出不回归）。
+```
 
 ---
 
@@ -1377,12 +1579,12 @@ PDF
 V0-T01  VERIFIED
 V0-T02  VERIFIED
 V0-T03  VERIFIED
-V0-T04  NOT ACTIVE
+V0-T04  VERIFIED
 ```
 
 因此从宏观上：
 
-> **当前还没有完成 V0。**
+> **V0 已完成并 CLOSED；V0 内部没有剩余任务。**
 
 正确理解不是：
 
@@ -1393,23 +1595,18 @@ M1 做完 → 项目快结束
 而是：
 
 ```text
-V0 的前三个收口任务已完成（Desktop 基础闭环、Course Authoring、AI Workflow），
-只差最后的 Output & Publish
+V0 的四个收口任务全部 VERIFIED：
+Desktop 基础闭环、Course Authoring、AI Workflow、Output & Publish
 ```
-
-仍然需要完成：
-
-```text
-V0-T04
-```
-
-全部 VERIFIED 后：
 
 ```text
 V0 CLOSED
 ```
 
-才进入 V1。
+V0 关闭后不自动进入 V1：V1 仍为 NOT ACTIVE，需要用户明确开启新版本后
+才允许规划 V1 的范围（本任务未创建任何新阶段、新任务编号或 V1 内容）。
+
+V0 关闭时仍留在 Backlog 且不阻塞 V0 的事项见 §16.4 第 3 条与 §23。
 
 ---
 
@@ -1703,6 +1900,19 @@ YYYY-MM-DD | Task | From → To | Summary
 当前：
 
 ```text
+2026-09-22 | V0-T04 | NOT ACTIVE → IN PROGRESS → DONE → VERIFIED
+最终构建真实 Tauri 窗口内完成完整 Output & Publish 走查（AX 驱动真实控件 + 落盘 sha256/JSON/PDF OCR 复核）：
+单课 Markdown 导出到项目目录内（自拷贝场景）→ 素材字节完全不变 → Static Web Package 移出项目目录后
+在真实 Chromium 打开（图片 640×360 / 320×180 正常渲染）→ PDF 1.4 两页、渲染 OCR 文字正确 →
+微信/富文本迁移版在 contenteditable 接收页粘贴后结构保序、无脚本、无私有 class →
+导出前检查 BLOCKING（缺素材：按钮禁用、不生成半成品）与 WARNING（待补/外链/媒体降级可确认继续）两态实测 →
+整轮走查前后素材 sha256 相同、Canonical 内容哈希不变 → 记录发布节点（publications 1 条）→
+关闭释放租约、重启重开一致。过程中修复 1 个 BLOCKER（导出把源素材截断为 0 字节的自拷贝缺陷）与
+1 个 preflight 面板计数矛盾；deno task check 通过、deno task test 223、cargo test 47、
+cargo tauri build --debug（.app + .dmg）通过。V0-T04 = VERIFIED → V0 CLOSED；
+NEXT ACTION 不再是 V0 任务（V1 保持 NOT ACTIVE，需用户明确开启）。
+详见 §16。
+
 2026-09-21 | V0-T03 | NOT ACTIVE → IN PROGRESS → DONE → VERIFIED
 最终构建真实 Tauri 窗口内完成完整 AI 走查（AX 驱动真实控件 + 截图 OCR 逐屏核对 + 落盘文件复核）：
 启动/恢复项目 → 进入 S01-01 选中区块 → 切换「当前区块」范围 → 预览上下文（8 项/1005 字，
@@ -1935,18 +2145,24 @@ PROJECT_MASTER_CONTROL.md
 
 # 29. 当前唯一 NEXT ACTION
 
-> **开始 V0-T04 — Output & Publish。**
+> **V0 已 CLOSED；唯一下一步是「制定 / 启动 V1 规划」（由用户决定何时开始）。**
 
-V0-T02 的真实 Tauri Desktop 走查已完成（证据见 14.4），V0-T02 = VERIFIED。
-V0-T03 的实现、自动化验收、浏览器整栈 E2E 与最终构建的真实 Tauri 窗口内完整 AI 走查
-全部完成（证据见 §15.2），V0-T03 = VERIFIED，因此唯一 NEXT ACTION 已切换为：
+V0-T01 / V0-T02 / V0-T03 / V0-T04 全部 VERIFIED：V0-T04 的实现、自动化验收与
+最终构建的真实 Tauri 窗口内完整 Output & Publish 走查全部完成（证据见 §16.2），
+且 T04 没有遗留 DoD BLOCKER，因此：
 
 ```text
-V0-T04 — Output & Publish
+V0 CLOSED
 ```
 
-下一轮开工前必须先完整阅读本文件与 README，确认 V0-T04 的 Definition of Done 与
-非目标后再动手；不得在本轮之外顺手实现 V1/V2 的内容。
+下一步唯一动作：
+
+```text
+制定 / 启动 V1 规划
+```
+
+V1 具体范围必须由用户决定：V1 保持 NOT ACTIVE，不得因为 V0 关闭而自动拆解 V1、
+创建新的阶段树或任务编号；用户决定开启时，先更新本文件与 README 再开工。
 （文档纠错：本项目 V0 只有 T01–T04，此前出现的“V0-T05 发布能力”为笔误，已更正为
 `V0-T04 — Output & Publish`，不创建 V0-T05。）
 
@@ -1962,13 +2178,13 @@ NORTH STAR
 长期、本地优先、AI 协作的课程生产与维护工作台
 
 CURRENT VERSION
-V0
+V0（已 CLOSED）
 
 CURRENT TASK
-V0-T04 Output & Publish（READY：V0-T03 已 VERIFIED，NEXT ACTION 已切换）
+无（V0-T04 Output & Publish 已 VERIFIED）
 
 CURRENT STATUS
-V0-T03 = VERIFIED；V0-T04 = NOT ACTIVE
+V0 = CLOSED；V0-T01 / V0-T02 / V0-T03 / V0-T04 全部 VERIFIED
 
 DONE / IMPLEMENTED
 - Canonical / Domain / Service 主体
@@ -1977,7 +2193,6 @@ DONE / IMPLEMENTED
 - Native Picker 代码
 - Asset Import / checksum / Asset·Usage
 - Autosave / Recovery 基础
-- Markdown / HTML 等基础输出
 - Course Map / Lesson Editor / Flow-Grid / 素材 Authoring / 待补 / Preview / 完成状态
 - 只读 asset_read 预览命令与完整 UI session 持久化
 - 真实 Tauri 窗口内完整 Course Authoring 走查（含关闭 → 重启 → 继续）
@@ -1987,13 +2202,17 @@ DONE / IMPLEMENTED
 - AI Apply 进入与人工编辑同一套 commit / history / undo / redo / autosave
 - AI 执行记录（非 Canonical、0600、无密钥、一次运行一行）
 - 密钥由所在进程注入，不进入 project.json / Canonical / 导出包 / 诊断包
-- Deno 220 tests + Rust 45 tests + cargo build + cargo tauri build --debug（.app 与 .dmg）
+- 只读 Publish Projection + 导出前检查（BLOCKING / WARNING）+ 发布与导出中心
+- 输出：Markdown（当前课 / 整门课程）、Semantic HTML、Static Web Package、PDF、
+  微信 / 富文本迁移版、Project JSON、素材包、完整项目包；导出严格只读并可记录发布节点
+- 真实 Tauri 窗口内完整 Output & Publish 走查（含自拷贝素材回归、BLOCKING 拦截、关闭 → 重启）
+- Deno 223 tests + Rust 47 tests + cargo build + cargo tauri build --debug（.app 与 .dmg）
 
 OPEN BLOCKERS
 - NONE
 
 AFTER CURRENT TASK
-V0-T04 Output & Publish（唯一剩余任务）
+无：V0 CLOSED；V1 需用户明确开启后才允许规划
 
 V1
 NOT ACTIVE
@@ -2002,7 +2221,7 @@ V2
 NOT ACTIVE
 
 NEXT ACTION
-V0-T04 — Output & Publish。
+制定 / 启动 V1 规划（V0 已 CLOSED；V1 范围由用户决定，当前 NOT ACTIVE）。
 ```
 
 ---

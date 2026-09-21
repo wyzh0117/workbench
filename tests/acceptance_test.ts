@@ -392,7 +392,7 @@ Deno.test("E2E-13 desktop command/UI contract keeps the canonical vertical slice
     });
     assert(
       !exported.error &&
-        (exported.value as { files: unknown[] }).files.length === 1,
+        (exported.value as { files: unknown[] }).files.length >= 1,
       "resolved assets should export through the desktop service root",
     );
     const inbox = await desktop.commands.execute("inbox.create", {

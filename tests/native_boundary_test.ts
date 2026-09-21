@@ -44,6 +44,7 @@ Deno.test("native shell exposes explicit project and high-level workflows", () =
       "select_export_path",
       "export_preflight",
       "export_run",
+      "reveal_export_path",
       "publication_record",
       "clear_recovery_journal",
     ]
@@ -87,7 +88,7 @@ Deno.test("native shell exposes explicit project and high-level workflows", () =
     "native asset import must preserve raw bytes, checksum and usage metadata",
   );
   assert(
-    lib.includes('"files": [{') &&
+    lib.includes('"files": exported_files') &&
       lib.includes('"__bytes_base64"') &&
       lib.includes('"target_path": output_path'),
     "native export must return stable file bytes and an explicit target path",

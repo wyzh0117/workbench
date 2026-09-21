@@ -293,6 +293,22 @@ kbd { background: #f2f3f7; border: 1px solid #e0e2eb; border-radius: 4px; color:
 .blueprint-confirm { margin-bottom: 15px; }
 .blueprint-nodes { margin: 11px 0; }
 .publish-card { margin-bottom: 15px; }
+.segmented { display: inline-flex; gap: 4px; margin: 12px 0; padding: 4px; border: 1px solid var(--line); border-radius: 9px; background: #f7f7fa; }
+.segmented button { border: 0; border-radius: 6px; padding: 8px 13px; background: transparent; color: var(--muted); }
+.segmented button.active { background: #fff; color: var(--primary); box-shadow: 0 1px 4px rgba(30,30,60,.12); }
+.format-grid { display: grid; grid-template-columns: repeat(auto-fit,minmax(180px,1fr)); gap: 9px; margin-top: 12px; }
+.format-card { display: flex; flex-direction: column; gap: 4px; min-height: 72px; padding: 12px; text-align: left; border: 1px solid var(--line); border-radius: 8px; background: #fff; }
+.format-card.active { border-color: var(--primary); background: var(--primary-soft); }
+.format-card small { color: var(--muted); line-height: 1.35; }
+.success-card { border-color: #9ed8b4; background: #f2fbf5; }
+.success-card code { overflow-wrap: anywhere; }
+.issue-list { display: grid; gap: 7px; max-height: 150px; overflow: auto; margin-top: 12px; }
+.issue-list article { display: flex; gap: 9px; padding: 9px; border-radius: 7px; font-size: 12px; }
+.issue-blocking { background: #fff0f0; color: #a42b2b; }
+.issue-warning { background: #fff7e8; color: #8b5a15; }
+.check.danger { background: #ffe1e1; color: #b3261e; }
+.error-text { color: #a42b2b; }
+.success-text { color: var(--green); }
 
 .toast > * { pointer-events: auto; }
 

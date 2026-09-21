@@ -12,7 +12,7 @@ deno task test
 deno task ui
 ```
 
-浏览器打开 `http://localhost:4173` 可检查三栏工作台、课程地图、单课编辑器（正文/结构/排版/预览）、Flow/Grid、媒体库、待补总览、六维状态、收件箱、快速收集、版本恢复、AI 助手（上下文范围 / Diff 审核）和 Markdown/HTML 导出。没有 Rust 工具链时仍可完成服务层与 UI 契约验收。
+浏览器打开 `http://localhost:4173` 可检查三栏工作台、课程地图、单课编辑器（正文/结构/排版/预览）、Flow/Grid、媒体库、待补总览、六维状态、收件箱、快速收集、版本恢复、AI 助手（上下文范围 / Diff 审核）、发布与导出中心（范围 / 格式 / 导出前检查 / 发布记录）以及 Markdown、HTML、富文本迁移版下载。没有 Rust 工具链时仍可完成服务层与 UI 契约验收；Static Web Package、PDF、项目 JSON、素材包与完整项目包由桌面壳生成。审查壳的 HTML 与富文本迁移版目前共用同一轻量渲染器，因此它的「富文本迁移版」下载与 HTML 下载内容相同、不含迁移提示；带迁移提示的迁移版由桌面壳导出。
 
 桌面壳（需要 Rust 工具链）：
 
@@ -55,13 +55,17 @@ PROJECT_ROOT=/path/to/project PORT=4174 deno run --allow-net --allow-read --allo
 - 高层命令边界、结构化错误、凭据字段拒绝、HTML/路径安全检查；
 - 本地/导入式对话连接器：只有用户主动 `sync` 且显式选择的会话进入 Canonical；
 - 可重建搜索索引（默认使用 `.workspace/index.json`；未注入原生 SQLite 时不会伪装成 SQLite）；
-- Markdown、HTML、SVG/分区导出、项目 JSON/素材包/完整项目包和手动发布记录；
+- 发布与导出（Output & Publish）：同一份 Canonical 通过只读 Publish Projection 生成 Markdown（当前课 / 整门课程）、Semantic HTML、Static Web Package（`index.html` + `manifest.json` + 实际使用的素材）、PDF（原生 PDF 1.4，中文走 STSong-Light）、微信 / 富文本迁移版 HTML、Project JSON、素材包与完整项目包；导出前检查（preflight）区分 BLOCKING（引用素材文件不存在、路径非法等，必须修复且不生成半成品）与 WARNING（仍有待补、外部引用、媒体降级，可确认后继续），导出结果给出实际位置并可在系统里打开，用户确认后可记录发布节点；
+- 导出严格只读：不修改 Canonical 正文 / 排版 / 素材引用，也不修改素材文件本身；导出包不含 AI 执行记录、诊断日志、lock/session 私有文件与任何密钥；
 - Deno 核心/服务/导入导出/完整性/Authoring/Authoring UI/AI 工作流/AI 传输/原生启动测试覆盖恢复、Grid、AI 上下文与权限、连接器故障隔离与错误码归一、ChangeDraft 原子应用、执行记录、安全、旋转诊断、规模搜索、三方合并、课程地图与单课投影、区块与待补生命周期、素材引用与删除安全、Flow/Grid 持久化、重开后的数据一致；
 - `tests/native_boot_test.ts` 用假的 `__TAURI__.core.invoke` 跑真实模块启动流程，覆盖 `--project-dir` 打开、会话写回、重启恢复到同一课/模式/视图，以及目录失效与租约冲突两种降级路径。
 
 ## 明确未支持
 
-- Tauri 壳目前只提供受限高层命令骨架；原生 PDF/PNG 渲染、真实平台发布和系统钥匙串适配器尚未安装；
+- 输出能力边界：PNG / JPG 位图输出在 V0 明确不支持，导出中心不提供该格式卡片；服务层 `preflightExport` 对 png/jpg 报 `unsupported_format`，桌面壳原生导出对未知格式直接返回「当前原生导出不支持这个格式」。复杂长图 / 海报系统列为 V0 REJECTED，已有 SVG / 分区导出不回归；PDF 使用系统 CJK 字体（STSong-Light + UniGB-UCS2-H），另存/取词依赖阅读器对该字体的支持，视觉渲染已用真实页面 OCR 核对；
+- 媒体降级是显式设计：Markdown / 富文本迁移版 / PDF 中 video、audio、document 与 PDF 中的 GIF 以非交互附件说明呈现，并在导出前检查里作为 WARNING 逐条列出；
+- 微信 / 富文本迁移只做到「可复制结构」：本轮用真实 Chromium 打开导出的迁移版 HTML，并用 `contenteditable` 接收页做粘贴结构验证（标题 / 段落 / 图片顺序正确、无脚本、无 Workbench 私有 class）。**未验证真实微信公众号后台**：不做登录、授权、草稿箱 API 或自动发布，也不承诺目标平台保留我们无法控制的样式；
+- Tauri 壳目前只提供受限高层命令骨架；真实平台发布（自动上传 / 登录）与系统钥匙串适配器尚未安装；
 - 系统钥匙串适配器缺失的后果：AI 密钥以明文保存在本机 AI 配置文件里（桌面壳为应用数据目录 `<app-data>/.workspace/ai/providers.json`，浏览器壳为 `<project>/.workspace/ai/providers.json`，权限 0600）。它不在 `project.json`、不在 Canonical、不进入任何导出包，但也不是加密存储；共享项目目录前请先删除已保存的密钥；
 - **尚未完成真实在线 Provider 调用验收**：本轮环境没有为工作台配置任何合法 Provider 凭据，真实 Tauri 窗口内是用离线的「本地确定性连接器」走通完整闭环的。真实 Provider 的请求组装、鉴权注入与错误码映射有自动化测试覆盖（含回环 HTTP 服务器），但没有一次真实在线 smoke，请勿把离线闭环当作「已联网验证」；
 - AI 面板不做逐字流式渲染：连接器已能归一化 SSE 与非流式响应，界面按完整结果展示；

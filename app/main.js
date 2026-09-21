@@ -56,6 +56,7 @@ const NATIVE_PROJECT_COMMANDS = new Set([
   "asset.read",
   "snapshot.create",
   "snapshot.restore",
+  "export.preflight",
   "export.run",
   "publication.record",
 ]);
@@ -167,7 +168,7 @@ class DesktopBridge {
     if (["project.open", "project.create", "project.save", "project.external.inspect", "project.reload", "project.merge", "snapshot.create", "snapshot.restore"].includes(command)) {
       return { ...input, projectDir };
     }
-    if (command === "export.run") {
+    if (command === "export.run" || command === "export.preflight") {
       const preset = input.preset || {};
       return {
         ...input,
@@ -264,7 +265,9 @@ class DesktopBridge {
       "asset.read": "asset_read",
       "snapshot.create": "create_snapshot",
       "snapshot.restore": "restore_snapshot",
+      "export.preflight": "export_preflight",
       "export.run": "export_run",
+      "export.reveal": "reveal_export_path",
       "publication.record": "publication_record",
       "secret.set": "secret_set",
       "secret.delete": "secret_delete",
@@ -423,6 +426,10 @@ class DesktopBridge {
     }
     return await this.invoke("export.run", { preset: nextPreset, options: { content_item_id: contentItemId || null } });
   }
+  async revealExport(path) {
+    if (!this.isNative()) throw new Error("请在系统下载目录中查看导出文件");
+    return await this.invoke("export.reveal", { path });
+  }
   async writeProject(project) {
     await this.invoke("project.save", { project });
   }
@@ -569,7 +576,7 @@ function browserMarkdown(data, item) {
     } else if (block.type === "divider") {
       lines.push("---");
     } else if (block.type === "placeholder") {
-      lines.push(`> 待补内容：${content}`);
+      return;
     } else if (asset && (asset.type === "image" || asset.type === "gif")) {
       lines.push(`![${asset.title || asset.filename}](${asset.storage_path})`);
     } else if (asset) {
@@ -581,7 +588,12 @@ function browserMarkdown(data, item) {
     }
     lines.push("");
   });
-  const assets = browserReferencedAssets(data, item);
+  const inlineIds = new Set(
+    browserExportBlocks(data, item)
+      .map((block) => browserBlockAsset(data, block)?.id)
+      .filter(Boolean),
+  );
+  const assets = browserReferencedAssets(data, item).filter((asset) => !inlineIds.has(asset.id));
   if (assets.length) {
     lines.push("## 素材", "");
     assets.forEach((asset) => {
@@ -601,7 +613,7 @@ function browserHtml(data, item) {
     if (block.type === "quote") return `<blockquote>${content}</blockquote>`;
     if (block.type === "code") return `<pre><code>${content}</code></pre>`;
     if (block.type === "divider") return "<hr>";
-    if (block.type === "placeholder") return `<aside class="todo">待补内容：${content}</aside>`;
+    if (block.type === "placeholder") return "";
     if (asset) {
       const path = esc(asset.storage_path);
       const title = esc(asset.title || asset.filename);
@@ -635,6 +647,10 @@ function browserHtml(data, item) {
       return `<p><a href="${path}">${title}</a></p>`;
     }).join("\n");
   return `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>${esc(item?.title || "未命名内容")}</title><style>body{max-width:760px;margin:2rem auto;padding:0 1rem;font:16px/1.7 system-ui,sans-serif}img,video{max-width:100%;height:auto}blockquote{border-left:3px solid #bbb;padding-left:1rem}.todo{padding:.75rem;background:#fff5dc}</style></head><body><article><h1>${esc(item?.title || "未命名内容")}</h1>${blocks}${assets ? `<section class="assets"><h2>素材</h2>${assets}</section>` : ""}</article></body></html>\n`;
+}
+
+function stemForExport(value) {
+  return String(value || "course").replace(/[\u0000-\u001f<>:"/\\|?*]/g, "_").replace(/[. ]+$/g, "").trim() || "course";
 }
 
 function browserDownload(filename, contents, mime) {
@@ -729,6 +745,10 @@ class WorkbenchStore {
       paletteIndex: 0,
       capture: false,
       preflight: false,
+      preflightReport: null,
+      publishScope: "lesson",
+      publishFormat: "markdown",
+      lastExport: null,
       snapshot: false,
       gridEditing: false,
       assetPicker: null,
@@ -3556,30 +3576,63 @@ class WorkbenchStore {
     this.ui.toast = "已恢复，恢复前备份已保留";
   }
   exportPreflight() {
-    const item = this.currentItem();
-    const view = item ? lessonView(this.data, item.id) : null;
-    const requirements = item ? this.data.requirements.filter((requirement) => requirement.content_item_id === item.id && requirement.status === "open") : [];
+    const selected = this.ui.publishScope === "course"
+      ? this.data.content_items.filter((candidate) => !candidate.archived)
+      : [this.currentItem()].filter(Boolean);
+    const ids = new Set(selected.map((item) => item.id));
+    const requirements = this.data.requirements.filter((requirement) => ids.has(requirement.content_item_id) && requirement.status === "open");
     const content = requirements.filter((requirement) => requirement.scope === "content").length;
     const layout = requirements.filter((requirement) => requirement.scope === "layout").length;
-    const missingAssets = view ? view.progress.missing_media : 0;
-    const layoutInstance = item ? this.layout(item) : null;
-    const overflow = layoutInstance
-      ? this.data.placements.filter((placement) => placement.layout_instance_id === layoutInstance.id).filter((placement) => placement.row_end > layoutInstance.grid_definition.rows.length || placement.column_end > layoutInstance.grid_definition.columns.length).length
-      : 0;
-    const text = view ? view.progress.empty_text_blocks : 0;
+    const usages = this.data.asset_usages.filter((usage) => ids.has(usage.content_item_id));
+    const missingAssets = usages.filter((usage) => !this.data.assets.some((asset) => asset.id === usage.asset_id && !asset.archived)).length;
+    const layouts = this.data.layout_instances.filter((candidate) => ids.has(candidate.content_item_id));
+    const overflow = layouts.reduce((sum, layoutInstance) => sum + this.data.placements.filter((placement) => placement.layout_instance_id === layoutInstance.id).filter((placement) => placement.row_end > layoutInstance.grid_definition.rows.length || placement.column_end > layoutInstance.grid_definition.columns.length).length, 0);
+    const text = selected.reduce((sum, item) => sum + lessonView(this.data, item.id).progress.empty_text_blocks, 0);
     const fonts = 0;
-    const external = (item ? blocksFor(this.data, item.id) : []).filter((block) => /https?:\/\//i.test(textOf(block.content))).length;
+    const external = selected.flatMap((item) => blocksFor(this.data, item.id)).filter((block) => /https?:\/\//i.test(textOf(block.content))).length;
+    const downgradeTypes = this.ui.publishFormat === "pdf"
+      ? new Set(["gif", "video", "audio", "document", "other"])
+      : new Set(["video", "audio", "document", "other"]);
+    const mediaDowngrades = usages.filter((usage, index, all) => {
+      const asset = this.data.assets.find((candidate) => candidate.id === usage.asset_id);
+      return asset && downgradeTypes.has(asset.type) && all.findIndex((candidate) => candidate.asset_id === usage.asset_id) === index;
+    }).length;
     const blocking = overflow + missingAssets;
-    const warnings = content + layout + text + fonts + external;
-    return { content, layout, missingAssets, overflow, text, fonts, external, blocking, warnings, total: blocking + warnings };
+    const warnings = content + layout + text + fonts + external + mediaDowngrades;
+    return { content, layout, missingAssets, overflow, text, fonts, external, mediaDowngrades, blocking, warnings, total: blocking + warnings, issues: [] };
   }
-  async exportCurrent(format = "markdown") {
+  async openPreflight() {
+    this.ui.preflight = true;
+    this.ui.preflightReport = this.exportPreflight();
+    this.notify();
+    if (!this.bridge.isNative()) return;
+    try {
+      const item = this.currentItem();
+      const contentItemId = this.ui.publishScope === "lesson" ? item?.id || null : null;
+      const preset = { name: this.ui.publishFormat, output_type: this.ui.publishFormat, target_type: this.ui.publishFormat, platform: "通用", settings: {} };
+      const report = await this.bridge.invoke("export.preflight", { preset, options: { content_item_id: contentItemId } });
+      const local = this.exportPreflight();
+      const errors = Array.isArray(report?.errors) ? report.errors : [];
+      const warnings = Array.isArray(report?.warnings) ? report.warnings : [];
+      const blockingCount = Math.max(errors.length, local.blocking);
+      const warningCount = Math.max(warnings.length, local.warnings);
+      // 本地只统计「引用断链」，磁盘上文件缺失由原生检查发现；两者都会让导出被阻止，
+      // 因此这一行必须同时反映原生错误，否则会出现「缺失素材文件 ✓ 0 / BLOCKING 1」的矛盾显示。
+      const missingAssets = Math.max(local.missingAssets, errors.filter((issue) => issue.code === "missing_asset").length);
+      this.ui.preflightReport = { ...local, missingAssets, blocking: blockingCount, warnings: warningCount, total: blockingCount + warningCount, issues: [...errors.map((issue) => ({ ...issue, severity: "blocking" })), ...warnings.map((issue) => ({ ...issue, severity: "warning" }))] };
+    } catch (error) {
+      this.ui.preflightReport = { ...this.exportPreflight(), blocking: 1, issues: [{ severity: "blocking", message: error?.message || "无法运行原生导出前检查" }] };
+    }
+    this.notify();
+  }
+  async exportCurrent(format = this.ui.publishFormat || "markdown") {
     const item = this.currentItem();
     if (!item) {
       this.ui.toast = "请先选择要导出的课程内容";
       this.notify();
       return;
     }
+    const contentItemId = this.ui.publishScope === "lesson" ? item.id : null;
     if (this.bridge.isNative()) {
       try {
         if (!await this.flush()) {
@@ -3587,22 +3640,29 @@ class WorkbenchStore {
           this.notify();
           return;
         }
-        const extension = format === "html" ? "html" : "md";
-        const outputPath = await this.bridge.selectExportPath(`${item.code}-${item.title}.${extension}`, format);
+        const extensions = { markdown: "md", html: "html", web: "web", wechat: "html", pdf: "pdf", json: "json", asset_package: "assets", full_project: "project-package" };
+        const stem = this.ui.publishScope === "lesson" ? `${item.code}-${item.title}` : this.data.project.title;
+        const outputPath = await this.bridge.selectExportPath(`${stem}.${extensions[format] || format}`, format);
         if (!outputPath) return;
-        const result = await this.bridge.exportProject(format, this.data, null, outputPath, item.id);
+        const result = await this.bridge.exportProject(format, this.data, null, outputPath, contentItemId);
         const files = Array.isArray(result?.files) ? result.files.length : 0;
-        this.ui.toast = files ? `已导出 ${files} 个文件` : "导出完成";
+        this.ui.lastExport = { format, scope: this.ui.publishScope, path: result?.output_path || outputPath, files };
+        this.ui.toast = `导出完成：${files || 1} 个文件，可在 ${this.ui.lastExport.path} 打开`;
       } catch (error) {
-        this.ui.toast = error?.message || "导出失败";
+        this.ui.lastExport = null;
+        this.ui.toast = `导出失败：${error?.message || "未知错误"}。源课程未被修改，可修复后重试。`;
       }
       this.notify();
       return;
     }
     try {
-      const contents = format === "html" ? browserHtml(this.data, item) : browserMarkdown(this.data, item);
-      browserDownload(`${item.code}-${item.title}.${format === "html" ? "html" : "md"}`, contents, format === "html" ? "text/html" : "text/markdown");
-      this.ui.toast = "已导出当前课程内容";
+      if (!["markdown", "html", "wechat"].includes(format)) throw new Error("浏览器审查壳仅下载 Markdown/HTML/富文本迁移版；完整 Web/PDF 请使用桌面版");
+      const items = this.ui.publishScope === "course" ? this.data.content_items.filter((candidate) => !candidate.archived) : [item];
+      const contents = items.map((candidate) => format === "markdown" ? browserMarkdown(this.data, candidate) : browserHtml(this.data, candidate)).join(format === "markdown" ? "\n" : "\n");
+      const extension = format === "markdown" ? "md" : "html";
+      browserDownload(`${stemForExport(this.data.project.title)}-${this.ui.publishScope}.${extension}`, contents, format === "markdown" ? "text/markdown" : "text/html");
+      this.ui.lastExport = { format, scope: this.ui.publishScope, path: "浏览器下载目录", files: 1 };
+      this.ui.toast = "已下载导出文件";
     } catch (error) {
       this.ui.toast = error?.message || "导出失败";
     }
@@ -4303,12 +4363,24 @@ function handleAction(action, element, event) {
       return;
     }
     case "ai-delete-secret": void store.aiDeleteSecret(); return;
-    case "preflight": store.ui.preflight = true; store.notify(); return;
+    case "preflight": void store.openPreflight(); return;
+    case "publish-scope":
+      store.ui.publishScope = element.dataset.scope === "course" ? "course" : "lesson";
+      store.ui.preflightReport = null;
+      store.notify();
+      return;
+    case "publish-format":
+      store.ui.publishFormat = element.dataset.format || "markdown";
+      store.ui.preflightReport = null;
+      store.notify();
+      return;
     case "export-format": {
-      const report = store.exportPreflight();
+      const format = element.dataset.format || store.ui.publishFormat || "markdown";
+      store.ui.publishFormat = format;
+      const report = store.ui.preflightReport || store.exportPreflight();
       if (report.blocking) { store.ui.toast = `仍有 ${report.blocking} 个严重问题，请先修复`; store.notify(); return; }
       store.ui.preflight = false;
-      void store.exportCurrent(element.dataset.format || "markdown");
+      void store.exportCurrent(format);
       return;
     }
     case "export-anyway": {
@@ -4318,6 +4390,11 @@ function handleAction(action, element, event) {
       void store.exportCurrent("markdown");
       return;
     }
+    case "reveal-export":
+      if (store.ui.lastExport?.path) {
+        void store.bridge.revealExport(store.ui.lastExport.path).catch((error) => store.say(error?.message || "无法定位导出结果"));
+      }
+      return;
     case "record-publication": void store.recordPublication(); return;
     case "clear-toast": store.ui.toast = ""; store.notify(); return;
     case "add-map-item": store.addMapItem(); return;

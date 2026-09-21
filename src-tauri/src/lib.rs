@@ -6,6 +6,7 @@ use std::collections::HashMap;
 use std::fs::{self, File, OpenOptions};
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::{Component, Path, PathBuf};
+use std::process::Command as ProcessCommand;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::thread;
@@ -832,7 +833,9 @@ fn release_all_project_locks() {
 ///
 /// Returns `None` when the flag is absent.  A malformed value is a startup
 /// error rather than a silently ignored argument.
-fn project_dir_from_args<I: IntoIterator<Item = String>>(args: I) -> Result<Option<PathBuf>, String> {
+fn project_dir_from_args<I: IntoIterator<Item = String>>(
+    args: I,
+) -> Result<Option<PathBuf>, String> {
     let collected: Vec<String> = args.into_iter().collect();
     let mut index = 0;
     while index < collected.len() {
@@ -2161,8 +2164,13 @@ fn export_format(preset: &Value) -> Result<String, String> {
     let format = match format.as_str() {
         "json" | "project_json" | "json_project" => "json",
         "md" | "markdown" => "markdown",
-        "html" | "web" => "html",
-        _ => return Err("当前原生导出仅支持 JSON、Markdown、HTML".into()),
+        "html" | "semantic_html" => "html",
+        "web" | "static_web" | "web_package" => "web",
+        "wechat" | "wechat_html" | "rich_text" => "wechat",
+        "pdf" => "pdf",
+        "asset" | "assets" | "asset_package" => "asset_package",
+        "package" | "full_package" | "full_project" => "full_project",
+        _ => return Err("当前原生导出不支持这个格式".into()),
     };
     Ok(format.into())
 }
@@ -2196,8 +2204,10 @@ fn output_filename(preset: &Value, project: &Value, format: &str) -> String {
         filename
     };
     let extension = match format {
-        "json" => "json",
+        "json" | "full_project" | "asset_package" => "json",
         "markdown" => "md",
+        "pdf" => "pdf",
+        "web" => "web",
         _ => "html",
     };
     if filename.ends_with(&format!(".{extension}")) {
@@ -2259,16 +2269,16 @@ fn asset_selected_for_content(
     asset_id: &str,
     content_item_id: Option<&str>,
 ) -> bool {
-    let Some(content_item_id) = content_item_id else {
-        return true;
-    };
     let used_by_content = project
         .get("asset_usages")
         .and_then(Value::as_array)
         .map(|usages| {
             usages.iter().any(|usage| {
                 usage.get("asset_id").and_then(Value::as_str) == Some(asset_id)
-                    && usage.get("content_item_id").and_then(Value::as_str) == Some(content_item_id)
+                    && content_item_id.is_none_or(|content_item_id| {
+                        usage.get("content_item_id").and_then(Value::as_str)
+                            == Some(content_item_id)
+                    })
             })
         })
         .unwrap_or(false);
@@ -2278,12 +2288,45 @@ fn asset_selected_for_content(
         .map(|requirements| {
             requirements.iter().any(|requirement| {
                 requirement.get("resolved_asset_id").and_then(Value::as_str) == Some(asset_id)
-                    && requirement.get("content_item_id").and_then(Value::as_str)
-                        == Some(content_item_id)
+                    && content_item_id.is_none_or(|content_item_id| {
+                        requirement.get("content_item_id").and_then(Value::as_str)
+                            == Some(content_item_id)
+                    })
             })
         })
         .unwrap_or(false);
     used_by_content || resolved_by_content
+}
+
+fn block_asset<'a>(project: &'a Value, block: &Value) -> Option<&'a Value> {
+    let linked = block
+        .get("settings")
+        .and_then(|value| value.get("asset_id"))
+        .and_then(Value::as_str);
+    let content = block_content(block);
+    project
+        .get("assets")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .find(|asset| {
+            !asset
+                .get("archived")
+                .and_then(Value::as_bool)
+                .unwrap_or(false)
+                && (linked.is_some_and(|id| asset.get("id").and_then(Value::as_str) == Some(id))
+                    || asset.get("filename").and_then(Value::as_str) == Some(content.as_str())
+                    || asset.get("storage_path").and_then(Value::as_str) == Some(content.as_str()))
+        })
+}
+
+fn asset_is_inline(project: &Value, document_id: &str, asset_id: &str) -> bool {
+    project_blocks(project, document_id).iter().any(|block| {
+        block_asset(project, block)
+            .and_then(|asset| asset.get("id"))
+            .and_then(Value::as_str)
+            == Some(asset_id)
+    })
 }
 
 fn referenced_assets_for_content<'a>(project: &'a Value, content_item_id: &str) -> Vec<&'a Value> {
@@ -2398,14 +2441,51 @@ fn markdown_for_project(project: &Value, content_item_id: Option<&str>) -> Strin
                             lines.push("```".into());
                         }
                         "divider" => lines.push("---".into()),
-                        "placeholder" => lines.push(format!("> 待补内容：{content}")),
+                        "placeholder" => continue,
+                        "image" | "gif" | "video" | "audio" | "embed" => {
+                            if let Some(asset) = block_asset(project, block) {
+                                let title = asset
+                                    .get("title")
+                                    .or_else(|| asset.get("filename"))
+                                    .and_then(Value::as_str)
+                                    .unwrap_or("素材")
+                                    .replace('[', "\\[")
+                                    .replace(']', "\\]");
+                                let path = asset
+                                    .get("storage_path")
+                                    .and_then(Value::as_str)
+                                    .unwrap_or_default();
+                                let image = matches!(
+                                    asset.get("type").and_then(Value::as_str),
+                                    Some("image" | "gif")
+                                );
+                                lines.push(format!(
+                                    "{}[{title}]({path})",
+                                    if image { "!" } else { "" }
+                                ));
+                            } else if !content.is_empty() {
+                                lines.push(content);
+                            }
+                        }
                         _ => lines.push(content),
                     }
                     lines.push(String::new());
                 }
             }
             if let Some(item_id) = item.get("id").and_then(Value::as_str) {
-                let assets = referenced_assets_for_content(project, item_id);
+                let assets: Vec<&Value> =
+                    referenced_assets_for_content(project, item_id)
+                        .into_iter()
+                        .filter(|asset| {
+                            !item.get("document_id").and_then(Value::as_str).is_some_and(
+                                |document_id| {
+                                    asset.get("id").and_then(Value::as_str).is_some_and(
+                                        |asset_id| asset_is_inline(project, document_id, asset_id),
+                                    )
+                                },
+                            )
+                        })
+                        .collect();
                 if !assets.is_empty() {
                     lines.push("### 素材".into());
                     lines.push(String::new());
@@ -2444,18 +2524,6 @@ fn escape_html(value: &str) -> String {
         .replace('>', "&gt;")
         .replace('"', "&quot;")
         .replace('\'', "&#39;")
-}
-
-fn safe_url(value: &str) -> String {
-    let trimmed = value.trim();
-    let lower = trimmed.to_ascii_lowercase();
-    if ["javascript:", "data:", "vbscript:", "file:"]
-        .iter()
-        .any(|prefix| lower.starts_with(prefix))
-    {
-        return "#".into();
-    }
-    trimmed.into()
 }
 
 fn html_for_project(project: &Value, content_item_id: Option<&str>) -> String {
@@ -2514,19 +2582,58 @@ fn html_for_project(project: &Value, content_item_id: Option<&str>) -> String {
                         "quote" => body.push_str(&format!("<blockquote>{escaped}</blockquote>")),
                         "code" => body.push_str(&format!("<pre><code>{escaped}</code></pre>")),
                         "divider" => body.push_str("<hr>"),
-                        "placeholder" => body.push_str(&format!(
-                            "<aside class=\"待补内容\">待补内容：{escaped}</aside>"
-                        )),
-                        "image" | "gif" => body.push_str(&format!(
-                            "<img alt=\"{escaped}\" src=\"{}\">",
-                            escape_html(&safe_url(&content))
-                        )),
+                        "placeholder" => continue,
+                        "image" | "gif" | "video" | "audio" | "embed" => {
+                            if let Some(asset) = block_asset(project, block) {
+                                let title = escape_html(
+                                    asset
+                                        .get("title")
+                                        .or_else(|| asset.get("filename"))
+                                        .and_then(Value::as_str)
+                                        .unwrap_or("素材"),
+                                );
+                                let path = escape_html(
+                                    asset
+                                        .get("storage_path")
+                                        .and_then(Value::as_str)
+                                        .unwrap_or_default(),
+                                );
+                                match asset.get("type").and_then(Value::as_str) {
+                                    Some("image" | "gif") => body.push_str(&format!(
+                                        "<figure><img src=\"{path}\" alt=\"{title}\"><figcaption>{title}</figcaption></figure>"
+                                    )),
+                                    Some("video") => body.push_str(&format!(
+                                        "<figure><video controls src=\"{path}\"></video><figcaption>{title}</figcaption></figure>"
+                                    )),
+                                    Some("audio") => body.push_str(&format!(
+                                        "<figure><audio controls src=\"{path}\"></audio><figcaption>{title}</figcaption></figure>"
+                                    )),
+                                    _ => body.push_str(&format!(
+                                        "<aside><strong>附件：{title}</strong> <a href=\"{path}\">打开</a></aside>"
+                                    )),
+                                }
+                            } else if !content.is_empty() {
+                                body.push_str(&format!("<p>{escaped}</p>"));
+                            }
+                        }
                         _ => body.push_str(&format!("<p>{escaped}</p>")),
                     }
                 }
             }
             if let Some(item_id) = item.get("id").and_then(Value::as_str) {
-                let assets = referenced_assets_for_content(project, item_id);
+                let assets: Vec<&Value> =
+                    referenced_assets_for_content(project, item_id)
+                        .into_iter()
+                        .filter(|asset| {
+                            !item.get("document_id").and_then(Value::as_str).is_some_and(
+                                |document_id| {
+                                    asset.get("id").and_then(Value::as_str).is_some_and(
+                                        |asset_id| asset_is_inline(project, document_id, asset_id),
+                                    )
+                                },
+                            )
+                        })
+                        .collect();
                 if !assets.is_empty() {
                     body.push_str("<div class=\"assets\"><h3>素材</h3>");
                     for asset in assets {
@@ -2609,7 +2716,9 @@ fn export_content_item_id(
     let raw = field(preset_object, &["content_item_id", "contentItemId"])
         .filter(|value| !value.is_null())
         .or_else(|| {
-            options_object.and_then(|object| field(object, &["content_item_id", "contentItemId"]))
+            options_object
+                .and_then(|object| field(object, &["content_item_id", "contentItemId"]))
+                .filter(|value| !value.is_null())
         });
     let Some(raw) = raw else {
         return Ok(None);
@@ -2703,12 +2812,37 @@ fn export_preflight_report(
         }
     }
     if let Some(assets) = project.get("assets").and_then(Value::as_array) {
+        let include_all_assets = matches!(format.as_str(), "asset_package" | "full_project");
         for asset in assets {
             let Some(asset_id) = asset.get("id").and_then(Value::as_str) else {
                 continue;
             };
-            if !asset_selected_for_content(&project, asset_id, content_item_id.as_deref()) {
+            if !include_all_assets
+                && !asset_selected_for_content(&project, asset_id, content_item_id.as_deref())
+            {
                 continue;
+            }
+            let asset_type = asset.get("type").and_then(Value::as_str).unwrap_or("other");
+            let downgraded = matches!(format.as_str(), "markdown" | "pdf" | "wechat")
+                && (matches!(asset_type, "video" | "audio" | "document" | "other")
+                    || (format == "pdf" && asset_type == "gif"));
+            if downgraded {
+                warnings.push(json!({
+                    "code": "media_downgrade",
+                    "asset_id": asset_id,
+                    "message": "该媒体在当前格式中将以非交互附件说明呈现"
+                }));
+            }
+            if asset
+                .get("source_url")
+                .and_then(Value::as_str)
+                .is_some_and(|url| url.starts_with("http://") || url.starts_with("https://"))
+            {
+                warnings.push(json!({
+                    "code": "external_reference",
+                    "asset_id": asset_id,
+                    "message": "外部素材链接不会被验证"
+                }));
             }
             let Some(storage_path) = asset.get("storage_path").and_then(Value::as_str) else {
                 continue;
@@ -2746,6 +2880,181 @@ fn export_preflight(preset: Value, options: Option<Value>) -> Result<Value, Stri
     Ok(report)
 }
 
+fn selected_export_assets<'a>(
+    project: &'a Value,
+    content_item_id: Option<&str>,
+    include_all: bool,
+) -> Vec<&'a Value> {
+    project
+        .get("assets")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter(|asset| {
+            !asset
+                .get("archived")
+                .and_then(Value::as_bool)
+                .unwrap_or(false)
+        })
+        .filter(|asset| {
+            include_all
+                || asset
+                    .get("id")
+                    .and_then(Value::as_str)
+                    .map(|id| {
+                        if let Some(content_item_id) = content_item_id {
+                            asset_selected_for_content(project, id, Some(content_item_id))
+                        } else {
+                            project
+                                .get("asset_usages")
+                                .and_then(Value::as_array)
+                                .is_some_and(|usages| {
+                                    usages.iter().any(|usage| {
+                                        usage.get("asset_id").and_then(Value::as_str) == Some(id)
+                                    })
+                                })
+                                || project
+                                    .get("requirements")
+                                    .and_then(Value::as_array)
+                                    .is_some_and(|requirements| {
+                                        requirements.iter().any(|requirement| {
+                                            requirement
+                                                .get("resolved_asset_id")
+                                                .and_then(Value::as_str)
+                                                == Some(id)
+                                        })
+                                    })
+                        }
+                    })
+                    .unwrap_or(false)
+        })
+        .collect()
+}
+
+fn copy_export_assets(
+    project: &Value,
+    project_dir: &Path,
+    destination_root: &Path,
+    content_item_id: Option<&str>,
+    include_all: bool,
+) -> Result<Vec<String>, String> {
+    let mut copied = Vec::new();
+    for asset in selected_export_assets(project, content_item_id, include_all) {
+        let storage_path = asset
+            .get("storage_path")
+            .and_then(Value::as_str)
+            .ok_or("素材缺少项目内路径")?;
+        let relative = Path::new(storage_path);
+        if relative.is_absolute()
+            || relative
+                .components()
+                .any(|component| !matches!(component, Component::Normal(_)))
+        {
+            return Err("项目素材必须使用安全的项目内相对路径".into());
+        }
+        let source = project_dir.join(relative);
+        reject_symlink(&source, "项目素材")?;
+        if !source.is_file() {
+            return Err(format!("项目素材文件不存在：{storage_path}"));
+        }
+        let target = destination_root.join(relative);
+        let same_file = source == target
+            || (target.exists()
+                && fs::canonicalize(&source).ok() == fs::canonicalize(&target).ok());
+        if same_file {
+            // A single-file export beside the project may already reference the
+            // canonical assets directory. Copying a file onto itself truncates
+            // it on macOS; skip it so export remains strictly read-only.
+            copied.push(storage_path.replace('\\', "/"));
+            continue;
+        }
+        if let Some(parent) = target.parent() {
+            fs::create_dir_all(parent).map_err(|error| format!("无法创建素材导出目录: {error}"))?;
+        }
+        fs::copy(&source, &target).map_err(|error| format!("无法复制导出素材: {error}"))?;
+        copied.push(storage_path.replace('\\', "/"));
+    }
+    copied.sort();
+    copied.dedup();
+    Ok(copied)
+}
+
+fn unique_export_staging(target: &Path) -> Result<PathBuf, String> {
+    let parent = target.parent().ok_or("导出目标父目录无效")?;
+    let name = target
+        .file_name()
+        .and_then(|value| value.to_str())
+        .unwrap_or("export");
+    Ok(parent.join(format!(".{name}.acw-{}.tmp", native_id("export"))))
+}
+
+fn sanitized_project_package(project: &Value) -> Value {
+    let mut value = project.clone();
+    if let Some(object) = value.as_object_mut() {
+        for key in [
+            "conversation_sources",
+            "conversations",
+            "messages",
+            "context_packs",
+            "context_pack_items",
+        ] {
+            object.insert(key.into(), Value::Array(Vec::new()));
+        }
+    }
+    value
+}
+
+fn chrome_binary() -> Option<PathBuf> {
+    [
+        "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+        "/Applications/Chromium.app/Contents/MacOS/Chromium",
+    ]
+    .iter()
+    .map(PathBuf::from)
+    .find(|path| path.is_file())
+}
+
+fn print_html_pdf(
+    html: &str,
+    project: &Value,
+    project_dir: &Path,
+    output_path: &Path,
+    content_item_id: Option<&str>,
+) -> Result<(), String> {
+    let chrome = chrome_binary()
+        .ok_or("PDF 导出需要本机 Google Chrome/Chromium 打印引擎；请安装后重试，或先导出 HTML。")?;
+    let staging = unique_export_staging(output_path)?;
+    fs::create_dir_all(&staging).map_err(|error| format!("无法创建 PDF 临时目录: {error}"))?;
+    let result = (|| {
+        let html_path = staging.join("index.html");
+        fs::write(&html_path, html).map_err(|error| format!("无法写入 PDF 临时页面: {error}"))?;
+        copy_export_assets(project, project_dir, &staging, content_item_id, false)?;
+        let pdf_path = staging.join("result.pdf");
+        let file_url = format!("file://{}", html_path.to_string_lossy());
+        let status = ProcessCommand::new(chrome)
+            .args([
+                "--headless=new",
+                "--disable-gpu",
+                "--allow-file-access-from-files",
+                "--no-pdf-header-footer",
+                &format!("--print-to-pdf={}", pdf_path.to_string_lossy()),
+                &file_url,
+            ])
+            .status()
+            .map_err(|error| format!("无法启动 PDF 打印引擎: {error}"))?;
+        if !status.success() || !pdf_path.is_file() {
+            return Err("PDF 打印引擎没有生成可用文件；未修改源项目，请重试或导出 HTML。".into());
+        }
+        let bytes = fs::read(&pdf_path).map_err(|error| format!("无法读取 PDF 输出: {error}"))?;
+        if !bytes.starts_with(b"%PDF-") || bytes.len() < 1024 {
+            return Err("PDF 输出验证失败；临时文件已清理。".into());
+        }
+        atomic_write_bytes_path(output_path, &bytes)
+    })();
+    let _ = fs::remove_dir_all(&staging);
+    result
+}
+
 #[tauri::command]
 fn export_run(preset: Value, options: Option<Value>) -> Result<Value, String> {
     let object = require_object(&preset, "export_run")?;
@@ -2754,40 +3063,185 @@ fn export_run(preset: Value, options: Option<Value>) -> Result<Value, String> {
     let _lease_guard = require_active_project_lock(&project_dir)?;
     let (project, report, output_path, format) =
         export_preflight_report(&preset, options.as_ref())?;
-    if report.get("ok").and_then(Value::as_bool).unwrap_or(false) == false {
-        return Err("导出前检查发现严重问题，请先修复".into());
+    if !report.get("ok").and_then(Value::as_bool).unwrap_or(false) {
+        return Err(structured_boundary_error(
+            "export_blocked",
+            "导出前检查发现严重问题，请先修复后重试。",
+            report.clone(),
+        ));
     }
     let content_item_id = report.get("content_item_id").and_then(Value::as_str);
-    let contents = match format.as_str() {
-        "json" => serde_json::to_string_pretty(&project).map_err(|error| error.to_string())? + "\n",
-        "markdown" => markdown_for_project(&project, content_item_id),
-        "html" => html_for_project(&project, content_item_id),
+    let mut exported_files: Vec<Value> = Vec::new();
+    let mut total_bytes = 0_u64;
+    match format.as_str() {
+        "markdown" | "html" | "wechat" => {
+            let contents = if format == "markdown" {
+                markdown_for_project(&project, content_item_id)
+            } else {
+                let html = html_for_project(&project, content_item_id);
+                if format == "wechat" {
+                    html.replacen(
+                        "<body>",
+                        "<body><p style=\"padding:12px;border:1px solid #ddd\">富文本迁移版：图片/GIF 可复制；视频、音频和文档需在目标平台单独上传，平台可能调整字体与间距。</p>",
+                        1,
+                    )
+                } else {
+                    html
+                }
+            };
+            atomic_write_path(&output_path, &contents, false)?;
+            let parent = output_path.parent().ok_or("导出目标父目录无效")?;
+            let copied =
+                copy_export_assets(&project, &project_dir, parent, content_item_id, false)?;
+            total_bytes = contents.len() as u64;
+            exported_files.push(json!({
+                "relative_path": output_path.file_name().and_then(|value| value.to_str()).unwrap_or("export"),
+                "path": output_path,
+                "mime_type": if format == "markdown" { "text/markdown" } else { "text/html" },
+                "bytes": { "__bytes_base64": encode_base64(contents.as_bytes()) },
+            }));
+            exported_files.extend(copied.into_iter().map(|path| {
+                json!({
+                    "relative_path": path,
+                    "mime_type": "application/octet-stream",
+                })
+            }));
+        }
+        "json" => {
+            let safe = sanitized_project_package(&project);
+            let contents =
+                serde_json::to_string_pretty(&safe).map_err(|error| error.to_string())? + "\n";
+            atomic_write_path(&output_path, &contents, false)?;
+            total_bytes = contents.len() as u64;
+            exported_files.push(json!({
+                "relative_path": output_path.file_name().and_then(|value| value.to_str()).unwrap_or("project.json"),
+                "path": output_path,
+                "mime_type": "application/json",
+                "bytes": { "__bytes_base64": encode_base64(contents.as_bytes()) },
+            }));
+        }
+        "pdf" => {
+            let html = html_for_project(&project, content_item_id);
+            print_html_pdf(&html, &project, &project_dir, &output_path, content_item_id)?;
+            total_bytes = fs::metadata(&output_path)
+                .map_err(|error| format!("无法检查 PDF 输出: {error}"))?
+                .len();
+            exported_files.push(json!({
+                "relative_path": output_path.file_name().and_then(|value| value.to_str()).unwrap_or("course.pdf"),
+                "path": output_path,
+                "mime_type": "application/pdf",
+            }));
+        }
+        "web" | "asset_package" | "full_project" => {
+            if output_path.exists() {
+                return Err("导出目录已存在；为避免覆盖有效文件，请选择新的名称。".into());
+            }
+            let staging = unique_export_staging(&output_path)?;
+            fs::create_dir_all(&staging)
+                .map_err(|error| format!("无法创建导出临时目录: {error}"))?;
+            let build = (|| -> Result<(), String> {
+                let copied = copy_export_assets(
+                    &project,
+                    &project_dir,
+                    &staging,
+                    content_item_id,
+                    format != "web",
+                )?;
+                if format == "web" {
+                    let html = html_for_project(&project, content_item_id);
+                    fs::write(staging.join("index.html"), html.as_bytes())
+                        .map_err(|error| format!("无法写入网页入口: {error}"))?;
+                    let manifest = json!({
+                        "schema_version": 1,
+                        "project_id": project.get("project").and_then(|value| value.get("id")),
+                        "scope": if content_item_id.is_some() { "lesson" } else { "course" },
+                        "content_item_id": content_item_id,
+                        "entrypoint": "index.html",
+                        "assets": copied,
+                    });
+                    fs::write(
+                        staging.join("manifest.json"),
+                        serde_json::to_vec_pretty(&manifest).map_err(|error| error.to_string())?,
+                    )
+                    .map_err(|error| format!("无法写入网页 manifest: {error}"))?;
+                } else {
+                    let manifest = json!({
+                        "schema_version": 1,
+                        "project_id": project.get("project").and_then(|value| value.get("id")),
+                        "assets": copied,
+                    });
+                    fs::write(
+                        staging.join("assets-manifest.json"),
+                        serde_json::to_vec_pretty(&manifest).map_err(|error| error.to_string())?,
+                    )
+                    .map_err(|error| format!("无法写入素材 manifest: {error}"))?;
+                    if format == "full_project" {
+                        let safe = sanitized_project_package(&project);
+                        fs::write(
+                            staging.join("project.json"),
+                            serde_json::to_vec_pretty(&safe).map_err(|error| error.to_string())?,
+                        )
+                        .map_err(|error| format!("无法写入项目包: {error}"))?;
+                        fs::write(
+                            staging.join("COURSE.md"),
+                            markdown_for_project(&project, content_item_id),
+                        )
+                        .map_err(|error| format!("无法写入项目课程正文: {error}"))?;
+                    }
+                }
+                Ok(())
+            })();
+            if let Err(error) = build {
+                let _ = fs::remove_dir_all(&staging);
+                return Err(error);
+            }
+            fs::rename(&staging, &output_path).map_err(|error| {
+                let _ = fs::remove_dir_all(&staging);
+                format!("无法提交导出目录: {error}")
+            })?;
+            for entry in
+                fs::read_dir(&output_path).map_err(|error| format!("无法检查导出目录: {error}"))?
+            {
+                let entry = entry.map_err(|error| format!("无法检查导出文件: {error}"))?;
+                exported_files.push(json!({
+                    "relative_path": entry.file_name().to_string_lossy(),
+                    "path": entry.path(),
+                }));
+            }
+        }
         _ => return Err("不支持的导出格式".into()),
-    };
-    atomic_write_path(&output_path, &contents, false)?;
-    let filename = output_path
-        .file_name()
-        .and_then(|value| value.to_str())
-        .unwrap_or("export");
-    let mime_type = match format.as_str() {
-        "json" => "application/json",
-        "markdown" => "text/markdown",
-        "html" => "text/html",
-        _ => "application/octet-stream",
-    };
+    }
     Ok(json!({
         "status": "completed",
         "format": format,
+        "scope": if content_item_id.is_some() { "lesson" } else { "course" },
         "output_path": output_path,
         "target_path": output_path,
-        "bytes": contents.len(),
-        "files": [{
-            "relative_path": filename,
-            "path": output_path,
-            "mime_type": mime_type,
-            "bytes": { "__bytes_base64": encode_base64(contents.as_bytes()) },
-        }],
+        "bytes": total_bytes,
+        "files": exported_files,
+        "preflight": report,
     }))
+}
+
+#[tauri::command]
+fn reveal_export_path(path: String) -> Result<Value, String> {
+    let path = PathBuf::from(path.trim());
+    if !path.is_absolute() || !path.exists() {
+        return Err("导出结果不存在，无法在 Finder 中定位。".into());
+    }
+    reject_symlink(&path, "导出结果")?;
+    let mut command = ProcessCommand::new("/usr/bin/open");
+    if path.is_file() {
+        command.arg("-R");
+    }
+    let status = command
+        .arg(&path)
+        .status()
+        .map_err(|error| format!("无法打开 Finder: {error}"))?;
+    if !status.success() {
+        return Err("Finder 未能打开导出结果。".into());
+    }
+    Ok(json!({ "status": "opened", "path": path }))
 }
 
 #[tauri::command]
@@ -2920,9 +3374,9 @@ fn asset_read(input: Value) -> Result<Value, String> {
         .get("assets")
         .and_then(Value::as_array)
         .and_then(|assets| {
-            assets.iter().find(|asset| {
-                asset.get("id").and_then(Value::as_str) == Some(asset_id.as_str())
-            })
+            assets
+                .iter()
+                .find(|asset| asset.get("id").and_then(Value::as_str) == Some(asset_id.as_str()))
         })
         .ok_or("找不到素材")?;
     if asset
@@ -2952,8 +3406,8 @@ fn asset_read(input: Value) -> Result<Value, String> {
     let target = project_file(&project_dir, storage_path)?;
     // Reject a symlinked target or a chain whose real path escapes the project.
     reject_symlink(&target, "素材文件")?;
-    let real_root = fs::canonicalize(&project_dir)
-        .map_err(|error| format!("无法解析项目目录: {error}"))?;
+    let real_root =
+        fs::canonicalize(&project_dir).map_err(|error| format!("无法解析项目目录: {error}"))?;
     let real_target =
         fs::canonicalize(&target).map_err(|error| format!("无法读取素材: {error}"))?;
     if !real_target.starts_with(&real_root) {
@@ -5424,6 +5878,39 @@ mod tests {
     }
 
     #[test]
+    fn exporting_beside_project_never_copies_an_asset_onto_itself() {
+        let directory = test_directory("export-same-root");
+        fs::create_dir_all(directory.join("assets")).unwrap();
+        let asset_path = directory.join("assets/cover.png");
+        fs::write(&asset_path, b"not-empty").unwrap();
+        let project = json!({
+            "assets": [{
+                "id": "asset-1", "storage_path": "assets/cover.png",
+                "archived": false
+            }],
+            "asset_usages": [{
+                "asset_id": "asset-1", "content_item_id": "item-1"
+            }],
+            "requirements": []
+        });
+        let copied = copy_export_assets(&project, &directory, &directory, None, false).unwrap();
+        assert_eq!(copied, vec!["assets/cover.png"]);
+        assert_eq!(fs::read(&asset_path).unwrap(), b"not-empty");
+        let _ = fs::remove_dir_all(directory);
+    }
+
+    #[test]
+    fn full_course_export_accepts_an_explicit_null_content_item() {
+        let project = json!({ "content_items": [] });
+        let preset = Map::new();
+        let options = json!({ "content_item_id": null });
+        assert_eq!(
+            export_content_item_id(&project, &preset, Some(&options)).unwrap(),
+            None
+        );
+    }
+
+    #[test]
     fn native_markdown_and_html_export_used_asset_references() {
         let project = json!({
             "project": { "title": "Export" },
@@ -7239,6 +7726,7 @@ pub fn run() {
             select_export_path,
             export_preflight,
             export_run,
+            reveal_export_path,
             publication_record,
             secret_set,
             secret_delete,
