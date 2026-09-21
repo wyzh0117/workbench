@@ -106,7 +106,19 @@ export class DiagnosticLogger {
     const line = jsonLine(entry);
     await Deno.mkdir(this.directory, { recursive: true });
     await this.rotateIfNeeded(new TextEncoder().encode(line).byteLength);
-    await Deno.writeTextFile(this.path, line, { append: true, create: true });
+    // Provider error text can land in this file, so it is created private
+    // (0600) exactly like the AI store; best effort on platforms without POSIX
+    // modes, where the call simply has nothing to enforce.
+    await Deno.writeTextFile(this.path, line, {
+      append: true,
+      create: true,
+      mode: 0o600,
+    });
+    try {
+      await Deno.chmod(this.path, 0o600);
+    } catch {
+      // Windows and some network filesystems cannot express POSIX modes.
+    }
     return structuredClone(entry);
   }
 

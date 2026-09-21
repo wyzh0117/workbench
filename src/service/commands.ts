@@ -54,6 +54,15 @@ export const HIGH_LEVEL_COMMANDS = [
   "connector.sync",
   "ai.analyze",
   "suggestion.apply",
+  "ai.connection.list",
+  "ai.connection.save",
+  "ai.connection.delete",
+  "ai.secret.set",
+  "ai.secret.delete",
+  "ai.complete",
+  "ai.cancel",
+  "ai.execution.append",
+  "ai.execution.list",
 ] as const;
 
 export const READ_QUERIES = [

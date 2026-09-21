@@ -18,9 +18,14 @@ import {
   addPlacement,
   createLayoutInstance,
 } from "../domain/layout.ts";
+import {
+  AiTransport,
+  type AiTransportOptions,
+} from "./ai_transport.ts";
 import { AuditLog } from "./audit.ts";
 import { CommandBus, type CommandContext, QueryBus } from "./commands.ts";
 import { EventBus } from "./events.ts";
+import { error } from "./errors.ts";
 import { JobManager } from "./jobs.ts";
 import { MemorySecretStore, type SecretStore } from "./security.ts";
 import { DiagnosticLogger } from "./diagnostics.ts";
@@ -88,13 +93,20 @@ export class DesktopService {
   readonly commands: CommandBus;
   readonly queries: QueryBus;
   private readonly importPreviews = new Map<string, ImportPreview>();
+  /** In-flight `ai.complete` requests, shared across project directories. */
+  private readonly aiRequests = new Map<string, AbortController>();
+  private readonly aiOptions: AiTransportOptions;
+  private aiTransportInstance: AiTransport | null = null;
+  private aiTransportDirectory: string | null = null;
 
   constructor(
     directory: string,
     options: ProjectDirectoryOptions = {},
     secrets: SecretStore = new MemorySecretStore(),
+    aiOptions: AiTransportOptions = {},
   ) {
     this.store = new ProjectDirectoryStore(directory, options);
+    this.aiOptions = aiOptions;
     this.diagnostics = new DiagnosticLogger(
       join(directory, ".workspace", "diagnostics"),
     );
@@ -1068,6 +1080,208 @@ export class DesktopService {
         audit: { object_type: "secret", object_id: provider, action: "delete" },
       };
     });
+    // ---- V0-T03 AI workflow (browser shell transport) ----------------------
+    // `ai.analyze` / `suggestion.apply` / `secret.*` keep their existing
+    // behaviour: these commands own provider connections and the live
+    // transport, and they never place a credential in a result or an audit.
+    this.commands.register("ai.connection.list", async () => {
+      // The only AI command that stays usable before a project exists.
+      if (!this.context.project) {
+        return {
+          value: { providers: [], configured: {} },
+          audit: {
+            object_type: "ai_connection",
+            action: "list",
+            metadata: { provider_count: 0 },
+          },
+        };
+      }
+      const connections = await this.aiTransport().listConnections();
+      return {
+        value: connections,
+        audit: {
+          object_type: "ai_connection",
+          action: "list",
+          metadata: { provider_count: connections.providers.length },
+        },
+      };
+    });
+    this.commands.register("ai.connection.save", async (input) => {
+      this.assertAiProjectOpen();
+      const saved = await this.aiTransport().saveConnection(input);
+      return {
+        value: saved,
+        audit: {
+          object_type: "ai_connection",
+          object_id: saved.provider.id,
+          action: "save",
+        },
+      };
+    });
+    this.commands.register("ai.connection.delete", async (input) => {
+      this.assertAiProjectOpen();
+      const providerId = input && typeof input === "object" &&
+          typeof (input as { provider_id?: unknown }).provider_id === "string"
+        ? (input as { provider_id: string }).provider_id
+        : "";
+      const result = await this.aiTransport().deleteConnection(providerId);
+      return {
+        value: result,
+        audit: {
+          object_type: "ai_connection",
+          object_id: result.provider_id,
+          action: "delete",
+          metadata: { removed: result.removed },
+        },
+      };
+    });
+    this.commands.register("ai.secret.set", async (input) => {
+      this.assertAiProjectOpen();
+      const candidate = input && typeof input === "object"
+        ? input as { provider_id?: unknown; value?: unknown }
+        : {};
+      const providerId = typeof candidate.provider_id === "string"
+        ? candidate.provider_id
+        : "";
+      const value = typeof candidate.value === "string" ? candidate.value : "";
+      const result = await this.aiTransport().setCredential(providerId, value);
+      // The credential value is deliberately absent from the result and audit.
+      return {
+        value: result,
+        audit: {
+          object_type: "ai_secret",
+          object_id: result.provider_id,
+          action: "set",
+          metadata: { has_value: true },
+        },
+      };
+    });
+    this.commands.register("ai.secret.delete", async (input) => {
+      this.assertAiProjectOpen();
+      const providerId = input && typeof input === "object" &&
+          typeof (input as { provider_id?: unknown }).provider_id === "string"
+        ? (input as { provider_id: string }).provider_id
+        : "";
+      const result = await this.aiTransport().deleteCredential(providerId);
+      return {
+        value: result,
+        audit: {
+          object_type: "ai_secret",
+          object_id: result.provider_id,
+          action: "delete",
+          metadata: { removed: result.removed },
+        },
+      };
+    });
+    this.commands.register("ai.complete", async (input) => {
+      this.assertAiProjectOpen();
+      const result = await this.aiTransport().completeAiRequest(input, {});
+      const candidate = input && typeof input === "object"
+        ? input as { provider_id?: unknown; request_id?: unknown }
+        : {};
+      return {
+        value: result,
+        audit: {
+          object_type: "ai",
+          object_id: typeof candidate.request_id === "string"
+            ? candidate.request_id
+            : null,
+          action: "complete",
+          metadata: {
+            provider_id: typeof candidate.provider_id === "string"
+              ? candidate.provider_id
+              : null,
+            status: result.status,
+            response_kind: result.response_kind,
+          },
+        },
+      };
+    });
+    this.commands.register("ai.cancel", async (input) => {
+      // Cancelling is idempotent and must never fail, even before a project is
+      // open: the in-flight registry is shared across project directories.
+      const requestId = input && typeof input === "object" &&
+          typeof (input as { request_id?: unknown }).request_id === "string"
+        ? (input as { request_id: string }).request_id
+        : "";
+      const result = this.aiTransport().cancelAiRequest(requestId);
+      return {
+        value: result,
+        audit: {
+          object_type: "ai",
+          object_id: requestId || null,
+          action: "cancel",
+          metadata: { cancelled: result.cancelled },
+        },
+      };
+    });
+    this.commands.register("ai.execution.append", async (input) => {
+      this.assertAiProjectOpen();
+      const candidate = input && typeof input === "object"
+        ? input as { record?: unknown }
+        : {};
+      const result = await this.aiTransport().appendExecutionRecord(
+        candidate.record ?? input,
+      );
+      return {
+        value: result,
+        audit: {
+          object_type: "ai_execution",
+          object_id: result.id,
+          action: "append",
+        },
+      };
+    });
+    this.commands.register("ai.execution.list", async (input) => {
+      this.assertAiProjectOpen();
+      const candidate = input && typeof input === "object"
+        ? input as { limit?: unknown }
+        : {};
+      const records = await this.aiTransport().listExecutionRecords(
+        typeof candidate.limit === "number" ? candidate.limit : undefined,
+      );
+      return {
+        value: { records },
+        audit: {
+          object_type: "ai_execution",
+          action: "list",
+          metadata: { count: records.length },
+        },
+      };
+    });
+  }
+
+  /** Structured failure used by every AI command that mutates project state. */
+  private assertAiProjectOpen(): void {
+    if (this.context.project) return;
+    throw error(
+      "project_not_open",
+      "请先打开或新建一个课程项目，再使用 AI 功能。",
+      "AI commands require an open project directory",
+      {
+        recoverable: true,
+        recommended_action: "打开或新建课程项目后重试。",
+        details: {},
+      },
+    );
+  }
+
+  /**
+   * Read the current project directory on every call so a project switch moves
+   * the AI files with it.  The transport itself is built lazily because the
+   * directory is only known once the store exists.
+   */
+  private aiTransport(): AiTransport {
+    const directory = this.store.directory;
+    if (!this.aiTransportInstance || this.aiTransportDirectory !== directory) {
+      this.aiTransportInstance = new AiTransport(directory, {
+        ...this.aiOptions,
+        read_only: this.store.options.read_only,
+        requests: this.aiRequests,
+      });
+      this.aiTransportDirectory = directory;
+    }
+    return this.aiTransportInstance;
   }
 
   private registerQueries(): void {

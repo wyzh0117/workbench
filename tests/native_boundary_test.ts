@@ -11,6 +11,10 @@ const cargo = await Deno.readTextFile(
 const app = await Deno.readTextFile(
   new URL("../app/main.js", import.meta.url),
 );
+/** Constants shared by the shell and the view layer (the picker's MIME list). */
+const shared = await Deno.readTextFile(
+  new URL("../app/constants.js", import.meta.url),
+);
 const capability = JSON.parse(
   await Deno.readTextFile(
     new URL("../src-tauri/capabilities/default.json", import.meta.url),
@@ -152,7 +156,7 @@ Deno.test("native shell exposes explicit project and high-level workflows", () =
     app.includes('"project.open": "project_open"') &&
       app.includes('"project.create": "project_create"') &&
       app.includes('"snapshot.restore": "restore_snapshot"') &&
-      app.includes('invoke("project_close"') &&
+      app.includes('this.nativeInvoke("project_close"') &&
       app.includes('addEventListener("beforeunload"') &&
       app.includes("closeNativeProject(previousProjectDir)") &&
       app.includes("getCurrentWindow") &&
@@ -279,9 +283,11 @@ Deno.test("native shell exposes explicit project and high-level workflows", () =
   );
   assert(
     app.includes("project_dir: this.projectDir || null") &&
-      app.includes(
-        "if (this.bridge.isNative()) return { project_dir: this.bridge.projectDir };",
-      ) &&
+      // The native session stores the reader position next to the directory, so
+      // relaunching the desktop app resumes the same lesson, mode and panel.
+      app.includes("active_content_item_id: this.ui.activeId") &&
+      app.includes("mode: this.ui.mode") &&
+      app.includes("right_panel: this.ui.rightPanel") &&
       !app.includes("data-project-dir") &&
       app.includes('"select_folder"') &&
       app.includes('return await this.invoke("project.open", {})') &&
@@ -292,7 +298,7 @@ Deno.test("native shell exposes explicit project and high-level workflows", () =
   assert(
     app.includes('"select_file"') &&
       app.includes('"select_export_path"') &&
-      app.includes('invoke("clear_recovery_journal"') &&
+      app.includes('this.nativeInvoke("clear_recovery_journal"') &&
       app.includes('listen("tauri://drag-drop"') &&
       app.includes("source_path: sourcePath") &&
       app.includes("const context = this.assetContext()") &&
@@ -301,7 +307,7 @@ Deno.test("native shell exposes explicit project and high-level workflows", () =
       app.includes("this.decodeBytes(await invoke") &&
       app.includes("content_item_id: contentItemId") &&
       app.includes("无法导入文件") &&
-      app.includes(".webm,.mov,.m4v"),
+      (app + shared).includes(".webm,.mov,.m4v"),
     "native picker, drag/drop, recovery cleanup and contextual asset import must stay in the UI boundary",
   );
   assert(

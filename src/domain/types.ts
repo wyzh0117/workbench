@@ -484,6 +484,29 @@ export interface ChangeDraft {
   status: ChangeDraftStatus;
   created_at: ISODate;
   applied_at: ISODate | null;
+  /** Optional V0-T03 fields; drafts written before them stay valid. */
+  operations?: ChangeOperation[];
+  reason?: string;
+  validation?: ChangeValidation;
+  scope?: JsonObject;
+  provider?: JsonObject;
+}
+
+/** One reviewable AI edit. `before`/`after` are snapshots used by Diff + Apply. */
+export interface ChangeOperation {
+  id: string;
+  op: "replace_block" | "insert_block" | "create_requirement" | "move_block";
+  target: JsonObject;
+  before: JsonValue | null;
+  after: JsonValue;
+  reason: string;
+}
+
+/** Result of the domain check that runs before an AI draft can be applied. */
+export interface ChangeValidation {
+  checked_at: ISODate;
+  ok: boolean;
+  issues: string[];
 }
 
 export interface Snapshot {

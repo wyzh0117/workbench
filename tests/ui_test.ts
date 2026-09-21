@@ -55,8 +55,8 @@ Deno.test("Desktop shell restores persisted state and supports palette keyboard 
     new URL("../app/main.js", import.meta.url),
   );
   assert(
-    source.includes("void store.initialize();"),
-    "startup must hydrate project/session state",
+    source.includes("__workbenchReady = store.initialize();"),
+    "startup must hydrate project/session state and expose the ready promise",
   );
   assert(
     source.includes("event.stopPropagation();"),
@@ -71,15 +71,24 @@ Deno.test("Desktop shell restores persisted state and supports palette keyboard 
     "native snapshot writes must preserve the UI snapshot id",
   );
   assert(
-    source.includes("native !== undefined"),
-    "native null command results must not trigger browser fallback writes",
+    source.includes("const invoke = globalThis.__TAURI__?.core?.invoke;") &&
+      source.includes("if (invoke) {"),
+    "the shell guard must key off the presence of invoke, so a native command " +
+      "that legitimately resolves to null cannot fall back to a service write",
   );
   assert(
     source.includes('requirement.scope === "layout"'),
     "browser Markdown export must exclude layout-only requirements",
   );
   assert(
-    source.includes("AI 连接器尚未配置"),
-    "browser fallback must not claim a suggestion was generated without an AI adapter",
+    source.includes('} from "./ai.js";') &&
+      source.includes("AiFailure") &&
+      source.includes('case "ai-run": void store.aiRun(); return;'),
+    "AI 面板必须走 app/ai.js 的共享工作流：未配置服务商或缺少密钥时由 " +
+      "AiFailure 说明原因，而不是在壳里伪造一条建议",
+  );
+  assert(
+    !source.includes("AI 连接器尚未配置"),
+    "旧的占位实现（未配置也照样说生成了建议）必须已经删除",
   );
 });

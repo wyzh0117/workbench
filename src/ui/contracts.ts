@@ -76,7 +76,16 @@ export type BridgeCommandName =
   | "secret.delete"
   | "connector.sync"
   | "ai.analyze"
-  | "suggestion.apply";
+  | "suggestion.apply"
+  | "ai.connection.list"
+  | "ai.connection.save"
+  | "ai.connection.delete"
+  | "ai.secret.set"
+  | "ai.secret.delete"
+  | "ai.complete"
+  | "ai.cancel"
+  | "ai.execution.append"
+  | "ai.execution.list";
 
 export type BridgeQueryName =
   | "project.get"

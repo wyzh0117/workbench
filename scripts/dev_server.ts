@@ -5,7 +5,13 @@ import { DesktopService } from "../src/service/desktop.ts";
 const appRoot = normalize(new URL("../app/", import.meta.url).pathname);
 // The browser build intentionally exposes one project root selected by the
 // launcher. The renderer never receives arbitrary filesystem access.
-const projectRoot = join(Deno.cwd(), ".workbench-project");
+//
+// `PROJECT_ROOT` / `PORT` let an isolated instance point at a throwaway
+// project for desktop-shell verification; the defaults keep the everyday
+// development workbench on .workbench-project:4173.
+const projectRoot = Deno.env.get("PROJECT_ROOT")?.trim() ||
+  join(Deno.cwd(), ".workbench-project");
+const port = Number(Deno.env.get("PORT") || "") || 4173;
 const desktop = new DesktopService(projectRoot, {
   app_instance_id: `browser-${Deno.pid}`,
 });
@@ -91,6 +97,60 @@ async function bridgeQuery(request: Request): Promise<Response> {
   }
 }
 
+/** Upper bound for a preview payload; the native shell uses the same limit. */
+const ASSET_READ_SIZE_LIMIT = 8 * 1024 * 1024;
+
+/**
+ * Read-only asset bytes for UI previews in the browser build.  The desktop
+ * shell exposes the same capability through the `asset_read` command, which
+ * resolves the id against the open project and refuses unsafe paths.  Here the
+ * request is limited to the one configured project root.
+ */
+async function bridgeAssetBytes(request: Request): Promise<Response> {
+  const body = await requestBody(request);
+  const assetId = typeof body.asset_id === "string" ? body.asset_id : "";
+  if (!assetId) return errorResponse("缺少素材 ID。", 400);
+  const project = desktop.context.project;
+  const asset = project?.assets.find((candidate) => candidate.id === assetId);
+  if (!asset || asset.archived) return errorResponse("找不到素材。", 404);
+  const storagePath = String(asset.storage_path || "");
+  if (
+    !storagePath || storagePath.startsWith("/") ||
+    storagePath.split(/[\\/]/).includes("..")
+  ) {
+    return errorResponse("素材路径无效。", 400);
+  }
+  const target = join(projectRoot, storagePath);
+  // Reject symlinked components and oversized files, matching the native
+  // `asset_read` limits: this route returns project bytes to the renderer.
+  try {
+    const realRoot = await Deno.realPath(projectRoot);
+    const realTarget = await Deno.realPath(target);
+    if (realTarget !== realRoot && !realTarget.startsWith(`${realRoot}/`)) {
+      return errorResponse("素材路径无效。", 400);
+    }
+    const stat = await Deno.lstat(target);
+    if (!stat.isFile) return errorResponse("素材路径不是文件。", 400);
+    if (stat.size > ASSET_READ_SIZE_LIMIT) {
+      return errorResponse("素材过大，无法在工作台内预览。", 413);
+    }
+  } catch {
+    return errorResponse("素材文件不可读。", 404);
+  }
+  try {
+    const bytes = await Deno.readFile(target);
+    return new Response(bytes, {
+      headers: {
+        "content-type": asset.mime_type || "application/octet-stream",
+        "cache-control": "no-store",
+        "access-control-allow-origin": "*",
+      },
+    });
+  } catch {
+    return errorResponse("素材文件不可读。", 404);
+  }
+}
+
 async function staticFile(pathname: string): Promise<Response> {
   const relativePath = pathname === "/" ? "index.html" : pathname.slice(1);
   if (
@@ -117,7 +177,7 @@ async function staticFile(pathname: string): Promise<Response> {
 }
 
 const server = Deno.serve(
-  { hostname: "127.0.0.1", port: 4173 },
+  { hostname: "127.0.0.1", port },
   async (request) => {
     const url = new URL(request.url);
     try {
@@ -135,7 +195,7 @@ const server = Deno.serve(
         return json({
           mode: "service",
           project_open: desktop.context.project !== null,
-          project_root: ".workbench-project",
+          project_root: projectRoot,
         });
       }
       if (url.pathname === "/api/command" && request.method === "POST") {
@@ -143,6 +203,9 @@ const server = Deno.serve(
       }
       if (url.pathname === "/api/query" && request.method === "POST") {
         return await bridgeQuery(request);
+      }
+      if (url.pathname === "/api/asset" && request.method === "POST") {
+        return await bridgeAssetBytes(request);
       }
       if (request.method !== "GET") {
         return new Response("Method not allowed", {

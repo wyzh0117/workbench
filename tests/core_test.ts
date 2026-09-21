@@ -356,6 +356,44 @@ Deno.test("Project serialization rejects camelCase secrets and local-only data",
   assertThrows(() => serializeProject(data));
 });
 
+Deno.test("A project that built an AI context pack can still be saved", async () => {
+  // `model_connection_id` matched the `model_connections` private-field token,
+  // so every project that had ever built an AI context pack failed to
+  // serialize — autosave threw and the AI workflow could not persist at all.
+  const data = createEmptyProjectData("上下文包保存");
+  await createContextPack(data, {
+    purpose: "解释当前内容",
+    items: [{
+      source_type: "course_map",
+      source_id: data.project.id,
+      label: "整门课程",
+      content: "课程结构摘要",
+    }],
+  });
+  assertEquals(data.context_packs.length, 1);
+  const serialized = serializeProject(data);
+  assertEquals(JSON.parse(serialized).context_packs.length, 1);
+  assertEquals(migrateProject(JSON.parse(serialized)).context_packs.length, 1);
+  // The exemption is scoped: it must not open a hole for real credentials and
+  // it must not relax any other collection.
+  const withSecret = structuredClone(data) as ProjectData;
+  (withSecret.context_packs[0] as unknown as Record<string, unknown>).api_key =
+    "must-not-persist";
+  assertThrows(() => serializeProject(withSecret));
+  const elsewhere = structuredClone(data) as ProjectData;
+  (elsewhere.project.settings as Record<string, unknown>).model_connection_id =
+    "x";
+  assertThrows(() => serializeProject(elsewhere));
+  // The exemption is the exact `context_packs[].model_connection_id` column, not
+  // a prefix: a same-named key nested deeper inside a pack row must still be
+  // rejected, otherwise the scoped exemption would be a real hole.
+  const nested = structuredClone(data) as ProjectData;
+  (nested.context_packs[0] as unknown as Record<string, unknown>).settings = {
+    model_connection_id: "x",
+  };
+  assertThrows(() => serializeProject(nested));
+});
+
 Deno.test("Migration fills schema versions for legacy documents and layouts", () => {
   const data = confirmedData();
   const content = firstContent(data);
