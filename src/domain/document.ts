@@ -411,6 +411,109 @@ export function insertPlaceholder(
   return requirement;
 }
 
+/**
+ * Insert a block at an explicit position.  Authoring inserts happen next to
+ * the block the user is looking at, so append-only helpers are not enough.
+ */
+export function insertBlockAt(
+  data: ProjectData,
+  contentItemId: string,
+  type: BlockType,
+  content: JsonValue,
+  toIndex: number,
+  settings: Record<string, JsonValue> = {},
+): Block {
+  assert(
+    Number.isInteger(toIndex) && toIndex >= 0,
+    "正文位置必须是非负整数",
+  );
+  const document = getDocument(data, contentItemId);
+  const existing = listBlocks(data, contentItemId);
+  assert(toIndex <= existing.length, "正文位置超出范围");
+  const timestamp = now();
+  const block: Block = {
+    id: id(),
+    document_id: document.id,
+    parent_block_id: null,
+    type,
+    order_index: toIndex,
+    content,
+    settings,
+    created_at: timestamp,
+    updated_at: timestamp,
+  };
+  data.blocks.push(block);
+  const ordered = [...existing];
+  ordered.splice(toIndex, 0, block);
+  ordered.forEach((candidate, index) => {
+    candidate.order_index = index;
+    if (candidate.id !== block.id) candidate.updated_at = timestamp;
+  });
+  document.updated_at = timestamp;
+  getContentItem(data, contentItemId).updated_at = timestamp;
+  touchProject(data);
+  return block;
+}
+
+/**
+ * Remove one block together with every canonical row that pointed at it.
+ *
+ * Deleting a block is the highest-risk authoring action: an orphaned
+ * Requirement, AssetUsage or Placement would keep a reference to a row that no
+ * longer exists.  The cascade is therefore explicit here instead of relying on
+ * the caller to remember each collection.
+ */
+export function deleteBlock(data: ProjectData, blockId: string): void {
+  const index = data.blocks.findIndex((candidate) => candidate.id === blockId);
+  assert(index >= 0, `找不到正文区块: ${blockId}`);
+  const [block] = data.blocks.splice(index, 1);
+  assert(block, `找不到正文区块: ${blockId}`);
+  data.requirements = data.requirements.filter((requirement) =>
+    requirement.anchor_block_id !== blockId
+  );
+  data.asset_usages = data.asset_usages.filter((usage) =>
+    usage.block_id !== blockId
+  );
+  data.placements = data.placements.filter((placement) =>
+    placement.block_id !== blockId
+  );
+  for (const group of data.groups) {
+    group.block_ids = group.block_ids.filter((candidate) =>
+      candidate !== blockId
+    );
+  }
+  const timestamp = now();
+  listBlocksByDocument(data, block.document_id).forEach((
+    candidate,
+    order,
+  ) => {
+    candidate.order_index = order;
+  });
+  for (const requirement of data.requirements) {
+    if (requirement.resolved_block_id === blockId) {
+      requirement.resolved_block_id = null;
+    }
+  }
+  const document = data.documents.find((candidate) =>
+    candidate.id === block.document_id
+  );
+  if (document) {
+    document.updated_at = timestamp;
+    const item = data.content_items.find((candidate) =>
+      candidate.document_id === document.id
+    );
+    if (item) item.updated_at = timestamp;
+  }
+  touchProject(data);
+}
+
+function listBlocksByDocument(data: ProjectData, documentId: string): Block[] {
+  return data.blocks.filter((block) => block.document_id === documentId).sort((
+    left,
+    right,
+  ) => left.order_index - right.order_index);
+}
+
 export function documentRevision(
   data: ProjectData,
   contentItemId: string,

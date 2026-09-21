@@ -11,16 +11,65 @@ export interface ErrorObject {
   details: Record<string, unknown>;
 }
 
+const REDACTED = "[REDACTED]";
+
 const SECRET_KEY =
   /(?:api[_-]?key|access[_-]?token|refresh[_-]?token|id[_-]?token|auth[_-]?token|bearer[_-]?token|token|cookie|password|passphrase|secret|private[_-]?key|client[_-]?secret|authorization|credentials?|credential[_-]?reference|auth[_-]?reference)/i;
-const SECRET_VALUE =
-  /((?:api[_-]?key|access[_-]?token|refresh[_-]?token|auth[_-]?token|bearer[_-]?token|cookie|password|passphrase|secret|authorization)\s*[:=]\s*)("[^"]*"|'[^']*'|[^\s,;]+)/gi;
+
+/** Credential-bearing names, matched case-insensitively. */
+const SECRET_LABELS = [
+  "x[_-]?goog[_-]?api[_-]?key",
+  "x[_-]?api[_-]?key",
+  "api[_-]?key",
+  "api[_-]?secret",
+  "access[_-]?token",
+  "refresh[_-]?token",
+  "id[_-]?token",
+  "auth[_-]?token",
+  "bearer[_-]?token",
+  "private[_-]?key",
+  "client[_-]?secret",
+  "secret[_-]?key",
+  "passphrase",
+  "password",
+  "authorization",
+  "bearer",
+  "credentials?",
+  "cookie",
+  "secret",
+  "token",
+].join("|");
+
+/**
+ * `name: value` / `name=value` where the WHOLE value is a credential.  The
+ * value runs to the next delimiter (newline, `,`, `;`, `&`, or a quote), so
+ * `Authorization: Bearer sk-abc` is removed as one unit.  Matching only the
+ * first whitespace-delimited token would leave the key itself behind.
+ */
+const SECRET_VALUE = new RegExp(
+  `((?:${SECRET_LABELS})["']?\\s*[:=]\\s*)("(?:[^"\\n]*)"|'(?:[^'\\n]*)'|[^\\n,;&"']+)`,
+  "gi",
+);
+
+/** A bare `Bearer <token>` that no header name introduced. */
+const BEARER_VALUE = /\bBearer\s+[^\s,;&"']+/gi;
+
+/** Provider key shapes that are recognisable on their own. */
+const PREFIXED_SECRET = /\bsk-[A-Za-z0-9_-]{6,}/g;
+
+/** Under-redaction is a security bug; over-redaction is only cosmetic. */
+function redactString(value: string): string {
+  return value
+    .replace(SECRET_VALUE, `$1${REDACTED}`)
+    .replace(BEARER_VALUE, REDACTED)
+    .replace(PREFIXED_SECRET, REDACTED);
+}
 
 /** Keep diagnostics useful without allowing credentials to cross a service boundary. */
 export function redactSecrets(value: unknown, key = ""): unknown {
-  if (SECRET_KEY.test(key)) return "[REDACTED]";
+  if (SECRET_KEY.test(key)) return REDACTED;
   if (typeof value === "string") {
-    return value.replace(SECRET_VALUE, "$1[REDACTED]");
+    return redactString(value);
   }
   if (Array.isArray(value)) return value.map((item) => redactSecrets(item));
   if (!value || typeof value !== "object") return value;

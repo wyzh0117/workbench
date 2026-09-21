@@ -21,8 +21,17 @@ rust_out
 Thumbs.db
 *.swp
 *~
+.Rhistory
+
+# Per-editor agent state (statusline/hook wiring, editor-local rules). The
+# shared, portable agent guidance lives in the committed AGENTS.md instead.
+.claude/
+.cursor/
 
 # ---- Local overrides -------------------------------------------------------
 .env
 .env.*
 *.local
+
+# graft's local graph cache — regenerable, not committed (run `graft build`).
+graft/

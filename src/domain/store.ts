@@ -1855,7 +1855,19 @@ function assertNoSecretFields(value: unknown, path = "project"): void {
     // actual cookie/token remains in the local SecretStore.
     const isOpaqueAuthReference = key === "auth_reference" &&
       path.startsWith("project.conversation_sources[");
-    if (isSensitiveFieldKey(key) && !isOpaqueAuthReference) {
+    // ContextPack stores only the id of the model connection it was built for.
+    // Without this exemption the `model_connections` private-field token makes
+    // every project that has ever built an AI context pack impossible to save
+    // (`model_connection_id` matches the delimited `model[_-]?connections?`
+    // rule), which would silently break autosave for the whole AI workflow.
+    // The exemption is scoped to that exact column: a same-named key nested
+    // deeper inside a pack row (or anywhere else) is still rejected.
+    const isOpaqueModelConnectionRef = key === "model_connection_id" &&
+      /^project\.context_packs\[\d+\]$/.test(path);
+    if (
+      isSensitiveFieldKey(key) && !isOpaqueAuthReference &&
+      !isOpaqueModelConnectionRef
+    ) {
       throw new Error(`项目数据禁止保存凭据字段: ${path}.${key}`);
     }
     assertNoSecretFields(child, `${path}.${key}`);

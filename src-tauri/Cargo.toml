@@ -20,6 +20,11 @@ serde_json = "1"
 sha2 = "0.10"
 base64 = "0.22"
 getrandom = "0.3"
+# 桌面壳的 AI 传输：只允许 https（外加本机回环 http 联调）。
+# 精确锁定 0.11.27：本地 registry 只缓存了这个版本（0.13.5 是 tauri 的移动端
+# 传递依赖，源码不在这台机器上）；锁死版本可避免联网构建时解析到未缓存的新版。
+# 必须关掉默认特性，否则会拉入 native-tls / hyper-tls（本地同样没有缓存）。
+reqwest = { version = "=0.11.27", default-features = false, features = ["json", "rustls-tls"] }
 
 [features]
 custom-protocol = ["tauri/custom-protocol"]

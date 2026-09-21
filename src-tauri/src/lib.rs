@@ -24,6 +24,15 @@ static APP_INSTANCE_ID: OnceLock<String> = OnceLock::new();
 static ACTIVE_PROJECT_LOCKS: OnceLock<Mutex<HashMap<PathBuf, LeaseHandle>>> = OnceLock::new();
 static PROJECT_BASELINES: OnceLock<Mutex<HashMap<PathBuf, ProjectBaseline>>> = OnceLock::new();
 static EXIT_READY: AtomicBool = AtomicBool::new(false);
+
+/// Project directory requested on the command line (`--project-dir <path>`).
+///
+/// This is the standard "open a project from the shell" entry point: it skips
+/// the folder picker but runs exactly the same validation, lease acquisition
+/// and canonical read as the picker does.
+static LAUNCH_PROJECT_DIR: OnceLock<Option<PathBuf>> = OnceLock::new();
+/// The launch directory is offered as the session exactly once.
+static LAUNCH_PROJECT_CONSUMED: AtomicBool = AtomicBool::new(false);
 const CLOSE_REQUEST_EVENT: &str = "workbench://close-requested";
 const WINDOW_CLOSE_REQUEST_EVENT: &str = "tauri://close-requested";
 
@@ -64,14 +73,19 @@ struct BridgeStatus {
     message: &'static str,
 }
 
+/// 正在执行的 AI 传输任务：`request_id` → `JoinHandle`，供 `ai_cancel` 中止。
+type AiRequestHandles = Mutex<HashMap<String, tauri::async_runtime::JoinHandle<()>>>;
+
 struct BridgeState {
     token: String,
+    ai_requests: AiRequestHandles,
 }
 
 impl BridgeState {
     fn new() -> Self {
         Self {
             token: bridge_token(),
+            ai_requests: AiRequestHandles::default(),
         }
     }
 }
@@ -812,6 +826,45 @@ fn release_all_project_locks() {
             let _ = fs::remove_file(lock_path);
         }
     }
+}
+
+/// Parse `--project-dir <path>` / `--project-dir=<path>` (also `-p`).
+///
+/// Returns `None` when the flag is absent.  A malformed value is a startup
+/// error rather than a silently ignored argument.
+fn project_dir_from_args<I: IntoIterator<Item = String>>(args: I) -> Result<Option<PathBuf>, String> {
+    let collected: Vec<String> = args.into_iter().collect();
+    let mut index = 0;
+    while index < collected.len() {
+        let argument = collected[index].clone();
+        let inline = argument
+            .strip_prefix("--project-dir=")
+            .or_else(|| argument.strip_prefix("-p="))
+            .map(ToOwned::to_owned);
+        let flag = argument == "--project-dir" || argument == "-p";
+        let raw = if let Some(value) = inline {
+            Some(value)
+        } else if flag {
+            // A flag with no following value is a usage error, and a following
+            // value that is itself a flag is never a path.
+            index += 1;
+            match collected.get(index) {
+                Some(value) if !value.starts_with('-') => Some(value.clone()),
+                _ => return Err("--project-dir 需要一个目录路径".into()),
+            }
+        } else {
+            None
+        };
+        if let Some(value) = raw {
+            let trimmed = value.trim().to_owned();
+            if trimmed.is_empty() {
+                return Err("--project-dir 需要一个目录路径".into());
+            }
+            return explicit_project_dir(&trimmed, false).map(Some);
+        }
+        index += 1;
+    }
+    Ok(None)
 }
 
 fn app_local_path(app: &AppHandle, relative: &str) -> Result<PathBuf, String> {
@@ -2520,6 +2573,16 @@ fn html_for_project(project: &Value, content_item_id: Option<&str>) -> String {
 }
 
 fn structured_boundary_error(code: &str, user_message: &str, details: Value) -> String {
+    structured_ai_error(code, user_message, None, details)
+}
+
+/// 与 [`structured_boundary_error`] 完全同一形状，另外允许给出「下一步怎么做」的建议。
+fn structured_ai_error(
+    code: &str,
+    user_message: &str,
+    recommended_action: Option<&str>,
+    details: Value,
+) -> String {
     json!({
         "error": {
             "code": code,
@@ -2527,7 +2590,7 @@ fn structured_boundary_error(code: &str, user_message: &str, details: Value) -> 
             "technical_message": user_message,
             "severity": "blocking",
             "recoverable": false,
-            "recommended_action": null,
+            "recommended_action": recommended_action,
             "details": details,
         }
     })
@@ -2792,6 +2855,15 @@ fn save_session(app: AppHandle, session: Value) -> Result<(), String> {
 
 #[tauri::command]
 fn load_session(app: AppHandle) -> Result<Option<Value>, String> {
+    // A directory passed on the command line wins for the first read, so
+    // `workbench --project-dir <path>` opens that project immediately.
+    if let Some(Some(directory)) = LAUNCH_PROJECT_DIR.get() {
+        if !LAUNCH_PROJECT_CONSUMED.swap(true, Ordering::AcqRel) {
+            return Ok(Some(json!({
+                "project_dir": directory.to_string_lossy(),
+            })));
+        }
+    }
     let path = app_local_path(&app, ".workspace/session.json")?;
     if !path.exists() {
         return Ok(None);
@@ -2817,6 +2889,98 @@ fn read_recovery_journal(project_dir: String) -> Result<Option<Value>, String> {
         return Ok(None);
     }
     Ok(Some(read_json_file(&path)?))
+}
+
+/// Read-only asset access for previews.
+///
+/// The webview never receives filesystem access: the command resolves an asset
+/// id against the open project's canonical metadata, refuses symlinked or
+/// out-of-project storage paths, and returns at most `ASSET_READ_SIZE_LIMIT`
+/// bytes.  It does not take an edit lease because it writes nothing.
+const ASSET_READ_SIZE_LIMIT: u64 = 8 * 1024 * 1024;
+
+#[tauri::command]
+fn asset_read(input: Value) -> Result<Value, String> {
+    let outer = require_object(&input, "asset_read")?;
+    let payload = outer
+        .get("input")
+        .filter(|value| value.is_object())
+        .cloned()
+        .unwrap_or(input);
+    let object = require_object(&payload, "asset_read")?;
+    let project_dir = required_string(object, &["project_dir", "projectDir"], "项目目录")?;
+    let asset_id = required_string(object, &["asset_id", "assetId"], "素材 ID")?;
+    let project_dir = explicit_project_dir(&project_dir, false)?;
+    // This is a preview read only: it resolves one named asset inside the
+    // project and writes nothing, so it deliberately takes no edit lease and
+    // does not participate in the save-conflict protocol.
+    let project = read_project_value(&project_dir)?;
+    let project_object = project.as_object().ok_or("项目数据必须是 JSON 对象")?;
+    let asset = project_object
+        .get("assets")
+        .and_then(Value::as_array)
+        .and_then(|assets| {
+            assets.iter().find(|asset| {
+                asset.get("id").and_then(Value::as_str) == Some(asset_id.as_str())
+            })
+        })
+        .ok_or("找不到素材")?;
+    if asset
+        .get("archived")
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
+    {
+        return Err("素材已归档，无法读取".into());
+    }
+    let storage_path = asset
+        .get("storage_path")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .ok_or("素材缺少存储路径")?;
+    // A preview read is only ever for material, never for canonical data or
+    // arbitrary project files, so the path must stay under `assets/`.
+    let relative = Path::new(storage_path);
+    let inside_assets = relative
+        .components()
+        .next()
+        .map(|component| matches!(component, Component::Normal(name) if name == "assets"))
+        .unwrap_or(false);
+    if !inside_assets {
+        return Err("素材路径必须位于 assets/ 目录内".into());
+    }
+    let target = project_file(&project_dir, storage_path)?;
+    // Reject a symlinked target or a chain whose real path escapes the project.
+    reject_symlink(&target, "素材文件")?;
+    let real_root = fs::canonicalize(&project_dir)
+        .map_err(|error| format!("无法解析项目目录: {error}"))?;
+    let real_target =
+        fs::canonicalize(&target).map_err(|error| format!("无法读取素材: {error}"))?;
+    if !real_target.starts_with(&real_root) {
+        return Err("素材路径超出项目目录".into());
+    }
+    let metadata = fs::metadata(&real_target).map_err(|error| format!("无法读取素材: {error}"))?;
+    if !metadata.is_file() {
+        return Err("素材路径不是文件".into());
+    }
+    if metadata.len() > ASSET_READ_SIZE_LIMIT {
+        return Err(format!(
+            "素材过大，无法在工作台内预览（上限 {} MB）",
+            ASSET_READ_SIZE_LIMIT / (1024 * 1024)
+        ));
+    }
+    let bytes = fs::read(&real_target).map_err(|error| format!("无法读取素材字节: {error}"))?;
+    let mime_type = asset
+        .get("mime_type")
+        .and_then(Value::as_str)
+        .unwrap_or("application/octet-stream");
+    Ok(json!({
+        "asset_id": asset_id,
+        "filename": asset.get("filename").and_then(Value::as_str).unwrap_or(""),
+        "mime_type": mime_type,
+        "file_size": bytes.len(),
+        "bytes_base64": BASE64.encode(&bytes),
+    }))
 }
 
 fn safe_asset_filename(value: &str) -> String {
@@ -3269,8 +3433,1769 @@ fn suggestion_apply(input: Value) -> Result<Value, String> {
     Err("unsupported: 修改草稿应用由工作台服务执行，原生壳未写入正文".into())
 }
 
+// ---------------------------------------------------------------------------
+// V0-T03 / Workstream C —— AI 传输、Provider 配置与执行记录
+//
+// 这三块都**不是** Canonical：Provider 目录（含凭据）与执行记录都写在应用数据目录的
+// `.workspace/ai/` 下，既不进 `project.json`，也不进导出包。读接口只回传「是否已配置」
+// 的布尔值，任何返回值或错误文本都不会带上凭据本身。
+// ---------------------------------------------------------------------------
+
+/// 非 Canonical AI 存储目录（相对应用数据目录）。
+const AI_STORE_DIR: &str = ".workspace/ai";
+const AI_PROVIDERS_FILE: &str = "providers.json";
+const AI_EXECUTIONS_FILE: &str = "executions.json";
+/// 执行记录上限：新记录插到最前，超出即丢弃最旧的一条。
+const AI_EXECUTION_LIMIT: usize = 200;
+/// `ai_execution_list` 在调用方没有给 limit 时返回多少条
+/// （与浏览器壳 `src/service/ai_transport.ts` 的 `DEFAULT_LIST_LIMIT` 保持一致）。
+const AI_EXECUTION_DEFAULT_LIMIT: usize = 50;
+/// 执行记录里的用户要求截断长度（字符数）。
+const AI_INSTRUCTION_LIMIT: usize = 2000;
+const AI_DEFAULT_TIMEOUT_MS: u64 = 60_000;
+const AI_MAX_TIMEOUT_MS: u64 = 600_000;
+/// Provider 错误正文进入 `details` 之前截断的长度（字符数）。
+const AI_ERROR_TEXT_LIMIT: usize = 400;
+/// 单条凭据的长度上限（与浏览器壳一致）。
+const AI_CREDENTIAL_MAX_CHARS: usize = 8192;
+/// 带 Content-Length 的响应超过这个大小就直接拒绝，避免被异常 Provider 拖垮内存。
+const AI_RESPONSE_SIZE_LIMIT: u64 = 8 * 1024 * 1024;
+
+/// `<app local data>/.workspace/ai`（缺失时创建）。
+fn ai_store_dir(app: &AppHandle) -> Result<PathBuf, String> {
+    app_local_path(app, AI_STORE_DIR)
+}
+
+/// 两个非 Canonical 存储文件的绝对路径；`base` 就是 [`ai_store_dir`] 的返回值。
+struct AiStorePaths {
+    providers: PathBuf,
+    executions: PathBuf,
+}
+
+fn ai_store_paths(base: &Path) -> AiStorePaths {
+    AiStorePaths {
+        providers: base.join(AI_PROVIDERS_FILE),
+        executions: base.join(AI_EXECUTIONS_FILE),
+    }
+}
+
+/// 凭据只属于当前用户：文件写完立刻收成 0600（尽力而为，失败不阻断写入）。
+fn restrict_ai_file_mode(path: &Path) {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = fs::set_permissions(path, fs::Permissions::from_mode(0o600));
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = path;
+    }
+}
+
+/// 读取非 Canonical AI 存储；文件不存在时返回 `Value::Null`（绝不报错）。
+fn ai_read_store(path: &Path, label: &str) -> Result<Value, String> {
+    reject_symlink(path, label)?;
+    match fs::read_to_string(path) {
+        Ok(contents) => {
+            if contents.trim().is_empty() {
+                return Ok(Value::Null);
+            }
+            serde_json::from_str(&contents).map_err(|error| format!("无法解析{label}: {error}"))
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(Value::Null),
+        Err(error) => Err(format!("无法读取{label}: {error}")),
+    }
+}
+
+fn ai_write_store(path: &Path, value: &Value, label: &str) -> Result<(), String> {
+    let mut contents = serde_json::to_string_pretty(value)
+        .map_err(|error| format!("无法序列化{label}: {error}"))?;
+    contents.push('\n');
+    atomic_write_path(path, &contents, true)?;
+    restrict_ai_file_mode(path);
+    Ok(())
+}
+
+fn ai_read_provider_store(path: &Path) -> Result<Map<String, Value>, String> {
+    let mut store = match ai_read_store(path, "AI Provider 配置")? {
+        Value::Null => Map::new(),
+        Value::Object(map) => map,
+        _ => return Err("AI Provider 配置格式无效".into()),
+    };
+    if !store.get("providers").map(Value::is_array).unwrap_or(false) {
+        store.insert("providers".into(), Value::Array(Vec::new()));
+    }
+    if !store
+        .get("credentials")
+        .map(Value::is_object)
+        .unwrap_or(false)
+    {
+        store.insert("credentials".into(), Value::Object(Map::new()));
+    }
+    Ok(store)
+}
+
+fn ai_read_execution_store(path: &Path) -> Result<Map<String, Value>, String> {
+    let mut store = match ai_read_store(path, "AI 执行记录")? {
+        Value::Null => Map::new(),
+        Value::Object(map) => map,
+        _ => return Err("AI 执行记录格式无效".into()),
+    };
+    if !store.get("records").map(Value::is_array).unwrap_or(false) {
+        store.insert("records".into(), Value::Array(Vec::new()));
+    }
+    Ok(store)
+}
+
+fn ai_credential_value(store: &Map<String, Value>, provider_id: &str) -> Option<String> {
+    store
+        .get("credentials")
+        .and_then(Value::as_object)
+        .and_then(|credentials| credentials.get(provider_id))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned)
+}
+
+/// 执行记录里必须丢弃的字段名：沿用 `sensitive_key` 的词表，再显式补上
+/// 凭据 / 密码 / 授权三个词（含复数与 `xxx_credentials` 这类后缀写法），
+/// 保证嵌套多深都不会把密钥写进执行历史。
+fn ai_sensitive_key(key: &str) -> bool {
+    if sensitive_key(key) {
+        return true;
+    }
+    let compact: String = key
+        .chars()
+        .filter(|character| !character.is_whitespace() && !matches!(*character, '_' | '-' | '.'))
+        .collect::<String>()
+        .to_ascii_lowercase();
+    [
+        "credential",
+        "credentials",
+        "password",
+        "passwords",
+        "authorization",
+        "authorizations",
+    ]
+    .iter()
+    .any(|needle| compact.starts_with(needle) || compact.ends_with(needle))
+}
+
+fn ai_strip_sensitive(value: &Value, is_sensitive: fn(&str) -> bool) -> Value {
+    match value {
+        Value::Object(fields) => {
+            let mut cleaned = Map::new();
+            for (key, child) in fields {
+                if is_sensitive(key) {
+                    continue;
+                }
+                cleaned.insert(key.clone(), ai_strip_sensitive(child, is_sensitive));
+            }
+            Value::Object(cleaned)
+        }
+        Value::Array(items) => Value::Array(
+            items
+                .iter()
+                .map(|item| ai_strip_sensitive(item, is_sensitive))
+                .collect(),
+        ),
+        other => other.clone(),
+    }
+}
+
+/// 落盘前的记录清洗：递归丢弃疑似凭据字段、擦掉自由文本里的密钥，
+/// 并把 `instruction` 截断到 2000 字。
+fn ai_sanitize_record(record: &Value, secrets: &[String]) -> Value {
+    let mut cleaned = ai_sanitize_record_value(record, secrets);
+    if let Some(object) = cleaned.as_object_mut() {
+        let truncated = object
+            .get("instruction")
+            .and_then(Value::as_str)
+            .filter(|text| text.chars().count() > AI_INSTRUCTION_LIMIT)
+            .map(|text| text.chars().take(AI_INSTRUCTION_LIMIT).collect::<String>());
+        if let Some(truncated) = truncated {
+            object.insert("instruction".into(), Value::String(truncated));
+        }
+    }
+    cleaned
+}
+
+fn ai_sanitize_record_value(value: &Value, secrets: &[String]) -> Value {
+    match value {
+        Value::Object(fields) => {
+            let mut cleaned = Map::new();
+            for (key, child) in fields {
+                if ai_sensitive_key(key) {
+                    continue;
+                }
+                // 用户可能把密钥粘进指令框，或错误信息里回显了密钥：
+                // 自由文本按 Deno 的 scrubFreeText 规则擦一遍再落盘。
+                if AI_FREE_TEXT_FIELDS.contains(&key.as_str()) {
+                    if let Some(text) = child.as_str() {
+                        cleaned.insert(
+                            key.clone(),
+                            Value::String(ai_scrub_free_text(text, secrets)),
+                        );
+                        continue;
+                    }
+                }
+                cleaned.insert(key.clone(), ai_sanitize_record_value(child, secrets));
+            }
+            Value::Object(cleaned)
+        }
+        Value::Array(items) => Value::Array(
+            items
+                .iter()
+                .map(|item| ai_sanitize_record_value(item, secrets))
+                .collect(),
+        ),
+        other => other.clone(),
+    }
+}
+
+/// 找出第一个被禁止的字段路径（形如 `body.messages[0].api_key`）；只回传字段名，
+/// 绝不回传字段值。`is_forbidden` 由调用方给出：请求体用 `sensitive_key`，
+/// Provider 配置用 [`ai_credential_field_name`]。
+fn ai_forbidden_field_path(
+    value: &Value,
+    prefix: &str,
+    is_forbidden: fn(&str) -> bool,
+) -> Option<String> {
+    match value {
+        Value::Object(fields) => {
+            for (key, child) in fields {
+                let path = if prefix.is_empty() {
+                    key.clone()
+                } else {
+                    format!("{prefix}.{key}")
+                };
+                if is_forbidden(key) {
+                    return Some(path);
+                }
+                if let Some(found) = ai_forbidden_field_path(child, &path, is_forbidden) {
+                    return Some(found);
+                }
+            }
+            None
+        }
+        Value::Array(items) => {
+            for (index, child) in items.iter().enumerate() {
+                let path = format!("{prefix}[{index}]");
+                if let Some(found) = ai_forbidden_field_path(child, &path, is_forbidden) {
+                    return Some(found);
+                }
+            }
+            None
+        }
+        _ => None,
+    }
+}
+
+fn ai_invalid_request(message: &str) -> String {
+    structured_ai_error("invalid_request", message, None, json!({}))
+}
+
+/// 浏览器壳 `src/service/ai_transport.ts` 的 `CREDENTIAL_FIELD` 规则：
+/// 字段名里出现 key / token / secret / credential / password / authorization
+/// 就属于密钥形状，必须单独走 `ai_secret_set`，不得随 Provider 配置提交。
+/// 两个壳必须拒绝同一批载荷，否则同一份配置会在其中一个壳里静默成功。
+fn ai_credential_field_name(name: &str) -> bool {
+    let lowered = name.to_ascii_lowercase();
+    [
+        "key",
+        "token",
+        "secret",
+        "credential",
+        "password",
+        "authorization",
+    ]
+    .iter()
+    .any(|needle| lowered.contains(needle))
+}
+
+/// Provider ID 必须可用于文件名/键名：与浏览器壳的 `PROVIDER_ID_PATTERN` 一致。
+fn ai_valid_provider_id(provider_id: &str) -> bool {
+    let mut characters = provider_id.chars();
+    match characters.next() {
+        Some(first) if first.is_ascii_alphanumeric() => {}
+        _ => return false,
+    }
+    provider_id.chars().count() <= 64
+        && provider_id
+            .chars()
+            .all(|character| character.is_ascii_alphanumeric() || matches!(character, '_' | '-'))
+}
+
+fn ai_validate_provider_id(provider_id: &str) -> Result<String, String> {
+    let trimmed = provider_id.trim();
+    if trimmed.is_empty() {
+        return Err(ai_invalid_request("Provider ID 不能为空。"));
+    }
+    if !ai_valid_provider_id(trimmed) {
+        return Err(ai_invalid_request(
+            "Provider ID 只能使用字母、数字、下划线或短横线，且必须以字母或数字开头（最长 64 个字符）。",
+        ));
+    }
+    Ok(trimmed.to_owned())
+}
+
+/// 解开 `{ "input": { … } }` 调用信封（或直接用裸字段）并返回载荷对象，
+/// **不**做凭据字段扫描：AI 载荷里 `body` 是任意模型请求体，`headers` 可能带
+/// 别名字段，硬拒会把正常请求挡掉（`max_tokens` 这类标准参数会被 `sensitive_key`
+/// 的“token 结尾”规则误伤吗？不会——它既不是分隔词，也不在词尾）。
+fn ai_payload(input: &Value, command: &str) -> Result<Map<String, Value>, String> {
+    if input.is_null() {
+        return Ok(Map::new());
+    }
+    let outer = input
+        .as_object()
+        .ok_or_else(|| format!("{command} 需要结构化参数"))?;
+    match outer.get("input") {
+        Some(inner) if inner.is_object() => inner
+            .as_object()
+            .cloned()
+            .ok_or_else(|| format!("{command} 需要结构化参数")),
+        _ => Ok(outer.clone()),
+    }
+}
+
+/// 同 [`ai_payload`]，但沿用 `require_object` 的凭据字段扫描：用于字段固定的命令。
+fn strict_payload(input: &Value, command: &str) -> Result<Map<String, Value>, String> {
+    if input.is_null() {
+        return Ok(Map::new());
+    }
+    let outer = require_object(input, command)?;
+    match outer.get("input") {
+        Some(inner) if inner.is_object() => Ok(require_object(inner, command)?.clone()),
+        _ => Ok(outer.clone()),
+    }
+}
+
+/// 把可能很长的 Provider 文本截断到 `limit` 个字符，供 `details` 使用。
+fn ai_error_text_limit(text: &str, limit: usize) -> String {
+    let trimmed = text.trim();
+    if trimmed.chars().count() <= limit {
+        return trimmed.to_owned();
+    }
+    let head: String = trimmed.chars().take(limit).collect();
+    format!("{head}…")
+}
+
+// ---------------------------------------------------------------------------
+// 凭据擦除：与浏览器壳 `scrubFreeText` / `scrubProviderText`（`ai_transport.ts`）
+// 及 `redactSecrets`（`errors.ts`）同一套规则。顺序固定为
+// 精确值 → 标签/Bearer/sk- → 不透明串；Provider 正文先判「变形回显」并整段丢弃，
+// 再解转义。两个壳必须给出同一结果，否则同一份 Provider 响应会在一个壳里泄露。
+// ---------------------------------------------------------------------------
+
+const AI_REDACTED: &str = "[REDACTED]";
+/// 短于这个长度的凭据不做精确替换：会把普通文本也搅碎。
+const AI_MIN_EXACT_SECRET_CHARS: usize = 4;
+/// 被拆开的凭据至少要有这么长的片段才算命中。
+const AI_MIN_SPLIT_FRAGMENT_CHARS: usize = 8;
+/// 自由文本字段：用户可能把密钥粘进指令框，或错误信息里回显了密钥。
+const AI_FREE_TEXT_FIELDS: [&str; 2] = ["instruction", "error_message"];
+/// `errors.ts` 里认得的凭据标签（`.` 表示可选的一个 `-` / `_`）。
+const AI_SECRET_LABELS: [&str; 21] = [
+    "x.goog.api.key",
+    "x.api.key",
+    "api.key",
+    "api.secret",
+    "access.token",
+    "refresh.token",
+    "id.token",
+    "auth.token",
+    "bearer.token",
+    "private.key",
+    "client.secret",
+    "secret.key",
+    "passphrase",
+    "password",
+    "authorization",
+    "bearer",
+    "credential",
+    "credentials",
+    "cookie",
+    "secret",
+    "token",
+];
+
+/// 擦除素材：从 `providers.json` 读出（best-effort，读不到就只剩模式擦除）。
+#[derive(Default, Clone)]
+struct AiSecrets {
+    /// 精确替换用的形态：`<scheme> <value>` 与裸 `<value>`，长的在前。
+    forms: Vec<String>,
+    /// 有没有短到不能精确替换的凭据：有的话 Provider 正文一律不回显。
+    has_short: bool,
+}
+
+fn ai_stored_secrets(base: &Path) -> AiSecrets {
+    // 凭据文件坏掉不能挡住执行记录的写入：读不到就只有模式擦除。
+    let Ok(store) = ai_read_provider_store(&ai_store_paths(base).providers) else {
+        return AiSecrets::default();
+    };
+    let schemes: HashMap<String, String> = store
+        .get("providers")
+        .and_then(Value::as_array)
+        .map(|providers| {
+            providers
+                .iter()
+                .filter_map(|provider| {
+                    let object = provider.as_object()?;
+                    let id = object.get("id").and_then(Value::as_str)?.trim().to_owned();
+                    let scheme = field(object, &["auth_scheme", "authScheme"])
+                        .and_then(Value::as_str)
+                        .unwrap_or("")
+                        .trim()
+                        .to_owned();
+                    Some((id, scheme))
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    let mut forms: Vec<String> = Vec::new();
+    let mut has_short = false;
+    if let Some(credentials) = store.get("credentials").and_then(Value::as_object) {
+        for (provider_id, raw) in credentials {
+            let Some(value) = raw
+                .as_str()
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+            else {
+                continue;
+            };
+            if value.chars().count() < AI_MIN_EXACT_SECRET_CHARS {
+                has_short = true;
+            }
+            if let Some(scheme) = schemes.get(provider_id) {
+                if !scheme.is_empty() {
+                    forms.push(format!("{scheme} {value}"));
+                }
+            }
+            forms.push(value.to_owned());
+        }
+    }
+    forms.sort_by(|left, right| right.chars().count().cmp(&left.chars().count()));
+    forms.dedup();
+    AiSecrets { forms, has_short }
+}
+
+/// 精确值替换；短于 4 个字符的交给标签规则（替换会搅碎普通文本）。
+fn ai_exact_scrub(text: &str, secrets: &[String]) -> String {
+    let mut output = text.to_owned();
+    for secret in secrets {
+        if secret.chars().count() < AI_MIN_EXACT_SECRET_CHARS {
+            continue;
+        }
+        if output.contains(secret.as_str()) {
+            output = output.replace(secret.as_str(), AI_REDACTED);
+        }
+    }
+    output
+}
+
+fn ai_opaque_character(character: char) -> bool {
+    character.is_ascii_alphanumeric() || matches!(character, '+' | '/' | '=' | '_' | '-')
+}
+
+/// 不透明串：至少 16 个凭据字母表字符，且含数字或大写字母。
+/// 普通标识符（`deepseek-reasoner`）因此能活下来，编码过的回显不能。
+fn ai_redact_opaque_runs(text: &str) -> String {
+    let characters: Vec<char> = text.chars().collect();
+    let mut output = String::with_capacity(text.len());
+    let mut index = 0;
+    while index < characters.len() {
+        if !ai_opaque_character(characters[index]) {
+            output.push(characters[index]);
+            index += 1;
+            continue;
+        }
+        let start = index;
+        while index < characters.len() && ai_opaque_character(characters[index]) {
+            index += 1;
+        }
+        let run = &characters[start..index];
+        let shaped = run.len() >= 16
+            && run
+                .iter()
+                .any(|character| character.is_ascii_digit() || character.is_ascii_uppercase());
+        if shaped {
+            output.push_str(AI_REDACTED);
+        } else {
+            output.extend(run);
+        }
+    }
+    output
+}
+
+/// 标签匹配：`.` 代表一个可选的 `-` / `_`（`x-api-key` / `x_api_key` 都算）。
+fn ai_match_secret_label(text: &[char], start: usize, label: &str) -> Option<usize> {
+    let mut cursor = start;
+    for pattern in label.chars() {
+        if pattern == '.' {
+            if matches!(text.get(cursor), Some('-' | '_')) {
+                cursor += 1;
+            }
+            continue;
+        }
+        let character = text.get(cursor)?;
+        if !character.eq_ignore_ascii_case(&pattern) {
+            return None;
+        }
+        cursor += 1;
+    }
+    Some(cursor)
+}
+
+/// 值：`"…"` / `'…'` / 一直到换行、`,`、`;`、`&`、引号的裸串。
+fn ai_match_secret_value(text: &[char], start: usize) -> Option<usize> {
+    let quote = match text.get(start) {
+        Some('"') => Some('"'),
+        Some('\'') => Some('\''),
+        Some(_) => None,
+        None => return None,
+    };
+    match quote {
+        Some(quote) => {
+            let mut cursor = start + 1;
+            while let Some(character) = text.get(cursor) {
+                if *character == '\n' {
+                    return None;
+                }
+                if *character == quote {
+                    return Some(cursor + 1);
+                }
+                cursor += 1;
+            }
+            None
+        }
+        None => {
+            let mut cursor = start;
+            while let Some(character) = text.get(cursor) {
+                if matches!(character, '\n' | ',' | ';' | '&' | '"' | '\'') {
+                    break;
+                }
+                cursor += 1;
+            }
+            if cursor > start {
+                Some(cursor)
+            } else {
+                None
+            }
+        }
+    }
+}
+
+/// `authorization: Bearer <x>` / `api_key=<x>`：整段值换成 `[REDACTED]`，标签保留。
+fn ai_redact_labelled_values(text: &str) -> String {
+    let characters: Vec<char> = text.chars().collect();
+    let mut output = String::with_capacity(text.len());
+    let mut index = 0;
+    while index < characters.len() {
+        let mut matched: Option<(usize, usize)> = None;
+        for label in AI_SECRET_LABELS {
+            let Some(after_label) = ai_match_secret_label(&characters, index, label) else {
+                continue;
+            };
+            let mut cursor = after_label;
+            if matches!(characters.get(cursor), Some('"' | '\'')) {
+                cursor += 1;
+            }
+            while matches!(characters.get(cursor), Some(character) if character.is_whitespace()) {
+                cursor += 1;
+            }
+            if !matches!(characters.get(cursor), Some(':' | '=')) {
+                continue;
+            }
+            cursor += 1;
+            while matches!(characters.get(cursor), Some(character) if character.is_whitespace()) {
+                cursor += 1;
+            }
+            if let Some(end) = ai_match_secret_value(&characters, cursor) {
+                matched = Some((end, cursor));
+                break;
+            }
+        }
+        match matched {
+            Some((end, value_start)) => {
+                output.extend(&characters[index..value_start]);
+                output.push_str(AI_REDACTED);
+                index = end;
+            }
+            None => {
+                output.push(characters[index]);
+                index += 1;
+            }
+        }
+    }
+    output
+}
+
+/// 没有标签引入的 `Bearer <token>`：整段抹掉。
+fn ai_redact_bearer(text: &str) -> String {
+    let characters: Vec<char> = text.chars().collect();
+    let mut output = String::with_capacity(text.len());
+    let mut index = 0;
+    while index < characters.len() {
+        let word_start = index == 0
+            || !(characters[index - 1].is_ascii_alphanumeric() || characters[index - 1] == '_');
+        let matches_bearer = word_start
+            && characters.len() >= index + 6
+            && characters[index..index + 6]
+                .iter()
+                .zip("Bearer".chars())
+                .all(|(left, right)| left.eq_ignore_ascii_case(&right));
+        if !matches_bearer {
+            output.push(characters[index]);
+            index += 1;
+            continue;
+        }
+        let mut cursor = index + 6;
+        let whitespace_start = cursor;
+        while matches!(characters.get(cursor), Some(character) if character.is_whitespace()) {
+            cursor += 1;
+        }
+        if cursor == whitespace_start {
+            output.push(characters[index]);
+            index += 1;
+            continue;
+        }
+        let value_start = cursor;
+        while let Some(character) = characters.get(cursor) {
+            if character.is_whitespace() || matches!(character, ',' | ';' | '&' | '"' | '\'') {
+                break;
+            }
+            cursor += 1;
+        }
+        if cursor == value_start {
+            output.push(characters[index]);
+            index += 1;
+            continue;
+        }
+        output.push_str(AI_REDACTED);
+        index = cursor;
+    }
+    output
+}
+
+/// 自身就认得出来的密钥形状：`sk-…`。
+fn ai_redact_prefixed_keys(text: &str) -> String {
+    let characters: Vec<char> = text.chars().collect();
+    let mut output = String::with_capacity(text.len());
+    let mut index = 0;
+    while index < characters.len() {
+        let word_start = index == 0
+            || !(characters[index - 1].is_ascii_alphanumeric() || characters[index - 1] == '_');
+        let matches_prefix = word_start
+            && characters.len() >= index + 3
+            && characters[index] == 's'
+            && characters[index + 1] == 'k'
+            && characters[index + 2] == '-';
+        if !matches_prefix {
+            output.push(characters[index]);
+            index += 1;
+            continue;
+        }
+        let mut cursor = index + 3;
+        while let Some(character) = characters.get(cursor) {
+            if !(character.is_ascii_alphanumeric() || matches!(character, '_' | '-')) {
+                break;
+            }
+            cursor += 1;
+        }
+        if cursor - (index + 3) < 6 {
+            output.push(characters[index]);
+            index += 1;
+            continue;
+        }
+        output.push_str(AI_REDACTED);
+        index = cursor;
+    }
+    output
+}
+
+fn ai_redact_labelled(text: &str) -> String {
+    let values = ai_redact_labelled_values(text);
+    let bearer = ai_redact_bearer(&values);
+    ai_redact_prefixed_keys(&bearer)
+}
+
+fn ai_compact_secret_text(text: &str) -> String {
+    text.chars()
+        .filter(|character| character.is_ascii_alphanumeric())
+        .collect()
+}
+
+/// 反转 / base64 / hex 三种「看起来不像密钥」的回显拼写。
+fn ai_encoded_secret_forms(secret: &str) -> Vec<String> {
+    let mut forms = Vec::new();
+    let reversed: String = secret.chars().rev().collect();
+    if reversed != secret && !reversed.is_empty() {
+        forms.push(reversed);
+    }
+    let encoded = BASE64.encode(secret.as_bytes());
+    if encoded != secret && !encoded.is_empty() {
+        forms.push(encoded);
+    }
+    let hex: String = secret
+        .as_bytes()
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect();
+    if hex != secret && !hex.is_empty() {
+        forms.push(hex);
+    }
+    forms
+}
+
+/// 文本里是否出现了被拆分 / 反转 / 编码过的凭据。命中就无法安全保留任何摘要。
+fn ai_contains_transformed_secret(text: &str, secrets: &[String]) -> bool {
+    let compact = ai_compact_secret_text(text);
+    if compact.is_empty() {
+        return false;
+    }
+    for secret in secrets {
+        let compact_secret = ai_compact_secret_text(secret);
+        let characters: Vec<char> = compact_secret.chars().collect();
+        if characters.len() < AI_MIN_SPLIT_FRAGMENT_CHARS {
+            continue;
+        }
+        for form in ai_encoded_secret_forms(secret) {
+            if text.contains(form.as_str())
+                || compact.contains(ai_compact_secret_text(&form).as_str())
+            {
+                return true;
+            }
+        }
+        let fragment = std::cmp::max(AI_MIN_SPLIT_FRAGMENT_CHARS, characters.len().div_ceil(2));
+        for start in 0..=(characters.len() - fragment) {
+            let window: String = characters[start..start + fragment].iter().collect();
+            if compact.contains(window.as_str()) {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+fn ai_hex_digit(byte: u8) -> Option<u8> {
+    match byte {
+        b'0'..=b'9' => Some(byte - b'0'),
+        b'a'..=b'f' => Some(byte - b'a' + 10),
+        b'A'..=b'F' => Some(byte - b'A' + 10),
+        _ => None,
+    }
+}
+
+/// `%NN` 全量解码；只要有一个 `%` 不是合法转义就保持原样（同 `decodeURIComponent`）。
+fn ai_percent_decode(text: &str) -> Option<String> {
+    let bytes = text.as_bytes();
+    let mut decoded: Vec<u8> = Vec::with_capacity(bytes.len());
+    let mut index = 0;
+    while index < bytes.len() {
+        if bytes[index] == b'%' {
+            let high = ai_hex_digit(*bytes.get(index + 1)?)?;
+            let low = ai_hex_digit(*bytes.get(index + 2)?)?;
+            decoded.push(high * 16 + low);
+            index += 3;
+        } else {
+            decoded.push(bytes[index]);
+            index += 1;
+        }
+    }
+    String::from_utf8(decoded).ok()
+}
+
+/// 还原 Provider 正文可能使用的转义拼写：`%NN`、`\uXXXX`、`\xNN` 与常见简写。
+fn ai_normalize_provider_text(text: &str) -> String {
+    let decoded = ai_percent_decode(text).unwrap_or_else(|| text.to_owned());
+    let characters: Vec<char> = decoded.chars().collect();
+    let mut units: Vec<u16> = Vec::with_capacity(decoded.len());
+    let mut buffer = [0_u16; 2];
+    let mut index = 0;
+    while index < characters.len() {
+        let character = characters[index];
+        if character != '\\' {
+            units.extend_from_slice(character.encode_utf16(&mut buffer));
+            index += 1;
+            continue;
+        }
+        let escape = characters.get(index + 1).copied();
+        if escape == Some('u') && characters.len() >= index + 6 {
+            let digits = &characters[index + 2..index + 6];
+            if let Some(value) = ai_hex_quad(digits) {
+                units.push(value);
+                index += 6;
+                continue;
+            }
+        }
+        if escape == Some('x') && characters.len() >= index + 4 {
+            let digits = &characters[index + 2..index + 4];
+            if let Some(value) = ai_hex_pair(digits) {
+                units.push(value);
+                index += 4;
+                continue;
+            }
+        }
+        if let Some(simple) = escape {
+            let mapped = match simple {
+                'n' => Some('\n'),
+                'r' => Some('\r'),
+                't' => Some('\t'),
+                '"' => Some('"'),
+                '\\' => Some('\\'),
+                '/' => Some('/'),
+                _ => None,
+            };
+            if let Some(mapped) = mapped {
+                units.extend_from_slice(mapped.encode_utf16(&mut buffer));
+                index += 2;
+                continue;
+            }
+        }
+        // 不认识的转义原样保留。
+        units.extend_from_slice(character.encode_utf16(&mut buffer));
+        index += 1;
+    }
+    String::from_utf16_lossy(&units)
+}
+
+fn ai_hex_quad(digits: &[char]) -> Option<u16> {
+    let mut value: u16 = 0;
+    for digit in digits {
+        value = value.checked_mul(16)? + u16::from(ai_hex_digit(*digit as u8)?);
+    }
+    Some(value)
+}
+
+fn ai_hex_pair(digits: &[char]) -> Option<u16> {
+    let high = ai_hex_digit(*digits.first()? as u8)?;
+    let low = ai_hex_digit(*digits.get(1)? as u8)?;
+    Some(u16::from(high) * 16 + u16::from(low))
+}
+
+/// 自由文本（指令、错误信息）的擦除顺序：精确值 → 标签/Bearer/sk- → 不透明串。
+fn ai_scrub_free_text(text: &str, secrets: &[String]) -> String {
+    ai_redact_opaque_runs(&ai_redact_labelled(&ai_exact_scrub(text, secrets)))
+}
+
+/// Provider 正文的完整擦除：先判变形回显并整段丢弃，再解转义、精确替换、
+/// 标签规则与不透明串。
+fn ai_scrub_provider_text(text: &str, secrets: &AiSecrets) -> String {
+    if ai_contains_transformed_secret(text, &secrets.forms) {
+        return AI_REDACTED.to_owned();
+    }
+    let decoded = ai_normalize_provider_text(text);
+    let exact = ai_exact_scrub(&decoded, &secrets.forms);
+    ai_redact_opaque_runs(&ai_redact_labelled(&exact))
+}
+
+/// 有效请求地址可能把密钥放在查询串里，所以它绝不进错误文本：统一用 `<url>` 占位。
+fn ai_strip_request_url(text: &str, url: &str) -> String {
+    let mut forms = vec![url.to_owned()];
+    if let Ok(parsed) = reqwest::Url::parse(url) {
+        let origin = parsed.origin().ascii_serialization();
+        if !origin.is_empty() && origin != "null" {
+            let path = parsed.path();
+            forms.push(format!("{origin}{path}"));
+            forms.push(format!("{origin}{path}/"));
+        }
+    }
+    let mut output = text.to_owned();
+    for form in forms {
+        if form.is_empty() {
+            continue;
+        }
+        if output.contains(form.as_str()) {
+            output = output.replace(form.as_str(), "<url>");
+        }
+    }
+    output
+}
+
+fn ai_body_kind(content_type: &str) -> &'static str {
+    let lowered = content_type.to_ascii_lowercase();
+    if lowered.contains("html") {
+        "html"
+    } else if lowered.contains("json") {
+        "json"
+    } else {
+        "text"
+    }
+}
+
+// ---- Provider 目录 -------------------------------------------------------
+
+fn ai_provider_records(store: &Map<String, Value>) -> Vec<Value> {
+    store
+        .get("providers")
+        .and_then(Value::as_array)
+        .map(|providers| {
+            providers
+                .iter()
+                .map(|provider| ai_sanitize_record(provider, &[]))
+                .collect::<Vec<Value>>()
+        })
+        .unwrap_or_default()
+}
+
+/// Provider 列表 + `configured` 布尔表；**永远不含凭据本身**。
+fn ai_connection_view(store: &Map<String, Value>) -> Value {
+    let providers = ai_provider_records(store);
+    let credentials = store.get("credentials").and_then(Value::as_object);
+    let mut configured = Map::new();
+    for provider in &providers {
+        if let Some(id) = provider.get("id").and_then(Value::as_str) {
+            let has_credential = credentials
+                .and_then(|map| map.get(id))
+                .and_then(Value::as_str)
+                .map(|value| !value.trim().is_empty())
+                .unwrap_or(false);
+            configured.insert(id.to_owned(), json!(has_credential));
+        }
+    }
+    if let Some(credentials) = credentials {
+        for (id, value) in credentials {
+            let has_credential = value
+                .as_str()
+                .map(|value| !value.trim().is_empty())
+                .unwrap_or(false);
+            configured
+                .entry(id.clone())
+                .or_insert_with(|| json!(has_credential));
+        }
+    }
+    json!({ "providers": providers, "configured": Value::Object(configured) })
+}
+
+fn ai_connection_list_at(base: &Path) -> Result<Value, String> {
+    let paths = ai_store_paths(base);
+    let store = ai_read_provider_store(&paths.providers)?;
+    Ok(ai_connection_view(&store))
+}
+
+fn ai_connection_save_at(base: &Path, provider: &Value) -> Result<Value, String> {
+    let object = provider
+        .as_object()
+        .ok_or_else(|| ai_invalid_request("Provider 配置必须是 JSON 对象。"))?;
+    let raw_id = field(object, &["id", "provider_id", "providerId"])
+        .and_then(Value::as_str)
+        .unwrap_or("");
+    let provider_id = ai_validate_provider_id(raw_id)?;
+    // 与浏览器壳一致：密钥形状的字段一律拒绝（而不是静默丢弃），
+    // 这样同一份配置在两个壳里的行为完全相同。
+    if let Some(field_path) = ai_forbidden_field_path(provider, "", ai_credential_field_name) {
+        let leaf = field_path.rsplit('.').next().unwrap_or(field_path.as_str());
+        let hint = if leaf.eq_ignore_ascii_case("requires_credential") {
+            "「requires_credential」是界面元数据，请勿随配置提交。"
+        } else {
+            "密钥请通过「保存密钥」单独提交。"
+        };
+        return Err(structured_ai_error(
+            "invalid_request",
+            &format!("Provider 配置中出现了不允许的字段「{field_path}」。"),
+            Some(&format!(
+                "{hint}允许的字段：id / label / kind / base_url / chat_path / auth_header / auth_scheme / default_model / models。"
+            )),
+            json!({ "field": field_path }),
+        ));
+    }
+    let mut record = match ai_strip_sensitive(provider, ai_sensitive_key) {
+        Value::Object(map) => map,
+        _ => return Err(ai_invalid_request("Provider 配置必须是 JSON 对象。")),
+    };
+    record.insert("id".into(), json!(provider_id));
+    let record = Value::Object(record);
+
+    let paths = ai_store_paths(base);
+    let mut store = ai_read_provider_store(&paths.providers)?;
+    let providers = store
+        .get_mut("providers")
+        .and_then(Value::as_array_mut)
+        .ok_or("AI Provider 配置格式无效")?;
+    match providers.iter().position(|existing| {
+        existing.get("id").and_then(Value::as_str) == Some(provider_id.as_str())
+    }) {
+        Some(index) => providers[index] = record.clone(),
+        None => providers.push(record.clone()),
+    }
+    ai_write_store(&paths.providers, &Value::Object(store), "AI Provider 配置")?;
+    Ok(json!({ "provider": record }))
+}
+
+fn ai_connection_delete_at(base: &Path, provider_id: &str) -> Result<Value, String> {
+    let paths = ai_store_paths(base);
+    let mut store = ai_read_provider_store(&paths.providers)?;
+    let removed_provider = store
+        .get_mut("providers")
+        .and_then(Value::as_array_mut)
+        .map(|providers| {
+            let before = providers.len();
+            providers
+                .retain(|provider| provider.get("id").and_then(Value::as_str) != Some(provider_id));
+            providers.len() != before
+        })
+        .unwrap_or(false);
+    let removed_credential = store
+        .get_mut("credentials")
+        .and_then(Value::as_object_mut)
+        .map(|credentials| credentials.remove(provider_id).is_some())
+        .unwrap_or(false);
+    let removed = removed_provider || removed_credential;
+    if removed {
+        ai_write_store(&paths.providers, &Value::Object(store), "AI Provider 配置")?;
+    }
+    Ok(json!({ "provider_id": provider_id, "removed": removed }))
+}
+
+/// 保存凭据。`value` 只出现在写入内容里：返回值、错误文本、日志一行都不带它。
+fn ai_secret_set_at(base: &Path, provider_id: &str, value: &str) -> Result<Value, String> {
+    let provider_id = ai_validate_provider_id(provider_id)?;
+    // 长度上限与浏览器壳一致；错误文本只说明问题，绝不含 value 本身。
+    let value = value.trim();
+    if value.is_empty() {
+        return Err(ai_invalid_request("API Key 不能为空。"));
+    }
+    if value.chars().count() > AI_CREDENTIAL_MAX_CHARS {
+        return Err(ai_invalid_request(
+            "API Key 过长，请确认粘贴的内容是否正确。",
+        ));
+    }
+    let paths = ai_store_paths(base);
+    let mut store = ai_read_provider_store(&paths.providers)?;
+    store
+        .get_mut("credentials")
+        .and_then(Value::as_object_mut)
+        .ok_or("AI Provider 配置格式无效")?
+        .insert(provider_id.clone(), json!(value));
+    // 失败路径只回传 IO/序列化错误，绝不把 value 拼进消息。
+    ai_write_store(&paths.providers, &Value::Object(store), "AI Provider 配置")?;
+    Ok(json!({ "provider_id": provider_id }))
+}
+
+fn ai_secret_delete_at(base: &Path, provider_id: &str) -> Result<Value, String> {
+    let paths = ai_store_paths(base);
+    let mut store = ai_read_provider_store(&paths.providers)?;
+    let removed = store
+        .get_mut("credentials")
+        .and_then(Value::as_object_mut)
+        .map(|credentials| credentials.remove(provider_id).is_some())
+        .unwrap_or(false);
+    if removed {
+        ai_write_store(&paths.providers, &Value::Object(store), "AI Provider 配置")?;
+    }
+    Ok(json!({ "provider_id": provider_id, "removed": removed }))
+}
+
+// ---- AI 传输 -------------------------------------------------------------
+
+struct AiRequestSpec {
+    request_id: String,
+    provider_id: String,
+    url: String,
+    headers: Vec<(String, String)>,
+    /// 由本地存储注入的鉴权头（名称 + 完整值）；值里含凭据，绝不外泄。
+    auth_header: Option<(String, String)>,
+    /// 已经序列化好的请求体：JSON 用紧凑编码，字符串按原样发送。
+    body: Vec<u8>,
+    timeout_ms: u64,
+    /// 擦除素材（所有已存凭据的形态）：Provider 回显的正文一律先过它。
+    secrets: AiSecrets,
+}
+
+/// HTTP 头名称的合法字符集（与浏览器壳的 `HEADER_NAME_PATTERN` 一致）。
+fn ai_valid_header_name(name: &str) -> bool {
+    !name.is_empty()
+        && name.chars().all(|character| {
+            character.is_ascii_alphanumeric()
+                || matches!(
+                    character,
+                    '!' | '#'
+                        | '$'
+                        | '%'
+                        | '&'
+                        | '\''
+                        | '*'
+                        | '+'
+                        | '.'
+                        | '^'
+                        | '_'
+                        | '`'
+                        | '|'
+                        | '~'
+                        | '-'
+                )
+        })
+}
+
+/// 请求头归一化：丢弃渲染层的内部标记与 `fetch` 自管头，缺省补 content-type。
+fn ai_normalize_headers(value: Option<&Value>) -> Result<Vec<(String, String)>, String> {
+    let mut headers: Vec<(String, String)> = Vec::new();
+    if let Some(value) = value {
+        if !value.is_null() {
+            let object = value.as_object().ok_or_else(|| {
+                structured_ai_error("invalid_request", "AI 请求头格式无效。", None, json!({}))
+            })?;
+            for (name, raw) in object {
+                let header = name.trim().to_ascii_lowercase();
+                if !ai_valid_header_name(&header) {
+                    return Err(structured_ai_error(
+                        "invalid_request",
+                        "AI 请求头名称无效。",
+                        None,
+                        json!({}),
+                    ));
+                }
+                // `x-workbench-*` 是渲染层的分发标记，绝不发给 Provider。
+                if header.starts_with("x-workbench-") {
+                    continue;
+                }
+                // 这两个头由传输层自己负责，转发会破坏请求。
+                if header == "content-length" || header == "host" {
+                    continue;
+                }
+                let Some(text) = raw.as_str() else {
+                    return Err(structured_ai_error(
+                        "invalid_request",
+                        &format!("AI 请求头「{header}」的值必须是文本。"),
+                        None,
+                        json!({}),
+                    ));
+                };
+                match headers.iter_mut().find(|(existing, _)| *existing == header) {
+                    Some(entry) => entry.1 = text.to_owned(),
+                    None => headers.push((header, text.to_owned())),
+                }
+            }
+        }
+    }
+    if !headers.iter().any(|(name, _)| name == "content-type") {
+        headers.push(("content-type".into(), "application/json".into()));
+    }
+    Ok(headers)
+}
+
+/// `auth` 归一化：只有 `header` 是非空字符串时才注入；
+/// 本地 / 自定义端点可以完全不带鉴权头（既不注入，也不要求密钥）。
+fn ai_normalize_auth(value: Option<&Value>) -> Result<Option<(String, String)>, String> {
+    let value = match value {
+        None | Some(Value::Null) => return Ok(None),
+        Some(value) => value,
+    };
+    let object = value.as_object().ok_or_else(|| {
+        structured_ai_error("invalid_request", "AI 鉴权配置无效。", None, json!({}))
+    })?;
+    let header = field(object, &["header"])
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .unwrap_or("");
+    if header.is_empty() {
+        return Ok(None);
+    }
+    if !ai_valid_header_name(header) {
+        return Err(structured_ai_error(
+            "invalid_request",
+            "AI 鉴权头名称无效。",
+            None,
+            json!({}),
+        ));
+    }
+    let scheme = field(object, &["scheme"])
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .unwrap_or("");
+    Ok(Some((header.to_ascii_lowercase(), scheme.to_owned())))
+}
+
+/// 请求体序列化：字符串按原样发送，其余走紧凑 JSON；缺 body 直接报错。
+fn ai_serialize_body(value: Option<&Value>) -> Result<Vec<u8>, String> {
+    match value {
+        None | Some(Value::Null) => Err(structured_ai_error(
+            "invalid_request",
+            "AI 请求缺少 body。",
+            None,
+            json!({}),
+        )),
+        Some(Value::String(text)) => Ok(text.clone().into_bytes()),
+        Some(value) => serde_json::to_vec(value).map_err(|error| {
+            structured_ai_error(
+                "invalid_request",
+                "AI 请求 body 无法序列化为 JSON。",
+                None,
+                json!({ "reason": error.to_string() }),
+            )
+        }),
+    }
+}
+
+/// 只允许 https；本地联调额外允许本机回环（`127.0.0.1` / `localhost` / `::1`）。
+fn ai_validate_request_url(url: &str) -> Result<(), String> {
+    let parsed = reqwest::Url::parse(url).map_err(|_| {
+        structured_ai_error(
+            "invalid_request",
+            "AI 请求地址无效，无法解析。",
+            Some("请检查服务商接口地址。"),
+            json!({}),
+        )
+    })?;
+    match parsed.scheme() {
+        "https" => Ok(()),
+        "http" => match parsed.host_str() {
+            // 与浏览器壳同一套白名单：仅本机回环（IPv4 / IPv6 / localhost）。
+            Some("127.0.0.1") | Some("localhost") | Some("::1") | Some("[::1]") => Ok(()),
+            _ => Err(ai_url_scheme_error()),
+        },
+        _ => Err(ai_url_scheme_error()),
+    }
+}
+
+fn ai_url_scheme_error() -> String {
+    structured_ai_error(
+        "invalid_request",
+        "出于安全考虑，AI 请求只允许 https:// 地址（本机调试可用 http://127.0.0.1 或 http://localhost）。",
+        Some("请把服务地址改为 https:// 开头的接口地址。"),
+        json!({}),
+    )
+}
+
+fn ai_request_spec(base: &Path, input: &Value) -> Result<AiRequestSpec, String> {
+    let payload = ai_payload(input, "ai_complete")?;
+    // 防御性检查：上下文装配一旦把凭据字段塞进请求（例如 `api_key`），
+    // 这里给出可读的 invalid_request 并指明字段路径，而不是把密钥发给 Provider。
+    if let Some(field_path) =
+        ai_forbidden_field_path(&Value::Object(payload.clone()), "", sensitive_key)
+    {
+        return Err(structured_ai_error(
+            "invalid_request",
+            &format!(
+                "AI 请求里出现了疑似凭据的字段「{field_path}」，为避免把密钥发给 Provider，本次请求未发出。"
+            ),
+            Some("请检查上下文装配：请求体只能包含课程内容与标准模型参数，不能包含 API Key、令牌或密码字段。"),
+            json!({ "field": field_path }),
+        ));
+    }
+    // 与浏览器壳一致：request_id 缺省时本地补一个，取消依然可用。
+    let request_id = field(&payload, &["request_id", "requestId"])
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned)
+        .unwrap_or_else(|| native_id("ai-request"));
+    let provider_id = field(&payload, &["provider_id", "providerId"])
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .unwrap_or("")
+        .to_owned();
+    // 地址统一走校验（含空值）：任何不被允许的形状都是 invalid_request。
+    let url = field(&payload, &["url"])
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .unwrap_or("")
+        .to_owned();
+    ai_validate_request_url(&url)?;
+    let timeout_ms = match field(&payload, &["timeout_ms", "timeoutMs"]) {
+        None | Some(Value::Null) => AI_DEFAULT_TIMEOUT_MS,
+        Some(value) => {
+            let raw = value.as_u64().filter(|value| *value > 0).ok_or_else(|| {
+                structured_ai_error("invalid_request", "AI 请求超时时间无效。", None, json!({}))
+            })?;
+            raw.clamp(1, AI_MAX_TIMEOUT_MS)
+        }
+    };
+    let auth = ai_normalize_auth(field(&payload, &["auth"]))?;
+    let headers = ai_normalize_headers(field(&payload, &["headers"]))?;
+    let body = ai_serialize_body(field(&payload, &["body"]))?;
+    let credential = match &auth {
+        None => None,
+        Some(_) => {
+            if provider_id.is_empty() {
+                return Err(structured_ai_error(
+                    "not_configured",
+                    "尚未选择 AI 服务商，无法取出密钥。",
+                    Some("在 AI 面板中选择并保存一个服务商后重试。"),
+                    json!({}),
+                ));
+            }
+            let paths = ai_store_paths(base);
+            let store = ai_read_provider_store(&paths.providers)?;
+            Some(ai_credential_value(&store, &provider_id).ok_or_else(|| {
+                structured_ai_error(
+                    "missing_credential",
+                    &format!("AI 服务商「{provider_id}」还没有配置 API Key。"),
+                    Some("在 AI 面板点击该服务商的「保存密钥」，填入 API Key 后重试。"),
+                    json!({ "provider_id": provider_id.clone() }),
+                )
+            })?)
+        }
+    };
+    let auth_header = match (auth, credential.clone()) {
+        (Some((header, scheme)), Some(credential)) => {
+            let value = if scheme.is_empty() {
+                credential
+            } else {
+                format!("{scheme} {credential}")
+            };
+            Some((header, value))
+        }
+        _ => None,
+    };
+    Ok(AiRequestSpec {
+        request_id,
+        provider_id,
+        url,
+        headers,
+        auth_header,
+        body,
+        timeout_ms,
+        // 存储里的每个凭据（含 `<scheme> <value>` 形态）都参与擦除，
+        // 而不是只擦本次注入的那一个。
+        secrets: ai_stored_secrets(base),
+    })
+}
+
+fn ai_status_error(
+    status: u16,
+    text: &str,
+    secrets: &AiSecrets,
+    provider_id: &str,
+    url: &str,
+    content_type: &str,
+) -> String {
+    // 敌意或出错的 Provider 会在错误正文里回显请求（含地址与请求头）。
+    // 摘要有四层：换掉有效地址 → 判变形回显并整段丢弃 → 解转义+精确值+模式擦除 → 截断。
+    // 只要存有短到不能精确替换的凭据，就一个字都不回显：可读性比不上不泄露。
+    let detail = if secrets.has_short {
+        AI_REDACTED.to_owned()
+    } else {
+        ai_error_text_limit(
+            &ai_scrub_provider_text(&ai_strip_request_url(text.trim(), url), secrets),
+            AI_ERROR_TEXT_LIMIT,
+        )
+    };
+    let details = json!({
+        "provider_id": if provider_id.is_empty() { Value::Null } else { json!(provider_id) },
+        "status": status,
+        "body_kind": ai_body_kind(content_type),
+        "body_chars": text.chars().count(),
+        "detail": detail,
+    });
+    // 3xx：传输层不跟随跳转（自定义鉴权头不能被转发到别的站点）。
+    if (300..400).contains(&status) {
+        return structured_ai_error(
+            "provider_error",
+            "AI 服务商地址发生了跳转，为避免密钥被转发到其他站点，请求已停止。",
+            Some("请把服务地址改为最终地址后重试。"),
+            details,
+        );
+    }
+    match status {
+        401 => structured_ai_error(
+            "missing_credential",
+            "服务商拒绝了本次请求（401）：API Key 可能不正确、已过期或未授权。",
+            Some("在 AI 面板重新保存该服务商的 API Key 后重试。"),
+            details,
+        ),
+        403 => structured_ai_error(
+            "permission_denied",
+            "服务商拒绝了本次请求（403）：该密钥没有调用此模型或接口的权限。",
+            Some("确认密钥权限、账号额度或更换模型后重试。"),
+            details,
+        ),
+        429 => structured_ai_error(
+            "rate_limited",
+            "请求过于频繁（429），服务商已限流。",
+            Some("等待一段时间后重试，或降低请求频率。"),
+            details,
+        ),
+        _ if status >= 500 => structured_ai_error(
+            "provider_error",
+            &format!("AI 服务商暂时不可用（HTTP {status}）。"),
+            Some("稍后重试；若持续失败，请查看服务商状态页。"),
+            details,
+        ),
+        _ => structured_ai_error(
+            "provider_error",
+            &format!("AI 服务商返回错误（HTTP {status}）。"),
+            Some("检查模型名称与服务地址后重试。"),
+            details,
+        ),
+    }
+}
+
+fn ai_transport_error(
+    error: reqwest::Error,
+    timeout_ms: u64,
+    url: &str,
+    secrets: &AiSecrets,
+    provider_id: &str,
+) -> String {
+    // reqwest 的错误文本会带上完整 URL（查询串里可能有密钥），
+    // 所以先换掉地址，再按 Provider 正文的规则擦一遍。
+    let raw = ai_error_text_limit(
+        &ai_scrub_provider_text(&ai_strip_request_url(&error.to_string(), url), secrets),
+        AI_ERROR_TEXT_LIMIT,
+    );
+    let provider = if provider_id.is_empty() {
+        Value::Null
+    } else {
+        json!(provider_id)
+    };
+    if error.is_timeout() {
+        let seconds = std::cmp::max(1, (timeout_ms as f64 / 1000.0).round() as u64);
+        return structured_ai_error(
+            "timeout",
+            &format!("AI 服务商在 {seconds} 秒内没有响应，请求已结束。"),
+            Some("稍后重试；如果持续超时，请换用响应更快的模型。"),
+            json!({ "provider_id": provider, "timeout_ms": timeout_ms }),
+        );
+    }
+    structured_ai_error(
+        "transport_unavailable",
+        "无法连接到 AI 服务商，请检查网络连接或服务地址。",
+        Some("检查网络与服务地址后重试。"),
+        json!({ "provider_id": provider, "reason": raw }),
+    )
+}
+
+async fn ai_perform_request(spec: AiRequestSpec) -> Result<Value, String> {
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_millis(spec.timeout_ms))
+        // 不跟随重定向：跳转可能把自定义鉴权头转发到用户没有配置过的站点。
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
+        .map_err(|error| {
+            structured_ai_error(
+                "transport_unavailable",
+                "无法初始化 AI 网络客户端。",
+                Some("请重启工作台后重试。"),
+                json!({ "reason": ai_error_text_limit(&error.to_string(), AI_ERROR_TEXT_LIMIT) }),
+            )
+        })?;
+    let mut request = client.post(&spec.url);
+    for (name, value) in &spec.headers {
+        request = request.header(name.as_str(), value.as_str());
+    }
+    if let Some((name, value)) = &spec.auth_header {
+        // 鉴权头最后写入：调用方即使传了同名头，也以本地保存的凭据为准。
+        request = request.header(name.as_str(), value.as_str());
+    }
+    let response = request
+        .body(spec.body.clone())
+        .send()
+        .await
+        .map_err(|error| {
+            ai_transport_error(
+                error,
+                spec.timeout_ms,
+                &spec.url,
+                &spec.secrets,
+                &spec.provider_id,
+            )
+        })?;
+    let status = response.status();
+    let content_type = response
+        .headers()
+        .get(reqwest::header::CONTENT_TYPE)
+        .and_then(|value| value.to_str().ok())
+        .unwrap_or("")
+        .to_owned();
+    if let Some(size) = response
+        .content_length()
+        .filter(|length| *length > AI_RESPONSE_SIZE_LIMIT)
+    {
+        return Err(structured_ai_error(
+            "provider_error",
+            "AI 服务商返回的内容过大，已停止处理。",
+            Some("缩小上下文后重试。"),
+            json!({
+                "provider_id": if spec.provider_id.is_empty() { Value::Null } else { json!(spec.provider_id) },
+                "size": size,
+            }),
+        ));
+    }
+    let bytes = response.bytes().await.map_err(|error| {
+        ai_transport_error(
+            error,
+            spec.timeout_ms,
+            &spec.url,
+            &spec.secrets,
+            &spec.provider_id,
+        )
+    })?;
+    let text = String::from_utf8_lossy(&bytes).into_owned();
+    if !status.is_success() {
+        return Err(ai_status_error(
+            status.as_u16(),
+            &text,
+            &spec.secrets,
+            &spec.provider_id,
+            &spec.url,
+            &content_type,
+        ));
+    }
+    let content_type_value = json!(content_type);
+    if content_type
+        .to_ascii_lowercase()
+        .contains("text/event-stream")
+    {
+        Ok(json!({
+            "status": status.as_u16(),
+            "headers": { "content-type": content_type_value },
+            "body": text,
+            "response_kind": "stream",
+        }))
+    } else {
+        // 解析不了就按原文回传，由前端判定 malformed_response。
+        let body = serde_json::from_str::<Value>(&text).unwrap_or(Value::String(text));
+        Ok(json!({
+            "status": status.as_u16(),
+            "headers": { "content-type": content_type_value },
+            "body": body,
+            "response_kind": "json",
+        }))
+    }
+}
+
+/// 发一次请求并把 `JoinHandle` 登记到 `requests`；取消时由 `ai_cancel_at` 中止。
+async fn ai_complete_at(
+    base: &Path,
+    requests: &AiRequestHandles,
+    input: &Value,
+) -> Result<Value, String> {
+    let spec = ai_request_spec(base, input)?;
+    let request_id = spec.request_id.clone();
+    let (sender, mut receiver) = tauri::async_runtime::channel::<Result<Value, String>>(1);
+    let handle = tauri::async_runtime::spawn(async move {
+        let outcome = ai_perform_request(spec).await;
+        let _ = sender.send(outcome).await;
+    });
+    requests.lock().unwrap().insert(request_id.clone(), handle);
+    let outcome = receiver.recv().await;
+    requests.lock().unwrap().remove(&request_id);
+    match outcome {
+        Some(outcome) => outcome,
+        // 被 abort 的任务连同发送端一起消失：这就是「已取消」。
+        None => Err(structured_ai_error(
+            "cancelled",
+            "已取消这次 AI 请求",
+            Some("可以重新发起请求；已取消的请求不会改动课程内容。"),
+            json!({ "request_id": request_id }),
+        )),
+    }
+}
+
+fn ai_cancel_at(requests: &AiRequestHandles, input: &Value) -> Result<Value, String> {
+    // 取消必须永不失败：空 / 未知 / 已结束的 id 都是空操作，重复点取消是正常操作。
+    let payload = ai_payload(input, "ai_cancel")?;
+    let request_id = field(&payload, &["request_id", "requestId"])
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .unwrap_or("");
+    let cancelled = if request_id.is_empty() {
+        false
+    } else {
+        match requests.lock().unwrap().remove(request_id) {
+            Some(handle) => {
+                handle.abort();
+                true
+            }
+            None => false,
+        }
+    };
+    Ok(json!({ "cancelled": cancelled }))
+}
+
+// ---- 执行记录（非 Canonical，写失败不得影响课程保存） ---------------------
+
+/// 执行记录写入失败时使用的结构化错误：只提示，绝不影响课程保存
+/// （与浏览器壳 `ai_execution_record_failed` 同一 code）。
+fn ai_execution_record_failed(reason: &str) -> String {
+    structured_ai_error(
+        "ai_execution_record_failed",
+        "AI 执行记录未能写入，课程内容不受影响。",
+        Some("可以继续编辑课程；如需保留记录，请确认工作台的本地数据目录可写。"),
+        json!({ "operation": "ai.execution.append", "reason": reason }),
+    )
+}
+
+/// 追加或按 `id` **就地替换**一条执行记录。
+///
+/// 同一次运行会先写一条 `pending`，用户随后做出决定（`applied` / `rejected`）时会
+/// 再写一次：按 `id` 替换而不是再插一行，历史里只留一行，并且保留它原来的列表位置，
+/// 所以调用方看到的最新在前顺序不会因为「补写决定」而改变。旧实现留下的同一个
+/// `id` 的多余行，也会在这一次替换里一并清掉。
+fn ai_execution_append_at(base: &Path, record: &Value) -> Result<Value, String> {
+    // 凭据文件坏掉不能挡住执行记录：读不到就只做模式擦除。
+    let secrets = ai_stored_secrets(base);
+    let mut cleaned = ai_sanitize_record(record, &secrets.forms);
+    let object = cleaned
+        .as_object_mut()
+        .ok_or_else(|| ai_execution_record_failed("AI 执行记录必须是 JSON 对象"))?;
+    let supplied_id = object
+        .get("id")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned);
+    let id = supplied_id.clone().unwrap_or_else(|| native_id("ai-exec"));
+    object.insert("id".into(), json!(id));
+    let paths = ai_store_paths(base);
+    let mut store = ai_read_execution_store(&paths.executions)
+        .map_err(|error| ai_execution_record_failed(&error))?;
+    let records = store
+        .get_mut("records")
+        .and_then(Value::as_array_mut)
+        .ok_or_else(|| ai_execution_record_failed("AI 执行记录格式无效"))?;
+    let existing = supplied_id.as_deref().and_then(|id| {
+        records
+            .iter()
+            .position(|existing| existing.get("id").and_then(Value::as_str) == Some(id))
+    });
+    match existing {
+        Some(index) => {
+            records[index] = cleaned;
+            let mut cursor = index + 1;
+            while cursor < records.len() {
+                if records[cursor].get("id").and_then(Value::as_str) == Some(id.as_str()) {
+                    records.remove(cursor);
+                } else {
+                    cursor += 1;
+                }
+            }
+        }
+        None => {
+            records.insert(0, cleaned);
+            records.truncate(AI_EXECUTION_LIMIT);
+        }
+    }
+    // 这里刻意不取任何项目锁：执行记录写失败只能提示，不能影响 project_save。
+    ai_write_store(&paths.executions, &Value::Object(store), "AI 执行记录")
+        .map_err(|error| ai_execution_record_failed(&error))?;
+    Ok(json!({ "id": id }))
+}
+
+fn ai_execution_list_at(base: &Path, limit: usize) -> Result<Value, String> {
+    let paths = ai_store_paths(base);
+    let store = ai_read_execution_store(&paths.executions)?;
+    // 读取路径同样擦一遍（纵深防御）：修复前写下的记录里可能还留着粘进去的密钥。
+    let secrets = ai_stored_secrets(base);
+    let mut records: Vec<Value> = store
+        .get("records")
+        .and_then(Value::as_array)
+        .map(|records| {
+            records
+                .iter()
+                .map(|record| ai_sanitize_record(record, &secrets.forms))
+                .collect()
+        })
+        .unwrap_or_default();
+    // 新的在前；时间戳相同时保持写入顺序（稳定排序）。
+    records.sort_by(|left, right| {
+        let left = left.get("created_at").and_then(Value::as_str).unwrap_or("");
+        let right = right
+            .get("created_at")
+            .and_then(Value::as_str)
+            .unwrap_or("");
+        right.cmp(left)
+    });
+    records.truncate(limit.clamp(1, AI_EXECUTION_LIMIT));
+    Ok(json!({ "records": records }))
+}
+
+// ---- 命令入口（只在这里解析应用数据目录） ---------------------------------
+
+/// 取原始 invoke 载荷。
+///
+/// 桌面壳的 `nativeInput` 不会给 AI 命令补 `input` 信封，而服务壳走的是
+/// `{ "input": { … } }`；两种形状都必须能用，所以这里直接读原始载荷，
+/// 再交给 [`ai_payload`] / [`strict_payload`] 统一拆封。
+fn ai_invoke_args(request: &tauri::ipc::Request<'_>) -> Value {
+    match request.body() {
+        tauri::ipc::InvokeBody::Json(value) => value.clone(),
+        _ => Value::Null,
+    }
+}
+
+#[tauri::command]
+fn ai_connection_list(app: AppHandle, request: tauri::ipc::Request<'_>) -> Result<Value, String> {
+    strict_payload(&ai_invoke_args(&request), "ai_connection_list")?;
+    ai_connection_list_at(&ai_store_dir(&app)?)
+}
+
+#[tauri::command]
+fn ai_connection_save(app: AppHandle, request: tauri::ipc::Request<'_>) -> Result<Value, String> {
+    let payload = ai_payload(&ai_invoke_args(&request), "ai_connection_save")?;
+    let provider = field(&payload, &["provider"])
+        .cloned()
+        .unwrap_or_else(|| Value::Object(payload.clone()));
+    ai_connection_save_at(&ai_store_dir(&app)?, &provider)
+}
+
+#[tauri::command]
+fn ai_connection_delete(app: AppHandle, request: tauri::ipc::Request<'_>) -> Result<Value, String> {
+    let payload = strict_payload(&ai_invoke_args(&request), "ai_connection_delete")?;
+    let provider_id = required_string(&payload, &["provider_id", "providerId"], "Provider ID")?;
+    ai_connection_delete_at(&ai_store_dir(&app)?, &provider_id)
+}
+
+#[tauri::command]
+fn ai_secret_set(app: AppHandle, request: tauri::ipc::Request<'_>) -> Result<Value, String> {
+    // 凭据值只在这里取一次，之后仅出现在写入内容里。
+    let payload = strict_payload(&ai_invoke_args(&request), "ai_secret_set")?;
+    let provider_id = required_string(&payload, &["provider_id", "providerId"], "Provider ID")?;
+    let value = required_string(&payload, &["value"], "API Key")?;
+    ai_secret_set_at(&ai_store_dir(&app)?, &provider_id, &value)
+}
+
+#[tauri::command]
+fn ai_secret_delete(app: AppHandle, request: tauri::ipc::Request<'_>) -> Result<Value, String> {
+    let payload = strict_payload(&ai_invoke_args(&request), "ai_secret_delete")?;
+    let provider_id = required_string(&payload, &["provider_id", "providerId"], "Provider ID")?;
+    ai_secret_delete_at(&ai_store_dir(&app)?, &provider_id)
+}
+
+#[tauri::command]
+async fn ai_complete(
+    app: AppHandle,
+    state: State<'_, BridgeState>,
+    request: tauri::ipc::Request<'_>,
+) -> Result<Value, String> {
+    let args = ai_invoke_args(&request);
+    let base = ai_store_dir(&app)?;
+    ai_complete_at(&base, &state.ai_requests, &args).await
+}
+
+#[tauri::command]
+fn ai_cancel(
+    state: State<'_, BridgeState>,
+    request: tauri::ipc::Request<'_>,
+) -> Result<Value, String> {
+    ai_cancel_at(&state.ai_requests, &ai_invoke_args(&request))
+}
+
+#[tauri::command]
+fn ai_execution_append(app: AppHandle, request: tauri::ipc::Request<'_>) -> Result<Value, String> {
+    let payload = ai_payload(&ai_invoke_args(&request), "ai_execution_append")?;
+    let record = field(&payload, &["record"])
+        .cloned()
+        .ok_or("AI 执行记录不能为空")?;
+    ai_execution_append_at(&ai_store_dir(&app)?, &record)
+}
+
+#[tauri::command]
+fn ai_execution_list(app: AppHandle, request: tauri::ipc::Request<'_>) -> Result<Value, String> {
+    let payload = strict_payload(&ai_invoke_args(&request), "ai_execution_list")?;
+    let limit = field(&payload, &["limit"])
+        .and_then(Value::as_u64)
+        .map(|value| value as usize)
+        .unwrap_or(AI_EXECUTION_DEFAULT_LIMIT);
+    ai_execution_list_at(&ai_store_dir(&app)?, limit)
+}
+
 #[cfg(test)]
 mod tests {
+
     use super::*;
 
     fn test_directory(label: &str) -> PathBuf {
@@ -3601,6 +5526,193 @@ mod tests {
     }
 
     #[test]
+    fn asset_read_returns_project_asset_bytes_and_rejects_unsafe_paths() {
+        let directory = test_directory("asset-read");
+        let project_dir = directory.to_string_lossy().into_owned();
+        let initial =
+            json!({ "project": { "id": "p1", "title": "read" }, "assets": [], "items": [] });
+        project_create(project_dir.clone(), initial).expect("project should be created");
+
+        let payload = BASE64.encode(b"asset-bytes");
+        let imported = asset_import(json!({
+            "input": {
+                "project_dir": project_dir,
+                "filename": "封面.png",
+                "mime_type": "image/png",
+                "type": "image",
+                "bytes_base64": payload,
+            }
+        }))
+        .expect("asset import should succeed");
+        let asset_id = imported["asset"]["id"].as_str().unwrap().to_owned();
+
+        let read = asset_read(json!({
+            "project_dir": project_dir,
+            "asset_id": asset_id,
+        }))
+        .expect("preview read should return the stored bytes");
+        assert_eq!(read["bytes_base64"], json!(BASE64.encode(b"asset-bytes")));
+        assert_eq!(read["file_size"], json!(11));
+        assert_eq!(read["mime_type"], json!("image/png"));
+
+        let missing = asset_read(json!({
+            "project_dir": project_dir,
+            "asset_id": "asset-does-not-exist",
+        }))
+        .expect_err("unknown asset ids must be rejected");
+        assert!(missing.contains("找不到素材"));
+
+        // A tampered storage path must never resolve outside the project.
+        let mut project = read_project_value(&directory).unwrap();
+        project["assets"][0]["storage_path"] = json!("../../etc/hosts");
+        fs::write(
+            directory.join("project.json"),
+            serde_json::to_vec_pretty(&project).unwrap(),
+        )
+        .unwrap();
+        let escaped = asset_read(json!({
+            "project_dir": directory.to_string_lossy().into_owned(),
+            "asset_id": asset_id,
+        }))
+        .expect_err("path traversal must be rejected");
+        assert!(
+            escaped.contains("assets/") || escaped.contains("项目文件路径无效"),
+            "got: {escaped}"
+        );
+
+        // Even inside assets/, a path with a parent component is refused.
+        project["assets"][0]["storage_path"] = json!("assets/../../etc/hosts");
+        fs::write(
+            directory.join("project.json"),
+            serde_json::to_vec_pretty(&project).unwrap(),
+        )
+        .unwrap();
+        let nested_escape = asset_read(json!({
+            "project_dir": directory.to_string_lossy().into_owned(),
+            "asset_id": asset_id,
+        }))
+        .expect_err("a parent component must be rejected");
+        assert!(!nested_escape.is_empty(), "got: {nested_escape}");
+
+        // A tampered row pointing at canonical data must not be readable.
+        project["assets"][0]["storage_path"] = json!("project.json");
+        fs::write(
+            directory.join("project.json"),
+            serde_json::to_vec_pretty(&project).unwrap(),
+        )
+        .unwrap();
+        let outside = asset_read(json!({
+            "project_dir": directory.to_string_lossy().into_owned(),
+            "asset_id": asset_id,
+        }))
+        .expect_err("only assets/ paths may be read");
+        assert!(outside.contains("assets/"), "got: {outside}");
+        project["assets"][0]["storage_path"] = json!("assets/missing.png");
+        fs::write(
+            directory.join("project.json"),
+            serde_json::to_vec_pretty(&project).unwrap(),
+        )
+        .unwrap();
+        let missing_file = asset_read(json!({
+            "project_dir": directory.to_string_lossy().into_owned(),
+            "asset_id": asset_id,
+        }))
+        .expect_err("a missing file must be reported");
+        assert!(!missing_file.is_empty(), "got: {missing_file}");
+
+        project_close(directory.to_string_lossy().into_owned()).unwrap();
+        let _ = fs::remove_dir_all(directory);
+    }
+
+    #[test]
+    fn session_payloads_carry_reader_position_but_never_credentials() {
+        // The shell persists the reader's position (lesson, mode, panel, tabs)
+        // next to the selected project directory.  It must stay free of any
+        // credential-looking field, and an asset preview read must never be
+        // allowed to return an unbounded amount of data.
+        let session = json!({
+            "project_dir": "/tmp/example-project",
+            "project_id": "p1",
+            "active_content_item_id": "c1",
+            "mode": "writing",
+            "right_panel": "requirements",
+            "route": "editor",
+            "selected_block_id": "b1",
+            "left_collapsed": false,
+            "right_collapsed": false,
+            "tabs": [{ "content_item_id": "c1", "mode": "writing", "pinned": false, "scroll_top": 0 }]
+        });
+        reject_sensitive(&session).expect("a reader position contains no credentials");
+        assert_eq!(
+            session
+                .get("active_content_item_id")
+                .and_then(Value::as_str),
+            Some("c1"),
+            "the persisted session must keep the lesson the user was editing"
+        );
+        let with_secret = json!({
+            "project_dir": "/tmp/example-project",
+            "active_content_item_id": "c1",
+            "api_key": "sk-should-never-be-written"
+        });
+        assert!(
+            reject_sensitive(&with_secret).is_err(),
+            "session writes must reject credential fields"
+        );
+        assert!(
+            ASSET_READ_SIZE_LIMIT > 0 && ASSET_READ_SIZE_LIMIT <= 64 * 1024 * 1024,
+            "asset preview reads must stay bounded"
+        );
+    }
+
+    #[test]
+    fn launch_project_dir_argument_is_parsed_and_validated() {
+        let parse =
+            |args: &[&str]| project_dir_from_args(args.iter().map(|value| (*value).to_owned()));
+        assert!(parse(&[]).unwrap().is_none(), "no flag means no directory");
+        assert!(
+            parse(&["--other", "x"]).unwrap().is_none(),
+            "unrelated arguments are ignored"
+        );
+        let directory = test_directory("launch-arg");
+        // `explicit_project_dir` canonicalizes, so compare canonical paths.
+        let expected = fs::canonicalize(&directory).unwrap();
+        let path = directory.to_string_lossy().into_owned();
+        assert_eq!(
+            parse(&["--project-dir", &path]).unwrap(),
+            Some(expected.clone()),
+            "--project-dir <path> is accepted"
+        );
+        assert_eq!(
+            parse(&[&format!("--project-dir={path}")]).unwrap(),
+            Some(expected.clone()),
+            "--project-dir=<path> is accepted"
+        );
+        assert_eq!(
+            parse(&["-p", &path]).unwrap(),
+            Some(expected.clone()),
+            "-p <path> is accepted"
+        );
+        assert!(
+            parse(&["--project-dir"]).is_err(),
+            "a missing value is an error"
+        );
+        assert!(
+            parse(&["--project-dir", "   "]).is_err(),
+            "a blank value is an error"
+        );
+        assert!(
+            parse(&["--project-dir", "relative/dir"]).is_err(),
+            "a relative path is rejected: the picker only ever returns absolute paths"
+        );
+        assert!(
+            parse(&["--project-dir", "/definitely/not/here/at/all"]).is_err(),
+            "a missing directory is rejected before the window opens"
+        );
+        let _ = fs::remove_dir_all(directory);
+    }
+
+    #[test]
     fn release_without_registered_lease_has_no_side_effect() {
         let directory = test_directory("release-empty");
         let guard_path = directory.join(PROJECT_LOCK_GUARD_RELATIVE_PATH);
@@ -3610,9 +5722,1488 @@ mod tests {
         assert!(!directory.join(PROJECT_LOCK_RELATIVE_PATH).exists());
         let _ = fs::remove_dir_all(directory);
     }
+
+    // ---- V0-T03 / Workstream C：AI 配置、传输与执行记录 --------------------
+
+    /// 测试用的 AI 存储目录，与生产路径同形：`<base>/.workspace/ai`。
+    fn ai_test_base(directory: &Path) -> PathBuf {
+        directory.join(".workspace").join("ai")
+    }
+
+    fn ai_test_handles() -> AiRequestHandles {
+        AiRequestHandles::default()
+    }
+
+    /// 只回答一次的最小 HTTP 服务：把收到的原始请求回传，并写死一个响应。
+    fn serve_once(
+        response: String,
+    ) -> (
+        u16,
+        std::sync::mpsc::Receiver<String>,
+        thread::JoinHandle<()>,
+    ) {
+        let listener =
+            std::net::TcpListener::bind("127.0.0.1:0").expect("loopback listener should bind");
+        let port = listener
+            .local_addr()
+            .expect("listener should have an address")
+            .port();
+        let (sender, receiver) = std::sync::mpsc::channel();
+        let handle = thread::spawn(move || {
+            let Ok((mut stream, _)) = listener.accept() else {
+                return;
+            };
+            let _ = stream.set_read_timeout(Some(Duration::from_secs(5)));
+            let mut buffer: Vec<u8> = Vec::new();
+            let mut chunk = [0_u8; 4096];
+            loop {
+                match stream.read(&mut chunk) {
+                    Ok(0) => break,
+                    Ok(read) => {
+                        buffer.extend_from_slice(&chunk[..read]);
+                        let text = String::from_utf8_lossy(&buffer).into_owned();
+                        if let Some(position) = text.find("\r\n\r\n") {
+                            let length = text[..position]
+                                .lines()
+                                .find_map(|line| {
+                                    let (name, value) = line.split_once(':')?;
+                                    if name.eq_ignore_ascii_case("content-length") {
+                                        value.trim().parse::<usize>().ok()
+                                    } else {
+                                        None
+                                    }
+                                })
+                                .unwrap_or(0);
+                            if buffer.len() >= position + 4 + length {
+                                break;
+                            }
+                        }
+                    }
+                    Err(_) => break,
+                }
+            }
+            let _ = stream.write_all(response.as_bytes());
+            let _ = stream.flush();
+            let _ = sender.send(String::from_utf8_lossy(&buffer).into_owned());
+        });
+        (port, receiver, handle)
+    }
+
+    fn http_response(status_line: &str, content_type: &str, body: &str) -> String {
+        format!(
+            "HTTP/1.1 {status_line}\r\nContent-Type: {content_type}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+            body.len()
+        )
+    }
+
+    /// 起一个本地服务、把 `payload.url` 指过去，跑一次 `ai_complete_at`。
+    fn run_ai_complete_once(
+        base: &Path,
+        mut payload: Value,
+        response: String,
+    ) -> (Result<Value, String>, String) {
+        let (port, receiver, server) = serve_once(response);
+        payload["url"] = json!(format!("http://127.0.0.1:{port}/v1/chat/completions"));
+        let requests = ai_test_handles();
+        let result = tauri::async_runtime::block_on(ai_complete_at(base, &requests, &payload));
+        let request = receiver
+            .recv_timeout(Duration::from_secs(5))
+            .expect("测试服务应当收到请求");
+        server.join().expect("测试服务线程应当结束");
+        (result, request)
+    }
+
+    #[test]
+    fn ai_connection_round_trip_reports_configured_without_the_key() {
+        let directory = test_directory("ai-connection");
+        let base = ai_test_base(&directory);
+        let secret = "sk-round-trip-must-never-return";
+        let saved = ai_connection_save_at(
+            &base,
+            &json!({
+                "id": "deepseek",
+                "label": "DeepSeek",
+                "kind": "openai_compatible",
+                "base_url": "https://api.deepseek.com",
+                "chat_path": "/chat/completions",
+                "auth_header": "authorization",
+                "auth_scheme": "Bearer",
+                "default_model": "deepseek-chat",
+                "models": ["deepseek-chat"],
+            }),
+        )
+        .expect("provider should save");
+        assert_eq!(saved["provider"]["id"], json!("deepseek"));
+        assert_eq!(
+            saved["provider"]["base_url"],
+            json!("https://api.deepseek.com")
+        );
+
+        ai_secret_set_at(&base, "deepseek", secret).expect("secret should save");
+        let listed = ai_connection_list_at(&base).expect("list should read the store");
+        assert_eq!(listed["configured"]["deepseek"], json!(true));
+        assert_eq!(listed["providers"][0]["id"], json!("deepseek"));
+        assert_eq!(listed["providers"][0]["models"][0], json!("deepseek-chat"));
+        assert!(
+            !listed.to_string().contains(secret),
+            "读取路径绝不能回传凭据: {listed}"
+        );
+        assert!(
+            !listed.to_string().contains("credentials"),
+            "读取路径只暴露 configured 布尔表: {listed}"
+        );
+
+        // 覆盖保存同一个 id 不会产生第二份记录。
+        ai_connection_save_at(&base, &json!({ "id": "deepseek", "label": "DeepSeek 2" }))
+            .expect("re-saving should update in place");
+        let listed = ai_connection_list_at(&base).unwrap();
+        assert_eq!(listed["providers"].as_array().unwrap().len(), 1);
+        assert_eq!(listed["providers"][0]["label"], json!("DeepSeek 2"));
+
+        // 文件权限：凭据只属于当前用户。
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = fs::metadata(base.join(AI_PROVIDERS_FILE))
+                .expect("store should exist")
+                .permissions()
+                .mode()
+                & 0o777;
+            assert_eq!(mode, 0o600, "AI 存储必须是 0600");
+            // 覆盖写入留下的 `.bak` 同样带着凭据，也必须只有本人可读。
+            let backup_mode = fs::metadata(base.join("providers.bak"))
+                .expect("backup should exist")
+                .permissions()
+                .mode()
+                & 0o777;
+            assert_eq!(backup_mode, 0o600, "凭据备份同样必须是 0600");
+        }
+
+        let _ = fs::remove_dir_all(directory);
+    }
+
+    #[test]
+    fn ai_connection_list_on_an_empty_store_returns_empty_collections() {
+        let directory = test_directory("ai-empty");
+        let base = ai_test_base(&directory);
+        let listed = ai_connection_list_at(&base).expect("缺少存储文件时不得报错");
+        assert_eq!(listed["providers"], json!([]));
+        assert_eq!(listed["configured"], json!({}));
+        assert!(!base.join(AI_PROVIDERS_FILE).exists(), "只读不得创建文件");
+        let _ = fs::remove_dir_all(directory);
+    }
+
+    #[test]
+    fn ai_secret_set_never_echoes_the_value_on_any_path() {
+        let directory = test_directory("ai-secret");
+        let base = ai_test_base(&directory);
+        let key = "sk-super-secret-value-42";
+
+        let saved = ai_secret_set_at(&base, "deepseek", key).expect("secret should save");
+        assert_eq!(saved["provider_id"], json!("deepseek"));
+        assert!(
+            !format!("{saved:?}").contains(key),
+            "返回值不得包含密钥: {saved}"
+        );
+
+        let blank_provider =
+            ai_secret_set_at(&base, "   ", key).expect_err("空 Provider ID 必须被拒绝");
+        assert!(!format!("{blank_provider:?}").contains(key));
+        assert!(blank_provider.contains("Provider ID"));
+
+        let blank_value =
+            ai_secret_set_at(&base, "deepseek", "   ").expect_err("空 API Key 必须被拒绝");
+        assert!(blank_value.contains("API Key"));
+        assert!(
+            blank_value.contains("\"invalid_request\""),
+            "got: {blank_value}"
+        );
+
+        // 真实写入失败路径：备份目标被目录占位，`value` 此刻仍在作用域里。
+        let broken = test_directory("ai-secret-write-failure");
+        let broken_base = ai_test_base(&broken);
+        fs::create_dir_all(&broken_base).expect("broken store directory should be created");
+        fs::write(
+            broken_base.join(AI_PROVIDERS_FILE),
+            br#"{"providers":[],"credentials":{}}"#,
+        )
+        .expect("store should be writable");
+        fs::create_dir_all(broken_base.join("providers.bak"))
+            .expect("backup placeholder should be created");
+        let failed =
+            ai_secret_set_at(&broken_base, "deepseek", key).expect_err("写入失败必须被上报");
+        assert!(
+            !format!("{failed:?}").contains(key),
+            "写入失败的错误文本不得包含密钥: {failed}"
+        );
+
+        let _ = fs::remove_dir_all(directory);
+        let _ = fs::remove_dir_all(broken);
+    }
+
+    #[test]
+    fn ai_connection_and_secret_delete_report_removed() {
+        let directory = test_directory("ai-delete");
+        let base = ai_test_base(&directory);
+        ai_connection_save_at(&base, &json!({ "id": "deepseek", "label": "DeepSeek" }))
+            .expect("provider should save");
+        ai_secret_set_at(&base, "deepseek", "sk-delete-me").expect("secret should save");
+        assert_eq!(
+            ai_connection_list_at(&base).unwrap()["configured"]["deepseek"],
+            json!(true)
+        );
+
+        let removed_secret = ai_secret_delete_at(&base, "deepseek").expect("secret delete");
+        assert_eq!(removed_secret["provider_id"], json!("deepseek"));
+        assert_eq!(removed_secret["removed"], json!(true));
+        let listed = ai_connection_list_at(&base).unwrap();
+        assert_eq!(listed["configured"]["deepseek"], json!(false));
+        assert_eq!(listed["providers"][0]["id"], json!("deepseek"));
+        assert_eq!(
+            ai_secret_delete_at(&base, "deepseek").unwrap()["removed"],
+            json!(false),
+            "重复删除必须是幂等的"
+        );
+
+        let removed_provider = ai_connection_delete_at(&base, "deepseek").expect("provider delete");
+        assert_eq!(removed_provider["removed"], json!(true));
+        assert_eq!(
+            ai_connection_list_at(&base).unwrap()["providers"],
+            json!([])
+        );
+        assert_eq!(
+            ai_connection_delete_at(&base, "deepseek").unwrap()["removed"],
+            json!(false)
+        );
+
+        let _ = fs::remove_dir_all(directory);
+    }
+
+    #[test]
+    fn ai_connection_save_rejects_credential_shaped_provider_fields() {
+        let directory = test_directory("ai-provider-guard");
+        let base = ai_test_base(&directory);
+        // 与浏览器壳同一套规则：密钥形状的字段必须被拒绝（而不是被静默丢弃），
+        // 否则同一份配置会在两个壳里得到不同结果。
+        let credential_metadata = ai_connection_save_at(
+            &base,
+            &json!({ "id": "deepseek", "label": "DeepSeek", "requires_credential": true }),
+        )
+        .expect_err("requires_credential 属于凭据形状字段，必须被拒绝");
+        assert!(
+            credential_metadata.contains("\"invalid_request\""),
+            "got: {credential_metadata}"
+        );
+        assert!(
+            credential_metadata.contains("requires_credential"),
+            "错误必须指明字段: {credential_metadata}"
+        );
+
+        let nested = ai_connection_save_at(
+            &base,
+            &json!({
+                "id": "deepseek",
+                "label": "DeepSeek",
+                "headers": { "x-api-key": "sk-provider-must-not-leak" },
+            }),
+        )
+        .expect_err("嵌套的密钥字段必须被拒绝");
+        assert!(nested.contains("headers.x-api-key"), "got: {nested}");
+        assert!(
+            !nested.contains("sk-provider-must-not-leak"),
+            "错误不得回显字段值: {nested}"
+        );
+        assert!(
+            !base.join(AI_PROVIDERS_FILE).exists(),
+            "被拒绝的配置不得落盘"
+        );
+
+        let bad_id = ai_connection_save_at(&base, &json!({ "id": "../evil" }))
+            .expect_err("非法 Provider ID 必须被拒绝");
+        assert!(bad_id.contains("Provider ID"), "got: {bad_id}");
+
+        // 安全字段必须原样保留（含 auth_header 这种名字里带 auth 的字段）。
+        let saved = ai_connection_save_at(
+            &base,
+            &json!({
+                "id": "custom-1",
+                "label": "自定义",
+                "kind": "openai_compatible",
+                "base_url": "https://example.com",
+                "chat_path": "/v1/chat/completions",
+                "auth_header": "authorization",
+                "auth_scheme": "Bearer",
+                "default_model": "gpt-4o-mini",
+                "models": ["gpt-4o-mini"],
+            }),
+        )
+        .expect("安全字段必须全部保留");
+        assert_eq!(saved["provider"]["models"][0], json!("gpt-4o-mini"));
+        assert_eq!(saved["provider"]["auth_header"], json!("authorization"));
+        assert_eq!(saved["provider"]["auth_scheme"], json!("Bearer"));
+        assert_eq!(
+            saved["provider"]["chat_path"],
+            json!("/v1/chat/completions")
+        );
+
+        // 凭据长度上限与浏览器壳一致。
+        let too_long =
+            ai_secret_set_at(&base, "custom-1", &"x".repeat(9000)).expect_err("超长密钥必须被拒绝");
+        assert!(too_long.contains("过长"), "got: {too_long}");
+        assert!(!too_long.contains(&"x".repeat(64)), "错误不得回显密钥");
+
+        let _ = fs::remove_dir_all(directory);
+    }
+
+    #[test]
+    fn ai_execution_append_sanitises_and_truncates_records() {
+        let directory = test_directory("ai-exec-append");
+        let base = ai_test_base(&directory);
+        let long_instruction = "长".repeat(3000);
+        let record = json!({
+            "id": "exec-1",
+            "created_at": "2026-01-01T00:00:00.000Z",
+            "instruction": long_instruction,
+            "context": { "item_count": 2, "chars": 128, "source_types": ["block"] },
+            "provider": { "provider_id": "deepseek", "model": "deepseek-chat" },
+            "meta": { "inner": { "api_key": "sk-nested-should-be-dropped", "note": "keep" } },
+            "credentials": { "deepseek": "sk-also-dropped" },
+        });
+        let appended = ai_execution_append_at(&base, &record).expect("record should append");
+        assert_eq!(appended["id"], json!("exec-1"));
+
+        let listed = ai_execution_list_at(&base, 10).expect("list should read the store");
+        let stored = &listed["records"][0];
+        assert_eq!(stored["id"], json!("exec-1"));
+        assert_eq!(stored["meta"]["inner"]["note"], json!("keep"));
+        assert!(
+            stored["meta"]["inner"].get("api_key").is_none(),
+            "深层凭据字段必须被丢弃: {stored}"
+        );
+        assert!(stored.get("credentials").is_none());
+        assert_eq!(stored["context"]["source_types"][0], json!("block"));
+        assert_eq!(
+            stored["instruction"].as_str().unwrap().chars().count(),
+            AI_INSTRUCTION_LIMIT,
+            "instruction 必须截断到 {AI_INSTRUCTION_LIMIT} 字"
+        );
+
+        let raw = fs::read_to_string(base.join(AI_EXECUTIONS_FILE)).expect("store should exist");
+        assert!(!raw.contains("sk-nested-should-be-dropped"));
+        assert!(!raw.contains("sk-also-dropped"));
+        assert!(!raw.contains("api_key"), "磁盘上不得留下凭据字段名: {raw}");
+
+        let _ = fs::remove_dir_all(directory);
+    }
+
+    #[test]
+    fn ai_execution_list_returns_newest_first_and_honours_limit() {
+        let directory = test_directory("ai-exec-list");
+        let base = ai_test_base(&directory);
+        for (id, created_at) in [
+            ("exec-a", "2026-01-01T00:00:00.000Z"),
+            ("exec-b", "2026-01-02T00:00:00.000Z"),
+            ("exec-c", "2026-01-03T00:00:00.000Z"),
+        ] {
+            ai_execution_append_at(
+                &base,
+                &json!({ "id": id, "created_at": created_at, "status": "succeeded" }),
+            )
+            .expect("record should append");
+        }
+        let all = ai_execution_list_at(&base, 10).expect("list should read the store");
+        let ids: Vec<&str> = all["records"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|record| record["id"].as_str().unwrap())
+            .collect();
+        assert_eq!(
+            ids,
+            vec!["exec-c", "exec-b", "exec-a"],
+            "最新的记录必须排最前"
+        );
+
+        let limited = ai_execution_list_at(&base, 2).unwrap();
+        assert_eq!(limited["records"].as_array().unwrap().len(), 2);
+        assert_eq!(limited["records"][0]["id"], json!("exec-c"));
+        assert_eq!(
+            AI_EXECUTION_DEFAULT_LIMIT, 50,
+            "未指定 limit 时的条数必须与浏览器壳的 DEFAULT_LIST_LIMIT 一致"
+        );
+        assert_eq!(
+            ai_execution_list_at(&base, 0).unwrap()["records"]
+                .as_array()
+                .unwrap()
+                .len(),
+            1,
+            "limit 至少返回 1 条"
+        );
+
+        let _ = fs::remove_dir_all(directory);
+    }
+
+    #[test]
+    fn ai_execution_store_is_bounded_to_two_hundred_records() {
+        let directory = test_directory("ai-exec-bound");
+        let base = ai_test_base(&directory);
+        // 真实存储是「新的在前」，这里按同样顺序铺满 200 条，最旧的一条排在最后。
+        let seeded: Vec<Value> = (0..AI_EXECUTION_LIMIT)
+            .rev()
+            .map(|index| {
+                json!({
+                    "id": format!("old-{index}"),
+                    "created_at": format!("2025-01-01T00:{:02}:{:02}.000Z", index / 60, index % 60),
+                })
+            })
+            .collect();
+        ai_write_store(
+            &base.join(AI_EXECUTIONS_FILE),
+            &json!({ "records": seeded }),
+            "AI 执行记录",
+        )
+        .expect("seed store should be writable");
+
+        ai_execution_append_at(
+            &base,
+            &json!({ "id": "newest", "created_at": "2026-01-01T00:00:00.000Z" }),
+        )
+        .expect("record should append");
+        let listed = ai_execution_list_at(&base, AI_EXECUTION_LIMIT).unwrap();
+        let records = listed["records"].as_array().unwrap();
+        assert_eq!(records.len(), AI_EXECUTION_LIMIT, "执行记录必须有界");
+        assert_eq!(records[0]["id"], json!("newest"));
+        assert!(
+            records.iter().all(|record| record["id"] != json!("old-0")),
+            "最旧的一条必须被丢弃"
+        );
+
+        let _ = fs::remove_dir_all(directory);
+    }
+
+    #[test]
+    fn ai_execution_append_replaces_an_existing_record_by_id() {
+        let directory = test_directory("ai-exec-upsert");
+        let base = ai_test_base(&directory);
+        for (id, created_at) in [
+            ("exec-a", "2026-01-01T00:00:00.000Z"),
+            ("exec-pending", "2026-01-02T00:00:00.000Z"),
+            ("exec-c", "2026-01-03T00:00:00.000Z"),
+        ] {
+            ai_execution_append_at(
+                &base,
+                &json!({
+                    "id": id,
+                    "created_at": created_at,
+                    "status": "succeeded",
+                    "review": { "state": "pending", "decided_at": null },
+                }),
+            )
+            .expect("record should append");
+        }
+        // 当前顺序（最新在前）：[exec-c, exec-pending, exec-a]。
+        let before = ai_execution_list_at(&base, 10).expect("list should read the store");
+        let ids: Vec<&str> = before["records"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|record| record["id"].as_str().unwrap())
+            .collect();
+        assert_eq!(ids, vec!["exec-c", "exec-pending", "exec-a"]);
+        let neighbour_before = before["records"][2].clone();
+
+        // 用户做出决定：同一个 id 只补写状态，不再多出一行。
+        let appended = ai_execution_append_at(
+            &base,
+            &json!({
+                "id": "exec-pending",
+                "created_at": "2026-01-02T00:00:00.000Z",
+                "status": "succeeded",
+                "review": { "state": "applied", "decided_at": "2026-01-04T00:00:00.000Z" },
+            }),
+        )
+        .expect("同一个 id 必须就地替换");
+        assert_eq!(appended["id"], json!("exec-pending"));
+
+        let after = ai_execution_list_at(&base, 10).unwrap();
+        let records = after["records"].as_array().unwrap();
+        assert_eq!(records.len(), 3, "替换不得增加历史行数");
+        assert_eq!(
+            records[1]["id"],
+            json!("exec-pending"),
+            "必须保留原来的位置"
+        );
+        assert_eq!(records[1]["review"]["state"], json!("applied"));
+        assert_eq!(
+            records[1]["review"]["decided_at"],
+            json!("2026-01-04T00:00:00.000Z")
+        );
+        assert_eq!(records[0]["id"], json!("exec-c"), "前一条不得被挪动");
+        assert_eq!(records[2], neighbour_before, "邻近记录不得被改动");
+        let raw = fs::read_to_string(base.join(AI_EXECUTIONS_FILE)).expect("store should exist");
+        assert_eq!(
+            raw.matches("\"exec-pending\"").count(),
+            1,
+            "磁盘上同一个 id 只能有一行"
+        );
+
+        let _ = fs::remove_dir_all(directory);
+    }
+
+    #[test]
+    fn ai_execution_append_collapses_pre_existing_duplicate_ids() {
+        let directory = test_directory("ai-exec-dedupe");
+        let base = ai_test_base(&directory);
+        // 旧实现（只追加不替换）为同一次运行留下两行：pending 在前，决定行更靠前。
+        ai_write_store(
+            &base.join(AI_EXECUTIONS_FILE),
+            &json!({
+                "records": [
+                    { "id": "run-1", "review": { "state": "applied" } },
+                    { "id": "run-2", "review": { "state": "pending" } },
+                    { "id": "run-1", "review": { "state": "pending" } },
+                    { "id": "run-0", "review": { "state": "applied" } },
+                ]
+            }),
+            "AI 执行记录",
+        )
+        .expect("seed store should be writable");
+
+        ai_execution_append_at(
+            &base,
+            &json!({ "id": "run-1", "review": { "state": "applied", "decided_at": "2026-01-05T00:00:00.000Z" } }),
+        )
+        .expect("replace should succeed");
+        let listed = ai_execution_list_at(&base, 10).unwrap();
+        let records = listed["records"].as_array().unwrap();
+        assert_eq!(records.len(), 3, "同一次运行只保留一行");
+        assert_eq!(records[0]["id"], json!("run-1"), "保留第一处匹配的位置");
+        assert_eq!(records[0]["review"]["state"], json!("applied"));
+        assert_eq!(records[1]["id"], json!("run-2"));
+        assert_eq!(records[2]["id"], json!("run-0"));
+
+        let _ = fs::remove_dir_all(directory);
+    }
+
+    #[test]
+    fn ai_execution_append_mints_an_id_when_none_is_supplied() {
+        let directory = test_directory("ai-exec-mint");
+        let base = ai_test_base(&directory);
+        let first = ai_execution_append_at(&base, &json!({ "status": "succeeded" }))
+            .expect("record without an id should append");
+        let second = ai_execution_append_at(&base, &json!({ "status": "failed" }))
+            .expect("record without an id should append");
+        let first_id = first["id"].as_str().unwrap().to_owned();
+        let second_id = second["id"].as_str().unwrap().to_owned();
+        assert!(first_id.starts_with("ai-exec-"), "got: {first_id}");
+        assert!(second_id.starts_with("ai-exec-"), "got: {second_id}");
+        assert_ne!(first_id, second_id, "补出来的 id 必须互不相同");
+
+        let listed = ai_execution_list_at(&base, 10).unwrap();
+        let records = listed["records"].as_array().unwrap();
+        assert_eq!(records.len(), 2, "没有 id 的记录一律追加");
+        assert_eq!(records[0]["id"], json!(second_id));
+        assert_eq!(records[0]["status"], json!("failed"));
+        assert_eq!(records[1]["id"], json!(first_id));
+
+        let _ = fs::remove_dir_all(directory);
+    }
+
+    #[test]
+    fn ai_execution_upsert_keeps_the_bound_and_newest_first_order() {
+        let directory = test_directory("ai-exec-upsert-bound");
+        let base = ai_test_base(&directory);
+        let seeded: Vec<Value> = (0..AI_EXECUTION_LIMIT)
+            .rev()
+            .map(|index| {
+                json!({
+                    "id": format!("old-{index}"),
+                    "created_at": format!("2025-01-01T00:{:02}:{:02}.000Z", index / 60, index % 60),
+                })
+            })
+            .collect();
+        ai_write_store(
+            &base.join(AI_EXECUTIONS_FILE),
+            &json!({ "records": seeded }),
+            "AI 执行记录",
+        )
+        .expect("seed store should be writable");
+
+        // 替换最旧的一条：总数与顺序都不变，位置也留在原地。
+        ai_execution_append_at(
+            &base,
+            &json!({
+                "id": "old-0",
+                "created_at": "2025-01-01T00:00:00.000Z",
+                "status": "rejected",
+            }),
+        )
+        .expect("replace should succeed");
+        let replaced = ai_execution_list_at(&base, AI_EXECUTION_LIMIT).unwrap();
+        let records = replaced["records"].as_array().unwrap();
+        assert_eq!(records.len(), AI_EXECUTION_LIMIT, "替换不得改变有界长度");
+        assert_eq!(records[0]["id"], json!("old-199"), "最新在前的顺序不变");
+        assert_eq!(records[AI_EXECUTION_LIMIT - 1]["id"], json!("old-0"));
+        assert_eq!(records[AI_EXECUTION_LIMIT - 1]["status"], json!("rejected"));
+
+        // 新 id 仍然按有界追加：最旧的一条被挤掉。
+        ai_execution_append_at(
+            &base,
+            &json!({ "id": "brand-new", "created_at": "2026-01-01T00:00:00.000Z" }),
+        )
+        .expect("new record should append");
+        let appended = ai_execution_list_at(&base, AI_EXECUTION_LIMIT).unwrap();
+        let records = appended["records"].as_array().unwrap();
+        assert_eq!(records.len(), AI_EXECUTION_LIMIT, "追加后仍然有界");
+        assert_eq!(records[0]["id"], json!("brand-new"));
+        assert!(
+            records.iter().all(|record| record["id"] != json!("old-0")),
+            "追加新记录时最旧的一条才被丢弃"
+        );
+
+        let _ = fs::remove_dir_all(directory);
+    }
+
+    #[test]
+    fn ai_execution_append_reports_a_log_failure_not_a_course_save_failure() {
+        let directory = test_directory("ai-exec-failed");
+        let base = ai_test_base(&directory);
+        fs::create_dir_all(&base).expect("store directory should be created");
+        fs::write(base.join(AI_EXECUTIONS_FILE), br#"{"records":[]}"#)
+            .expect("store should be writable");
+        // 备份目标被目录占位：原子写入必然失败。
+        fs::create_dir_all(base.join("executions.bak"))
+            .expect("backup placeholder should be created");
+        let error = ai_execution_append_at(&base, &json!({ "id": "exec-1" }))
+            .expect_err("写入失败必须被上报");
+        assert!(
+            error.contains("ai_execution_record_failed"),
+            "失败必须是「记录未写入」，不能长得像课程保存失败: {error}"
+        );
+        assert!(error.contains("课程内容不受影响"), "got: {error}");
+        assert!(error.contains("ai.execution.append"), "got: {error}");
+
+        let _ = fs::remove_dir_all(directory);
+    }
+
+    #[test]
+    fn ai_execution_append_scrubs_pasted_credentials_from_free_text() {
+        let directory = test_directory("ai-exec-free-text");
+        let base = ai_test_base(&directory);
+        let key = "sk-v0t03-do-not-leak-9f8e7d6c";
+        ai_connection_save_at(&base, &json!({ "id": "deepseek", "auth_scheme": "Bearer" }))
+            .expect("provider should save");
+        ai_secret_set_at(&base, "deepseek", key).expect("secret should save");
+        let encoded = BASE64.encode(key.as_bytes());
+        assert_ne!(encoded, key);
+
+        ai_execution_append_at(
+            &base,
+            &json!({
+                "id": "exec-secret",
+                "instruction": format!("请按 {key} 和 {encoded} 配置"),
+                "error_message": format!("401 unauthorized: Bearer {key}"),
+            }),
+        )
+        .expect("record should append");
+
+        let raw = fs::read_to_string(base.join(AI_EXECUTIONS_FILE)).expect("store should exist");
+        assert!(!raw.contains(key), "粘贴的密钥不得落盘: {raw}");
+        assert!(!raw.contains(&encoded), "编码后的密钥不得落盘: {raw}");
+        assert!(raw.contains("[REDACTED]"), "擦除位置必须留标记: {raw}");
+
+        let listed = ai_execution_list_at(&base, 5).unwrap();
+        let record = &listed["records"][0];
+        assert!(
+            record["instruction"]
+                .as_str()
+                .unwrap()
+                .contains("[REDACTED]"),
+            "got: {}",
+            record["instruction"]
+        );
+        assert!(
+            record["error_message"]
+                .as_str()
+                .unwrap()
+                .contains("[REDACTED]"),
+            "got: {}",
+            record["error_message"]
+        );
+
+        let _ = fs::remove_dir_all(directory);
+    }
+
+    #[test]
+    fn ai_execution_append_keeps_short_credentials_from_shredding_text() {
+        let directory = test_directory("ai-exec-short-secret");
+        let base = ai_test_base(&directory);
+        ai_connection_save_at(&base, &json!({ "id": "tiny", "auth_scheme": "Bearer" }))
+            .expect("provider should save");
+        ai_secret_set_at(&base, "tiny", "e").expect("short secret should save");
+
+        let secrets = ai_stored_secrets(&base);
+        assert!(secrets.has_short, "1 字符凭据必须被识别为「不能精确替换」");
+
+        ai_execution_append_at(
+            &base,
+            &json!({
+                "id": "exec-tiny",
+                "instruction": "evaluate every example",
+                "error_message": "authorization: e",
+            }),
+        )
+        .expect("record should append");
+
+        let listed = ai_execution_list_at(&base, 5).unwrap();
+        let record = &listed["records"][0];
+        assert_eq!(
+            record["instruction"],
+            json!("evaluate every example"),
+            "1 字符凭据不得搅碎普通文本"
+        );
+        assert_eq!(
+            record["error_message"],
+            json!("authorization: [REDACTED]"),
+            "标签规则必须兜住短值"
+        );
+
+        // 存有短凭据时，Provider 正文一个字都不回显。
+        let error = ai_status_error(
+            500,
+            "provider said the key is e",
+            &secrets,
+            "tiny",
+            "https://example.com/v1/chat/completions",
+            "application/json",
+        );
+        assert!(
+            error.contains("\"[REDACTED]\""),
+            "短凭据在场时 Provider 正文必须整段丢弃: {error}"
+        );
+        assert!(!error.contains("said the key"), "got: {error}");
+
+        let _ = fs::remove_dir_all(directory);
+    }
+
+    #[test]
+    fn ai_provider_excerpts_keep_identifiers_but_drop_encoded_keys() {
+        let directory = test_directory("ai-excerpt");
+        let base = ai_test_base(&directory);
+        let key = "sk-v0t03-excerpt-key-7d6c5b4a";
+        ai_connection_save_at(&base, &json!({ "id": "deepseek", "auth_scheme": "Bearer" }))
+            .expect("provider should save");
+        ai_secret_set_at(&base, "deepseek", key).expect("secret should save");
+        let secrets = ai_stored_secrets(&base);
+        assert!(!secrets.has_short);
+
+        // 普通标识符（无数字、无大写）必须活下来。
+        let kept = ai_scrub_provider_text(
+            "model deepseek-reasoner is temporarily unavailable",
+            &secrets,
+        );
+        assert!(kept.contains("deepseek-reasoner"), "got: {kept}");
+
+        // 长得像 base64 的不透明串必须被抹掉，普通文字保留。
+        let opaque = ai_scrub_provider_text("blob c2VjcmV0S2V5VmFsdWUxMjM0NTY3OA end", &secrets);
+        assert!(
+            !opaque.contains("c2VjcmV0S2V5VmFsdWUxMjM0NTY3OA"),
+            "got: {opaque}"
+        );
+        assert!(opaque.contains("blob"), "got: {opaque}");
+        assert!(opaque.contains("[REDACTED]"), "got: {opaque}");
+
+        // 被拆成两半的密钥：任何摘要都不安全，整段丢弃。
+        let split = format!("key half sk-v0t03-excerpt {}", "key-7d6c5b4a");
+        assert_eq!(
+            ai_scrub_provider_text(&split, &secrets),
+            "[REDACTED]",
+            "拆开的密钥必须整段丢弃"
+        );
+        // 编码成 base64 的回显同样整段丢弃。
+        let encoded = BASE64.encode(key.as_bytes());
+        assert_eq!(
+            ai_scrub_provider_text(&format!("body {encoded} end"), &secrets),
+            "[REDACTED]"
+        );
+        // 转义拼写要还原后再比对（%NN / \uXXXX / \xNN）。
+        assert_eq!(ai_normalize_provider_text("\\u0073k-abc"), "sk-abc");
+        assert_eq!(ai_normalize_provider_text("\\x73k-abc"), "sk-abc");
+        assert_eq!(ai_normalize_provider_text("%73k-abc"), "sk-abc");
+        assert_eq!(
+            ai_normalize_provider_text("100% sure"),
+            "100% sure",
+            "孤立的 % 不是转义"
+        );
+
+        let _ = fs::remove_dir_all(directory);
+    }
+
+    #[test]
+    fn ai_errors_never_echo_the_request_url() {
+        let url = "http://127.0.0.1:45678/v1/chat/completions?key=sk-query-secret";
+        assert_eq!(
+            ai_strip_request_url(&format!("failed for {url}"), url),
+            "failed for <url>"
+        );
+        // origin + path 这一形态（没有查询串）同样要换掉；带尾斜杠时按 Deno 的
+        // 替换顺序留下 `<url>/`。
+        assert_eq!(
+            ai_strip_request_url("failed for http://127.0.0.1:45678/v1/chat/completions", url),
+            "failed for <url>"
+        );
+        assert_eq!(
+            ai_strip_request_url(
+                "failed for http://127.0.0.1:45678/v1/chat/completions/",
+                url
+            ),
+            "failed for <url>/"
+        );
+
+        // Provider 正文里回显的地址同样进不了 details。
+        let error = ai_status_error(
+            500,
+            &format!("upstream at {url} exploded"),
+            &AiSecrets::default(),
+            "deepseek",
+            url,
+            "text/plain",
+        );
+        assert!(error.contains("\"provider_error\""), "got: {error}");
+        assert!(error.contains("<url>"), "got: {error}");
+        assert!(!error.contains("sk-query-secret"), "got: {error}");
+        assert!(!error.contains("127.0.0.1:45678"), "got: {error}");
+        assert!(error.contains("\"body_kind\":\"text\""), "got: {error}");
+
+        // 端到端：真实请求失败时，错误里既没有地址、也没有查询串里的密钥。
+        // 用一个「接了就不说话」的服务端把请求逼到超时（纯本机回环，不需要外网）。
+        let directory = test_directory("ai-url-echo");
+        let base = ai_test_base(&directory);
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("listener should bind");
+        listener
+            .set_nonblocking(true)
+            .expect("listener should be non-blocking");
+        let port = listener
+            .local_addr()
+            .expect("listener should have an address")
+            .port();
+        let stop = Arc::new(AtomicBool::new(false));
+        let server_stop = Arc::clone(&stop);
+        let server = thread::spawn(move || {
+            let mut held = Vec::new();
+            while !server_stop.load(Ordering::Acquire) {
+                match listener.accept() {
+                    Ok((stream, _)) => held.push(stream),
+                    Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                        thread::sleep(Duration::from_millis(5));
+                    }
+                    Err(_) => break,
+                }
+            }
+            drop(held);
+        });
+        let requests = ai_test_handles();
+        let error = tauri::async_runtime::block_on(ai_complete_at(
+            &base,
+            &requests,
+            &json!({
+                "request_id": "req-transport",
+                "url": format!("http://127.0.0.1:{port}/v1/chat/completions?key=sk-query-leak"),
+                "body": { "model": "m" },
+                "timeout_ms": 1500,
+            }),
+        ))
+        .expect_err("超时必须上报");
+        assert!(error.contains("\"timeout\""), "got: {error}");
+        assert!(!error.contains("sk-query-leak"), "got: {error}");
+        assert!(
+            !error.contains(&format!("127.0.0.1:{port}")),
+            "got: {error}"
+        );
+        stop.store(true, Ordering::Release);
+        server.join().expect("server thread should finish");
+        let _ = fs::remove_dir_all(directory);
+    }
+
+    #[test]
+    fn ai_complete_rejects_non_https_and_unparseable_urls() {
+        let directory = test_directory("ai-url");
+        let base = ai_test_base(&directory);
+        let requests = ai_test_handles();
+        for url in [
+            "file:///etc/hosts",
+            "ftp://example.com/chat",
+            "http://example.com/v1/chat/completions",
+            "/v1/chat/completions",
+            "api.deepseek.com/chat/completions",
+            "",
+        ] {
+            let error = tauri::async_runtime::block_on(ai_complete_at(
+                &base,
+                &requests,
+                &json!({
+                    "request_id": "req-url",
+                    "provider_id": "deepseek",
+                    "url": url,
+                    "body": { "model": "m" },
+                }),
+            ))
+            .expect_err("非 https / 非回环地址必须被拒绝");
+            assert!(
+                error.contains("\"invalid_request\""),
+                "{url} 应当得到 invalid_request，实际: {error}"
+            );
+            assert!(
+                !error.contains("example.com"),
+                "错误里不得回显地址: {error}"
+            );
+        }
+        assert!(requests.lock().unwrap().is_empty(), "被拒绝的请求不得登记");
+        // 允许的两种形状：https 与本机回环 http（IPv6 回环与浏览器壳一致）。
+        ai_validate_request_url("https://api.deepseek.com/chat/completions")
+            .expect("https 地址必须允许");
+        ai_validate_request_url("http://[::1]:8080/v1/chat/completions")
+            .expect("IPv6 回环地址必须允许");
+        let _ = fs::remove_dir_all(directory);
+    }
+
+    #[test]
+    fn ai_complete_requires_a_stored_credential_when_auth_is_requested() {
+        let directory = test_directory("ai-missing-credential");
+        let base = ai_test_base(&directory);
+        let requests = ai_test_handles();
+        let error = tauri::async_runtime::block_on(ai_complete_at(
+            &base,
+            &requests,
+            &json!({
+                "request_id": "req-cred",
+                "provider_id": "deepseek",
+                "url": "https://api.deepseek.com/chat/completions",
+                "auth": { "header": "authorization", "scheme": "Bearer" },
+                "headers": { "content-type": "application/json" },
+                "body": { "model": "deepseek-chat", "messages": [] },
+            }),
+        ))
+        .expect_err("缺少密钥时必须失败");
+        assert!(error.contains("\"missing_credential\""), "got: {error}");
+        assert!(error.contains("recommended_action"), "got: {error}");
+        assert!(
+            error.contains("AI 面板"),
+            "提示必须告诉用户去哪里配置: {error}"
+        );
+        assert!(!error.contains("Bearer"), "错误里不得出现注入头: {error}");
+        assert!(
+            !base.join(AI_PROVIDERS_FILE).exists(),
+            "只读凭据不得创建存储文件"
+        );
+        let _ = fs::remove_dir_all(directory);
+    }
+
+    #[test]
+    fn ai_complete_rejects_credential_shaped_request_fields() {
+        let directory = test_directory("ai-guard");
+        let base = ai_test_base(&directory);
+        // 词表规则本身：标准采样参数必须可用，凭据字段必须被识别。
+        assert!(!sensitive_key("max_tokens"), "max_tokens 是标准模型参数");
+        assert!(!sensitive_key("max_completion_tokens"));
+        assert!(sensitive_key("api_key"));
+        assert!(sensitive_key("requires_credential"));
+        assert!(sensitive_key("authorization"));
+
+        // 刻意不给 `AiRequestSpec` 实现 Debug：它持有凭据，测试失败信息也不该打印它。
+        let error = match ai_request_spec(
+            &base,
+            &json!({
+                "request_id": "req-guard",
+                "provider_id": "deepseek",
+                "url": "https://api.deepseek.com/chat/completions",
+                "body": {
+                    "model": "deepseek-chat",
+                    "messages": [{ "role": "user", "content": "hi", "api_key": "sk-must-not-leak" }],
+                },
+            }),
+        ) {
+            Ok(_) => panic!("请求体里的凭据字段必须被拦下"),
+            Err(error) => error,
+        };
+        assert!(error.contains("\"invalid_request\""), "got: {error}");
+        assert!(
+            error.contains("body.messages[0].api_key"),
+            "错误必须指明字段路径: {error}"
+        );
+        assert!(
+            !error.contains("sk-must-not-leak"),
+            "错误里不得出现字段值: {error}"
+        );
+
+        let spec = ai_request_spec(
+            &base,
+            &json!({
+                "request_id": "req-ok",
+                "provider_id": "deepseek",
+                "url": "https://api.deepseek.com/chat/completions",
+                "body": { "model": "m", "messages": [], "max_tokens": 16 },
+            }),
+        )
+        .expect("标准采样参数不得被误伤");
+        assert_eq!(spec.timeout_ms, AI_DEFAULT_TIMEOUT_MS);
+        assert!(spec.auth_header.is_none());
+        assert!(spec.secrets.forms.is_empty(), "没有存过凭据时不带擦除素材");
+
+        let _ = fs::remove_dir_all(directory);
+    }
+
+    #[test]
+    fn ai_payloads_accept_both_invoke_shapes() {
+        // 服务壳发 `{ "input": { … } }`，桌面壳的 nativeInput 对 AI 命令直接发裸字段，
+        // 两种形状都必须能解析出同一份载荷。
+        for value in [
+            json!({ "request_id": "r1", "provider_id": "deepseek" }),
+            json!({ "input": { "request_id": "r1", "provider_id": "deepseek" } }),
+        ] {
+            let payload = ai_payload(&value, "ai_complete").expect("两种调用形状都必须可解析");
+            assert_eq!(payload["request_id"], json!("r1"));
+            assert_eq!(payload["provider_id"], json!("deepseek"));
+        }
+        assert!(ai_payload(&Value::Null, "ai_complete")
+            .expect("无参数调用按空载荷处理")
+            .is_empty());
+        let strict = strict_payload(&json!({ "input": { "provider_id": "p" } }), "ai_secret_set")
+            .expect("信封形状必须可解析");
+        assert_eq!(strict["provider_id"], json!("p"));
+        assert!(
+            strict_payload(&json!({ "api_key": "sk-x" }), "ai_secret_set").is_err(),
+            "字段固定的命令必须继续做凭据字段扫描"
+        );
+    }
+
+    #[test]
+    fn ai_complete_posts_with_the_injected_credential_and_parses_json() {
+        let directory = test_directory("ai-complete-ok");
+        let base = ai_test_base(&directory);
+        ai_connection_save_at(&base, &json!({ "id": "local", "label": "Local" }))
+            .expect("provider should save");
+        ai_secret_set_at(&base, "local", "sk-loopback-test-key").expect("secret should save");
+
+        let (result, request) = run_ai_complete_once(
+            &base,
+            json!({
+                "request_id": "req-1",
+                "provider_id": "local",
+                "auth": { "header": "authorization", "scheme": "Bearer" },
+                "headers": {
+                    "content-type": "application/json",
+                    // 渲染层的内部标记：绝不能发给 Provider。
+                    "x-workbench-auth": "provider",
+                    "x-workbench-provider": "local",
+                },
+                "body": { "model": "test", "messages": [{ "role": "user", "content": "你好" }] },
+                "timeout_ms": 5000,
+            }),
+            http_response(
+                "200 OK",
+                "application/json",
+                "{\"choices\":[{\"message\":\"hi\"}]}",
+            ),
+        );
+        let result = result.expect("本机回环请求应当成功");
+        assert_eq!(result["status"], json!(200));
+        assert_eq!(result["response_kind"], json!("json"));
+        assert_eq!(result["body"]["choices"][0]["message"], json!("hi"));
+        assert_eq!(result["headers"]["content-type"], json!("application/json"));
+        assert!(!result.to_string().contains("sk-loopback-test-key"));
+
+        let lowered = request.to_ascii_lowercase();
+        assert!(
+            lowered.contains("authorization: bearer sk-loopback-test-key"),
+            "本地凭据必须由原生侧注入: {request}"
+        );
+        assert!(
+            lowered.contains("\"model\":\"test\""),
+            "请求体必须原样发出: {request}"
+        );
+        assert!(
+            !lowered.contains("x-workbench-"),
+            "内部标记不得离开本进程: {request}"
+        );
+        assert!(lowered.starts_with("post /v1/chat/completions"));
+
+        // 不给 headers 时必须补上 content-type，且不能带任何鉴权头。
+        let (plain, plain_request) = run_ai_complete_once(
+            &base,
+            json!({
+                "request_id": "req-2",
+                "provider_id": "local",
+                "body": { "model": "test" },
+                "timeout_ms": 5000,
+            }),
+            http_response("200 OK", "application/json", "{\"ok\":true}"),
+        );
+        plain.expect("不带鉴权的请求应当成功");
+        let plain_lowered = plain_request.to_ascii_lowercase();
+        assert!(
+            plain_lowered.contains("content-type: application/json"),
+            "缺省请求头必须补 content-type: {plain_request}"
+        );
+        assert!(
+            !plain_lowered.contains("authorization")
+                && !plain_lowered.contains("sk-loopback-test-key"),
+            "没有 auth 时不得注入凭据: {plain_request}"
+        );
+
+        let _ = fs::remove_dir_all(directory);
+    }
+
+    #[test]
+    fn ai_complete_skips_auth_for_endpoints_without_a_header() {
+        let directory = test_directory("ai-complete-no-auth");
+        let base = ai_test_base(&directory);
+        ai_connection_save_at(&base, &json!({ "id": "custom-1", "label": "本地端点" }))
+            .expect("provider should save");
+        // 刻意不保存任何密钥：空 header 的预设不需要密钥，也不得报 missing_credential。
+        for auth in [
+            json!({ "header": "", "scheme": "Bearer" }),
+            json!({ "scheme": "Bearer" }),
+            json!(null),
+        ] {
+            let (result, request) = run_ai_complete_once(
+                &base,
+                json!({
+                    "request_id": "req-no-auth",
+                    "provider_id": "custom-1",
+                    "auth": auth,
+                    "body": { "model": "local" },
+                    "timeout_ms": 5000,
+                }),
+                http_response("200 OK", "application/json", "{\"ok\":true}"),
+            );
+            result.expect("不需要密钥的端点必须能直接调用");
+            assert!(
+                !request.to_ascii_lowercase().contains("authorization"),
+                "空 header 不得注入鉴权头: {request}"
+            );
+        }
+        let _ = fs::remove_dir_all(directory);
+    }
+
+    /// `ai_request_spec` 的失败分支：刻意不打印载荷（里面可能有凭据）。
+    fn expect_spec_error(base: &Path, payload: Value) -> String {
+        match ai_request_spec(base, &payload) {
+            Ok(_) => panic!("该请求形状必须被拒绝"),
+            Err(error) => error,
+        }
+    }
+
+    #[test]
+    fn ai_complete_stops_redirects_and_rejects_bad_request_shapes() {
+        let directory = test_directory("ai-complete-redirect");
+        let base = ai_test_base(&directory);
+        ai_connection_save_at(&base, &json!({ "id": "local", "label": "Local" }))
+            .expect("provider should save");
+        ai_secret_set_at(&base, "local", "sk-redirect-test-key").expect("secret should save");
+
+        // 3xx：不跟随跳转（自定义鉴权头可能被转发到别的站点），直接停在原地。
+        let (redirected, _) = run_ai_complete_once(
+            &base,
+            json!({
+                "request_id": "req-redirect",
+                "provider_id": "local",
+                "auth": { "header": "authorization", "scheme": "Bearer" },
+                "body": { "model": "test" },
+                "timeout_ms": 5000,
+            }),
+            http_response("302 Found", "text/plain", ""),
+        );
+        let redirected = redirected.expect_err("3xx 必须失败");
+        assert!(
+            redirected.contains("\"provider_error\""),
+            "got: {redirected}"
+        );
+        assert!(redirected.contains("跳转"), "got: {redirected}");
+        assert!(!redirected.contains("sk-redirect-test-key"));
+
+        // 请求形状错误：非文本请求头 / 非法头名 / 缺 body / 超时值非法。
+        let header_value = expect_spec_error(
+            &base,
+            json!({ "url": "https://example.com/v1", "headers": { "x-extra": 7 }, "body": {} }),
+        );
+        assert!(header_value.contains("必须是文本"), "got: {header_value}");
+        let header_name = expect_spec_error(
+            &base,
+            json!({ "url": "https://example.com/v1", "headers": { "bad header": "x" }, "body": {} }),
+        );
+        assert!(header_name.contains("请求头名称无效"), "got: {header_name}");
+        let missing_body = expect_spec_error(&base, json!({ "url": "https://example.com/v1" }));
+        assert!(missing_body.contains("缺少 body"), "got: {missing_body}");
+        let bad_timeout = expect_spec_error(
+            &base,
+            json!({ "url": "https://example.com/v1", "body": {}, "timeout_ms": 0 }),
+        );
+        assert!(bad_timeout.contains("超时时间无效"), "got: {bad_timeout}");
+        // 要注入凭据却没给 provider_id：与浏览器壳一致报 not_configured。
+        let unconfigured = expect_spec_error(
+            &base,
+            json!({
+                "url": "https://example.com/v1",
+                "auth": { "header": "authorization" },
+                "body": {},
+            }),
+        );
+        assert!(
+            unconfigured.contains("\"not_configured\""),
+            "got: {unconfigured}"
+        );
+
+        // request_id 缺省时本地补一个，取消依然可用。
+        let spec = ai_request_spec(
+            &base,
+            &json!({ "url": "https://example.com/v1", "body": {} }),
+        )
+        .expect("request_id 缺省时应当本地补一个");
+        assert!(
+            spec.request_id.starts_with("ai-request-"),
+            "got: {}",
+            spec.request_id
+        );
+        assert_eq!(spec.provider_id, "");
+        assert_eq!(spec.timeout_ms, AI_DEFAULT_TIMEOUT_MS);
+
+        let _ = fs::remove_dir_all(directory);
+    }
+
+    #[test]
+    fn ai_complete_maps_provider_statuses_and_stream_responses() {
+        let directory = test_directory("ai-complete-status");
+        let base = ai_test_base(&directory);
+        ai_connection_save_at(&base, &json!({ "id": "local", "label": "Local" }))
+            .expect("provider should save");
+        ai_secret_set_at(&base, "local", "sk-status-test-key").expect("secret should save");
+        let payload = || {
+            json!({
+                "request_id": "req-status",
+                "provider_id": "local",
+                "auth": { "header": "authorization", "scheme": "Bearer" },
+                "headers": { "content-type": "application/json" },
+                "body": { "model": "test", "messages": [] },
+                "timeout_ms": 5000,
+            })
+        };
+
+        let (unauthorized, _) = run_ai_complete_once(
+            &base,
+            payload(),
+            http_response(
+                "401 Unauthorized",
+                "application/json",
+                "{\"error\":\"bad key\"}",
+            ),
+        );
+        let unauthorized = unauthorized.expect_err("401 必须失败");
+        assert!(
+            unauthorized.contains("\"missing_credential\""),
+            "got: {unauthorized}"
+        );
+        assert!(!unauthorized.contains("sk-status-test-key"));
+
+        let (forbidden, _) = run_ai_complete_once(
+            &base,
+            payload(),
+            http_response(
+                "403 Forbidden",
+                "application/json",
+                "{\"error\":\"no access\"}",
+            ),
+        );
+        assert!(forbidden
+            .expect_err("403 必须失败")
+            .contains("\"permission_denied\""));
+
+        let (limited, _) = run_ai_complete_once(
+            &base,
+            payload(),
+            http_response(
+                "429 Too Many Requests",
+                "application/json",
+                "{\"error\":\"slow down\"}",
+            ),
+        );
+        let limited = limited.expect_err("429 必须失败");
+        assert!(limited.contains("\"rate_limited\""), "got: {limited}");
+        assert!(limited.contains("slow down"));
+
+        let (failed, _) = run_ai_complete_once(
+            &base,
+            payload(),
+            http_response(
+                "500 Internal Server Error",
+                "text/plain",
+                "upstream exploded",
+            ),
+        );
+        let failed = failed.expect_err("5xx 必须失败");
+        assert!(failed.contains("\"provider_error\""), "got: {failed}");
+        assert!(failed.contains("\"status\":500"), "got: {failed}");
+        assert!(failed.contains("upstream exploded"), "got: {failed}");
+
+        let (stream, _) = run_ai_complete_once(
+            &base,
+            payload(),
+            http_response("200 OK", "text/event-stream", "data: {\"choices\":[]}\n\n"),
+        );
+        let stream = stream.expect("SSE 响应应当成功");
+        assert_eq!(stream["response_kind"], json!("stream"));
+        assert_eq!(stream["body"], json!("data: {\"choices\":[]}\n\n"));
+        assert_eq!(
+            stream["headers"]["content-type"],
+            json!("text/event-stream")
+        );
+
+        let (malformed, _) = run_ai_complete_once(
+            &base,
+            payload(),
+            http_response("200 OK", "application/json", "<html>not json</html>"),
+        );
+        let malformed = malformed.expect("非 JSON 正文按原文回传，由前端判定 malformed_response");
+        assert_eq!(malformed["response_kind"], json!("json"));
+        assert_eq!(malformed["body"], json!("<html>not json</html>"));
+
+        let _ = fs::remove_dir_all(directory);
+    }
+
+    #[test]
+    fn ai_cancel_unknown_request_is_a_harmless_no_op() {
+        let requests = ai_test_handles();
+        let unknown = ai_cancel_at(&requests, &json!({ "request_id": "req-missing" }))
+            .expect("取消未知请求不得报错");
+        assert_eq!(unknown["cancelled"], json!(false));
+        // 与浏览器壳一致：取消永不失败，空 id / 空载荷都只是空操作。
+        let blank =
+            ai_cancel_at(&requests, &json!({ "request_id": "   " })).expect("空请求 ID 也不得报错");
+        assert_eq!(blank["cancelled"], json!(false));
+        let empty = ai_cancel_at(&requests, &Value::Null).expect("无参数也不得报错");
+        assert_eq!(empty["cancelled"], json!(false));
+    }
+
+    #[test]
+    fn ai_cancel_aborts_a_registered_handle() {
+        let requests = ai_test_handles();
+        let handle = tauri::async_runtime::spawn(async {
+            thread::sleep(Duration::from_millis(50));
+        });
+        requests.lock().unwrap().insert("req-sleep".into(), handle);
+        let cancelled = ai_cancel_at(&requests, &json!({ "request_id": "req-sleep" }))
+            .expect("取消已登记的句柄不得报错");
+        assert_eq!(cancelled["cancelled"], json!(true));
+        assert!(requests.lock().unwrap().is_empty(), "取消后必须摘掉句柄");
+    }
+
+    #[test]
+    fn ai_complete_cancel_aborts_an_in_flight_request() {
+        let directory = test_directory("ai-complete-cancel");
+        let base = ai_test_base(&directory);
+        ai_connection_save_at(&base, &json!({ "id": "local", "label": "Local" }))
+            .expect("provider should save");
+        ai_secret_set_at(&base, "local", "sk-cancel-test-key").expect("secret should save");
+
+        // 只接受 TCP 连接、永不回应 TLS 握手的「服务端」：请求会一直挂在握手上，
+        // 于是取消测试不需要任何外部网络，也不会因为网络抖动而不稳定。
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("listener should bind");
+        listener
+            .set_nonblocking(true)
+            .expect("listener should be non-blocking");
+        let port = listener
+            .local_addr()
+            .expect("listener should have an address")
+            .port();
+        let stop = Arc::new(AtomicBool::new(false));
+        let server_stop = Arc::clone(&stop);
+        let server = thread::spawn(move || {
+            let mut held = Vec::new();
+            while !server_stop.load(Ordering::Acquire) {
+                match listener.accept() {
+                    Ok((stream, _)) => held.push(stream),
+                    Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                        thread::sleep(Duration::from_millis(5));
+                    }
+                    Err(_) => break,
+                }
+            }
+            drop(held);
+        });
+
+        let requests = Arc::new(ai_test_handles());
+        let client_requests = Arc::clone(&requests);
+        let client_base = base.clone();
+        let (sender, receiver) = std::sync::mpsc::channel();
+        let client = thread::spawn(move || {
+            let result = tauri::async_runtime::block_on(ai_complete_at(
+                &client_base,
+                &client_requests,
+                &json!({
+                    "request_id": "req-cancel",
+                    "provider_id": "local",
+                    "url": format!("https://127.0.0.1:{port}/v1/chat/completions"),
+                    "auth": { "header": "authorization", "scheme": "Bearer" },
+                    "headers": { "content-type": "application/json" },
+                    "body": { "model": "test", "messages": [] },
+                    "timeout_ms": 5000,
+                }),
+            ));
+            let _ = sender.send(result);
+        });
+
+        let mut cancelled = false;
+        let mut finished_early = None;
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        while std::time::Instant::now() < deadline {
+            let outcome = ai_cancel_at(&requests, &json!({ "request_id": "req-cancel" }))
+                .expect("取消不得报错");
+            if outcome["cancelled"] == json!(true) {
+                cancelled = true;
+                break;
+            }
+            if let Ok(result) = receiver.try_recv() {
+                finished_early = Some(result);
+                break;
+            }
+            thread::sleep(Duration::from_millis(5));
+        }
+        assert!(
+            cancelled,
+            "in-flight 请求必须可取消（提前结束: {finished_early:?}）"
+        );
+
+        let result = receiver
+            .recv_timeout(Duration::from_secs(5))
+            .expect("取消后必须立刻返回");
+        let error = result.expect_err("被取消的请求不得报告成功");
+        assert!(error.contains("\"cancelled\""), "got: {error}");
+        assert!(error.contains("已取消这次 AI 请求"), "got: {error}");
+        assert!(!error.contains("sk-cancel-test-key"));
+
+        assert_eq!(
+            ai_cancel_at(&requests, &json!({ "request_id": "req-cancel" })).unwrap()["cancelled"],
+            json!(false),
+            "已经结束的请求再次取消必须是空操作"
+        );
+        client.join().expect("客户端线程应当结束");
+        stop.store(true, Ordering::Release);
+        server.join().expect("服务端线程应当结束");
+        let _ = fs::remove_dir_all(directory);
+    }
 }
 
 pub fn run() {
+    // Resolve the optional launch directory before the window exists so a bad
+    // path fails fast instead of leaving an empty workbench on screen.
+    let launch_project_dir = match project_dir_from_args(std::env::args().skip(1)) {
+        Ok(directory) => directory,
+        Err(message) => {
+            eprintln!("{message}");
+            std::process::exit(2);
+        }
+    };
+    let _ = LAUNCH_PROJECT_DIR.set(launch_project_dir);
     let app = tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .manage(BridgeState::new())
@@ -3642,6 +7233,7 @@ pub fn run() {
             import_preview,
             import_confirm,
             asset_import,
+            asset_read,
             select_file,
             select_folder,
             select_export_path,
@@ -3652,7 +7244,16 @@ pub fn run() {
             secret_delete,
             connector_sync,
             ai_analyze,
-            suggestion_apply
+            suggestion_apply,
+            ai_connection_list,
+            ai_connection_save,
+            ai_connection_delete,
+            ai_secret_set,
+            ai_secret_delete,
+            ai_complete,
+            ai_cancel,
+            ai_execution_append,
+            ai_execution_list
         ])
         .build(tauri::generate_context!())
         .expect("error while building AI Course Workbench");

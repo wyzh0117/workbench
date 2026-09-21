@@ -139,6 +139,82 @@ export function removeAssetUsage(data: ProjectData, usageId: string): void {
   touchProject(data);
 }
 
+/**
+ * Detach one asset from one content item, releasing every reference that
+ * pointed at it there.  Media slots and grid placements stay in place so the
+ * user still sees where the material used to be.
+ */
+export function detachAssetFromContent(
+  data: ProjectData,
+  assetId: string,
+  contentItemId: string,
+): number {
+  const before = data.asset_usages.length;
+  data.asset_usages = data.asset_usages.filter((usage) =>
+    !(usage.asset_id === assetId && usage.content_item_id === contentItemId)
+  );
+  for (const block of data.blocks) {
+    if (block.settings.asset_id !== assetId) continue;
+    const document = data.documents.find((candidate) =>
+      candidate.id === block.document_id
+    );
+    if (document?.content_item_id !== contentItemId) continue;
+    delete block.settings.asset_id;
+    block.content = "";
+    block.updated_at = now();
+  }
+  for (const requirement of data.requirements) {
+    if (
+      requirement.content_item_id !== contentItemId ||
+      requirement.resolved_asset_id !== assetId
+    ) continue;
+    requirement.resolved_asset_id = null;
+    if (requirement.status === "resolved") requirement.status = "open";
+  }
+  touchProject(data);
+  return before - data.asset_usages.length;
+}
+
+/**
+ * Archive an asset and every reference to it.  Files on disk are never
+ * deleted here: the canonical row is archived and the material stays
+ * recoverable in the project's asset folder.
+ */
+export function removeAsset(
+  data: ProjectData,
+  assetId: string,
+): { usages_removed: number } {
+  const asset = data.assets.find((candidate) => candidate.id === assetId);
+  assert(asset, `找不到素材: ${assetId}`);
+  let removed = 0;
+  for (
+    const contentItemId of new Set(
+      data.asset_usages.filter((usage) => usage.asset_id === assetId).map(
+        (usage) => usage.content_item_id,
+      ),
+    )
+  ) {
+    removed += detachAssetFromContent(data, assetId, contentItemId);
+  }
+  for (const block of data.blocks) {
+    if (block.settings.asset_id === assetId) {
+      delete block.settings.asset_id;
+      block.updated_at = now();
+    }
+  }
+  for (const requirement of data.requirements) {
+    if (requirement.resolved_asset_id === assetId) {
+      requirement.resolved_asset_id = null;
+      if (requirement.status === "resolved") requirement.status = "open";
+    }
+  }
+  asset.archived = true;
+  touchProject(data);
+  return { usages_removed: removed };
+}
+
+/** Placement rows that point at a block that no longer exists. */
+
 /** Every canonical asset reference must resolve to one project-owned target. */
 export function validateAssetUsages(data: ProjectData): string[] {
   const errors: string[] = [];
