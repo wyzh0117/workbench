@@ -497,13 +497,13 @@ N1
 
 # 6. 当前项目位置
 
-> 最后更新时间：2026-09-20
+> 最后更新时间：2026-09-21
 >
 > 当前版本：**V0**
 >
-> 当前任务：**V0-T01 — Desktop 基础闭环**
+> 当前任务：**V0-T01 — Desktop 基础闭环（已完成）**
 >
-> 当前状态：**IN PROGRESS / 接近收口，但尚未 VERIFIED**
+> 当前状态：**VERIFIED / DONE / PASS**
 
 ---
 
@@ -513,7 +513,7 @@ V0 当前只使用以下四个平级任务。
 
 | ID | 任务 | 当前状态 | 目标 |
 |---|---|---|---|
-| V0-T01 | Desktop 基础闭环 | IN PROGRESS | 真实桌面运行、项目生命周期、文件/素材、保存恢复安全 |
+| V0-T01 | Desktop 基础闭环 | VERIFIED | 真实桌面运行、项目生命周期、文件/素材、保存恢复安全 |
 | V0-T02 | Course Authoring | PARTIAL | 真正顺手地制作一节课和维护整门课程 |
 | V0-T03 | AI Workflow | PARTIAL | AI 真正进入工作流，同时保持 Diff / Apply 控制 |
 | V0-T04 | Output & Publish | PARTIAL | 将课程可靠迁移到实际使用和发布场景 |
@@ -634,7 +634,7 @@ deno task test
 当前：
 
 ```text
-Rust 11 tests + Deno 81 tests passed
+Rust 14 tests + Deno 87 tests passed
 ```
 
 ---
@@ -689,7 +689,7 @@ Asset / Usage
 恢复安全
 Web 端继续可用
 AssetUsage 语义统一
-Rust 11 tests + Deno 81 tests
+Rust 14 tests + Deno 87 tests
 ```
 
 主要实现已经进入：
@@ -701,20 +701,21 @@ app/main.js
 
 ---
 
-# 11. V0-T01 尚未完成
+# 11. V0-T01 完成状态
 
-当前还剩两个明确 BLOCKER：
+当前 BLOCKER：
 
 ```text
-1. External Modification Detection
-2. Real Desktop E2E
+NONE
 ```
+
+Real Desktop E2E、External Modification Detection、Finder Drag & Drop、Recovery Restore / Discard、Markdown / HTML Asset References 与 Web Regression 均已闭环。
 
 ---
 
 ## 11.1 Real Tauri Runtime
 
-本轮 Native Runtime smoke 已 VERIFIED（不等同于 V0-T01 全部 VERIFIED）：
+Native Runtime smoke 已 VERIFIED：
 
 ```text
 Rust / Cargo 1.98.1
@@ -724,11 +725,10 @@ debug Tauri app bundle 成功
 真实 cargo tauri dev 启动，UI 非白屏
 Native folder picker 实机工作
 临时项目新建 / 编辑 / 保存 / 终止 / 重启重开并读回内容
-Rust 11 tests / deno 81 tests 通过
+Rust 14 tests / Deno 87 tests 通过
 ```
 
-Native Runtime smoke 与 Native Project Lock 已分别 VERIFIED；这不等同于 V0-T01 全部 VERIFIED。
-当前剩余验证为 External Modification Detection 与完整 Desktop E2E。
+Native Runtime smoke、Native Project Lock、External Modification Detection 与完整 Desktop E2E 均已 VERIFIED。
 
 ---
 
@@ -749,7 +749,7 @@ owner-scoped acquire / heartbeat / release
 stale takeover 与 malformed fresh/old 处理
 Native + TS 所有项目写路径均经同一 lock/guard 保护
 create / open / switch / close 生命周期均覆盖租约
-Rust 11 tests、Deno 81 tests、cargo build 通过
+Rust 14 tests、Deno 87 tests、cargo build 通过
 真实 Tauri GUI：session 失效自愈、新建、保存、heartbeat、正常 close release、重启 reopen
 ```
 
@@ -760,7 +760,7 @@ project.lock.guard 是协调文件；它可以是零字节并在释放后保留�
 guard 文件存在不等于当前仍持有项目锁，持锁状态只由统一协议与实际 owner 判断。
 ```
 
-该状态只表示 Native Project Lock 已 VERIFIED；V0-T01 仍为 IN PROGRESS。
+Native Project Lock 已 VERIFIED；V0-T01 全部 DoD 亦已 VERIFIED。
 
 必须防止：
 
@@ -784,45 +784,34 @@ Multi-instance Protection
 
 ## 11.3 External Modification Detection
 
-当：
+状态：
 
 ```text
-Workbench 打开项目
-↓
-外部 Agent / 编辑器 / Git 修改 project.json
+VERIFIED
 ```
 
-Workbench 不能使用旧内存静默覆盖新文件。
-
-需要：
-
-```text
-Detect
-Warn
-Reload / Diff / Merge
-```
-
-并优先复用已经存在的三方合并能力。
+真实 Tauri Desktop 已验证 Manual Save / Autosave 阻止静默覆盖，磁盘外部版本保持不变；Reload、非重叠 Merge 和 Explicit Resolution 均刷新 baseline，后续保存与 reopen 成功；Snapshot Restore 不能绕过保护。
 
 ---
 
 ## 11.4 Real Desktop E2E
 
-必须真实完成：
+状态：
 
 ```text
-Launch
-Open
-Edit
-Import
-Drag
-Autosave
-Close
-Restart
-Reopen
-Recovery
-External Change
-Export
+VERIFIED
+```
+
+真实完成：
+
+```text
+Launch / Open / Edit / Autosave / Close / Restart / Reopen
+Finder Drag & Drop（image / GIF / video / Markdown）
+Recovery Restore / Discard（含恢复前安全快照）
+External Change Conflict / Reload / Merge / Explicit Resolution
+Markdown / HTML Export（正文与已使用素材引用）
+Project Lock 正常释放
+Web Workbench Regression
 ```
 
 ---
@@ -837,21 +826,21 @@ Export
 [x] Desktop App 真实启动成功
 [x] Native commands 实机工作
 [x] Native Picker 实机工作
-[ ] Asset Import 实机工作
-[ ] Drag & Drop 实机工作
-[ ] Autosave 实机工作
+[x] Asset Import 实机工作
+[x] Drag & Drop 实机工作
+[x] Autosave 实机工作
 [x] Reopen 数据完整
-[ ] Recovery 实机验证
+[x] Recovery 实机验证
 [x] Project Lock 完成
 [x] stale lock 完成
-[ ] External Change Detection 完成
-[ ] 不发生 silent overwrite
-[ ] Markdown Desktop Export 正常
-[ ] HTML Desktop Export 正常
-[ ] Real Desktop E2E 全流程通过
+[x] External Change Detection 完成
+[x] 不发生 silent overwrite
+[x] Markdown Desktop Export 正常
+[x] HTML Desktop Export 正常
+[x] Real Desktop E2E 全流程通过
 [x] deno task check 通过
 [x] deno task test 通过
-[ ] Web 端无回归
+[x] Web 端无回归
 ```
 
 才允许：
@@ -864,21 +853,15 @@ V0-T01 = VERIFIED
 
 # 13. V0-T01 当前下一步
 
-当前唯一 Next Action：
+V0-T01 已完成并 VERIFIED，Remaining Blockers 已清零。
 
-> **完成 External Modification Detection。**
-
-随后继续：
+下一任务：
 
 ```text
-External Modification Detection
-↓
-Real Desktop E2E
-↓
-V0-T01 VERIFIED
+V0-T02 — Course Authoring
 ```
 
-不要切换到其他任务。
+本轮没有进入 V0-T02。
 
 ---
 
@@ -892,9 +875,7 @@ PARTIAL / NOT ACTIVE
 
 当前已有一些基础 UI 与数据能力。
 
-但 V0-T01 未 VERIFIED 前：
-
-> 不进入集中开发。
+V0-T01 已 VERIFIED，V0-T02 是下一任务；本轮尚未进入集中开发。
 
 V0-T02 的最终目标：
 
@@ -1030,7 +1011,7 @@ PDF
 当前 V0 共 4 个平铺任务：
 
 ```text
-V0-T01  IN PROGRESS
+V0-T01  VERIFIED
 V0-T02  PARTIAL / NOT ACTIVE
 V0-T03  PARTIAL / NOT ACTIVE
 V0-T04  PARTIAL / NOT ACTIVE
@@ -1363,6 +1344,9 @@ YYYY-MM-DD | Task | From → To | Summary
 2026-09-20 | V0-T01 | IN PROGRESS → IN PROGRESS
 Native Runtime smoke 与 Native Project Lock 已 VERIFIED（统一 lock/guard、30s/5s、owner 安全、stale/malformed、Native+TS 写 guard、create/open/switch/close 生命周期；Rust 11、Deno 81、Tauri build；真实 GUI session 自愈、新建/保存/heartbeat/正常 close release/reopen）。
 V0-T01 仍 IN PROGRESS；尚缺 External Modification Detection、Real Desktop E2E。
+
+2026-09-21 | V0-T01 | IN PROGRESS → VERIFIED
+Real Desktop E2E 已闭环：真实 Finder 拖入 image/GIF/video/Markdown，Recovery Restore/Discard 与恢复前快照，External Modification Manual Save/Autosave 阻止覆盖、Reload/Merge/Explicit Resolution、Snapshot Restore 保护，Markdown/HTML 素材引用，Web regression；Rust 14、Deno 87 全部通过，Remaining Blockers 清零。下一任务仍为 V0-T02，本轮未进入。
 ```
 
 ---
@@ -1533,16 +1517,9 @@ PROJECT_MASTER_CONTROL.md
 
 # 29. 当前唯一 NEXT ACTION
 
-> **V0-T01：完成 External Modification Detection；随后完成完整 Desktop E2E，直到 V0-T01 = VERIFIED。**
+> **V0-T02 — Course Authoring。**
 
-在 V0-T01 VERIFIED 之前：
-
-```text
-不要进入 V0-T02
-不要扩展 AI
-不要扩展发布
-不要重新规划版本
-```
+V0-T01 已 VERIFIED；本轮仅完成交接，尚未进入 V0-T02 开发。
 
 ---
 
@@ -1559,10 +1536,10 @@ CURRENT VERSION
 V0
 
 CURRENT TASK
-V0-T01 Desktop 基础闭环
+V0-T01 Desktop 基础闭环（已完成）
 
 CURRENT STATUS
-IN PROGRESS
+VERIFIED / DONE / PASS
 
 DONE / IMPLEMENTED
 - Canonical / Domain / Service 主体
@@ -1575,11 +1552,12 @@ DONE / IMPLEMENTED
 - Autosave / Recovery 基础
 - Markdown / HTML 等基础输出
 - AI ChangeDraft 安全边界
-- Rust 11 tests + Deno 81 tests
+- Rust 14 tests + Deno 87 tests
+- Finder Drag & Drop / Recovery Restore & Discard / External Modification Desktop GUI
+- Markdown / HTML 已使用素材引用 / Web Regression
 
 OPEN BLOCKERS
-- External Modification Detection
-- Real Desktop E2E
+- NONE
 
 AFTER CURRENT TASK
 V0-T02 Course Authoring
@@ -1593,7 +1571,7 @@ V2
 NOT ACTIVE
 
 NEXT ACTION
-完成 External Modification Detection，继续收口 V0-T01。
+V0-T02 Course Authoring（本轮未进入）。
 ```
 
 ---

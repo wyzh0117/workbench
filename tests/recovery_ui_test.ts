@@ -100,6 +100,128 @@ Deno.test("WorkbenchStore flush retries a mutation that lands during save", asyn
   }
 });
 
+Deno.test("WorkbenchStore surfaces autosave conflicts and reload establishes a usable state", async () => {
+  const runtime = globalThis as typeof globalThis & { document?: unknown };
+  const previousDocument = runtime.document;
+  const previousFetch = globalThis.fetch;
+  const root = {
+    innerHTML: "",
+    querySelector: () => null,
+    querySelectorAll: () => [],
+  };
+  runtime.document = {
+    querySelector: () => root,
+    addEventListener: () => undefined,
+  };
+  globalThis.fetch = async () => { throw new Error("test fetch disabled"); };
+  try {
+    const { WorkbenchStore } = await import("../app/main.js?external-conflict-ui-test");
+    let shouldConflict = true;
+    let store: InstanceType<typeof WorkbenchStore>;
+    const bridge = {
+      isNative: () => false,
+      writeRecoveryJournal: async () => {},
+      writeProject: async () => {
+        if (shouldConflict) {
+          const failure = new Error("保存已阻止") as Error & { code: string };
+          failure.code = "external_modification_conflict";
+          throw failure;
+        }
+      },
+      inspectExternalModification: async () => ({
+        changed: true,
+        current: { exists: true, mtime_ms: 1, size: 2, hash: "external" },
+        external_diff: { changed: true, entries: [{ path: "project.title" }] },
+        local_diff: { changed: true, entries: [{ path: "project.description" }] },
+      }),
+      reloadExternalProject: async () => {
+        const project = structuredClone(store.data);
+        project.project.title = "磁盘版本";
+        return project;
+      },
+      clearRecoveryJournal: async () => {},
+      saveSession: async () => {},
+    };
+    store = new WorkbenchStore(bridge);
+    assert(!(await store.flush()), "autosave must report a blocked write");
+    assert(store.externalConflict?.changed, "the UI must retain structured conflict state");
+    assert(store.saveStatus === "外部修改冲突", "conflict must not look like a successful save");
+    shouldConflict = false;
+    await store.resolveExternalConflict("reload");
+    assert(store.data.project.title === "磁盘版本", "reload must replace stale in-memory state");
+    assert(!store.externalConflict, "reload must clear the resolved conflict");
+    assert(await store.flush(), "saving after reload must succeed");
+  } finally {
+    runtime.document = previousDocument;
+    globalThis.fetch = previousFetch;
+  }
+});
+
+Deno.test("pending recovery keeps canonical data until restore snapshots it", async () => {
+  const runtime = globalThis as typeof globalThis & { document?: unknown };
+  const previousDocument = runtime.document;
+  const previousFetch = globalThis.fetch;
+  const root = {
+    innerHTML: "",
+    querySelector: () => null,
+    querySelectorAll: () => [],
+  };
+  runtime.document = {
+    querySelector: () => root,
+    addEventListener: () => undefined,
+  };
+  globalThis.fetch = async () => { throw new Error("test fetch disabled"); };
+  try {
+    const { WorkbenchStore } = await import("../app/main.js?pending-recovery-test");
+    const backups: Array<{ project: { project: { title: string } } }> = [];
+    const writes: Array<{ project: { title: string }; snapshots: Array<{ name: string }> }> = [];
+    let clearCount = 0;
+    let persisted: Record<string, unknown> | null = null;
+    let journal: Record<string, unknown> | null = null;
+    const bridge = {
+      projectDir: "/tmp/recovery-project",
+      isNative: () => true,
+      loadSession: async () => null,
+      readProject: async () => structuredClone(persisted),
+      readRecoveryJournal: async () => structuredClone(journal),
+      listenNativeDrops: async () => () => {},
+      writeRecoveryJournal: async () => {},
+      writeProject: async (project: typeof writes[number]) => { writes.push(structuredClone(project)); },
+      createSnapshot: async (input: typeof backups[number]) => {
+        backups.push(structuredClone(input));
+        return { id: "recovery-before", name: "恢复前备份", note: "backup", created_at: "2026-09-21T00:00:00.000Z" };
+      },
+      clearRecoveryJournal: async () => { clearCount += 1; },
+      saveSession: async () => {},
+    };
+    const store = new WorkbenchStore(bridge);
+    const canonical = structuredClone(store.data);
+    canonical.project.title = "磁盘版本";
+    const recovered = structuredClone(canonical);
+    recovered.project.title = "自动保存版本";
+    persisted = canonical;
+    journal = { project: recovered, saved_at: "2999-09-21T00:00:00.000Z" };
+    await store.initialize();
+    assert(store.data.project.title === "磁盘版本", "startup must keep canonical data visible");
+    assert(store.pendingRecovery?.project.project.title === "自动保存版本", "startup must retain the newer recovery candidate");
+    assert(!(await store.flush()), "pending recovery must block an ordinary flush");
+    await store.resolvePendingRecovery("restore");
+    assert(String(store.data.project.title) === "自动保存版本", "restore must install the journal project");
+    assert(writes.at(-1)?.project.title === "自动保存版本", "restore must persist the journal project");
+    const backup = backups.at(0);
+    assert(backup && backup.project.project.title === "磁盘版本", "restore must snapshot canonical data first");
+    assert(writes.at(-1)?.snapshots[0]?.name === "恢复前备份", "restore must retain the before-backup metadata");
+    assert(clearCount === 1 && !store.pendingRecovery, "restore must clear the journal and pending state");
+    store.pendingRecovery = { project: recovered, canonical: store.data, saved_at: "2999-09-21T00:00:00.000Z" };
+    await store.resolvePendingRecovery("discard");
+    assert(Number(clearCount) === 2 && !store.pendingRecovery, "discard must only clear the journal and pending state");
+    assert(String(store.data.project.title) === "自动保存版本", "discard must keep the canonical project untouched");
+  } finally {
+    runtime.document = previousDocument;
+    globalThis.fetch = previousFetch;
+  }
+});
+
 Deno.test("native startup clears a persisted project path when opening loses its lease", async () => {
   const runtime = globalThis as typeof globalThis & { document?: unknown; __TAURI__?: unknown };
   const previousDocument = runtime.document;
@@ -197,6 +319,134 @@ Deno.test("native project switching rolls back the target when the old lease can
     assert(sessions.at(-1)?.project_dir === "A", "switch rollback must persist the original project path");
     assert(store.hasNativeLease("A") && !store.hasNativeLease("B"), "failed switch must not leave two active leases");
     assert(!store.nativeSwitchPending, "a successful target rollback must not leave a pending switch");
+  } finally {
+    runtime.document = previousDocument;
+    runtime.__TAURI__ = previousTauri;
+    globalThis.fetch = previousFetch;
+  }
+});
+
+Deno.test("native open releases a provisional lease when project data is malformed", async () => {
+  const runtime = globalThis as typeof globalThis & { document?: unknown; __TAURI__?: unknown };
+  const previousDocument = runtime.document;
+  const previousTauri = runtime.__TAURI__;
+  const previousFetch = globalThis.fetch;
+  const root = {
+    innerHTML: "",
+    querySelector: () => null,
+    querySelectorAll: () => [],
+  };
+  runtime.document = {
+    querySelector: () => root,
+    addEventListener: () => undefined,
+  };
+  runtime.__TAURI__ = undefined;
+  globalThis.fetch = async () => { throw new Error("test fetch disabled"); };
+  try {
+    const { WorkbenchStore } = await import("../app/main.js?native-open-rollback-test");
+    const closes: string[] = [];
+    let projectDir = "A";
+    const bridge = {
+      projectDir,
+      projectDirFromUrl: false,
+      isNative: () => true,
+      setProjectDir: (value: string) => { projectDir = value; bridge.projectDir = value; },
+      restoreProjectDir: (value: string | null) => { projectDir = value || ""; bridge.projectDir = projectDir; },
+      openProject: async () => ({ malformed: true }),
+      readProject: async () => ({ malformed: true }),
+      closeProject: async (value: string) => { closes.push(value); },
+      saveSession: async () => {},
+    };
+    const store = new WorkbenchStore(bridge);
+    await store.openProject("B");
+    assert(closes.join(",") === "B", "malformed open must release the provisional target lease");
+    assert(!store.hasNativeLease("B"), "failed open must clear the target lease bookkeeping");
+    assert(projectDir === "", "failed open must restore the unselected project path");
+  } finally {
+    runtime.document = previousDocument;
+    runtime.__TAURI__ = previousTauri;
+    globalThis.fetch = previousFetch;
+  }
+});
+
+Deno.test("native open does not close a lease when project_open rejects", async () => {
+  const runtime = globalThis as typeof globalThis & { document?: unknown; __TAURI__?: unknown };
+  const previousDocument = runtime.document;
+  const previousTauri = runtime.__TAURI__;
+  const previousFetch = globalThis.fetch;
+  const root = {
+    innerHTML: "",
+    querySelector: () => null,
+    querySelectorAll: () => [],
+  };
+  runtime.document = {
+    querySelector: () => root,
+    addEventListener: () => undefined,
+  };
+  runtime.__TAURI__ = undefined;
+  globalThis.fetch = async () => { throw new Error("test fetch disabled"); };
+  try {
+    const { WorkbenchStore } = await import("../app/main.js?native-open-error-test");
+    const closes: string[] = [];
+    let projectDir = "A";
+    const bridge = {
+      projectDir,
+      projectDirFromUrl: false,
+      isNative: () => true,
+      setProjectDir: (value: string) => { projectDir = value; bridge.projectDir = value; },
+      restoreProjectDir: (value: string | null) => { projectDir = value || ""; bridge.projectDir = projectDir; },
+      openProject: async () => { throw new Error("项目被其他实例占用"); },
+      closeProject: async (value: string) => { closes.push(value); },
+      saveSession: async () => {},
+    };
+    const store = new WorkbenchStore(bridge);
+    await store.openProject("B");
+    assert(closes.length === 0, "a rejected project_open must not release an unowned lease");
+    assert(!store.hasNativeLease("B"), "a rejected project_open must not mark a lease");
+    assert(projectDir === "", "failed open must restore the unselected project path");
+  } finally {
+    runtime.document = previousDocument;
+    runtime.__TAURI__ = previousTauri;
+    globalThis.fetch = previousFetch;
+  }
+});
+
+Deno.test("native open keeps a null project result unleased", async () => {
+  const runtime = globalThis as typeof globalThis & { document?: unknown; __TAURI__?: unknown };
+  const previousDocument = runtime.document;
+  const previousTauri = runtime.__TAURI__;
+  const previousFetch = globalThis.fetch;
+  const root = {
+    innerHTML: "",
+    querySelector: () => null,
+    querySelectorAll: () => [],
+  };
+  runtime.document = {
+    querySelector: () => root,
+    addEventListener: () => undefined,
+  };
+  runtime.__TAURI__ = undefined;
+  globalThis.fetch = async () => { throw new Error("test fetch disabled"); };
+  try {
+    const { WorkbenchStore } = await import("../app/main.js?native-open-null-test");
+    const closes: string[] = [];
+    let projectDir = "A";
+    const bridge = {
+      projectDir,
+      projectDirFromUrl: false,
+      isNative: () => true,
+      setProjectDir: (value: string) => { projectDir = value; bridge.projectDir = value; },
+      restoreProjectDir: (value: string | null) => { projectDir = value || ""; bridge.projectDir = projectDir; },
+      openProject: async () => null,
+      readProject: async () => null,
+      closeProject: async (value: string) => { closes.push(value); },
+      saveSession: async () => {},
+    };
+    const store = new WorkbenchStore(bridge);
+    await store.openProject("B");
+    assert(closes.length === 0, "a null project_open result must not trigger close");
+    assert(!store.hasNativeLease("B"), "a null project_open result must not mark a lease");
+    assert(projectDir === "", "failed open must restore the unselected project path");
   } finally {
     runtime.document = previousDocument;
     runtime.__TAURI__ = previousTauri;

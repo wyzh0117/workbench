@@ -1,5 +1,6 @@
 import {
   addAsset,
+  addAssetUsage,
   addLayoutSection,
   addPlacement,
   appendBlock,
@@ -134,6 +135,15 @@ Deno.test("Markdown and clean semantic HTML exports are deterministic", async ()
   const item = data.content_items[0]!;
   appendBlock(data, item.id, "heading", "导出标题", { level: 2 });
   appendBlock(data, item.id, "paragraph", "正文 <script>alert(1)</script>");
+  const exportedAsset = addAsset(data, data.project.id, {
+    type: "image",
+    filename: "cover.png",
+    storage_path: "assets/cover.png",
+    mime_type: "image/png",
+    checksum: "export-cover-checksum",
+    title: "课程封面",
+  }).asset;
+  addAssetUsage(data, exportedAsset.id, item.id);
   const markdownPreset = createExportPreset(data, {
     name: "正文",
     output_type: "markdown",
@@ -144,21 +154,31 @@ Deno.test("Markdown and clean semantic HTML exports are deterministic", async ()
     output_type: "html",
     platform: "网页",
   });
+  const assetBytes = { [exportedAsset.id]: new Uint8Array([1]) };
   const markdown = await exportProject(data, markdownPreset, {
     content_item_id: item.id,
+    asset_bytes: assetBytes,
   });
   const html = await exportProject(data, htmlPreset, {
     content_item_id: item.id,
+    asset_bytes: assetBytes,
   });
   const markdownAgain = await exportProject(data, markdownPreset, {
     content_item_id: item.id,
+    asset_bytes: assetBytes,
   });
   assert(
     new TextDecoder().decode(markdown.files[0]!.bytes) ===
       new TextDecoder().decode(markdownAgain.files[0]!.bytes),
     "same input should produce stable markdown",
   );
+  const markdownText = new TextDecoder().decode(markdown.files[0]!.bytes);
   const htmlText = new TextDecoder().decode(html.files[0]!.bytes);
+  assert(
+    markdownText.includes("![课程封面](assets/cover.png)") &&
+      htmlText.includes('src="assets/cover.png"'),
+    "used assets should remain referenced in Markdown and HTML",
+  );
   assert(
     htmlText.includes("<article>") && !htmlText.includes("data-"),
     "HTML should be semantic and free of app data attributes",

@@ -206,6 +206,82 @@ Deno.test("project storage uses recovery journal, lock and persistent snapshots"
   await second.close();
 });
 
+Deno.test("external modification blocks manual save and autosave until reload or merge resolution", async () => {
+  const directory = await Deno.makeTempDir({ prefix: "acw-external-change-" });
+  const store = new ProjectDirectoryStore(directory, {
+    app_instance_id: "external-change-test",
+    heartbeat_ms: 60_000,
+  });
+  await store.open();
+  const base = createEmptyProjectData("基线课程");
+  await store.writeProject(base);
+
+  // Rewriting identical bytes may change mtime, but must not create a false
+  // conflict because content hash is authoritative.
+  const identical = await Deno.readTextFile(`${directory}/project.json`);
+  await Deno.writeTextFile(`${directory}/project.json`, identical);
+  assert(!(await store.externalChange()).changed, "same content must not conflict");
+
+  const local = structuredClone(base);
+  local.project.title = "本地标题";
+  local.project.updated_at = "2030-01-02T00:00:00.000Z";
+  const external = structuredClone(base);
+  external.project.description = "外部说明";
+  external.project.updated_at = "2030-01-03T00:00:00.000Z";
+  await Deno.writeTextFile(`${directory}/project.json`, JSON.stringify(external));
+  const externalBytes = await Deno.readTextFile(`${directory}/project.json`);
+
+  for (const save of [
+    () => store.writeProject(local),
+    () => store.saveWithRecovery(local),
+  ]) {
+    let code = "";
+    try {
+      await save();
+    } catch (caught) {
+      if (caught instanceof ServiceError) code = caught.error.code;
+    }
+    assert(
+      code === "external_modification_conflict",
+      "manual save and autosave need the same structured conflict",
+    );
+    assert(
+      await Deno.readTextFile(`${directory}/project.json`) === externalBytes,
+      "a rejected save must preserve the external disk version",
+    );
+  }
+
+  const report = await store.inspectExternalModification(local);
+  assert(report.changed && report.current.hash, "conflict report needs a disk fingerprint");
+  const merged = await store.mergeExternalChanges(local);
+  assert(merged.can_apply, "non-overlapping local and external edits should merge");
+  await store.resolveExternalChanges(merged.merged, report.current);
+  const resolved = await store.readProject();
+  assert(
+    resolved.project.title === "本地标题" &&
+      resolved.project.description === "外部说明",
+    "explicit merge resolution must preserve both branches",
+  );
+  resolved.project.title = "合并后继续";
+  await store.writeProject(resolved);
+  assert(
+    (await store.readProject()).project.title === "合并后继续",
+    "a resolved project must save without repeating the old conflict",
+  );
+
+  const nextExternal = structuredClone(resolved);
+  nextExternal.project.title = "重新载入的磁盘标题";
+  await Deno.writeTextFile(`${directory}/project.json`, JSON.stringify(nextExternal));
+  const reloaded = await store.readProject();
+  reloaded.project.description = "重新载入后继续";
+  await store.saveWithRecovery(reloaded);
+  assert(
+    (await store.readProject()).project.description === "重新载入后继续",
+    "reload must establish a fresh baseline for subsequent autosave",
+  );
+  await store.close();
+});
+
 Deno.test("active project lock blocks a second editor", async () => {
   const directory = await Deno.makeTempDir({ prefix: "acw-lock-" });
   const first = new ProjectDirectoryStore(directory, {

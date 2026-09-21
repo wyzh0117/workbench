@@ -1,6 +1,6 @@
 import { join } from "node:path";
 import type { ProjectData } from "../domain/types.ts";
-import { serializeProject } from "../domain/store.ts";
+import { loadProject, serializeProject } from "../domain/store.ts";
 
 export interface SnapshotBackendInfo {
   kind: "git" | "file";
@@ -58,12 +58,17 @@ export class GitSnapshotAdapter {
   ): Promise<string | null> {
     const info = await this.detect();
     if (!info.available) return null;
-    // The canonical file is staged through a fixed high-level path.  No raw
-    // Git parameters are exposed to callers.
-    await Deno.writeTextFile(
-      join(this.projectRoot, "project.json"),
-      serializeProject(data),
-    );
+    // Snapshot creation must never become a second canonical writer. The
+    // guarded persistence service saves first; Git only stages those exact
+    // disk bytes. A mismatch is an external-modification conflict, not an
+    // invitation to overwrite project.json here.
+    const canonicalPath = join(this.projectRoot, "project.json");
+    const disk = await loadProject(canonicalPath);
+    if (serializeProject(disk) !== serializeProject(data)) {
+      throw new Error(
+        "external_modification_conflict: project.json 与待快照版本不一致",
+      );
+    }
     const add = await this.run(["add", "--", "project.json"]);
     if (add.code !== 0) throw new Error(`历史版本保存失败: ${add.stderr}`);
     const message = `AI Course Workbench: ${name}${note ? ` — ${note}` : ""}`

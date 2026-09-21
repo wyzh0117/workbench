@@ -163,6 +163,22 @@ export function mergeProjectData(
       assignPath(merged, change.path, change.after);
       continue;
     }
+    // updated_at is derived merge metadata. Concurrent non-overlapping edits
+    // should not become a content conflict only because both writers touched it.
+    if (change.path === "project.updated_at") {
+      const localUpdated = typeof localChange.after === "string"
+        ? localChange.after
+        : "";
+      const externalUpdated = typeof change.after === "string"
+        ? change.after
+        : "";
+      assignPath(
+        merged,
+        change.path,
+        localUpdated >= externalUpdated ? localChange.after : change.after,
+      );
+      continue;
+    }
     conflicts.push({
       path: change.path,
       base: change.before,
@@ -412,6 +428,34 @@ export async function fileFingerprint(path: string): Promise<FileFingerprint> {
   }
 }
 
+async function readProjectState(
+  path: string,
+): Promise<{ original: unknown; project: ProjectData; fingerprint: FileFingerprint }> {
+  const bytes = await Deno.readFile(path);
+  const original: unknown = JSON.parse(new TextDecoder().decode(bytes));
+  const project = migrateProject(original);
+  const stat = await Deno.stat(path);
+  return {
+    original,
+    project,
+    fingerprint: {
+      exists: true,
+      mtime_ms: stat.mtime?.getTime() ?? null,
+      size: bytes.length,
+      hash: await sha256Bytes(bytes),
+    },
+  };
+}
+
+/** Content identity is authoritative; mtime is diagnostic only. */
+function fingerprintsDiffer(
+  baseline: FileFingerprint,
+  current: FileFingerprint,
+): boolean {
+  return baseline.exists !== current.exists || baseline.hash !== current.hash ||
+    baseline.size !== current.size;
+}
+
 export class ProjectDirectoryStore {
   readonly directory: string;
   readonly options: Required<ProjectDirectoryOptions>;
@@ -553,10 +597,11 @@ export class ProjectDirectoryStore {
       }
     }
     if (projectExists) {
-      this.baseline = await fileFingerprint(this.projectPath);
       try {
-        const original = JSON.parse(await Deno.readTextFile(this.projectPath));
-        const migrated = migrateProject(original);
+        const opened = await readProjectState(this.projectPath);
+        const original = opened.original;
+        const migrated = opened.project;
+        this.baseline = opened.fingerprint;
         this.baselineProject = clone(migrated);
         if (
           !this.options.read_only &&
@@ -815,10 +860,10 @@ export class ProjectDirectoryStore {
   }
 
   async readProject(): Promise<ProjectData> {
-    const data = await loadProject(this.projectPath);
-    this.baseline = await fileFingerprint(this.projectPath);
-    this.baselineProject = clone(data);
-    return data;
+    const state = await readProjectState(this.projectPath);
+    this.baseline = state.fingerprint;
+    this.baselineProject = clone(state.project);
+    return state.project;
   }
 
   async writeProject(
@@ -840,18 +885,29 @@ export class ProjectDirectoryStore {
         (!externalState.baseline && externalState.current.exists))
     ) {
       throw error(
-        "external_change_conflict",
-        "检测到项目在其他位置被修改，请先查看差异并合并。",
+        "external_modification_conflict",
+        "检测到 project.json 已被外部修改，保存已阻止。",
         "Refusing to overwrite an externally modified canonical project",
         {
           recoverable: true,
-          recommended_action: "查看差异并选择保留本地或外部修改。",
-          details: {},
+          recommended_action: "查看差异，然后重新载入或合并修改。",
+          details: {
+            baseline: externalState.baseline,
+            current: externalState.current,
+          },
         },
       );
     }
-    await this.writeAtomicText(PROJECT_FILE, serializeProject(data), true);
-    this.baseline = await fileFingerprint(this.projectPath);
+    const contents = serializeProject(data);
+    const bytes = new TextEncoder().encode(contents);
+    await this.writeAtomicText(PROJECT_FILE, contents, true);
+    const written = await Deno.stat(this.projectPath);
+    this.baseline = {
+      exists: true,
+      mtime_ms: written.mtime?.getTime() ?? null,
+      size: bytes.length,
+      hash: await sha256Bytes(bytes),
+    };
     this.baselineProject = clone(migrateProject(data));
   }
 
@@ -944,6 +1000,28 @@ export class ProjectDirectoryStore {
       saved_at: now(),
       project: clone(canonical),
     };
+    // Reject a known conflict before creating a new journal. writeProject
+    // repeats the comparison so an external edit racing this check is still
+    // blocked at the canonical write boundary.
+    const externalState = await this.externalChange();
+    if (
+      externalState.changed ||
+      (!externalState.baseline && externalState.current.exists)
+    ) {
+      throw error(
+        "external_modification_conflict",
+        "检测到 project.json 已被外部修改，自动保存已阻止。",
+        "Refusing autosave after an external canonical modification",
+        {
+          recoverable: true,
+          recommended_action: "查看差异，然后重新载入或合并修改。",
+          details: {
+            baseline: externalState.baseline,
+            current: externalState.current,
+          },
+        },
+      );
+    }
     await this.writeRecoveryJournal(journal);
     await this.writeProject(canonical);
     await this.clearRecoveryJournal();
@@ -958,12 +1036,9 @@ export class ProjectDirectoryStore {
   > {
     const current = await fileFingerprint(this.projectPath);
     const baseline = this.baseline;
-    const changed = Boolean(
-      baseline &&
-        (baseline.hash !== current.hash ||
-          baseline.mtime_ms !== current.mtime_ms ||
-          baseline.size !== current.size),
-    );
+    const changed = baseline
+      ? fingerprintsDiffer(baseline, current)
+      : current.exists;
     return { changed, baseline, current };
   }
 
@@ -973,12 +1048,9 @@ export class ProjectDirectoryStore {
   ): Promise<ExternalModificationReport> {
     const current = await fileFingerprint(this.projectPath);
     const baseline = this.baseline;
-    const changed = Boolean(
-      baseline &&
-        (baseline.hash !== current.hash ||
-          baseline.mtime_ms !== current.mtime_ms ||
-          baseline.size !== current.size),
-    );
+    const changed = baseline
+      ? fingerprintsDiffer(baseline, current)
+      : current.exists;
     let external: ProjectData | null = null;
     if (current.exists) {
       try {
@@ -1031,6 +1103,32 @@ export class ProjectDirectoryStore {
     return this.mergeExternalChanges(localProject);
   }
 
+  /** Explicitly accept the inspected disk revision and write a resolved branch. */
+  async resolveExternalChanges(
+    resolvedProject: ProjectData,
+    expectedCurrent: FileFingerprint,
+  ): Promise<void> {
+    await this.withWritableLease(async () => {
+      const current = await fileFingerprint(this.projectPath);
+      if (fingerprintsDiffer(expectedCurrent, current)) {
+        throw error(
+          "external_modification_conflict",
+          "处理期间 project.json 再次发生变化，请重新查看差异。",
+          "External canonical changed while conflict resolution was pending",
+          {
+            recoverable: true,
+            recommended_action: "重新查看最新磁盘版本。",
+            details: { expected: expectedCurrent, current },
+          },
+        );
+      }
+      const external = current.exists ? await loadProject(this.projectPath) : null;
+      this.baseline = current;
+      this.baselineProject = external ? clone(external) : null;
+      await this.writeProjectUnlocked(resolvedProject);
+    });
+  }
+
   /** Diff two persisted file snapshots without exposing Git primitives. */
   async diffSnapshots(
     firstSnapshotId: string,
@@ -1078,9 +1176,10 @@ export class ProjectDirectoryStore {
       await Deno.copyFile(this.projectPath, this.path(backup));
       await this.writeAtomicText(PROJECT_FILE, migratedText, true);
     }
-    this.baseline = await fileFingerprint(this.projectPath);
-    this.baselineProject = clone(migrated);
-    return migrated;
+    const state = await readProjectState(this.projectPath);
+    this.baseline = state.fingerprint;
+    this.baselineProject = clone(state.project);
+    return state.project;
   }
 
   async moveToTrash(relativePath: string): Promise<string> {
@@ -1138,6 +1237,29 @@ export class ProjectDirectoryStore {
     note = "",
     options: { allow_external_overwrite?: boolean } = {},
   ): Promise<Snapshot> {
+    // Detect before creating a snapshot side effect; the canonical write also
+    // repeats this check immediately before replacement.
+    if (!options.allow_external_overwrite) {
+      const externalState = await this.externalChange();
+      if (
+        externalState.changed ||
+        (!externalState.baseline && externalState.current.exists)
+      ) {
+        throw error(
+          "external_modification_conflict",
+          "检测到 project.json 已被外部修改，版本保存已阻止。",
+          "Refusing snapshot creation after external modification",
+          {
+            recoverable: true,
+            recommended_action: "查看差异，然后重新载入或合并修改。",
+            details: {
+              baseline: externalState.baseline,
+              current: externalState.current,
+            },
+          },
+        );
+      }
+    }
     // Validate before createDomainSnapshot mutates the in-memory object.
     serializeProject(data);
     const snapshot = createDomainSnapshot(data, name, note, null);
@@ -1198,13 +1320,12 @@ export class ProjectDirectoryStore {
       data,
       "恢复前备份",
       "恢复旧版本前自动保存当前项目",
-      { allow_external_overwrite: true },
     );
     restored.snapshots = [
       backup,
       ...restored.snapshots.filter((snapshot) => snapshot.id !== backup.id),
     ];
-    await this.writeProjectUnlocked(restored, { allow_external_overwrite: true });
+    await this.writeProjectUnlocked(restored);
     return { project: restored, backup };
   }
 

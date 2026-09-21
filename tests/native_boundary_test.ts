@@ -23,6 +23,10 @@ Deno.test("native shell exposes explicit project and high-level workflows", () =
       "project_open",
       "project_create",
       "project_save",
+      "project_external_status",
+      "project_reload",
+      "project_merge",
+      "project_resolve",
       "project_close",
       "confirm_close",
       "create_snapshot",
@@ -48,6 +52,14 @@ Deno.test("native shell exposes explicit project and high-level workflows", () =
   assert(
     lib.includes("atomic_write_path"),
     "canonical writes must use the atomic writer",
+  );
+  assert(
+    lib.includes("PROJECT_BASELINES") &&
+      lib.includes("ensure_no_external_modification") &&
+      lib.includes("external_modification_conflict") &&
+      lib.includes("project_fingerprint") &&
+      lib.includes("merge_json_values"),
+    "native writes must compare a content fingerprint and reuse the diff/merge conflict path",
   );
   assert(
     lib.includes("PROJECT_LOCK_RELATIVE_PATH") &&
@@ -148,11 +160,18 @@ Deno.test("native shell exposes explicit project and high-level workflows", () =
       app.includes('listen("tauri://close-requested"') &&
       app.includes('workbench://close-requested') &&
       app.includes('confirmClose()') &&
+      app.includes('return await this.invoke("project.open", {})') &&
+      !app.includes('invoke("open_project"') &&
+      app.includes('"project.external.inspect": "project_external_status"') &&
+      app.includes('resolveExternalConflict') &&
+      app.includes('external_modification_conflict') &&
       app.includes("nativeLeaseDirs") &&
       app.includes("hasNativeLease") &&
       app.includes("targetLeaseActive") &&
       app.includes("nativeSwitchPending") &&
-      app.includes("rollbackNativeTarget"),
+      app.includes("rollbackNativeTarget") &&
+      app.includes("onDragDropEvent") &&
+      app.includes('listen("tauri://drag-drop"'),
     "native mapping must target explicit create/open/restore/close lifecycle commands",
   );
   const readProjectStart = lib.indexOf("fn read_project(project_dir: String)");
@@ -265,7 +284,8 @@ Deno.test("native shell exposes explicit project and high-level workflows", () =
       ) &&
       !app.includes("data-project-dir") &&
       app.includes('"select_folder"') &&
-      app.includes('invoke("open_project"') &&
+      app.includes('return await this.invoke("project.open", {})') &&
+      !app.includes('invoke("open_project"') &&
       app.includes("await this.bridge.saveSession({ project_dir: null })"),
     "native session and launcher must use the folder picker instead of manual paths",
   );

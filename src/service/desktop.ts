@@ -35,6 +35,7 @@ import {
   syncSelectedConversations,
 } from "./connectors.ts";
 import {
+  type FileFingerprint,
   type ProjectDirectoryOptions,
   ProjectDirectoryStore,
 } from "./storage.ts";
@@ -198,6 +199,61 @@ export class DesktopService {
           object_type: "project",
           object_id: candidate.project.id,
           action: "save",
+        },
+      };
+    });
+    this.commands.register("project.external.inspect", async (input) => {
+      const candidate = input && typeof input === "object"
+        ? input as { project?: ProjectData }
+        : {};
+      return {
+        value: await this.store.inspectExternalModification(
+          candidate.project ?? this.context.project,
+        ),
+      };
+    });
+    this.commands.register("project.reload", async () => {
+      this.context.project = await this.store.readProject();
+      await this.search.rebuild(this.context.project);
+      return {
+        value: this.context.project,
+        audit: {
+          object_type: "project",
+          object_id: this.context.project.project.id,
+          action: "reload_external",
+        },
+      };
+    });
+    this.commands.register("project.merge", async (input) => {
+      const candidate = input && typeof input === "object"
+        ? input as { project?: ProjectData }
+        : {};
+      const local = candidate.project ?? this.context.project;
+      if (!local) throw new Error("No project is open");
+      return { value: await this.store.mergeExternalChanges(local) };
+    });
+    this.commands.register("project.resolve", async (input) => {
+      const candidate = input && typeof input === "object"
+        ? input as {
+          project?: ProjectData;
+          expected_current?: FileFingerprint;
+        }
+        : {};
+      if (!candidate.project || !candidate.expected_current) {
+        throw new Error("project.resolve requires project and expected_current");
+      }
+      await this.store.resolveExternalChanges(
+        candidate.project,
+        candidate.expected_current,
+      );
+      this.context.project = candidate.project;
+      await this.search.rebuild(candidate.project);
+      return {
+        value: candidate.project,
+        audit: {
+          object_type: "project",
+          object_id: candidate.project.project.id,
+          action: "resolve_external",
         },
       };
     });

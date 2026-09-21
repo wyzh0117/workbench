@@ -22,6 +22,7 @@ const PROJECT_LOCK_READ_ATTEMPTS: usize = 4;
 
 static APP_INSTANCE_ID: OnceLock<String> = OnceLock::new();
 static ACTIVE_PROJECT_LOCKS: OnceLock<Mutex<HashMap<PathBuf, LeaseHandle>>> = OnceLock::new();
+static PROJECT_BASELINES: OnceLock<Mutex<HashMap<PathBuf, ProjectBaseline>>> = OnceLock::new();
 static EXIT_READY: AtomicBool = AtomicBool::new(false);
 const CLOSE_REQUEST_EVENT: &str = "workbench://close-requested";
 const WINDOW_CLOSE_REQUEST_EVENT: &str = "tauri://close-requested";
@@ -39,6 +40,20 @@ struct ProjectLockRecord {
     host: String,
     opened_at: String,
     heartbeat: String,
+}
+
+#[derive(Clone, Debug, Serialize, PartialEq, Eq)]
+struct FileFingerprint {
+    exists: bool,
+    mtime_ms: Option<u64>,
+    size: Option<u64>,
+    hash: Option<String>,
+}
+
+#[derive(Clone, Debug)]
+struct ProjectBaseline {
+    fingerprint: FileFingerprint,
+    project: Option<Value>,
 }
 
 #[derive(Debug, Serialize)]
@@ -315,6 +330,10 @@ fn active_project_locks() -> &'static Mutex<HashMap<PathBuf, LeaseHandle>> {
     ACTIVE_PROJECT_LOCKS.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
+fn project_baselines() -> &'static Mutex<HashMap<PathBuf, ProjectBaseline>> {
+    PROJECT_BASELINES.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
 fn current_app_instance_id() -> &'static str {
     APP_INSTANCE_ID.get_or_init(new_app_instance_id).as_str()
 }
@@ -550,6 +569,7 @@ fn unregister_project_lock(project_dir: &Path, expected: Option<&LeaseHandle>) {
     });
     if let Some(entry) = should_remove.then(|| active.remove(project_dir)).flatten() {
         entry.stop.store(true, Ordering::Relaxed);
+        project_baselines().lock().unwrap().remove(project_dir);
     }
 }
 
@@ -775,6 +795,7 @@ fn release_all_project_locks() {
         let mut active = active_project_locks().lock().unwrap();
         active.drain().collect()
     };
+    project_baselines().lock().unwrap().clear();
     for (project_dir, entry) in entries {
         entry.stop.store(true, Ordering::Relaxed);
         let Ok(_guard) = open_project_lock_guard(&project_dir) else {
@@ -941,14 +962,261 @@ fn validate_project(value: &Value) -> Result<(), String> {
     reject_sensitive(value)
 }
 
-fn read_project_value(project_dir: &Path) -> Result<Value, String> {
+fn read_project_state(project_dir: &Path) -> Result<(Value, FileFingerprint), String> {
     let path = project_file(project_dir, "project.json")?;
     if !path.exists() {
         return Err("项目目录中没有 project.json".into());
     }
-    let value = read_json_file(&path)?;
+    reject_symlink(&path, "项目文件")?;
+    let contents = fs::read(&path).map_err(|error| format!("无法读取项目文件: {error}"))?;
+    let value: Value =
+        serde_json::from_slice(&contents).map_err(|error| format!("项目 JSON 无效: {error}"))?;
     validate_project(&value)?;
-    Ok(value)
+    let mtime_ms = fs::metadata(&path)
+        .ok()
+        .and_then(|metadata| metadata.modified().ok())
+        .and_then(|value| value.duration_since(UNIX_EPOCH).ok())
+        .map(|value| value.as_millis().min(u128::from(u64::MAX)) as u64);
+    let fingerprint = FileFingerprint {
+        exists: true,
+        mtime_ms,
+        size: Some(contents.len() as u64),
+        hash: Some(sha256_hex(&contents)),
+    };
+    Ok((value, fingerprint))
+}
+
+fn read_project_value(project_dir: &Path) -> Result<Value, String> {
+    read_project_state(project_dir).map(|(project, _)| project)
+}
+
+fn project_fingerprint(project_dir: &Path) -> Result<FileFingerprint, String> {
+    let path = project_file(project_dir, "project.json")?;
+    let metadata = match fs::metadata(&path) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return Ok(FileFingerprint {
+                exists: false,
+                mtime_ms: None,
+                size: None,
+                hash: None,
+            })
+        }
+        Err(error) => return Err(format!("无法检查 project.json: {error}")),
+    };
+    let contents = fs::read(&path).map_err(|error| format!("无法读取 project.json: {error}"))?;
+    let mtime_ms = metadata
+        .modified()
+        .ok()
+        .and_then(|value| value.duration_since(UNIX_EPOCH).ok())
+        .map(|value| value.as_millis().min(u128::from(u64::MAX)) as u64);
+    Ok(FileFingerprint {
+        exists: true,
+        mtime_ms,
+        size: Some(contents.len() as u64),
+        hash: Some(sha256_hex(&contents)),
+    })
+}
+
+fn fingerprints_differ(left: &FileFingerprint, right: &FileFingerprint) -> bool {
+    left.exists != right.exists || left.size != right.size || left.hash != right.hash
+}
+
+fn store_project_baseline(
+    project_dir: &Path,
+    fingerprint: FileFingerprint,
+    project: Option<Value>,
+) -> Result<(), String> {
+    let directory =
+        fs::canonicalize(project_dir).map_err(|error| format!("无法解析项目目录: {error}"))?;
+    project_baselines().lock().unwrap().insert(
+        directory,
+        ProjectBaseline {
+            fingerprint,
+            project,
+        },
+    );
+    Ok(())
+}
+
+fn set_project_baseline(project_dir: &Path, project: Option<Value>) -> Result<(), String> {
+    let fingerprint = project_fingerprint(project_dir)?;
+    store_project_baseline(project_dir, fingerprint, project)
+}
+
+fn external_conflict_error(
+    baseline: Option<&FileFingerprint>,
+    current: &FileFingerprint,
+) -> String {
+    json!({
+        "error": {
+            "code": "external_modification_conflict",
+            "user_message": "检测到 project.json 已被外部修改，保存已阻止。",
+            "technical_message": "Refusing to overwrite an externally modified canonical project",
+            "severity": "blocking",
+            "recoverable": true,
+            "recommended_action": "查看差异，然后重新载入或合并修改。",
+            "details": { "baseline": baseline, "current": current },
+        }
+    })
+    .to_string()
+}
+
+fn ensure_no_external_modification(project_dir: &Path) -> Result<FileFingerprint, String> {
+    let directory =
+        fs::canonicalize(project_dir).map_err(|error| format!("无法解析项目目录: {error}"))?;
+    let current = project_fingerprint(&directory)?;
+    let baseline = project_baselines().lock().unwrap().get(&directory).cloned();
+    let changed = baseline
+        .as_ref()
+        .map(|value| fingerprints_differ(&value.fingerprint, &current))
+        .unwrap_or(current.exists);
+    if changed {
+        return Err(external_conflict_error(
+            baseline.as_ref().map(|value| &value.fingerprint),
+            &current,
+        ));
+    }
+    Ok(current)
+}
+
+fn diff_json_values(before: &Value, after: &Value, path: &str, entries: &mut Vec<Value>) {
+    if before == after {
+        return;
+    }
+    match (before, after) {
+        (Value::Object(left), Value::Object(right)) => {
+            let mut keys: Vec<&String> = left.keys().chain(right.keys()).collect();
+            keys.sort();
+            keys.dedup();
+            for key in keys {
+                let child_path = if path.is_empty() {
+                    key.to_owned()
+                } else {
+                    format!("{path}.{key}")
+                };
+                diff_json_values(
+                    left.get(key).unwrap_or(&Value::Null),
+                    right.get(key).unwrap_or(&Value::Null),
+                    &child_path,
+                    entries,
+                );
+            }
+        }
+        (Value::Array(left), Value::Array(right)) => {
+            let length = left.len().max(right.len());
+            for index in 0..length {
+                diff_json_values(
+                    left.get(index).unwrap_or(&Value::Null),
+                    right.get(index).unwrap_or(&Value::Null),
+                    &format!("{path}[{index}]"),
+                    entries,
+                );
+            }
+        }
+        _ => entries.push(json!({ "path": path, "before": before, "after": after })),
+    }
+}
+
+fn project_diff(before: Option<&Value>, after: Option<&Value>) -> Value {
+    let mut entries = Vec::new();
+    match (before, after) {
+        (Some(before), Some(after)) => diff_json_values(before, after, "", &mut entries),
+        (None, None) => {}
+        (before, after) => entries.push(json!({ "path": "", "before": before, "after": after })),
+    }
+    json!({ "changed": !entries.is_empty(), "entries": entries })
+}
+
+fn merge_json_values(
+    base: &Value,
+    local: &Value,
+    external: &Value,
+    path: &str,
+    conflicts: &mut Vec<Value>,
+) -> Value {
+    if local == external {
+        return local.clone();
+    }
+    if local == base {
+        return external.clone();
+    }
+    if external == base {
+        return local.clone();
+    }
+    // updated_at is derived merge metadata. It must not turn otherwise
+    // independent local and external edits into a content conflict.
+    if path == "project.updated_at" {
+        return match (local.as_str(), external.as_str()) {
+            (Some(local), Some(external)) if external > local => Value::String(external.into()),
+            _ => local.clone(),
+        };
+    }
+    if let (Value::Object(base), Value::Object(local), Value::Object(external)) =
+        (base, local, external)
+    {
+        let mut keys: Vec<&String> = base
+            .keys()
+            .chain(local.keys())
+            .chain(external.keys())
+            .collect();
+        keys.sort();
+        keys.dedup();
+        let mut merged = Map::new();
+        for key in keys {
+            let child_path = if path.is_empty() {
+                key.to_owned()
+            } else {
+                format!("{path}.{key}")
+            };
+            let value = merge_json_values(
+                base.get(key).unwrap_or(&Value::Null),
+                local.get(key).unwrap_or(&Value::Null),
+                external.get(key).unwrap_or(&Value::Null),
+                &child_path,
+                conflicts,
+            );
+            if !value.is_null() || local.contains_key(key) || external.contains_key(key) {
+                merged.insert(key.to_owned(), value);
+            }
+        }
+        return Value::Object(merged);
+    }
+    conflicts.push(json!({ "path": path, "base": base, "local": local, "external": external }));
+    local.clone()
+}
+
+fn external_modification_report(
+    project_dir: &Path,
+    local: Option<&Value>,
+) -> Result<Value, String> {
+    let directory =
+        fs::canonicalize(project_dir).map_err(|error| format!("无法解析项目目录: {error}"))?;
+    let current = project_fingerprint(&directory)?;
+    let baseline = project_baselines().lock().unwrap().get(&directory).cloned();
+    let changed = baseline
+        .as_ref()
+        .map(|value| fingerprints_differ(&value.fingerprint, &current))
+        .unwrap_or(current.exists);
+    let external = if current.exists {
+        read_project_value(&directory).ok()
+    } else {
+        None
+    };
+    Ok(json!({
+        "changed": changed,
+        "baseline": baseline.as_ref().map(|value| &value.fingerprint),
+        "current": current,
+        "external": external,
+        "external_diff": project_diff(
+            baseline.as_ref().and_then(|value| value.project.as_ref()),
+            external.as_ref(),
+        ),
+        "local_diff": project_diff(
+            baseline.as_ref().and_then(|value| value.project.as_ref()),
+            local,
+        ),
+    }))
 }
 
 fn write_project_value_with_warning_unlocked(
@@ -956,9 +1224,30 @@ fn write_project_value_with_warning_unlocked(
     project: &Value,
 ) -> Result<Option<String>, String> {
     validate_project(project)?;
+    ensure_no_external_modification(project_dir)?;
     let contents = serde_json::to_string_pretty(project).map_err(|error| error.to_string())? + "\n";
     let path = project_file(project_dir, "project.json")?;
+    // Compare again after serialization and immediately before replacement.
+    ensure_no_external_modification(project_dir)?;
     atomic_write_path(&path, &contents, true)?;
+    let mtime_ms = fs::metadata(&path)
+        .ok()
+        .and_then(|metadata| metadata.modified().ok())
+        .and_then(|value| value.duration_since(UNIX_EPOCH).ok())
+        .map(|value| value.as_millis().min(u128::from(u64::MAX)) as u64);
+    // Keep the identity of the exact bytes written. If an external process
+    // races immediately after rename, the next write still compares against
+    // our content hash instead of accidentally adopting the raced version.
+    store_project_baseline(
+        project_dir,
+        FileFingerprint {
+            exists: true,
+            mtime_ms,
+            size: Some(contents.len() as u64),
+            hash: Some(sha256_hex(contents.as_bytes())),
+        },
+        Some(project.clone()),
+    )?;
     // A successful canonical write makes the recovery copy stale.  Cleanup
     // failure is a warning because the canonical write already succeeded.
     match clear_recovery_journal_path(project_dir) {
@@ -1012,8 +1301,18 @@ fn project_open(project_dir: String) -> Result<Option<Value>, String> {
         }
         return Ok(None);
     }
-    match read_project_value(&project_dir) {
-        Ok(project) => Ok(Some(project)),
+    match read_project_state(&project_dir) {
+        Ok((project, fingerprint)) => {
+            if let Err(error) =
+                store_project_baseline(&project_dir, fingerprint, Some(project.clone()))
+            {
+                if !already_open {
+                    let _ = release_project_lock(&project_dir);
+                }
+                return Err(error);
+            }
+            Ok(Some(project))
+        }
         Err(error) => {
             if !already_open {
                 let _ = release_project_lock(&project_dir);
@@ -1047,6 +1346,14 @@ fn project_create(project_dir: String, project: Value) -> Result<(), String> {
     let project_dir = explicit_project_dir(&project_dir, true)?;
     let already_open = project_lock_registered(&project_dir, current_app_instance_id());
     acquire_project_lock(&project_dir)?;
+    if !already_open {
+        let current = project_fingerprint(&project_dir)?;
+        if current.exists {
+            let _ = release_project_lock(&project_dir);
+            return Err(external_conflict_error(None, &current));
+        }
+        set_project_baseline(&project_dir, None)?;
+    }
     match write_project_value(&project_dir, &project) {
         Ok(()) => Ok(()),
         Err(error) => {
@@ -1056,6 +1363,81 @@ fn project_create(project_dir: String, project: Value) -> Result<(), String> {
             Err(error)
         }
     }
+}
+
+#[tauri::command]
+fn project_external_status(project_dir: String, project: Option<Value>) -> Result<Value, String> {
+    let project_dir = explicit_project_dir(&project_dir, false)?;
+    let _lease_guard = require_active_project_lock(&project_dir)?;
+    external_modification_report(&project_dir, project.as_ref())
+}
+
+#[tauri::command]
+fn project_reload(project_dir: String) -> Result<Value, String> {
+    let project_dir = explicit_project_dir(&project_dir, false)?;
+    let _lease_guard = require_active_project_lock(&project_dir)?;
+    let (project, fingerprint) = read_project_state(&project_dir)?;
+    store_project_baseline(&project_dir, fingerprint, Some(project.clone()))?;
+    Ok(project)
+}
+
+#[tauri::command]
+fn project_merge(project_dir: String, project: Value) -> Result<Value, String> {
+    let project_dir = explicit_project_dir(&project_dir, false)?;
+    let _lease_guard = require_active_project_lock(&project_dir)?;
+    validate_project(&project)?;
+    let directory =
+        fs::canonicalize(&project_dir).map_err(|error| format!("无法解析项目目录: {error}"))?;
+    let baseline = project_baselines()
+        .lock()
+        .unwrap()
+        .get(&directory)
+        .cloned()
+        .ok_or("项目缺少打开时基线，请重新载入项目")?;
+    let external = read_project_value(&directory)?;
+    let base = baseline.project.ok_or("项目缺少可合并的打开时快照")?;
+    let mut conflicts = Vec::new();
+    let merged = merge_json_values(&base, &project, &external, "", &mut conflicts);
+    validate_project(&merged)?;
+    Ok(json!({
+        "can_apply": conflicts.is_empty(),
+        "conflicts": conflicts,
+        "merged": merged,
+    }))
+}
+
+#[tauri::command]
+fn project_resolve(
+    project_dir: String,
+    project: Value,
+    expected_current: Value,
+) -> Result<Value, String> {
+    let project_dir = explicit_project_dir(&project_dir, false)?;
+    let _lease_guard = require_active_project_lock(&project_dir)?;
+    validate_project(&project)?;
+    let current = project_fingerprint(&project_dir)?;
+    let expected_exists = expected_current
+        .get("exists")
+        .and_then(Value::as_bool)
+        .ok_or("冲突处理缺少 expected_current.exists")?;
+    let expected_hash = expected_current.get("hash").and_then(Value::as_str);
+    if current.exists != expected_exists || current.hash.as_deref() != expected_hash {
+        return Err(external_conflict_error(None, &current));
+    }
+    let external = if current.exists {
+        Some(read_project_value(&project_dir)?)
+    } else {
+        None
+    };
+    project_baselines().lock().unwrap().insert(
+        fs::canonicalize(&project_dir).map_err(|error| format!("无法解析项目目录: {error}"))?,
+        ProjectBaseline {
+            fingerprint: current,
+            project: external,
+        },
+    );
+    write_project_value_unlocked(&project_dir, &project)?;
+    Ok(project)
 }
 
 #[tauri::command]
@@ -1422,6 +1804,7 @@ fn write_snapshot(
     project: Value,
 ) -> Result<Value, String> {
     let _lease_guard = require_active_project_lock(project_dir)?;
+    ensure_no_external_modification(project_dir)?;
     write_snapshot_unlocked(project_dir, snapshot_id, name, note, project)
 }
 
@@ -1509,6 +1892,7 @@ fn list_snapshots(project_dir: String) -> Result<Value, String> {
 fn restore_snapshot(project_dir: String, snapshot_id: String) -> Result<Value, String> {
     let project_dir = explicit_project_dir(&project_dir, false)?;
     let _lease_guard = require_active_project_lock(&project_dir)?;
+    ensure_no_external_modification(&project_dir)?;
     let current = read_project_value(&project_dir)?;
     let envelope =
         read_snapshot_envelope(&project_dir, &snapshot_id)?.ok_or("找不到这个历史版本")?;
@@ -1849,6 +2233,53 @@ fn asset_selected_for_content(
     used_by_content || resolved_by_content
 }
 
+fn referenced_assets_for_content<'a>(project: &'a Value, content_item_id: &str) -> Vec<&'a Value> {
+    let mut assets: Vec<&Value> = project
+        .get("assets")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter(|asset| {
+            !asset
+                .get("archived")
+                .and_then(Value::as_bool)
+                .unwrap_or(false)
+        })
+        .filter(|asset| {
+            asset
+                .get("id")
+                .and_then(Value::as_str)
+                .map(|asset_id| {
+                    asset_selected_for_content(project, asset_id, Some(content_item_id))
+                })
+                .unwrap_or(false)
+        })
+        .filter(|asset| {
+            asset
+                .get("storage_path")
+                .and_then(Value::as_str)
+                .map(|path| {
+                    let path = Path::new(path);
+                    !path.is_absolute()
+                        && path
+                            .components()
+                            .all(|component| matches!(component, Component::Normal(_)))
+                })
+                .unwrap_or(false)
+        })
+        .collect();
+    assets.sort_by_key(|asset| {
+        (
+            asset
+                .get("filename")
+                .and_then(Value::as_str)
+                .unwrap_or_default(),
+            asset.get("id").and_then(Value::as_str).unwrap_or_default(),
+        )
+    });
+    assets
+}
+
 fn markdown_for_project(project: &Value, content_item_id: Option<&str>) -> String {
     let mut lines = Vec::new();
     let title = project
@@ -1918,6 +2349,34 @@ fn markdown_for_project(project: &Value, content_item_id: Option<&str>) -> Strin
                         _ => lines.push(content),
                     }
                     lines.push(String::new());
+                }
+            }
+            if let Some(item_id) = item.get("id").and_then(Value::as_str) {
+                let assets = referenced_assets_for_content(project, item_id);
+                if !assets.is_empty() {
+                    lines.push("### 素材".into());
+                    lines.push(String::new());
+                    for asset in assets {
+                        let title = asset
+                            .get("title")
+                            .or_else(|| asset.get("filename"))
+                            .and_then(Value::as_str)
+                            .unwrap_or("素材");
+                        let path = asset
+                            .get("storage_path")
+                            .and_then(Value::as_str)
+                            .unwrap_or_default();
+                        let is_image = matches!(
+                            asset.get("type").and_then(Value::as_str),
+                            Some("image" | "gif")
+                        );
+                        lines.push(format!(
+                            "{}[{}]({path})",
+                            if is_image { "!" } else { "" },
+                            title.replace('[', "\\[").replace(']', "\\]")
+                        ));
+                        lines.push(String::new());
+                    }
                 }
             }
         }
@@ -2011,6 +2470,42 @@ fn html_for_project(project: &Value, content_item_id: Option<&str>) -> String {
                         )),
                         _ => body.push_str(&format!("<p>{escaped}</p>")),
                     }
+                }
+            }
+            if let Some(item_id) = item.get("id").and_then(Value::as_str) {
+                let assets = referenced_assets_for_content(project, item_id);
+                if !assets.is_empty() {
+                    body.push_str("<div class=\"assets\"><h3>素材</h3>");
+                    for asset in assets {
+                        let title = escape_html(
+                            asset
+                                .get("title")
+                                .or_else(|| asset.get("filename"))
+                                .and_then(Value::as_str)
+                                .unwrap_or("素材"),
+                        );
+                        let path = escape_html(
+                            asset
+                                .get("storage_path")
+                                .and_then(Value::as_str)
+                                .unwrap_or_default(),
+                        );
+                        match asset.get("type").and_then(Value::as_str) {
+                            Some("image" | "gif") => body.push_str(&format!(
+                                "<figure><img src=\"{path}\" alt=\"{title}\"><figcaption>{title}</figcaption></figure>"
+                            )),
+                            Some("video") => body.push_str(&format!(
+                                "<figure><video controls src=\"{path}\"></video><figcaption>{title}</figcaption></figure>"
+                            )),
+                            Some("audio") => body.push_str(&format!(
+                                "<figure><audio controls src=\"{path}\"></audio><figcaption>{title}</figcaption></figure>"
+                            )),
+                            _ => body.push_str(&format!(
+                                "<p><a href=\"{path}\">{title}</a></p>"
+                            )),
+                        }
+                    }
+                    body.push_str("</div>");
                 }
             }
             body.push_str("</section>");
@@ -3004,6 +3499,108 @@ mod tests {
     }
 
     #[test]
+    fn native_markdown_and_html_export_used_asset_references() {
+        let project = json!({
+            "project": { "title": "Export" },
+            "content_items": [{
+                "id": "item-1", "title": "Lesson", "document_id": "doc-1",
+                "order_index": 0, "archived": false
+            }],
+            "blocks": [{
+                "id": "block-1", "document_id": "doc-1", "type": "paragraph",
+                "content": "Body", "order_index": 0
+            }],
+            "requirements": [],
+            "assets": [{
+                "id": "asset-1", "filename": "cover.png", "title": "Cover",
+                "type": "image", "storage_path": "assets/cover.png", "archived": false
+            }],
+            "asset_usages": [{ "asset_id": "asset-1", "content_item_id": "item-1" }]
+        });
+        let markdown = markdown_for_project(&project, Some("item-1"));
+        let html = html_for_project(&project, Some("item-1"));
+        assert!(markdown.contains("![Cover](assets/cover.png)"));
+        assert!(html.contains("src=\"assets/cover.png\""));
+    }
+
+    #[test]
+    fn external_modification_blocks_native_save_and_reload_refreshes_baseline() {
+        let directory = test_directory("external-save");
+        let initial = json!({ "project": { "id": "p1", "title": "base" }, "items": [] });
+        project_create(directory.to_string_lossy().into_owned(), initial.clone())
+            .expect("project should be created");
+        let external = json!({ "project": { "id": "p1", "title": "external" }, "items": [] });
+        fs::write(
+            directory.join("project.json"),
+            serde_json::to_vec_pretty(&external).unwrap(),
+        )
+        .expect("external edit should be written");
+        let local = json!({ "project": { "id": "p1", "title": "local" }, "items": [] });
+        let rejected = project_save(directory.to_string_lossy().into_owned(), local)
+            .expect_err("native save must reject the external edit");
+        assert!(rejected.contains("external_modification_conflict"));
+        assert_eq!(read_project_value(&directory).unwrap(), external);
+        let report =
+            project_external_status(directory.to_string_lossy().into_owned(), Some(initial))
+                .expect("conflict report should be available");
+        assert_eq!(report.get("changed").and_then(Value::as_bool), Some(true));
+        let mut reloaded = project_reload(directory.to_string_lossy().into_owned())
+            .expect("reload should refresh the baseline");
+        reloaded["project"]["title"] = json!("after-reload");
+        project_save(directory.to_string_lossy().into_owned(), reloaded)
+            .expect("save after reload should succeed");
+        assert_eq!(
+            read_project_value(&directory).unwrap()["project"]["title"],
+            json!("after-reload")
+        );
+        project_close(directory.to_string_lossy().into_owned()).unwrap();
+        let _ = fs::remove_dir_all(directory);
+    }
+
+    #[test]
+    fn native_merge_resolution_requires_the_inspected_disk_fingerprint() {
+        let directory = test_directory("external-merge");
+        let base = json!({
+            "project": {
+                "id": "p1", "title": "base", "description": "base",
+                "updated_at": "2026-01-01T00:00:00.000Z"
+            },
+            "items": []
+        });
+        project_create(directory.to_string_lossy().into_owned(), base.clone()).unwrap();
+        let mut external = base.clone();
+        external["project"]["description"] = json!("external");
+        external["project"]["updated_at"] = json!("2026-01-03T00:00:00.000Z");
+        fs::write(
+            directory.join("project.json"),
+            serde_json::to_vec(&external).unwrap(),
+        )
+        .unwrap();
+        let mut local = base;
+        local["project"]["title"] = json!("local");
+        local["project"]["updated_at"] = json!("2026-01-02T00:00:00.000Z");
+        let report = project_external_status(
+            directory.to_string_lossy().into_owned(),
+            Some(local.clone()),
+        )
+        .unwrap();
+        let merge = project_merge(directory.to_string_lossy().into_owned(), local).unwrap();
+        assert_eq!(merge.get("can_apply").and_then(Value::as_bool), Some(true));
+        let merged = merge.get("merged").cloned().unwrap();
+        project_resolve(
+            directory.to_string_lossy().into_owned(),
+            merged.clone(),
+            report.get("current").cloned().unwrap(),
+        )
+        .expect("explicit resolution should write the merged branch");
+        assert_eq!(read_project_value(&directory).unwrap(), merged);
+        project_save(directory.to_string_lossy().into_owned(), merged)
+            .expect("resolved baseline should allow a subsequent save");
+        project_close(directory.to_string_lossy().into_owned()).unwrap();
+        let _ = fs::remove_dir_all(directory);
+    }
+
+    #[test]
     fn release_without_registered_lease_has_no_side_effect() {
         let directory = test_directory("release-empty");
         let guard_path = directory.join(PROJECT_LOCK_GUARD_RELATIVE_PATH);
@@ -3023,6 +3620,10 @@ pub fn run() {
             project_open,
             project_create,
             project_save,
+            project_external_status,
+            project_reload,
+            project_merge,
+            project_resolve,
             project_close,
             confirm_close,
             bridge_status,

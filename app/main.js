@@ -15,6 +15,10 @@ const NATIVE_PROJECT_COMMANDS = new Set([
   "project.open",
   "project.create",
   "project.save",
+  "project.external.inspect",
+  "project.reload",
+  "project.merge",
+  "project.resolve",
   "import.preview",
   "import.confirm",
   "asset.import",
@@ -190,7 +194,10 @@ class DesktopBridge {
     if (!this.isNative() || !NATIVE_PROJECT_COMMANDS.has(command)) return args;
     const projectDir = this.requireProjectDir();
     const input = args && typeof args === "object" ? args : {};
-    if (["project.open", "project.create", "project.save", "snapshot.create", "snapshot.restore"].includes(command)) {
+    if (command === "project.resolve") {
+      return { projectDir, project: input.project, expectedCurrent: input.expected_current };
+    }
+    if (["project.open", "project.create", "project.save", "project.external.inspect", "project.reload", "project.merge", "snapshot.create", "snapshot.restore"].includes(command)) {
       return { ...input, projectDir };
     }
     if (command === "export.run") {
@@ -214,14 +221,31 @@ class DesktopBridge {
     }
     return { ...input, project_dir: projectDir };
   }
+  bridgeError(value, fallback = "工作台操作失败") {
+    let payload = value;
+    if (value instanceof Error && typeof value.message === "string") payload = value.message;
+    if (typeof payload === "string") {
+      try { payload = JSON.parse(payload); } catch { payload = { error: { user_message: payload } }; }
+    }
+    const detail = payload?.error || payload;
+    const failure = new Error(detail?.user_message || detail?.message || fallback);
+    failure.code = detail?.code || "bridge_request_failed";
+    failure.details = detail?.details || {};
+    failure.recoverable = detail?.recoverable !== false;
+    return failure;
+  }
   async invoke(command, args) {
     const invoke = globalThis.__TAURI__?.core?.invoke;
-    // `undefined` means no native shell.  A successful Tauri command may
+    // `undefined` means no native shell. A successful Tauri command may
     // legitimately resolve to `null`, which must not trigger fallback writes.
-    // A native command may legitimately return null; only undefined means the
-    // native shell is absent (the old boundary used `native !== undefined`),
-    // so browser fallback writes are never triggered.
-    if (invoke) return this.decodeBytes(await invoke(this.nativeCommand(command), this.nativeInput(command, args)));
+    // Preserve the old invariant expressed as `native !== undefined`.
+    if (invoke) {
+      try {
+        return this.decodeBytes(await invoke(this.nativeCommand(command), this.nativeInput(command, args)));
+      } catch (error) {
+        throw this.bridgeError(error, "工作台操作失败");
+      }
+    }
     if (typeof fetch !== "function") throw new Error("工作台服务不可用");
     const response = await fetch(`${this.apiBase}/command`, {
       method: "POST",
@@ -229,9 +253,7 @@ class DesktopBridge {
       body: JSON.stringify({ name: command, input: args ?? {} }),
     });
     const payload = await response.json().catch(() => ({}));
-    if (!response.ok || payload.error) {
-      throw new Error(payload.error?.user_message || "工作台操作失败");
-    }
+    if (!response.ok || payload.error) throw this.bridgeError(payload, "工作台操作失败");
     return this.decodeBytes(payload.value);
   }
   nativeCommand(command) {
@@ -239,6 +261,10 @@ class DesktopBridge {
       "project.open": "project_open",
       "project.create": "project_create",
       "project.save": "project_save",
+      "project.external.inspect": "project_external_status",
+      "project.reload": "project_reload",
+      "project.merge": "project_merge",
+      "project.resolve": "project_resolve",
       "import.preview": "import_preview",
       "import.confirm": "import_confirm",
       "asset.import": "asset_import",
@@ -264,17 +290,7 @@ class DesktopBridge {
     return nativePath(await this.invokePicker(invoke, "select_file", {}));
   }
   async openProject(projectDir) {
-    const invoke = globalThis.__TAURI__?.core?.invoke;
-    if (!invoke) return await this.invoke("project.open", {});
-    try {
-      const result = parseNativeValue(await invoke("open_project", { projectDir, project_dir: projectDir }));
-      return result?.project || result?.value?.project || result?.value || result;
-    } catch (error) {
-      // Keep old desktop shells usable while the native adapter rolls forward.
-      const message = String(error?.message || error || "").toLowerCase();
-      if (!/(unknown|not found|不存在|未注册|command)/.test(message)) throw error;
-      return await this.invoke("project.open", {});
-    }
+    return await this.invoke("project.open", {});
   }
   async selectExportPath(filename, format) {
     const invoke = globalThis.__TAURI__?.core?.invoke;
@@ -303,14 +319,28 @@ class DesktopBridge {
     return await invoke("clear_recovery_journal", { projectDir: this.projectDir, project_dir: this.projectDir });
   }
   async listenNativeDrops(onPaths) {
-    const listen = globalThis.__TAURI__?.event?.listen;
-    if (!this.isNative() || typeof listen !== "function") return () => {};
-    return await listen("tauri://drag-drop", (event) => {
+    if (!this.isNative()) return () => {};
+    const handleDrop = (event) => {
       const payload = event?.payload ?? event;
+      if (payload?.type && payload.type !== "drop") return;
       const paths = Array.isArray(payload) ? payload : payload?.paths || payload?.files || [];
       const normalized = paths.map((path) => typeof path === "string" ? path : path?.path).filter(Boolean);
       if (normalized.length) onPaths(normalized);
-    });
+    };
+    const getCurrentWindow = globalThis.__TAURI__?.window?.getCurrentWindow;
+    if (typeof getCurrentWindow === "function") {
+      try {
+        const currentWindow = getCurrentWindow();
+        if (typeof currentWindow?.onDragDropEvent === "function") {
+          return await currentWindow.onDragDropEvent(handleDrop);
+        }
+      } catch {
+        // Older Tauri shells may only expose the global drag-drop event.
+      }
+    }
+    const listen = globalThis.__TAURI__?.event?.listen;
+    if (typeof listen !== "function") return () => {};
+    return await listen("tauri://drag-drop", handleDrop);
   }
   decodeBytes(value) {
     if (Array.isArray(value)) return value.map((child) => this.decodeBytes(child));
@@ -356,6 +386,18 @@ class DesktopBridge {
   }
   async writeProject(project) {
     await this.invoke("project.save", { project });
+  }
+  async inspectExternalModification(project) {
+    return await this.invoke("project.external.inspect", { project });
+  }
+  async reloadExternalProject() {
+    return await this.invoke("project.reload", {});
+  }
+  async mergeExternalProject(project) {
+    return await this.invoke("project.merge", { project });
+  }
+  async resolveExternalProject(project, expectedCurrent) {
+    return await this.invoke("project.resolve", { project, expected_current: expectedCurrent });
   }
   async closeProject(projectDir = this.projectDir) {
     const invoke = globalThis.__TAURI__?.core?.invoke;
@@ -423,6 +465,10 @@ function browserExportBlocks(data, item) {
   return (data.blocks || []).filter((block) => block.document_id === item?.document_id).sort((a, b) => (a.order_index || 0) - (b.order_index || 0));
 }
 function browserExportText(value) { return typeof value === "string" ? value : JSON.stringify(value ?? ""); }
+function browserReferencedAssets(data, item) {
+  const ids = new Set((data.asset_usages || []).filter((usage) => usage.content_item_id === item?.id).map((usage) => usage.asset_id));
+  return (data.assets || []).filter((asset) => ids.has(asset.id) && !asset.archived && typeof asset.storage_path === "string" && !asset.storage_path.startsWith("/") && !asset.storage_path.split(/[\\/]/).includes("..")).sort((a, b) => String(a.filename).localeCompare(String(b.filename)) || String(a.id).localeCompare(String(b.id)));
+}
 function browserMarkdown(data, item) {
   const lines = [`# ${browserExportText(item?.title || "未命名内容")}`, ""];
   const layoutOnlyAnchors = new Set((data.requirements || [])
@@ -440,6 +486,14 @@ function browserMarkdown(data, item) {
     else lines.push(content);
     lines.push("");
   });
+  const assets = browserReferencedAssets(data, item);
+  if (assets.length) {
+    lines.push("## 素材", "");
+    assets.forEach((asset) => {
+      const title = String(asset.title || asset.filename).replaceAll("[", "\\[").replaceAll("]", "\\]");
+      lines.push(`${asset.type === "image" || asset.type === "gif" ? "!" : ""}[${title}](${asset.storage_path})`, "");
+    });
+  }
   return `${lines.join("\n").replace(/\n{3,}/g, "\n\n").trim()}\n`;
 }
 function browserHtml(data, item) {
@@ -452,7 +506,14 @@ function browserHtml(data, item) {
     if (block.type === "placeholder") return `<aside class="待补内容">待补内容：${content}</aside>`;
     return `<p>${content}</p>`;
   }).join("\n");
-  return `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>${esc(item?.title || "未命名内容")}</title><style>body{max-width:760px;margin:2rem auto;padding:0 1rem;font:16px/1.7 system-ui,sans-serif}blockquote{border-left:3px solid #bbb;padding-left:1rem}.待补内容{padding:.75rem;background:#fff5dc}</style></head><body><article><h1>${esc(item?.title || "未命名内容")}</h1>${blocks}</article></body></html>\n`;
+  const assets = browserReferencedAssets(data, item).map((asset) => {
+    const path = esc(asset.storage_path); const title = esc(asset.title || asset.filename);
+    if (asset.type === "image" || asset.type === "gif") return `<figure><img src="${path}" alt="${title}"><figcaption>${title}</figcaption></figure>`;
+    if (asset.type === "video") return `<figure><video controls src="${path}"></video><figcaption>${title}</figcaption></figure>`;
+    if (asset.type === "audio") return `<figure><audio controls src="${path}"></audio><figcaption>${title}</figcaption></figure>`;
+    return `<p><a href="${path}">${title}</a></p>`;
+  }).join("\n");
+  return `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>${esc(item?.title || "未命名内容")}</title><style>body{max-width:760px;margin:2rem auto;padding:0 1rem;font:16px/1.7 system-ui,sans-serif}img,video{max-width:100%;height:auto}blockquote{border-left:3px solid #bbb;padding-left:1rem}.待补内容{padding:.75rem;background:#fff5dc}</style></head><body><article><h1>${esc(item?.title || "未命名内容")}</h1>${blocks}${assets ? `<section class="assets"><h2>素材</h2>${assets}</section>` : ""}</article></body></html>\n`;
 }
 function browserDownload(filename, contents, mime) {
   if (typeof Blob === "undefined" || typeof URL === "undefined" || typeof document === "undefined") return false;
@@ -482,6 +543,8 @@ class WorkbenchStore {
     this.nativeDropUnlisten = null;
     this.nativeLeaseDirs = new Set();
     this.nativeSwitchPending = null;
+    this.externalConflict = null;
+    this.pendingRecovery = null;
   }
   subscribe(listener) { this.listeners.add(listener); return () => this.listeners.delete(listener); }
   notify() { this.listeners.forEach((listener) => listener()); }
@@ -588,6 +651,12 @@ class WorkbenchStore {
   async flushNow() {
     let saved = false;
     this.recoveryWarning = "";
+    if (this.pendingRecovery) {
+      this.saveStatus = "恢复待处理";
+      this.ui.toast = "检测到未完成自动保存，请先恢复或放弃恢复";
+      this.notify();
+      return false;
+    }
     if (this.nativeSwitchPending) {
       this.saveStatus = "保存失败";
       this.ui.toast = "项目切换尚未完成，请先完成锁回滚";
@@ -622,11 +691,131 @@ class WorkbenchStore {
       if (this.bridge.isNative() && /project_(?:not_open|lock_lost|lock_not_owned)/.test(message)) {
         this.clearNativeLease();
       }
-      this.saveStatus = "保存失败";
-      this.ui.toast = error?.message || "保存失败，请重试";
+      if (error?.code === "external_modification_conflict" || /external_(?:change|modification)_conflict/.test(message)) {
+        await this.captureExternalConflict(error);
+      } else {
+        this.saveStatus = "保存失败";
+        this.ui.toast = error?.message || "保存失败，请重试";
+      }
     }
     this.notify();
     return saved;
+  }
+  async captureExternalConflict(error) {
+    this.saveStatus = "外部修改冲突";
+    this.ui.toast = "检测到外部修改，已阻止保存；请选择重新载入或合并";
+    try {
+      this.externalConflict = await this.bridge.inspectExternalModification(this.data);
+    } catch (inspectError) {
+      this.externalConflict = {
+        changed: true,
+        current: error?.details?.current || null,
+        external_diff: { changed: true, entries: [] },
+        local_diff: null,
+        inspection_error: inspectError?.message || "无法读取差异",
+      };
+    }
+  }
+  async resolveExternalConflict(action) {
+    const conflict = this.externalConflict;
+    if (!conflict) return;
+    try {
+      if (action === "reload") {
+        const result = await this.bridge.reloadExternalProject();
+        const project = this.isProjectData(result) ? result : result?.project;
+        if (!this.isProjectData(project)) throw new Error("磁盘 project.json 无法重新载入");
+        this.data = project;
+        this.history = [];
+        this.future = [];
+        this.externalConflict = null;
+        this.saveStatus = "已重新载入";
+        this.ui.toast = "已重新载入磁盘版本，并建立新的保存基线";
+        try { await this.bridge.clearRecoveryJournal(); } catch (error) { this.noteRecoveryWarning(error?.message || "恢复日志清理失败"); }
+      } else if (action === "merge") {
+        const merged = await this.bridge.mergeExternalProject(this.data);
+        conflict.merge = merged;
+        if (!merged?.can_apply) {
+          this.ui.toast = `发现 ${merged?.conflicts?.length || 1} 处合并冲突；可重新载入或明确保留本地版本`;
+          this.notify();
+          return;
+        }
+        await this.applyExternalResolution(merged.merged, "已合并外部修改并继续保存");
+      } else if (action === "keep-local") {
+        await this.applyExternalResolution(this.data, "已明确保留本地版本并建立新基线");
+      }
+    } catch (error) {
+      if (error?.code === "external_modification_conflict") await this.captureExternalConflict(error);
+      else {
+        this.saveStatus = "保存失败";
+        this.ui.toast = error?.message || "冲突处理失败";
+      }
+    }
+    this.notify();
+  }
+  async applyExternalResolution(project, message) {
+    const expected = this.externalConflict?.current;
+    if (!expected) throw new Error("冲突状态缺少磁盘指纹，请重新查看差异");
+    const resolved = await this.bridge.resolveExternalProject(project, expected);
+    this.data = this.isProjectData(resolved) ? resolved : project;
+    this.externalConflict = null;
+    this.history = [];
+    this.future = [];
+    this.saveStatus = "已保存";
+    this.ui.toast = message;
+    await this.bridge.saveSession(this.session());
+  }
+  async resolvePendingRecovery(action) {
+    const pending = this.pendingRecovery;
+    if (!pending) return;
+    try {
+      if (action === "discard") {
+        await this.bridge.clearRecoveryJournal();
+        this.pendingRecovery = null;
+        this.saveStatus = "已保存";
+        this.ui.toast = "已放弃未完成自动保存，保留磁盘版本";
+      } else if (action === "restore") {
+        const canonical = this.isProjectData(pending.canonical)
+          ? clone(pending.canonical)
+          : null;
+        const recovery = clone(pending.project);
+        let backup = null;
+        if (canonical) {
+          const backupId = uid();
+          backup = await this.bridge.createSnapshot({
+            snapshot_id: backupId,
+            name: "恢复前备份",
+            note: "恢复自动保存内容前自动保留当前项目",
+            project: canonical,
+          });
+          const backupMeta = {
+            id: backup?.id || backupId,
+            name: backup?.name || "恢复前备份",
+            note: backup?.note || "恢复自动保存内容前自动保留当前项目",
+            created_at: backup?.created_at || now(),
+          };
+          recovery.snapshots = [
+            backupMeta,
+            ...(Array.isArray(recovery.snapshots) ? recovery.snapshots : [])
+              .filter((snapshot) => snapshot.id !== backupMeta.id),
+          ];
+        }
+        await this.bridge.writeProject(recovery);
+        await this.bridge.clearRecoveryJournal();
+        this.data = recovery;
+        this.history = [];
+        this.future = [];
+        this.pendingRecovery = null;
+        this.saveStatus = "已保存";
+        this.ui.toast = backup
+          ? "已恢复自动保存内容，并保留恢复前备份"
+          : "已恢复自动保存内容";
+        await this.bridge.saveSession(this.session());
+      }
+    } catch (error) {
+      this.saveStatus = "恢复失败";
+      this.ui.toast = error?.message || "恢复处理失败，请重试";
+    }
+    this.notify();
   }
   noteRecoveryWarning(value) {
     const message = String(value || "恢复日志处理失败");
@@ -666,7 +855,7 @@ class WorkbenchStore {
         persisted = null;
         recovery = null;
       }
-      this.ui.toast = error?.message || "无法读取本地项目";
+      this.ui.toast = error?.message || String(error || "无法读取本地项目");
     }
     if (this.bridge.isNative() && this.bridge.projectDir && !this.hasNativeLease()) {
       this.bridge.restoreProjectDir(null, false);
@@ -682,9 +871,17 @@ class WorkbenchStore {
     const journalProject = this.isProjectData(recovery?.project) ? recovery.project : null;
     const projectUpdatedAt = project?.project?.updated_at || "";
     const journalSavedAt = typeof recovery?.saved_at === "string" ? recovery.saved_at : "";
-    if (journalProject && (!project || journalSavedAt > projectUpdatedAt)) {
+    if (journalProject && project && journalSavedAt > projectUpdatedAt) {
+      this.data = project;
+      this.pendingRecovery = {
+        project: journalProject,
+        canonical: project,
+        saved_at: journalSavedAt,
+      };
+      this.ui.toast = "检测到未完成自动保存，请选择恢复或保留磁盘版本";
+    } else if (journalProject && !project) {
       this.data = journalProject;
-      this.ui.toast = "已载入上次自动保存的工作";
+      this.ui.toast = "已载入未完成自动保存内容";
     } else if (project) {
       this.data = project;
     }
@@ -812,10 +1009,16 @@ class WorkbenchStore {
       }
       this.bridge.setProjectDir(projectDir);
       let opened = await this.bridge.openProject(projectDir);
-      if (!this.isProjectData(opened)) opened = await this.bridge.readProject();
+      // project_open keeps the native lease for any non-null result. Register it
+      // before parsing/fallback work so later failures can release that lease.
+      if (opened != null && !this.hasNativeLease(projectDir)) {
+        this.markNativeLease(projectDir);
+        targetLeaseActive = true;
+      }
+      if (!this.isProjectData(opened)) {
+        opened = await this.bridge.readProject();
+      }
       if (!this.isProjectData(opened)) throw new Error("项目目录中没有可识别的 project.json");
-      this.markNativeLease(projectDir);
-      targetLeaseActive = true;
       await this.bridge.saveSession({ project_dir: projectDir });
       if (previousLeaseActive && previousProjectDir !== projectDir) {
         try {
@@ -1201,7 +1404,7 @@ function shellView() {
 }
 
 function topbarView(item) {
-  return `<header class="topbar"><div class="brand"><button class="icon-button" data-action="toggle-left" title="收起左栏">${store.ui.leftCollapsed ? "☰" : "‹"}</button><span class="brand-mark">✦</span><span>AI Course Workbench</span></div><div class="project-name"><span class="dot"></span>${esc(store.data.project.title)}<span class="chevron">⌄</span></div><div class="top-actions"><span class="save-state ${store.saveStatus === "保存失败" ? "error" : ""}">${store.saveStatus === "已保存" ? "✓ " : ""}${esc(store.saveStatus)}</span><button class="icon-button" data-action="undo" title="撤销">↶</button><button class="icon-button" data-action="redo" title="恢复">↷</button><button class="secondary" data-action="save-version">保存版本</button><button class="secondary" data-action="preview">预览</button><button class="primary" data-action="preflight">导出</button><button class="icon-button" data-action="toggle-right" title="收起右栏">${store.ui.rightCollapsed ? "☰" : "›"}</button></div></header>
+  return `<header class="topbar"><div class="brand"><button class="icon-button" data-action="toggle-left" title="收起左栏">${store.ui.leftCollapsed ? "☰" : "‹"}</button><span class="brand-mark">✦</span><span>AI Course Workbench</span></div><div class="project-name"><span class="dot"></span>${esc(store.data.project.title)}<span class="chevron">⌄</span></div><div class="top-actions"><span class="save-state ${store.saveStatus === "保存失败" || store.saveStatus === "外部修改冲突" ? "error" : ""}">${store.saveStatus === "已保存" ? "✓ " : ""}${esc(store.saveStatus)}</span><button class="icon-button" data-action="undo" title="撤销">↶</button><button class="icon-button" data-action="redo" title="恢复">↷</button><button class="secondary" data-action="save-project">保存</button><button class="secondary" data-action="save-version">保存版本</button><button class="secondary" data-action="preview">预览</button><button class="primary" data-action="preflight">导出</button><button class="icon-button" data-action="toggle-right" title="收起右栏">${store.ui.rightCollapsed ? "☰" : "›"}</button></div></header>
   <div class="tabs"><button class="tab home-tab ${store.ui.route === "overview" ? "active" : ""}" data-action="route" data-route="overview">项目概览</button>${store.tabs.map((tab) => { const target = store.data.content_items.find((candidate) => candidate.id === tab.content_item_id); return `<button class="tab ${target?.id === item?.id ? "active" : ""}" data-action="open-item" data-id="${target?.id}">${esc(target?.code || "课程")} <span class="tab-close" data-action="close-tab" data-id="${target?.id}">×</span></button>`; }).join("")}</div>`;
 }
 
@@ -1272,7 +1475,7 @@ function inboxView() { const items = store.data.inbox_items.filter((item) => ite
 
 function boardView() { const dimension = store.ui.boardDimension || "content"; const statuses = STATUS[dimension] || STATUS.content; const selected = (item) => store.statuses(item).find((candidate) => candidate.key === dimension)?.selected || statuses[0]; return `<section class="page"><div class="page-head"><div><span class="eyebrow">制作进度</span><h1>制作看板</h1><p class="muted">状态由你决定，完整度由待补自动计算；拖动卡片即可改当前维度。</p></div><select class="select" data-board-dimension>${Object.entries({ content: "正文", media: "媒体", layout: "排版", review: "审核", publish: "发布", update: "更新" }).map(([key, label]) => `<option value="${key}" ${dimension === key ? "selected" : ""}>${label}</option>`).join("")}</select></div><div class="kanban" data-board-dimension="${dimension}">${statuses.map((status) => `<div class="kanban-column" data-board-option="${esc(status)}"><div class="kanban-head"><span>${esc(status)}</span><b>${store.data.content_items.filter((item) => selected(item) === status).length}</b></div>${store.data.content_items.filter((item) => selected(item) === status).map((item) => `<button draggable="true" class="kanban-card" data-action="open-item" data-board-id="${item.id}" data-id="${item.id}"><span>${esc(item.code)}</span><b>${esc(item.title)}</b><small>${store.gaps(item).total ? `待补 ${store.gaps(item).total}` : "无待补"}</small></button>`).join("")}</div>`).join("")}</div></section>`; }
 
-function mediaView() { return `<section class="page"><div class="page-head"><div><span class="eyebrow">项目资产</span><h1>媒体库 <sup>${store.data.assets.length}</sup></h1><p class="muted">拖入媒体库只创建素材；拖到正文或待补才会建立使用位置。</p></div><button class="primary" data-action="open-file">＋ 添加素材</button></div><input hidden type="file" data-project-file accept=".png,.jpg,.jpeg,.gif,.webp,.svg,.mp4,.webm,.mov,.m4v,.mp3,.wav,.m4a,.aac,.ogg,.pdf,.doc,.docx,.md,.markdown,.txt" /><div class="drop-zone" data-drop-zone="assets"><span class="drop-icon">⇧</span><b>拖入文件，或点击添加素材</b><small>图片、GIF、视频、音频和普通附件</small></div><div class="asset-grid">${store.data.assets.map((asset) => `<article class="asset-card"><div class="asset-thumb">${asset.type === "image" ? "▧" : "◈"}</div><div><b>${esc(asset.filename)}</b><small>${esc(asset.source_type)} · 未使用</small></div></article>`).join("")}</div></section>`; }
+function mediaView() { return `<section class="page"><div class="page-head"><div><span class="eyebrow">项目资产</span><h1>媒体库 <sup>${store.data.assets.length}</sup></h1><p class="muted">拖入媒体库只创建素材；拖到正文或待补才会建立使用位置。</p></div><button class="primary" data-action="open-file">＋ 添加素材</button></div><input hidden type="file" data-project-file accept=".png,.jpg,.jpeg,.gif,.webp,.svg,.mp4,.webm,.mov,.m4v,.mp3,.wav,.m4a,.aac,.ogg,.pdf,.doc,.docx,.md,.markdown,.txt" /><div class="drop-zone" data-drop-zone="assets"><span class="drop-icon">⇧</span><b>拖入文件，或点击添加素材</b><small>图片、GIF、视频、音频和普通附件</small></div><div class="asset-grid">${store.data.assets.map((asset) => { const usageCount = store.data.asset_usages.filter((usage) => usage.asset_id === asset.id).length; return `<article class="asset-card"><div class="asset-thumb">${asset.type === "image" ? "▧" : "◈"}</div><div><b>${esc(asset.filename)}</b><small>${esc(asset.source_type)} · ${usageCount ? `已使用 ${usageCount} 处` : "未使用"}</small></div></article>`; }).join("")}</div></section>`; }
 function versionsView() { return `<section class="page"><div class="page-head"><div><span class="eyebrow">长期历史</span><h1>版本历史</h1><p class="muted">撤销解决手滑，自动保存防丢失，历史版本帮助你回到明确节点。</p></div><button class="primary" data-action="save-version">保存版本</button></div><div class="version-list">${store.data.snapshots.length ? store.data.snapshots.map((snapshot) => `<article class="version-card"><span class="version-icon">◷</span><div><b>${esc(snapshot.name)}</b><p>${esc(snapshot.note || "没有备注")}</p><small>${new Date(snapshot.created_at).toLocaleString("zh-CN")}</small></div><button class="secondary" data-action="restore-version" data-id="${snapshot.id}">恢复</button></article>`).join("") : emptyState("还没有命名版本", "重要节点可以保存一个容易理解的版本名。", "save-version", "保存版本")}</div></section>`; }
 function publishView() { const item = store.currentItem(); const publications = (store.data.publications || []).filter((publication) => publication.content_item_id === item?.id); return `<section class="page"><div class="page-head"><div><span class="eyebrow">发布中心</span><h1>发布与导出</h1><p class="muted">先做确定性的导出前检查，再记录你已经发布的版本。</p></div><button class="primary" data-action="preflight">导出前检查</button></div><div class="card publish-card"><h2>${esc(item?.code || "未选择内容")}｜${esc(item?.title || "还没有内容")}</h2><p class="muted">当前排版：${esc(store.layout()?.name || "未设置")} · 发布记录 ${publications.length} 条</p><div class="modal-actions"><button class="secondary" data-action="export-format" data-format="markdown">导出 Markdown</button><button class="secondary" data-action="export-format" data-format="html">导出 HTML</button><button class="primary" data-action="record-publication">记录已发布</button></div></div><div class="version-list">${publications.map((publication) => `<article class="version-card"><span class="version-icon">↗</span><div><b>${esc(publication.version_label)}</b><p>${esc(publication.platform)} · ${esc(publication.status)}</p><small>${esc(publication.published_at || "")}</small></div></article>`).join("") || `<div class="empty-state"><h2>还没有发布记录</h2><p class="muted">完成检查并记录第一个已发布版本。</p></div>`}</div></section>`; }
 function simplePage(title, description, icon) { return `<section class="page simple-page"><div class="simple-icon">${icon}</div><span class="eyebrow">项目工作台</span><h1>${title}</h1><p class="muted">${description}</p><button class="primary" data-action="open-item" data-id="${store.currentItem()?.id}">继续编辑当前内容 →</button></section>`; }
@@ -1282,7 +1485,7 @@ function rightPanelView() {
   const tabs = [["media", "媒体"], ["requirements", "待补"], ["status", "状态"], ["assistant", "AI 助手"], ["properties", "属性"], ["versions", "版本"]];
   return `<aside class="right-panel panel"><div class="right-tabs">${tabs.map(([key, label]) => `<button class="right-tab ${store.ui.rightPanel === key ? "active" : ""}" data-action="right-panel" data-panel="${key}">${label}</button>`).join("")}<button class="icon-button collapse-right" data-action="toggle-right">›</button></div><div class="right-content">${store.ui.rightPanel === "media" ? mediaPanel() : store.ui.rightPanel === "requirements" ? requirementsPanel() : store.ui.rightPanel === "status" ? statusPanel() : store.ui.rightPanel === "assistant" ? assistantPanel() : store.ui.rightPanel === "properties" ? propertiesPanel() : versionsPanel()}</div></aside>`;
 }
-function mediaPanel() { return `<div class="side-head"><div><span class="eyebrow">当前课程</span><h2>媒体库</h2></div><button class="icon-button" data-action="add-asset">＋</button></div><div class="mini-search">⌕ 搜索媒体</div><div class="side-list">${store.data.assets.length ? store.data.assets.map((asset) => `<div class="side-item"><span class="side-thumb">▧</span><span><b>${esc(asset.filename)}</b><small>未使用</small></span></div>`).join("") : `<div class="side-empty">还没有素材<br /><button class="text-button" data-action="add-asset">添加第一个素材</button></div>`}</div>`; }
+function mediaPanel() { return `<div class="side-head"><div><span class="eyebrow">当前课程</span><h2>媒体库</h2></div><button class="icon-button" data-action="add-asset">＋</button></div><div class="mini-search">⌕ 搜索媒体</div><div class="side-list">${store.data.assets.length ? store.data.assets.map((asset) => { const usageCount = store.data.asset_usages.filter((usage) => usage.asset_id === asset.id).length; return `<div class="side-item"><span class="side-thumb">▧</span><span><b>${esc(asset.filename)}</b><small>${usageCount ? `已使用 ${usageCount} 处` : "未使用"}</small></span></div>`; }).join("") : `<div class="side-empty">还没有素材<br /><button class="text-button" data-action="add-asset">添加第一个素材</button></div>`}</div>`; }
 function requirementsPanel() { const gaps = store.gaps(); return `<div class="side-head"><div><span class="eyebrow">完成当前内容</span><h2>待补内容 <sup>${gaps.total}</sup></h2></div><button class="icon-button" data-action="add-placeholder">＋</button></div><div class="gap-summary"><div><b>${gaps.content}</b><span>内容待补</span></div><div><b>${gaps.layout}</b><span>排版待补</span></div></div><div class="side-list">${store.data.requirements.filter((req) => req.content_item_id === store.currentItem()?.id).map((req) => `<button class="side-item requirement-item" data-action="focus-requirement" data-id="${req.id}"><span class="req-dot ${req.status === "open" ? "open" : "done"}">${req.status === "open" ? "!" : "✓"}</span><span><b>${req.status === "open" ? "待补" : "已完成"} · ${esc(req.type)}</b><small>${esc(req.note)}</small></span><span>›</span></button>`).join("") || `<div class="side-empty">当前正文没有待补内容</div>`}</div>`; }
 function statusPanel() { return `<div class="side-head"><div><span class="eyebrow">由你决定</span><h2>制作状态</h2></div></div><div class="status-list">${store.statuses().map((status) => `<label class="status-row"><span>${esc(status.label)}</span><select data-status-dim="${status.key}">${status.options.map((option) => `<option ${option === status.selected ? "selected" : ""}>${option}</option>`).join("")}</select></label>`).join("")}</div><p class="side-note">状态和完整度是两件事：正文可以已定稿，同时仍有图片待补。</p>`; }
 function assistantPanel() { return `<div class="side-head"><div><span class="eyebrow">只分析已勾选内容</span><h2>AI 助手</h2></div></div><label class="field-label">模型<select class="select"><option>DeepSeek</option><option>ChatGPT / OpenAI</option><option>豆包</option><option>自定义接口</option></select></label><div class="context-list"><label><input type="checkbox" checked /> 当前正文</label><label><input type="checkbox" checked /> 当前阶段</label><label><input type="checkbox" /> 当前媒体</label><label><input type="checkbox" /> 历史对话</label></div><button class="primary full" data-action="analyze">分析已选上下文</button><p class="side-note">AI 只生成建议。接受后会先进入修改草稿和 Diff，确认后才应用正文。</p>`; }
@@ -1292,6 +1495,19 @@ function versionsPanel() { return `<div class="side-head"><div><span class="eyeb
 function statusbarView(item) { const gaps = store.gaps(item); const contentStatus = store.statuses(item).find((status) => status.key === "content")?.selected; const layoutStatus = store.statuses(item).find((status) => status.key === "layout")?.selected; return `<footer class="statusbar"><span class="status-code">${esc(item?.code || "未选择")}</span><span>正文：${esc(contentStatus || "待研究")}</span><span>待补：${gaps.content}</span><span>排版：${esc(layoutStatus || "未开始")}</span><span class="status-spacer"></span><span>本地优先 · 自动保存</span></footer>`; }
 
 function overlayView() {
+  if (store.externalConflict) {
+    const conflict = store.externalConflict;
+    const externalEntries = conflict.external_diff?.entries || [];
+    const localEntries = conflict.local_diff?.entries || [];
+    const mergeConflicts = conflict.merge?.conflicts || [];
+    return `<div class="overlay"><div class="conflict-modal modal" data-stop-click="true"><div class="modal-head"><div><span class="eyebrow">EXTERNAL MODIFICATION CONFLICT</span><h2>project.json 已在工作台外被修改</h2></div></div><p class="muted">为避免静默覆盖，手动保存和自动保存都已暂停。磁盘版本仍保持不变。</p>${conflict.inspection_error ? `<p class="conflict-error">${esc(conflict.inspection_error)}</p>` : ""}<div class="conflict-summary"><span>磁盘变化 <b>${externalEntries.length}</b></span><span>本地变化 <b>${localEntries.length}</b></span><span>合并冲突 <b>${mergeConflicts.length}</b></span></div><div class="conflict-list">${(mergeConflicts.length ? mergeConflicts : externalEntries).slice(0, 12).map((entry) => `<div><code>${esc(entry.path || "project.json")}</code><small>${mergeConflicts.length ? "本地与外部都修改了此处" : "磁盘版本已变化"}</small></div>`).join("") || `<div><code>project.json</code><small>文件内容或存在状态已变化</small></div>`}</div><div class="modal-actions"><button class="secondary" data-action="external-reload">重新载入磁盘版本</button><button class="secondary" data-action="external-merge">预览并自动合并</button>${mergeConflicts.length ? `<button class="primary danger" data-action="external-keep-local">明确保留本地版本</button>` : ""}</div></div></div>`;
+  }
+  if (store.pendingRecovery) {
+    const pending = store.pendingRecovery;
+    const recoveredBlocks = pending.project?.blocks?.length || 0;
+    const savedAt = pending.saved_at ? new Date(pending.saved_at).toLocaleString("zh-CN") : "未知时间";
+    return `<div class="overlay"><div class="conflict-modal modal" data-stop-click="true"><div class="modal-head"><div><span class="eyebrow">RECOVERY JOURNAL</span><h2>检测到未完成自动保存</h2></div></div><p class="muted">磁盘版本保持不变；自动保存内容来自 ${esc(savedAt)}，包含 ${recoveredBlocks} 个正文区块。请选择是否恢复。</p><div class="modal-actions"><button class="secondary" data-action="recovery-discard">保留磁盘版本</button><button class="primary" data-action="recovery-restore">恢复自动保存</button></div></div></div>`;
+  }
   if (store.ui.palette) return `<div class="overlay" data-action="close-overlay"><div class="palette modal" data-stop-click="true"><div class="palette-input"><span>⌕</span><input autofocus data-palette-input placeholder="搜索课程、素材、命令……" /></div><div class="palette-results">${paletteResults("")}</div><div class="palette-hint"><kbd>↑↓</kbd> 选择 <kbd>↵</kbd> 打开 <kbd>Esc</kbd> 关闭</div></div></div>`;
   if (store.ui.capture) return `<div class="overlay" data-action="close-overlay"><div class="capture modal" data-stop-click="true"><div class="modal-head"><div><span class="eyebrow">QUICK CAPTURE</span><h2>快速收集</h2></div><button class="icon-button" data-action="close-overlay">×</button></div><textarea autofocus data-capture-input placeholder="写点什么，或粘贴网页链接……"></textarea><label class="field-label">放入<select class="select"><option>${esc(store.data.project.title)}</option></select></label><div class="modal-actions"><button class="secondary" data-action="close-overlay">取消</button><button class="primary" data-action="submit-capture">放入收件箱</button></div></div></div>`;
   if (store.ui.preflight) { const report = store.exportPreflight(); return `<div class="overlay" data-action="close-overlay"><div class="preflight modal" data-stop-click="true"><div class="modal-head"><div><span class="eyebrow">EXPORT PREFLIGHT</span><h2>导出前检查</h2></div><button class="icon-button" data-action="close-overlay">×</button></div><label class="field-label">导出预设<select class="select">${(store.data.export_presets || []).map((preset) => `<option>${esc(preset.name)} · ${esc(preset.platform)}</option>`).join("") || "<option>未设置预设</option>"}</select></label><p class="muted">检查是结构化计算，不调用 AI；严重问题必须修复，警告可在确认后继续。</p><div class="check-list"><div><span class="check ${report.content ? "warning" : "ok"}">${report.content ? report.content : "✓"}</span><span>内容级待补</span><b>${report.content}</b></div><div><span class="check ${report.layout ? "warning" : "ok"}">${report.layout ? report.layout : "✓"}</span><span>当前排版待补</span><b>${report.layout}</b></div><div><span class="check ${report.missingAssets ? "warning" : "ok"}">${report.missingAssets ? report.missingAssets : "✓"}</span><span>缺失素材文件</span><b>${report.missingAssets}</b></div><div><span class="check ${report.overflow ? "warning" : "ok"}">${report.overflow ? report.overflow : "✓"}</span><span>超出画布</span><b>${report.overflow}</b></div><div><span class="check ${report.text ? "warning" : "ok"}">${report.text ? report.text : "✓"}</span><span>文字溢出</span><b>${report.text}</b></div><div><span class="check ${report.fonts ? "warning" : "ok"}">${report.fonts ? report.fonts : "✓"}</span><span>未加载字体</span><b>${report.fonts}</b></div><div><span class="check ${report.external ? "warning" : "ok"}">${report.external ? report.external : "✓"}</span><span>外部引用</span><b>${report.external}</b></div></div><div class="preflight-total">严重问题 <strong>${report.blocking}</strong> · 警告 <strong>${report.warnings}</strong></div><div class="modal-actions"><button class="secondary" data-action="close-overlay">返回修复</button><button class="secondary" data-action="export-format" data-format="markdown">导出 Markdown</button><button class="primary" data-action="export-format" data-format="html">导出 HTML</button></div></div></div>`; }
@@ -1320,6 +1536,12 @@ function bindEvents() {
     if (action === "preview") { store.setMode("preview"); store.ui.route = "editor"; store.notify(); return; }
     if (action === "undo") { store.undo(); return; }
     if (action === "redo") { store.redo(); return; }
+    if (action === "save-project") { void store.flush(); return; }
+    if (action === "external-reload") { void store.resolveExternalConflict("reload"); return; }
+    if (action === "external-merge") { void store.resolveExternalConflict("merge"); return; }
+    if (action === "external-keep-local") { void store.resolveExternalConflict("keep-local"); return; }
+    if (action === "recovery-restore") { void store.resolvePendingRecovery("restore"); return; }
+    if (action === "recovery-discard") { void store.resolvePendingRecovery("discard"); return; }
     if (action === "save-version") { store.ui.snapshot = true; store.ui.palette = false; store.notify(); return; }
     if (action === "submit-snapshot") { store.saveVersion(root.querySelector("[data-snapshot-name]")?.value, root.querySelector("[data-snapshot-note]")?.value); return; }
     if (action === "restore-version") { store.restoreVersion(element.dataset.id); return; }
@@ -1369,8 +1591,10 @@ function bindEvents() {
 
 document.addEventListener("keydown", (event) => {
   const command = (event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k";
+  const save = (event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "s";
   const capture = (event.metaKey || event.ctrlKey) && event.shiftKey && event.code === "Space";
   if (command) { event.preventDefault(); store.ui.palette = true; store.ui.paletteIndex = 0; store.ui.capture = false; store.notify(); }
+  if (save) { event.preventDefault(); void store.flush(); }
   if (store.ui.palette && ["ArrowDown", "ArrowUp", "Enter"].includes(event.key)) {
     event.preventDefault();
     const results = root.querySelectorAll(".palette-result");

@@ -1088,6 +1088,40 @@ function semanticItems(
   ).sort((a, b) => (a.order_index - b.order_index) || a.id.localeCompare(b.id));
 }
 
+function referencedAssets(data: ProjectData, item: ContentItem) {
+  const ids = new Set(
+    data.asset_usages
+      .filter((usage) => usage.content_item_id === item.id)
+      .map((usage) => usage.asset_id),
+  );
+  return data.assets
+    .filter((asset) => ids.has(asset.id) && !asset.archived)
+    .filter((asset) => relativeSafePath(asset.storage_path))
+    .sort((a, b) =>
+      a.filename.localeCompare(b.filename) || a.id.localeCompare(b.id)
+    );
+}
+
+function renderAssetHtml(data: ProjectData, item: ContentItem): string {
+  const assets = referencedAssets(data, item);
+  if (!assets.length) return "";
+  const body = assets.map((asset) => {
+    const path = escapeHtml(asset.storage_path);
+    const title = escapeHtml(asset.title || asset.filename);
+    if (asset.type === "image" || asset.type === "gif") {
+      return `<figure><img src="${path}" alt="${title}"><figcaption>${title}</figcaption></figure>`;
+    }
+    if (asset.type === "video") {
+      return `<figure><video controls src="${path}"></video><figcaption>${title}</figcaption></figure>`;
+    }
+    if (asset.type === "audio") {
+      return `<figure><audio controls src="${path}"></audio><figcaption>${title}</figcaption></figure>`;
+    }
+    return `<p><a href="${path}">${title}</a></p>`;
+  }).join("\n");
+  return `<section class="assets"><h2>素材</h2>\n${body}\n</section>`;
+}
+
 function renderSemanticHtml(
   data: ProjectData,
   item: ContentItem,
@@ -1133,13 +1167,14 @@ function renderSemanticHtml(
         : "";
     })()]).filter(Boolean).join("\n")
     : blocks.map((block) => htmlBlock(data, block)).join("\n");
+  const assets = renderAssetHtml(data, item);
   return `<!doctype html>\n<html lang="${
     escapeHtml(data.project.language || "zh-CN")
   }">\n<head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>${
     escapeHtml(item.title)
-  }</title><style>body{max-width:760px;margin:2rem auto;padding:0 1rem;font:16px/1.7 system-ui,sans-serif}img{max-width:100%;height:auto}blockquote{border-left:3px solid #bbb;padding-left:1rem;color:#555}.待补内容{padding:.75rem;background:#fff5dc}</style></head>\n<body><article><h1>${
+  }</title><style>body{max-width:760px;margin:2rem auto;padding:0 1rem;font:16px/1.7 system-ui,sans-serif}img,video{max-width:100%;height:auto}blockquote{border-left:3px solid #bbb;padding-left:1rem;color:#555}.待补内容{padding:.75rem;background:#fff5dc}</style></head>\n<body><article><h1>${
     escapeHtml(item.title)
-  }</h1>\n${body}\n</article></body></html>\n`;
+  }</h1>\n${body}${assets ? `\n${assets}` : ""}\n</article></body></html>\n`;
 }
 
 function renderMarkdownWithoutLayoutRequirements(
@@ -1177,6 +1212,19 @@ function renderMarkdownWithoutLayoutRequirements(
     else if (block.type === "placeholder") lines.push(`> 待补内容：${content}`);
     else lines.push(content);
     lines.push("");
+  }
+  const assets = referencedAssets(data, item);
+  if (assets.length) {
+    lines.push("## 素材", "");
+    for (const asset of assets) {
+      const title = asset.title || asset.filename;
+      if (asset.type === "image" || asset.type === "gif") {
+        lines.push(`![${title}](${asset.storage_path})`);
+      } else {
+        lines.push(`[${title}](${asset.storage_path})`);
+      }
+      lines.push("");
+    }
   }
   return `${lines.join("\n").replace(/\n{3,}/g, "\n\n").trim()}\n`;
 }
