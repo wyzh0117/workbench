@@ -1120,7 +1120,7 @@ cargo build / cargo check：通过
   会话持久化链路。系统模态选择器（NSOpenPanel）不可脚本驱动，故未纳入脚本走查。
 
 走查结果（全部在真实窗口内完成，均有落盘证据）：
-  1. 启动：`--project-dir /tmp/acw-native-walk` 直接打开课程；不传参数时从 session
+  1. 启动：`--project-dir <临时验收项目路径>` 直接打开课程；不传参数时从 session
      恢复上次项目，启动页卡片显示上次所在的那一课与「整门课程 0/3 课完成 · 待补 1 项」。
   2. 课程地图：整门结构（2 个阶段 3 课）、每课完成度（80% / 100% / 67%）、
      「共 3 课 · 已完成 0 课 · 待补 0 项 · 缺素材 0 处」，每课带编辑/上移/下移/删除控件。
@@ -1378,7 +1378,7 @@ VERIFIED
 ## 16.2 本轮证据（真实 Tauri 窗口走查 + 落盘复核）
 
 ```text
-测试项目：/tmp/AI-Course-Workbench-V0-T04-Takeover-20260922
+测试项目：验收用临时项目（V0-T04 takeover 场景，位于系统临时目录）
   4 个真实素材：课程 封面.png(1504B) / 演示 动图.gif(1874B) /
   讲解 视频.mp4(12083B) / 配套 阅读.md(48B)
   2 课：S01-01 输出基础（正文/引用/外链/图片/GIF/视频/文档，Grid 排版）、
@@ -1390,7 +1390,7 @@ VERIFIED
    构建上复跑）：生成 S01-01-输出基础.md(402B)，标题/段落/引用/外链/图片/GIF/视频/
    附件引用正确；4 个素材 sha256 与导出前完全一致、大小非零（ASSETS_BYTE_IDENTICAL_OK）。
    说明：截断缺陷本身的原始现场来自上一轮的验收项目
-   /tmp/AI-Course-Workbench-V0-T04-Final-20260921（其 assets/* 与导出的
+   （临时验收项目；其 assets/* 与导出的
    基础阶段.web/assets/*、course-web-moved/assets/* 均为 0 字节），
    本轮走查用的是修复后构建，因此本轮不再出现 0 字节，属预期。
 2  Static Web Package：包内 index.html(1138B) / manifest.json(338B) / assets 4 个，
@@ -1411,8 +1411,7 @@ VERIFIED
    普通 contenteditable 接收页，结构
    P(migration banner)/H1/H2/H2/P/BLOCKQUOTE/P/FIGURE(IMG)/FIGURE(IMG)/FIGURE(VIDEO)/ASIDE
    保序、0 个 <script>、0 个 Workbench 私有 class，媒体单独上传提示随内容保留。
-   证据文件：/tmp/acw-t04-takeover/paste-into-contenteditable.json
-   （含接收页 DOM 与逐项观测；粘贴动作本身由 Chromium 真实剪贴板完成）
+   证据文件：验收用的粘贴结构记录（位于系统临时目录，含接收页 DOM 与逐项观测）
 5  导出前检查（preflight）实测两态：
    BLOCKING：把 assets/演示 动图.gif 移走后 → 面板「缺失素材文件 1」、
    问题清单「BLOCKING 项目素材文件不存在」、BLOCKING 1 · WARNING 3、
@@ -1446,8 +1445,8 @@ AXValue 写入与键盘事件，并以落盘文件（sha256 / project.json / PDF
     自动发布，只做迁移格式本身的复制粘贴结构验证。
   - cargo tauri build --debug 在应用仍从该 bundle 运行时会在 DMG 步骤失败
     （首次构建遇到：bundle_dmg.sh 失败）；关闭应用后重跑即产出 .app 与 .dmg。
-  - 上一轮 pi 会话中断时遗留的 Desktop UI 独占锁
-    /tmp/ai-course-workbench-desktop-ui.lock（owner=pi-v0-t04，pid 51244）已确认
+  - 上一轮会话中断时遗留的 Desktop UI 独占锁（位于系统临时目录，owner 为当时的
+    验收实例）已确认
     owner 进程不存在、应用已退出后释放，并在本轮以自己的身份重新取锁、结束时释放。
   - 关于「导出包不含私有会话数据」：实现是 sanitized_project_package（导出前移除
     conversations / conversation_sources / messages / context_packs / context_pack_items），
@@ -1473,7 +1472,7 @@ Git 状态（§13.7）：
 ```text
 1. BLOCKER — 导出会把源素材截断为 0 字节：把单文件导出到项目目录内时，
    素材复制目标与源路径相同，fs::copy 自拷贝在 macOS 上截断文件；此后所有导出
-   都引用空素材。原始现场（上一轮验收项目 /tmp/AI-Course-Workbench-V0-T04-Final-20260921）：
+   都引用空素材。原始现场（上一轮验收用的临时项目）：
    4 个素材 sha256 均为空文件哈希 e3b0c44…，其导出的基础阶段.web/assets/* 与
    course-web-moved/assets/* 也都是 0 字节、Web 包图片 naturalWidth=0；
    独立复核另用单独 Rust 探针确认 fs::copy(same, same) → Ok(0) 在本机确实截断文件。
@@ -2615,7 +2614,7 @@ Warn skipping app notarization, no APPLE_ID & APPLE_PASSWORD & APPLE_TEAM_ID
 （`com.apple.quarantine = 0083;<hex 时间>;Safari;`），挂载、取出 App 再评估：
 
 ```text
-spctl --assess --type execute --verbose=4 "/tmp/qtest/AI Course Workbench.app"
+spctl --assess --type execute --verbose=4 "&lt;解包后放在临时目录的 AI Course Workbench.app&gt;"
   →  rejected（exit 3）
 ```
 
@@ -2757,9 +2756,39 @@ Actions 按 commit SHA 固定。配置好 Secrets 后同一条 workflow 会自�
 - 用同一固定 asset 文件名重新构建并上传 Release，使 `spctl --assess` 通过、stapling 生效；
 - 在 GitHub Actions Secrets 中配置证书与公证凭据，实跑一次 `.github/workflows/release.yml`；
 - 重跑一次「下载 → 安装 → 首次打开无阻碍」的干净机器 smoke；
-- 将 release workflow 的 Actions 依赖升级到新版本时同步更新 commit SHA。
+- 将 release workflow 的 Actions 依赖升级到新版本时同步更新 commit SHA；
+- 用 `--remap-path-prefix` 重新构建，去掉二进制里内嵌的 `/Users/<本机用户>/.cargo/registry/...`
+  panic 位置元数据（属卫生问题，非泄漏；会改变 SHA，适合与下一次签名发版一起做）；
+- 仓库当前**没有 LICENSE**（公开仓库默认「保留所有权利」）。是否开源、用哪个许可证属用户决策，
+  本轮不擅自添加；
+- 两份 Release 资产的 `downloadCount` 目前都是 0：还没有第三方真正下载过；
+  Intel 切片与 macOS 11.0 最低版本都还没有在真实机器上跑过。
 
-## 34.13 结论
+## 34.13 独立复核与据其修正
+
+交付后由一个**未参与实现**的 subagent 做只读对抗性复核（不修改任何东西）：
+逐条重derive 上面的每一项声明、扫描全部 refs 的 208 个 blob、检查非目标合规、专门搜索过度声明。
+
+复核结论：**PASS-WITH-NOTES** —— `V1-T02 = PARTIAL` 是**正确且被如实报告**的状态；
+**未发现任何过度声明**（仓库里每一处 `PUBLIC RELEASE READY` 都是否定句）；
+非目标全部合规（无 PKG / Cask / MAS / 自定义安装器 / 自动更新器 / Windows / Linux / 矩阵 / Nightly / Beta）；
+`release.yml` 是单个 `macos-latest` 作业、3/3 Actions 按 SHA 固定、零明文密钥。
+
+复核发现的问题与**本轮已做的修正**：
+
+| # | 复核发现 | 严重度 | 本轮处理 |
+|---|---|---|---|
+| 1 | Release Notes 的「首次打开说明」只给了「右键 → 打开」，并断言「此后双击即可正常打开」；**在 macOS 15 (Sequoia) 及更新版本上这条已失效**（Apple 官方公告：Control-click 不再能绕过 Gatekeeper，必须到「系统设置 → 隐私与安全性」） | 高 | **已修**：README 与 Release Notes 都改为按版本分两条路径（macOS 15/26+ 走「系统设置 → 隐私与安全性 → 仍要打开」；macOS 11–14 走右键打开），并去掉「此后双击即可正常打开」这种一刀切说法；线上 Release Notes 已用 `gh release edit` 更新（资产未动，SHA 不变）；`release.yml` 自动生成的 Notes 同步修正 |
+| 2 | `release.yml` 在已存在 Release 时走 `--clobber` 覆盖资产，却不重写 Notes，会让 Notes 里记录的 SHA-256 与新资产不一致 | 中 | **已修**：覆盖资产后追加 `gh release edit --notes-file dist/release-notes.md` |
+| 3 | `APPLE_API_KEY_PATH` 被当成 repository secret，但它必须指向 runner 上真实存在的 `.p8`，照原样配是不可用的（「配好 Secrets 就不用改代码」只对 Apple ID 路线成立） | 中 | **已修**：新增「Materialize App Store Connect API key (optional)」步骤，把 `APPLE_API_KEY_P8` 写成 runner 临时目录的 `.p8` 并经 `GITHUB_ENV` 传入；Apple ID 路线保持原样，两条路线都在注释里写明 |
+| 4 | 公开文档里残留上一轮的临时验收路径与实例名（系统临时目录下的测试项目名、锁文件 owner 等） | 低 | **已修**：改为通用描述；保留了对真实 commit 主题的引用（那是对历史的如实引用） |
+| 5 | 二进制内嵌 514 个本机 Cargo registry 绝对路径（Rust panic 位置元数据）；无项目路径泄漏 | 低 | **未修**（记为 Backlog）：修它需要 `--remap-path-prefix` 重新构建，会改变 SHA 从而作废已发布的 Release 与已记录校验值，收益不足以抵消 |
+
+复核同时确认的既有事实（可直接引用）：Release 的 GitHub 侧 asset digest 与本机 SHA-256 三方一致；
+匿名 `curl -L` 走通 `302 → 302 → 200` 且下载文件哈希一致；Universal 与元数据是在**挂载后的 DMG 内部**验证的
+（不只是 `target/`）；release profile 无 `__debug_info`；全部 Git history 中本机用户名 / 家目录绝对路径的命中数为 **0**。
+
+## 34.14 结论
 
 ```text
 V1-T02 = PARTIAL

@@ -50,6 +50,27 @@ jobs:
         with:
           workspaces: src-tauri
 
+      # Optional App Store Connect API-key notarization route. `APPLE_API_KEY_PATH`
+      # cannot be a repository secret — it has to be a real .p8 file that exists on
+      # the runner — so when APPLE_API_KEY_P8 is provided we write it to a
+      # runner-temporary path and export it for the build step below.
+      # If you use the Apple ID route instead (APPLE_ID + APPLE_PASSWORD +
+      # APPLE_TEAM_ID), leave APPLE_API_KEY_P8 unset and this step does nothing.
+      - name: Materialize App Store Connect API key (optional)
+        env:
+          APPLE_API_KEY_P8: ${{ secrets.APPLE_API_KEY_P8 }}
+        run: |
+          set -euo pipefail
+          if [ -z "${APPLE_API_KEY_P8:-}" ]; then
+            echo "APPLE_API_KEY_P8 is not set; assuming the Apple ID route (or ad-hoc)."
+            exit 0
+          fi
+          KEY_PATH="$RUNNER_TEMP/AuthKey.p8"
+          printf '%s' "$APPLE_API_KEY_P8" > "$KEY_PATH"
+          chmod 600 "$KEY_PATH"
+          echo "APPLE_API_KEY_PATH=$KEY_PATH" >> "$GITHUB_ENV"
+          echo "Wrote the App Store Connect API key to a runner-temporary path."
+
       - name: Build Universal app + DMG
         uses: tauri-apps/tauri-action@84b9d35b5fc46c1e45415bdb6144030364f7ebc5 # v0
         env:
@@ -58,12 +79,14 @@ jobs:
           APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
           APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
           APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY || '-' }}
+          # Apple ID 公证路线：
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          # API Key 公证路线（APPLE_API_KEY_PATH 由上一个步骤写入 runner 临时目录后经
+          # GITHUB_ENV 传进来；不要把它配成 repository secret）：
           APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
           APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
-          APPLE_API_KEY_PATH: ${{ secrets.APPLE_API_KEY_PATH }}
         with:
           args: --target universal-apple-darwin --bundles app,dmg
 
@@ -106,10 +129,22 @@ jobs:
 
           if codesign -dv "src-tauri/target/universal-apple-darwin/release/bundle/macos/AI Course Workbench.app" 2>&1 | grep -q "Developer ID Application"; then
             SIGNING_LINE="- Signed with Apple Developer ID and notarized."
-            FIRST_LAUNCH="- 直接双击打开即可。"
+            FIRST_LAUNCH="- 已签名并公证，直接双击打开即可。"
           else
             SIGNING_LINE="- NOT signed with an Apple Developer ID and NOT notarized."
-            FIRST_LAUNCH="- 首次打开：在「应用程序」中右键点击（或按住 Control 点击）AI Course Workbench → 选择「打开」→ 在弹窗中再次点「打开」。此后双击即可正常打开。"
+            # macOS 15 (Sequoia) removed the Control-click override for software that
+            # is not correctly signed or notarized, so the right-click path must not be
+            # presented as the only way in.  Both routes are documented below.
+            FIRST_LAUNCH="$(cat <<'NOTES'
+          - 首次打开需要手动放行一次，方式取决于 macOS 版本：
+            - **macOS 15 (Sequoia) / 26 及更新版本**：Control-click 已无法绕过 Gatekeeper。
+              双击后点「完成」→ 打开「系统设置 → 隐私与安全性」→ 在「安全性」区域点「仍要打开」→ 输入密码或 Touch ID 确认。
+            - **macOS 11 (Big Sur) – 14 (Sonoma)**：在「应用程序」中右键点击（或按住 Control 点击）
+              AI Course Workbench → 选择「打开」→ 在弹窗中再次点「打开」。
+            - 放行一次之后，双击即可正常打开。
+          - 不建议关闭 Gatekeeper，也不建议用 `xattr` 移除隔离属性。
+          NOTES
+          )"
           fi
 
           cat > dist/release-notes.md <<EOF
@@ -152,7 +187,14 @@ jobs:
           EOF
 
           if gh release view "$TAG" >/dev/null 2>&1; then
-            gh release upload "$TAG" dist/AI-Course-Workbench-macOS.dmg dist/AI-Course-Workbench-macOS.dmg.sha256 --clobber
+            # --clobber replaces the assets, so the notes MUST be rewritten in the same
+            # run: they record the SHA-256, and a stale digest would silently point at a
+            # file that no longer exists.
+            gh release upload "$TAG" \
+              dist/AI-Course-Workbench-macOS.dmg \
+              dist/AI-Course-Workbench-macOS.dmg.sha256 \
+              --clobber
+            gh release edit "$TAG" --notes-file dist/release-notes.md
           else
             gh release create "$TAG" \
               dist/AI-Course-Workbench-macOS.dmg \
