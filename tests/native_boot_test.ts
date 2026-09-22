@@ -96,6 +96,7 @@ async function bootNative(options: {
     session: options.persistedSession ? structuredClone(options.persistedSession) : null,
     sessionWrites: 0,
     calls: [] as BridgeCall[],
+    closeRequested: null as ((event: { preventDefault?: () => void }) => void) | null,
   };
   const root = {
     innerHTML: "",
@@ -174,7 +175,10 @@ async function bootNative(options: {
     },
     window: {
       getCurrentWindow: () => ({
-        onCloseRequested: async () => () => {},
+        onCloseRequested: async (handler: (event: { preventDefault?: () => void }) => void) => {
+          state.closeRequested = handler;
+          return () => {};
+        },
         onDragDropEvent: async () => () => {},
       }),
     },
@@ -247,6 +251,36 @@ Deno.test("native launch opens the --project-dir project and persists it", async
     assertEquals(store.bridge.projectDir, "/tmp/native-boot-project", "启动目录必须成为当前项目");
     assertEquals(state.session?.project_dir, "/tmp/native-boot-project", "会话必须记录新项目目录");
     assert(state.sessionWrites > 0, "启动流程必须把会话写回磁盘");
+  } finally {
+    restore();
+  }
+});
+
+Deno.test("native close immediately flushes and releases the committed project session", async () => {
+  const { store, state, restore } = await bootNative({
+    project: seededProject(),
+    launchProjectDir: "/tmp/native-close-project",
+    persistedSession: null,
+  });
+  try {
+    await until(() => store.data.content_items.length >= 2, "关闭测试载入课程");
+    const lesson = store.data.content_items[1];
+    assert(lesson != null, "关闭测试必须有可选课程");
+    store.ui.activeId = lesson.id;
+    store.ui.mode = "preview";
+    store.ui.route = "media";
+    state.closeRequested?.({ preventDefault: () => {} });
+    await until(() => state.calls.some((call) => call.command === "confirm_close"), "完成原生关闭");
+    const closeOrder = state.calls
+      .filter((call) => ["project_save", "project_close", "confirm_close"].includes(call.command))
+      .map((call) => call.command);
+    assert(closeOrder.indexOf("project_save") >= 0, "立即关闭必须先保存 canonical 项目");
+    assert(closeOrder.indexOf("project_close") > closeOrder.indexOf("project_save"), "立即关闭必须先写完再释放租约");
+    assert(closeOrder.indexOf("confirm_close") > closeOrder.indexOf("project_close"), "立即关闭必须释放租约后再确认退出");
+    assertEquals(state.session?.project_dir, "/tmp/native-close-project", "关闭保存不得丢失项目目录");
+    assertEquals(state.session?.project_id, store.data.project.id, "关闭保存不得丢失项目标识");
+    assertEquals(state.session?.active_content_item_id, lesson.id, "关闭保存必须保留当前课程");
+    assertEquals(state.session?.mode, "preview", "关闭保存必须保留当前模式");
   } finally {
     restore();
   }
@@ -378,7 +412,7 @@ Deno.test("a project that is only leased elsewhere keeps its resume pointer", as
   });
   try {
     await until(
-      () => typeof store.ui.toast === "string" && store.ui.toast.includes("project_locked"),
+      () => typeof store.ui.toast === "string" && store.ui.toast.includes("正在其他窗口或进程中使用"),
       "锁冲突提示",
     );
     assert(!store.hasNativeLease(), "被拒绝时不得持有项目租约");

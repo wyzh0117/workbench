@@ -1,0 +1,163 @@
+name: Release macOS DMG
+
+# 这个 workflow 只做一件事：构建 Universal macOS DMG、按固定 asset 文件名重命名、
+# 生成 SHA-256，并作为 Release Asset 上传到触发它的 tag 上。
+#
+# 它不构建 Windows / Linux，不做自动更新、Nightly 或 Beta 通道，也不做多平台矩阵。
+#
+# 没有配置 Apple 凭据时：workflow 仍可运行，产出 ad-hoc 签名的 DMG，与本地手工构建结果一致，
+# Release Notes 会如实说明「未签名 / 未公证」。
+#
+# 配置好下面的 secrets 之后：同一条 workflow 会自动完成 Developer ID 签名与 Apple 公证，
+# 不需要再改代码。
+#
+# 需要的 repository secrets（任何密钥都不得写进本文件）：
+#   APPLE_CERTIFICATE            Developer ID Application 证书的 base64（.p12）
+#   APPLE_CERTIFICATE_PASSWORD   .p12 导出密码
+#   APPLE_SIGNING_IDENTITY       例如 "Developer ID Application: NAME (TEAMID)"
+#   APPLE_ID / APPLE_PASSWORD / APPLE_TEAM_ID          Apple ID 公证凭据
+#   或 APPLE_API_KEY / APPLE_API_ISSUER / APPLE_API_KEY_PATH   App Store Connect API Key 公证凭据
+#
+# 注意：本文件中的 DMG asset 文件名必须永远是 AI-Course-Workbench-macOS.dmg，
+# 因为 README 与用户手里的「固定直链」依赖它：
+#   https://github.com/<OWNER>/<REPO>/releases/latest/download/AI-Course-Workbench-macOS.dmg
+# 不要改成带版本号的文件名。
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  macos-dmg:
+    name: Build Universal DMG
+    runs-on: macos-latest
+
+    steps:
+      # Actions are pinned to commit SHAs because this job handles an Apple
+      # signing certificate. Bump the SHA (and keep the trailing version
+      # comment) when you intentionally upgrade an action.
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Add macOS Rust targets
+        run: rustup target add aarch64-apple-darwin x86_64-apple-darwin
+
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+        with:
+          workspaces: src-tauri
+
+      - name: Build Universal app + DMG
+        uses: tauri-apps/tauri-action@84b9d35b5fc46c1e45415bdb6144030364f7ebc5 # v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # 有证书就导入并签名；没有就退回 ad-hoc（"-"），让流程依然可以跑通。
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY || '-' }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+          APPLE_API_KEY_PATH: ${{ secrets.APPLE_API_KEY_PATH }}
+        with:
+          args: --target universal-apple-darwin --bundles app,dmg
+
+      - name: Stage release assets with the stable filename
+        run: |
+          set -euo pipefail
+          BUNDLE_DIR="src-tauri/target/universal-apple-darwin/release/bundle"
+          SRC_DMG="$(find "$BUNDLE_DIR/dmg" -maxdepth 1 -name '*.dmg' -print -quit)"
+          if [ -z "$SRC_DMG" ]; then
+            echo "No DMG produced under $BUNDLE_DIR/dmg" >&2
+            exit 1
+          fi
+          mkdir -p dist
+          cp "$SRC_DMG" dist/AI-Course-Workbench-macOS.dmg
+          cd dist
+          shasum -a 256 AI-Course-Workbench-macOS.dmg > AI-Course-Workbench-macOS.dmg.sha256
+          cat AI-Course-Workbench-macOS.dmg.sha256
+          ls -l
+
+      - name: Verify signature state of the shipped app
+        run: |
+          set -euo pipefail
+          APP="src-tauri/target/universal-apple-darwin/release/bundle/macos/AI Course Workbench.app"
+          echo "--- lipo ---"
+          lipo -archs "$APP/Contents/MacOS/ai-course-workbench" || true
+          echo "--- codesign ---"
+          codesign -dv --verbose=4 "$APP" 2>&1 || true
+          echo "--- spctl ---"
+          spctl --assess --type execute --verbose "$APP" 2>&1 || true
+
+      - name: Publish release assets
+        if: github.ref_type == 'tag'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          TAG="${GITHUB_REF_NAME}"
+          VERSION="${TAG#v}"
+          SHA="$(cut -d' ' -f1 dist/AI-Course-Workbench-macOS.dmg.sha256)"
+
+          if codesign -dv "src-tauri/target/universal-apple-darwin/release/bundle/macos/AI Course Workbench.app" 2>&1 | grep -q "Developer ID Application"; then
+            SIGNING_LINE="- Signed with Apple Developer ID and notarized."
+            FIRST_LAUNCH="- 直接双击打开即可。"
+          else
+            SIGNING_LINE="- NOT signed with an Apple Developer ID and NOT notarized."
+            FIRST_LAUNCH="- 首次打开：在「应用程序」中右键点击（或按住 Control 点击）AI Course Workbench → 选择「打开」→ 在弹窗中再次点「打开」。此后双击即可正常打开。"
+          fi
+
+          cat > dist/release-notes.md <<EOF
+          # AI Course Workbench ${VERSION}
+
+          首个可公开安装的 macOS 分发版本。
+
+          ## System
+
+          - macOS 11.0 (Big Sur) 或更高版本
+          - Architecture: Universal（Apple Silicon arm64 + Intel x86_64，同一个安装包）
+
+          ## Install
+
+          1. 下载 \`AI-Course-Workbench-macOS.dmg\`
+          2. 双击打开 DMG
+          3. 将 **AI Course Workbench** 拖到 Applications
+          4. 从 Applications 打开
+
+          ${FIRST_LAUNCH}
+
+          ## Distribution status
+
+          ${SIGNING_LINE}
+
+          ## Verify
+
+          \`\`\`
+          ${SHA}  AI-Course-Workbench-macOS.dmg
+          \`\`\`
+
+          \`\`\`bash
+          shasum -a 256 ~/Downloads/AI-Course-Workbench-macOS.dmg
+          \`\`\`
+
+          ## Links
+
+          - Latest release page: https://github.com/${GITHUB_REPOSITORY}/releases/latest
+          - Direct download: https://github.com/${GITHUB_REPOSITORY}/releases/latest/download/AI-Course-Workbench-macOS.dmg
+          EOF
+
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" dist/AI-Course-Workbench-macOS.dmg dist/AI-Course-Workbench-macOS.dmg.sha256 --clobber
+          else
+            gh release create "$TAG" \
+              dist/AI-Course-Workbench-macOS.dmg \
+              dist/AI-Course-Workbench-macOS.dmg.sha256 \
+              --title "AI Course Workbench ${VERSION}" \
+              --notes-file dist/release-notes.md \
+              --verify-tag
+          fi

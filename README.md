@@ -1,8 +1,111 @@
 # AI Course Workbench
 
-本仓库是 AI Course Workbench 的可运行本地优先骨架：Deno 服务/领域层、无依赖 Web UI 以及受限的 Tauri 2 壳。Canonical 项目数据保存在开放的 `project.json`；Markdown、课程地图、搜索索引、缩略图和诊断日志都是可重建镜像或缓存。
+本地优先的课程创作工作台：课程地图、单课编辑器、待补管理、素材、六维完成度、只审阅式 AI 助手，以及发布与导出中心。项目数据保存在你自己磁盘上的开放 `project.json`。
 
-## 运行
+技术构成：Deno 服务/领域层、无依赖 Web UI 以及受限的 Tauri 2 壳。Canonical 项目数据保存在开放的 `project.json`；Markdown、课程地图、搜索索引、缩略图和诊断日志都是可重建镜像或缓存。
+
+---
+
+## Download
+
+**下载最新 macOS 安装包（DMG）：**
+
+| 入口 | 链接 |
+|---|---|
+| 最新版本页面（含 Release Notes） | https://github.com/wyzh0117/workbench/releases/latest |
+| 直接下载最新 DMG（固定链接，始终指向最新版本） | https://github.com/wyzh0117/workbench/releases/latest/download/AI-Course-Workbench-macOS.dmg |
+
+把第二个链接粘贴到 Safari / Chrome 回车，浏览器就会开始下载最新的 `AI-Course-Workbench-macOS.dmg`，不需要先找 Assets，也不需要判断版本号。
+
+### 当前已发布版本
+
+```text
+Release Tag ：v0.1.0
+文件名      ：AI-Course-Workbench-macOS.dmg（固定不变，版本号只在 Tag 与 Release Notes 里）
+大小        ：10,357,233 字节
+SHA-256     ：59597a342109785e190d9dc8194d841744249dbbc46498ee594572d2d2412573
+```
+
+因为文件名固定不变，上面那条「直接下载最新 DMG」链接在以后发布 `v0.1.1`、`v0.2.0` 时**依然有效**，
+永远指向最新版本；只有 Release Notes 与 SHA-256 会随版本更新。
+
+### 系统要求与架构
+
+```text
+最低系统版本：macOS 11.0（Big Sur）
+架构：Universal —— Apple Silicon（arm64）与 Intel（x86_64）同一个安装包
+```
+
+### 安装步骤
+
+```text
+1. 下载 AI-Course-Workbench-macOS.dmg
+2. 双击打开 DMG
+3. 把 AI Course Workbench 拖到 Applications
+4. 从 Applications 打开
+```
+
+### 首次打开说明（重要）
+
+本版本**尚未使用 Apple Developer ID 签名与公证**（原因见下方「分发状态」），所以首次打开时 macOS 会提示
+「无法验证开发者」或「Apple 无法检查其是否包含恶意软件」。这是**预期行为，不是安装包损坏**。
+
+处理方式（只需做一次）：
+
+```text
+在「应用程序」中右键点击（或按住 Control 点击）AI Course Workbench
+→ 选择「打开」
+→ 在弹窗中再次点「打开」
+```
+
+此后双击即可正常打开。若系统只在「系统设置 → 隐私与安全性」里给出提示，可在该处点击「仍要打开」。
+
+### 校验下载完整性
+
+每个 Release 同时提供 `AI-Course-Workbench-macOS.dmg.sha256`：
+
+```bash
+shasum -a 256 ~/Downloads/AI-Course-Workbench-macOS.dmg
+```
+
+输出应与 Release Notes 中的 SHA-256 一致。
+
+---
+
+## 分发状态（如实说明）
+
+```text
+DISTRIBUTION STATE = PARTIAL
+BLOCKER            = 缺正式 macOS signing / notarization credentials
+```
+
+- **已完成**：正式 Release 构建（非 Debug）、Universal（Apple Silicon + Intel）DMG、
+  公开 GitHub 仓库与 Release、固定 latest 直链、SHA-256 校验。
+- **未完成**：Developer ID Application 签名与 Apple 公证（notarization / stapling）。
+  本机 `security find-identity -v -p codesigning` 返回 0 valid identities，没有可用的
+  Apple Developer Program 分发凭据，因此**不能宣称「普通用户无安全阻碍安装」**，
+  也不宣称 `PUBLIC RELEASE READY`。
+- 拿到正确的 Apple Developer 分发资格后，只需要补做签名、公证、重新上传 Release 与
+  一次安装 smoke，**不需要重新开发 Workbench 本体**（见 `.github/workflows/release.yml`）。
+
+---
+
+## 当前开发位置
+
+- 当前版本：**V1（ACTIVE）**
+- V1-T01 — V0 Hardening & UX Polish：**VERIFIED**
+- 当前任务：**V1-T02 — macOS Distribution & Public Release Closure**
+- 当前状态：**PARTIAL**（BLOCKER：缺正式 macOS signing / notarization credentials）
+- 产品状态：**DOGFOOD READY**
+- 分发状态：**PARTIAL**（DMG / Release / 固定直链已完成；签名与公证未完成）
+- V0 状态：**V0 CLOSED；V0-T01 / V0-T02 / V0-T03 / V0-T04 全部 VERIFIED**
+- NEXT ACTION：**获取 Apple Developer 分发资格后补做签名 / 公证 / Release 重传 / smoke**
+
+---
+
+## 开发者运行
+
+以下内容面向参与开发的工程师。**普通用户请直接使用上面的 Download 入口。**
 
 需要 Deno 2：
 
@@ -22,12 +125,21 @@ cargo build --manifest-path src-tauri/Cargo.toml
 ./src-tauri/target/debug/ai-course-workbench --project-dir /绝对/路径   # 启动即打开该课程
 ```
 
+构建与发布完全一致的正式分发包（Universal DMG，产物在 `src-tauri/target/universal-apple-darwin/release/bundle/`）：
+
+```bash
+rustup target add aarch64-apple-darwin x86_64-apple-darwin
+cargo tauri build --target universal-apple-darwin --bundles app,dmg
+```
+
+DMG 内的对外资产名固定为 `AI-Course-Workbench-macOS.dmg`（版本号只出现在 Release Tag、Release Notes 与 App bundle metadata 中），这样 `/releases/latest/download/AI-Course-Workbench-macOS.dmg` 才能长期指向最新版本。
+
 `--project-dir`（可写 `-p <路径>`）必须是绝对路径，目录不存在或参数缺值会在开窗前退出并打印原因。不传参数时应用读取 `.workspace/session.json` 恢复上次的项目与阅读位置（当前课、模式、右栏、所在视图）。
 
 需要另一个隔离项目（例如验收用的临时课程）时可以指定根目录与端口：
 
 ```bash
-PROJECT_ROOT=/path/to/project PORT=4174 deno run --allow-net --allow-read --allow-write --allow-sys --allow-env scripts/dev_server.ts
+PROJECT_ROOT=/path/to/project PORT=4174 deno run --allow-net --allow-read --allow-write --allow-run=/usr/bin/security --allow-sys --allow-env scripts/dev_server.ts
 ```
 
 ## 已支持
@@ -39,7 +151,8 @@ PROJECT_ROOT=/path/to/project PORT=4174 deno run --allow-net --allow-read --allo
 - 素材 Authoring：有界只读预览（`asset_read` 原生命令 / `/api/asset` 服务路由）、插入区块、建立 AssetUsage、解除引用、删除前引用确认；素材链接同时写入 `settings.asset_id` 与文件名，编辑器、预览与导出读取同一份引用；
 - Requirement 生命周期：创建、编辑备注/类型/优先级、定位、用素材完成、重新打开、删除，以及跨课待补总览；
 - Preview 与导出读取同一份 Canonical 正文；单课完成度由六维状态 + 待补 + 素材 + 排版派生，不单独保存；
-- 重启后恢复上次的课、模式、右侧面板、所在视图与选中区块（UI session 不含凭据字段）。桌面壳把会话写入应用数据目录，已在真实窗口中验证「关闭 → 重启 → 继续」；浏览器壳目前只把会话保存在页面内存里，刷新页面即丢失（服务层尚无会话端点），两个壳共用同一份会话结构；
+- 重启后恢复上次的课、模式、右侧面板、所在视图与选中区块（UI session 不含凭据字段）。桌面壳把会话写入应用数据目录，已在真实窗口中验证「关闭 → 重启 → 继续」；浏览器壳把同一份会话写入 `<project>/.workspace/browser-session.json`（带版本号、字段白名单与 64KB 上限，只保存阅读位置这类可重建状态），刷新页面后课程位置与右侧面板都会恢复，文件缺失 / 损坏 / 属于别的项目时安全降级为默认视图而不是白屏或写错项目；
+- 切换项目只提交新项目自己的状态：按 `project_id` 分别保存每个项目的阅读位置，切换到 B 不会把 A 的课次或面板带过去，切回 A 时仍回到 A 原来的位置；切换失败时保留原项目会话，不写半套状态；
 - 项目被另一实例持有时启动会给出可读提示并保留上次位置，不会清空「继续工作」入口；前端资源加载失败时窗口显示失败原因，而不是空白页；
 - 写入前一致性校验：编号唯一、待补/素材/排版/收件箱引用完整，磁盘上的项目被替换时停止写入而不是覆盖；
 - 原子写入、自动保存恢复日志、项目锁、外部修改检测、历史版本恢复前备份；
@@ -48,7 +161,7 @@ PROJECT_ROOT=/path/to/project PORT=4174 deno run --allow-net --allow-read --allo
 - AI 助手进入现有三栏工作台：可选择课程 / 当前课次 / 当前区块三种上下文范围，调用前先「预览」本次实际会发送的条目与字数，并单独列出「不会发送」的类别（例如区块范围不发送本课其他区块的正文，任何密钥字段都不进入上下文）；
 - AI 上下文由 Canonical 与现有投影现场装配，不复制出第二份「AI 版课程数据」；同一份输入稳定可复现，装配过程只读、不改动项目（`app/ai.js` 的 `assembleAiContext`）；
 - 统一 Connector 边界：DeepSeek / 火山方舟（豆包）/ OpenAI / 自定义 OpenAI 兼容接口，以及完全离线、确定性的「本地确定性连接器」；请求组装、JSON 与 SSE 响应归一化、timeout / cancel / 缺密钥 / 限流 / Provider 错误 / 无法解析的返回都在同一层处理，业务逻辑不绑定任何一家 API 形状；
-- API Key 由所在进程注入（桌面壳走 Rust `ai_complete`，浏览器壳走本地服务），页面拿不到密钥；密钥只写入本机 AI 配置文件（权限 0600），不进入 `project.json`、Canonical、导出包或执行记录；
+- API Key 由所在进程注入（桌面壳走 Rust `ai_complete`，浏览器壳走本地服务），页面拿不到密钥；macOS 两条路径都把密钥写入系统钥匙串，`providers.json` 只保留服务商元数据，不进入 `project.json`、Canonical、导出包或执行记录；
 - 非修改型请求只产生 Suggestion；修改型请求产生 ChangeDraft（target / operation / before / after / 理由 / 校验结果），Diff 逐条展示「修改前 / 修改后」，Reject 不动正文，Apply 前重新做 domain 校验并在深拷贝候选上一次性落盘，失败不留半写入；
 - Apply 与人工编辑共用同一套 `commit` / history / undo / redo / autosave 路径：撤销回到应用前，重做回到应用后，保存 / 关闭 / 重启 / 重开后数据一致；
 - AI 执行记录写入工作台本机数据区（桌面壳在应用数据目录、浏览器壳在 `<project>/.workspace/ai/`，均为非 Canonical、可重建）：记录时间、范围、指令、Provider / Model、结果类型、成功 / 失败 / 取消与错误码，以及 Apply / Reject 结论；写入失败只提示、不影响课程保存，且不含任何密钥；
@@ -65,8 +178,8 @@ PROJECT_ROOT=/path/to/project PORT=4174 deno run --allow-net --allow-read --allo
 - 输出能力边界：PNG / JPG 位图输出在 V0 明确不支持，导出中心不提供该格式卡片；服务层 `preflightExport` 对 png/jpg 报 `unsupported_format`，桌面壳原生导出对未知格式直接返回「当前原生导出不支持这个格式」。复杂长图 / 海报系统列为 V0 REJECTED，已有 SVG / 分区导出不回归；PDF 使用系统 CJK 字体（STSong-Light + UniGB-UCS2-H），另存/取词依赖阅读器对该字体的支持，视觉渲染已用真实页面 OCR 核对；
 - 媒体降级是显式设计：Markdown / 富文本迁移版 / PDF 中 video、audio、document 与 PDF 中的 GIF 以非交互附件说明呈现，并在导出前检查里作为 WARNING 逐条列出；
 - 微信 / 富文本迁移只做到「可复制结构」：本轮用真实 Chromium 打开导出的迁移版 HTML，并用 `contenteditable` 接收页做粘贴结构验证（标题 / 段落 / 图片顺序正确、无脚本、无 Workbench 私有 class）。**未验证真实微信公众号后台**：不做登录、授权、草稿箱 API 或自动发布，也不承诺目标平台保留我们无法控制的样式；
-- Tauri 壳目前只提供受限高层命令骨架；真实平台发布（自动上传 / 登录）与系统钥匙串适配器尚未安装；
-- 系统钥匙串适配器缺失的后果：AI 密钥以明文保存在本机 AI 配置文件里（桌面壳为应用数据目录 `<app-data>/.workspace/ai/providers.json`，浏览器壳为 `<project>/.workspace/ai/providers.json`，权限 0600）。它不在 `project.json`、不在 Canonical、不进入任何导出包，但也不是加密存储；共享项目目录前请先删除已保存的密钥；
+- Tauri 壳目前只提供受限高层命令骨架；真实平台发布（自动上传 / 登录）仍未支持。macOS 系统钥匙串适配器同时用于桌面壳与本地浏览器审查服务；Windows 是明确的非目标平台；
+- 历史 `providers.json` / `providers.bak` 中的明文 API Key 会在首次读取时迁移到 macOS 系统钥匙串，只有写入并校验成功后才删除明文；迁移失败会保留原文件并给出可读提示，不回显密钥；
 - **尚未完成真实在线 Provider 调用验收**：本轮环境没有为工作台配置任何合法 Provider 凭据，真实 Tauri 窗口内是用离线的「本地确定性连接器」走通完整闭环的。真实 Provider 的请求组装、鉴权注入与错误码映射有自动化测试覆盖（含回环 HTTP 服务器），但没有一次真实在线 smoke，请勿把离线闭环当作「已联网验证」；
 - AI 面板不做逐字流式渲染：连接器已能归一化 SSE 与非流式响应，界面按完整结果展示；
 - 不做 AI 后台自动执行、多 Agent 调度、RAG / 向量数据库，也不做绕过 ChangeDraft 的直接写入；

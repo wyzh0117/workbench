@@ -608,6 +608,18 @@ Deno.test("provider catalog exposes the five presets as copies", () => {
   );
 });
 
+Deno.test("missing credential guidance names the system-secure storage boundary", () => {
+  const failure = new AiFailure("missing_credential", "这个 Provider 还没有配置 API Key。");
+  assert(
+    failure.recommended_action.includes("macOS 系统钥匙串"),
+    "缺少密钥的下一步必须指向系统钥匙串",
+  );
+  assert(
+    !failure.recommended_action.includes(".workspace"),
+    "缺少密钥的下一步不得保留明文文件存储说明",
+  );
+});
+
 Deno.test("buildAiProviderCall builds a chat request without any credential", () => {
   const { data, first } = aiFixture();
   const context = assembleAiContext(data, {

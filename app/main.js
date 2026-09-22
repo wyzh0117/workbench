@@ -41,6 +41,19 @@ import {
 } from "./ai.js";
 
 const SESSION_KEY = "ai-course-workbench.session";
+const SESSION_READER_KEYS = [
+  "active_content_item_id",
+  "mode",
+  "right_panel",
+  "route",
+  "selected_block_id",
+  "ai_scope",
+  "ai_provider_id",
+  "ai_model",
+  "left_collapsed",
+  "right_collapsed",
+  "tabs",
+];
 /** High-level commands that must carry the selected project directory. */
 const NATIVE_PROJECT_COMMANDS = new Set([
   "project.open",
@@ -107,6 +120,37 @@ const assetTypeForFile = (filename, mime = "") => {
   return "other";
 };
 const isAssetFile = (filename, mime = "") => mime.startsWith("image/") || mime.startsWith("video/") || mime.startsWith("audio/") || /\.(gif|png|jpe?g|webp|svg|mp4|webm|mov|m4v|mp3|wav|m4a|aac|pdf|docx|md|markdown)$/i.test(filename);
+
+/** Keep technical bridge failures out of ordinary toasts. */
+const userFacingError = (error, fallback) => {
+  const raw = String(error?.message || error || "").trim();
+  const context = `${String(error?.code || "")} ${raw}`.toLowerCase();
+  if (/project_(?:not_open|lock_lost|lock_not_owned|locked)|项目已被占用|项目编辑锁|锁/.test(context)) {
+    return "这个项目正在其他窗口或进程中使用。为避免覆盖，当前操作没有写入；课程内容没有改变，请关闭其他窗口后重试。";
+  }
+  if (/external_modification_conflict|外部修改|外部项目文件|磁盘版本/.test(context)) {
+    return "课程文件在其他地方发生了变化，保存已暂停以免覆盖内容。你仍可继续查看，请重新载入、自动合并，或明确保留本地版本。";
+  }
+  if (/project\.json|可识别的课程|project data|项目文件|项目目录不存在/.test(context)) {
+    return "这个文件夹或文件不是可用的课程项目。课程内容没有改变，请选择正确的项目后再试。";
+  }
+  if (/session|会话|阅读位置/.test(context)) {
+    return "上次阅读位置没有保存，但课程内容没有受影响。你可以继续使用，稍后再试。";
+  }
+  if (/工作台服务不可用|service unavailable|服务暂时不可用/.test(context)) {
+    return "工作台服务暂时不可用。课程内容没有改变，请重新启动后再试。";
+  }
+  if (/permission denied|access denied|eacces|权限不足|没有权限/.test(context)) {
+    return "工作台没有权限完成这项操作。课程内容没有改变，请检查项目目录权限后重试。";
+  }
+  if (!raw || /^操作未完成(?:，|。|$)/.test(raw)) return fallback;
+  // English exception text, error codes, paths and stack fragments are useful
+  // in diagnostics but not as the primary action a user sees in a toast.
+  if (/^(?:[A-Za-z][A-Za-z0-9_.-]*(?::|\s|$)|Error\b|Exception\b)|(?:[\\/]|\bat\s+|ENOENT|EISDIR|EINVAL)/.test(raw)) {
+    return fallback;
+  }
+  return raw;
+};
 
 const STATUS = {
   content: ["待研究", "起草中", "待审核", "已定稿"],
@@ -195,7 +239,24 @@ class DesktopBridge {
     let payload = value;
     if (value instanceof Error && typeof value.message === "string") payload = value.message;
     if (typeof payload === "string") {
-      try { payload = JSON.parse(payload); } catch { payload = { error: { user_message: payload } }; }
+      try {
+        payload = JSON.parse(payload);
+      } catch {
+        const raw = payload;
+        if (raw.startsWith("keychain_unavailable:")) {
+          payload = {
+            error: {
+              code: "keychain_unavailable",
+              user_message: "无法访问 macOS 系统钥匙串。课程内容没有改动，请检查系统钥匙串后重试。",
+              technical_message: raw,
+              recommended_action: "确认系统钥匙串可用后重试；课程内容不会因此改变。",
+              details: {},
+            },
+          };
+        } else {
+          payload = { error: { user_message: raw } };
+        }
+      }
     }
     const detail = payload?.error || payload;
     const failure = new Error(detail?.user_message || detail?.message || fallback);
@@ -240,7 +301,7 @@ class DesktopBridge {
         throw this.bridgeError(error, "工作台操作失败");
       }
     }
-    if (typeof fetch !== "function") throw new Error("工作台服务不可用");
+    if (typeof fetch !== "function") throw new Error("工作台服务暂时不可用。课程内容没有改变，请重新启动后再试。");
     const response = await fetch(`${this.apiBase}/command`, {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -372,7 +433,9 @@ class DesktopBridge {
       try {
         await this.invoke("project.create", { project });
         created = true;
-        await this.saveSession({ project_dir: this.projectDir });
+        // Session persistence belongs to WorkbenchStore's transition commit.
+        // Writing only the directory here used to pair a newly created target
+        // with whichever reader state happened to be in memory.
         return project;
       } catch (error) {
         if (created) await this.closeProject().catch(() => {});
@@ -427,7 +490,7 @@ class DesktopBridge {
     return await this.invoke("export.run", { preset: nextPreset, options: { content_item_id: contentItemId || null } });
   }
   async revealExport(path) {
-    if (!this.isNative()) throw new Error("请在系统下载目录中查看导出文件");
+    if (!this.isNative()) throw new Error("浏览器下载的文件请在下载目录查看。");
     return await this.invoke("export.reveal", { path });
   }
   async writeProject(project) {
@@ -483,12 +546,35 @@ class DesktopBridge {
   async saveSession(session) {
     const invoke = globalThis.__TAURI__?.core?.invoke;
     if (invoke) {
-      await this.nativeInvoke("save_session", {
-        session: { ...(session || {}), project_dir: this.projectDir || null },
-      });
+      const requested = session && typeof session === "object" ? session : {};
+      const requestedDir = typeof requested.project_dir === "string" && requested.project_dir.trim()
+        ? requested.project_dir.trim()
+        : null;
+      const currentDir = this.projectDir || null;
+      if (requestedDir && currentDir && requestedDir !== currentDir) {
+        throw new Error("项目会话目录与当前项目不一致");
+      }
+      const payload = { ...requested, project_dir: requestedDir || currentDir };
+      if (payload.project_dir && !payload.project_id) {
+        throw new Error("项目会话缺少项目标识");
+      }
+      if (!payload.project_dir && payload.project_id) {
+        throw new Error("项目会话缺少项目目录");
+      }
+      await this.nativeInvoke("save_session", { session: payload });
       return;
     }
-    this.memory[SESSION_KEY] = clone(session);
+    if (typeof globalThis.fetch !== "function") {
+      this.memory[SESSION_KEY] = clone(session);
+      return;
+    }
+    const response = await globalThis.fetch(`${this.apiBase}/session`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ session: session && typeof session === "object" ? session : {} }),
+    });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok || payload.error) throw this.bridgeError(payload, "无法记录上次阅读位置");
   }
   async loadSession() {
     const invoke = globalThis.__TAURI__?.core?.invoke;
@@ -504,7 +590,20 @@ class DesktopBridge {
       // restart would fall back to "first unfinished lesson, default panels".
       return projectDir && session && typeof session === "object" ? session : null;
     }
-    return this.memory[SESSION_KEY] || null;
+    if (typeof globalThis.fetch !== "function") return this.memory[SESSION_KEY] || null;
+    try {
+      const response = await globalThis.fetch(`${this.apiBase}/session`, {
+        method: "GET",
+        cache: "no-store",
+      });
+      const payload = await response.json().catch(() => ({}));
+      // Session metadata is optional. A service outage, stale identity, or
+      // corrupt record must leave a usable launcher/project, not a white page.
+      if (!response.ok || payload.error) return null;
+      return payload.value && typeof payload.value === "object" ? payload.value : null;
+    } catch {
+      return null;
+    }
   }
   async createSnapshot(input) {
     const invoke = globalThis.__TAURI__?.core?.invoke;
@@ -796,6 +895,12 @@ class WorkbenchStore {
     this.localSnapshots = new Map();
     this.nativeDropUnlisten = null;
     this.nativeLeaseDirs = new Set();
+    // The native session file is the current pointer, while this map keeps a
+    // coherent reader position for every project visited during this process.
+    // It is serialized inside the same session payload so A → B → A does not
+    // turn B into a reason to forget where A was.
+    this.nativeProjectSessions = new Map();
+    this.nativeSwitching = false;
     this.nativeSwitchPending = null;
     this.externalConflict = null;
     this.pendingRecovery = null;
@@ -838,33 +943,229 @@ class WorkbenchStore {
     this.clearNativeLease(projectDir);
     return true;
   }
+  readerState() {
+    return {
+      active_content_item_id: this.ui.activeId,
+      mode: this.ui.mode,
+      right_panel: this.ui.rightPanel,
+      route: this.ui.route,
+      selected_block_id: this.ui.selectedBlockId,
+      ai_scope: this.ui.aiScope,
+      ai_provider_id: this.ui.aiProviderId,
+      ai_model: this.ui.aiModel,
+      left_collapsed: this.ui.leftCollapsed,
+      right_collapsed: this.ui.rightCollapsed,
+      tabs: clone(this.tabs),
+    };
+  }
+  defaultReaderState(project, route = "overview") {
+    const activeId = resumeLessonId(project) || project?.content_items?.[0]?.id || null;
+    return {
+      active_content_item_id: activeId,
+      mode: "writing",
+      right_panel: "requirements",
+      route,
+      selected_block_id: null,
+      ai_scope: "lesson",
+      ai_provider_id: "fake",
+      ai_model: "",
+      left_collapsed: false,
+      right_collapsed: false,
+      tabs: activeId
+        ? [{ content_item_id: activeId, mode: "writing", pinned: false, scroll_top: 0 }]
+        : [],
+    };
+  }
+  normalizeReaderState(project, candidate = {}, route = "overview") {
+    const defaults = this.defaultReaderState(project, route);
+    const value = candidate && typeof candidate === "object" ? candidate : {};
+    const knownItem = (id) => Boolean(id) && project.content_items.some((item) => item.id === id);
+    const activeId = knownItem(value.active_content_item_id)
+      ? value.active_content_item_id
+      : defaults.active_content_item_id;
+    const mode = ["writing", "structure", "layout", "preview"].includes(value.mode)
+      ? value.mode
+      : defaults.mode;
+    const rightPanel = RIGHT_PANEL_KEYS.includes(value.right_panel)
+      ? value.right_panel
+      : defaults.right_panel;
+    const nextRoute = ROUTES.includes(value.route) ? value.route : defaults.route;
+    const selectedBlockId = typeof value.selected_block_id === "string" && activeId &&
+        blocksFor(project, activeId).some((block) => block.id === value.selected_block_id)
+      ? value.selected_block_id
+      : null;
+    const tabs = Array.isArray(value.tabs)
+      ? value.tabs
+        .filter((tab) => tab && knownItem(tab.content_item_id))
+        .map((tab) => ({
+          content_item_id: tab.content_item_id,
+          mode: ["writing", "structure", "layout", "preview"].includes(tab.mode) ? tab.mode : "writing",
+          pinned: Boolean(tab.pinned),
+          scroll_top: Number(tab.scroll_top) || 0,
+        }))
+      : [];
+    if (activeId && !tabs.some((tab) => tab.content_item_id === activeId)) {
+      tabs.push({ content_item_id: activeId, mode, pinned: false, scroll_top: 0 });
+    }
+    return {
+      ...defaults,
+      active_content_item_id: activeId,
+      mode,
+      right_panel: rightPanel,
+      route: nextRoute,
+      selected_block_id: selectedBlockId,
+      ai_scope: ["course", "lesson", "block"].includes(value.ai_scope) ? value.ai_scope : defaults.ai_scope,
+      ai_provider_id: typeof value.ai_provider_id === "string" && value.ai_provider_id.trim()
+        ? value.ai_provider_id.trim()
+        : defaults.ai_provider_id,
+      ai_model: typeof value.ai_model === "string" ? value.ai_model.trim() : defaults.ai_model,
+      left_collapsed: Boolean(value.left_collapsed),
+      right_collapsed: Boolean(value.right_collapsed),
+      tabs,
+    };
+  }
+  applyReaderState(reader) {
+    const value = reader || {};
+    this.ui.activeId = value.active_content_item_id || null;
+    this.ui.mode = value.mode || "writing";
+    this.ui.rightPanel = value.right_panel || "requirements";
+    this.ui.route = value.route || "overview";
+    this.ui.selectedBlockId = value.selected_block_id || null;
+    this.ui.aiScope = value.ai_scope || "lesson";
+    this.ui.aiProviderId = value.ai_provider_id || "fake";
+    this.ui.aiModel = value.ai_model || "";
+    this.ui.leftCollapsed = Boolean(value.left_collapsed);
+    this.ui.rightCollapsed = Boolean(value.right_collapsed);
+    this.tabs = clone(value.tabs || []);
+  }
+  cacheSessionRecord(session) {
+    if (!session || typeof session !== "object") return;
+    const projectId = typeof session.project_id === "string" && session.project_id.trim()
+      ? session.project_id.trim()
+      : null;
+    if (!projectId) return;
+    const projectDir = typeof session.project_dir === "string" && session.project_dir.trim()
+      ? session.project_dir.trim()
+      : null;
+    if (this.bridge.isNative() && !projectDir) return;
+    const record = { project_id: projectId, project_dir: projectDir };
+    for (const key of SESSION_READER_KEYS) {
+      if (key in session) record[key] = clone(session[key]);
+    }
+    this.nativeProjectSessions.set(projectId, record);
+  }
+  rememberSession(session) {
+    if (!session || typeof session !== "object") return;
+    const records = session.project_sessions;
+    if (records && typeof records === "object" && !Array.isArray(records)) {
+      for (const [projectId, record] of Object.entries(records)) {
+        if (record && typeof record === "object" && record.project_id === projectId) {
+          this.cacheSessionRecord(record);
+        }
+      }
+    }
+    // The top-level record is the current committed identity and wins over a
+    // stale duplicate nested under project_sessions.
+    this.cacheSessionRecord(session);
+  }
+  sessionWithReader(projectDir, projectId, reader) {
+    const record = {
+      ...(this.bridge.isNative() ? { project_dir: projectDir || null } : {}),
+      project_id: projectId || null,
+      ...clone(reader || {}),
+    };
+    const records = new Map(this.nativeProjectSessions);
+    if (record.project_id) records.set(record.project_id, record);
+    const payload = { ...record };
+    // Native storage can safely keep per-project reader positions because the
+    // session file is app-local and each record carries its directory. The
+    // browser service owns one configured root, so sending other projects'
+    // records would only create an unnecessary cross-project restore surface.
+    if (this.bridge.isNative()) {
+      payload.project_sessions = Object.fromEntries(
+        [...records.entries()].filter(([id, value]) => id && value && value.project_id === id),
+      );
+    }
+    return payload;
+  }
+  async persistSession(session) {
+    const value = session && typeof session === "object" ? session : {};
+    const projectDir = typeof value.project_dir === "string" && value.project_dir.trim()
+      ? value.project_dir.trim()
+      : null;
+    const projectId = typeof value.project_id === "string" && value.project_id.trim()
+      ? value.project_id.trim()
+      : null;
+    if (this.bridge.isNative()) {
+      if ((projectDir && !projectId) || (!projectDir && projectId)) {
+        throw new Error("项目会话的目录与标识不一致");
+      }
+      if (projectDir && this.bridge.projectDir !== projectDir) {
+        throw new Error("项目会话目录与当前项目不一致");
+      }
+    }
+    await this.bridge.saveSession(value);
+    this.rememberSession(value);
+  }
+  targetSession(project, projectDir, route = "overview") {
+    const projectId = project?.project?.id || null;
+    const saved = projectId ? this.nativeProjectSessions.get(projectId) : null;
+    const savedForTarget = saved && (!this.bridge.isNative() || saved.project_dir === projectDir)
+      ? saved
+      : null;
+    const reader = this.normalizeReaderState(project, savedForTarget || {}, route);
+    return this.sessionWithReader(projectDir, projectId, reader);
+  }
   async resolveNativeSwitchPending() {
     const pending = this.nativeSwitchPending;
     if (!pending) return true;
     try {
-      await this.closeNativeProject(pending.projectDir);
+      if (pending.projectDir && this.hasNativeLease(pending.projectDir)) {
+        await this.closeNativeProject(pending.projectDir);
+      }
+      if (pending.restoreProjectDir !== undefined) {
+        this.bridge.restoreProjectDir(pending.restoreProjectDir, pending.restoreFromUrl);
+      }
+      if (Object.prototype.hasOwnProperty.call(pending, "restoreSession")) {
+        if (pending.restoreSession) await this.persistSession(pending.restoreSession);
+        else await this.persistSession({ project_dir: null });
+      }
       this.nativeSwitchPending = null;
       return true;
     } catch (error) {
-      this.ui.toast = `项目切换仍未完成：${error?.message || error || "新项目锁尚未释放"}`;
+      this.ui.toast = `项目切换仍未完成。${userFacingError(error, "请稍后再试，当前项目仍保持不变。")}`;
       this.saveStatus = "保存失败";
       this.notify();
       return false;
     }
   }
-  async rollbackNativeTarget(projectDir, restoreProjectDir, restoreFromUrl, cause) {
+  async rollbackNativeTarget(projectDir, restoreProjectDir, restoreFromUrl, cause, restoreSession = null) {
     // A provisional target lease belongs to us even when the project payload
-    // turned out to be unusable, so close it unconditionally here.
+    // turned out to be unusable, so close it before restoring the old pointer.
+    const pending = {
+      projectDir,
+      restoreProjectDir,
+      restoreFromUrl,
+      restoreSession,
+    };
     try {
       await this.bridge.closeProject(projectDir);
       this.clearNativeLease(projectDir);
     } catch (rollbackError) {
-      this.nativeSwitchPending = { projectDir };
+      this.nativeSwitchPending = pending;
       this.bridge.restoreProjectDir(restoreProjectDir, restoreFromUrl);
-      throw new Error(`项目切换失败，无法回滚新项目锁：${rollbackError?.message || rollbackError}`);
+      throw new Error(`项目切换失败，当前项目仍保持不变。${userFacingError(rollbackError, "请稍后重试。")}`);
     }
     this.bridge.restoreProjectDir(restoreProjectDir, restoreFromUrl);
-    await this.bridge.saveSession({ project_dir: restoreProjectDir || null });
+    try {
+      if (restoreSession) await this.persistSession(restoreSession);
+      else await this.persistSession({ project_dir: null });
+    } catch (restoreError) {
+      // The target lease is already gone, but the old session write can be
+      // retried while the old lease/path remains active.
+      this.nativeSwitchPending = { ...pending, projectDir: null };
+      throw new Error(`项目切换失败，当前项目仍保持不变。${userFacingError(restoreError, "请稍后重试。")}`);
+    }
     throw cause;
   }
   currentItem() { return this.data.content_items.find((item) => item.id === this.ui.activeId) ?? this.data.content_items[0] ?? null; }
@@ -1361,9 +1662,7 @@ class WorkbenchStore {
     try {
       await this.bridge.command("ai.cancel", { request_id: requestId });
     } catch (error) {
-      this.ui.toast = `取消请求没有送达本机服务（${
-        String(error?.message || error || "未知原因")
-      }）；这次请求可能仍在运行。`;
+      this.ui.toast = `取消请求没有送达本机服务。${userFacingError(error, "这次请求可能仍在运行。")}`;
       this.notify();
     }
     return true;
@@ -1459,9 +1758,7 @@ class WorkbenchStore {
     } catch (error) {
       // Callers fire this off without awaiting, so it must never reject: the
       // decision itself has already been applied either way.
-      this.ui.toast = `这次审核决定没有写进执行记录（${
-        String(error?.message || error || "未知原因")
-      }）；课程内容与保存状态不受影响。`;
+      this.ui.toast = "这次审核决定没有写进执行记录，但课程内容与保存状态不受影响。你可以继续使用。";
       this.notify();
     }
   }
@@ -1577,16 +1874,11 @@ class WorkbenchStore {
     this.ui.aiProviderForm = null;
     this.refreshAiSideFiles();
   }
-  /**
-   * Where the AI side files live, per shell.  The desktop shell keeps them
-   * app-globally under its app-data directory; the browser shell keeps them in
-   * the project's `.workspace/ai`.  Saying one is the other would be false, so
-   * every user-facing sentence asks this instead of hardcoding a path.
-   */
+  /** Both shells keep provider metadata local and API Keys in macOS Keychain. */
   aiStorageLabel() {
     return this.bridge.isNative()
-      ? "本机应用数据目录（app_data/.workspace/ai）"
-      : "本项目目录的 .workspace/ai";
+      ? "macOS 系统钥匙串"
+      : "macOS 系统钥匙串（本机浏览器服务）";
   }
   /**
    * What this workflow may call besides the provider's chat endpoint.  Read
@@ -1749,9 +2041,7 @@ class WorkbenchStore {
       this.notify();
       return this.ui.aiExecutions;
     } catch (error) {
-      this.ui.toast = `执行记录暂时读不到（${
-        String(error?.message || error || "未知原因")
-      }）；课程内容不受影响。`;
+      this.ui.toast = "执行记录暂时读不到，但课程内容不受影响。你可以继续使用，稍后再试。";
       this.notify();
       return [];
     }
@@ -1777,9 +2067,7 @@ class WorkbenchStore {
     try {
       await this.bridge.command("ai.execution.append", { record });
     } catch (error) {
-      this.ui.toast = `AI 执行记录没有写入（${
-        String(error?.message || error || "未知原因")
-      }）；课程内容与保存状态不受影响。`;
+      this.ui.toast = "AI 执行记录没有写入，但课程内容与保存状态不受影响。你可以继续使用。";
       this.notify();
     }
     return record;
@@ -1794,10 +2082,17 @@ class WorkbenchStore {
   scheduleSessionSave() {
     clearTimeout(this.sessionTimer);
     this.sessionTimer = setTimeout(() => {
-      this.bridge.saveSession(this.session()).catch(() => {});
+      if (this.nativeSwitching) return;
+      this.persistSession(this.session()).catch(() => {});
     }, 0);
   }
   flush() {
+    if (this.nativeSwitching) {
+      this.saveStatus = "保存失败";
+      this.ui.toast = "项目切换尚未完成，请稍后再保存或关闭";
+      this.notify();
+      return Promise.resolve(false);
+    }
     clearTimeout(this.saveTimer);
     this.saveTimer = 0;
     return this.flushQueue(() => this.flushNow());
@@ -1820,13 +2115,13 @@ class WorkbenchStore {
       // Refuse to write a project that would fail canonical validation: the
       // previous good file must stay intact and the user must be told.
       this.saveStatus = "保存失败";
-      this.ui.toast = `数据不一致，已停止保存：${issues[0]}`;
+      this.ui.toast = "这份课程里有一处关联不完整，暂时没有保存。你可以继续编辑；修复提示后再保存。";
       this.notify();
       return false;
     }
     if (this.pendingRecovery) {
       this.saveStatus = "恢复待处理";
-      this.ui.toast = "检测到未完成自动保存，请先恢复或放弃恢复";
+      this.ui.toast = "发现未完成的保存，当前不能继续保存。请先恢复暂存内容或保留磁盘版本。";
       this.notify();
       return false;
     }
@@ -1857,7 +2152,7 @@ class WorkbenchStore {
         }
         if (diskId && diskId !== expected) {
           this.saveStatus = "保存失败";
-          this.ui.toast = "磁盘上的项目已经被替换，已停止写入；请重新打开项目";
+          this.ui.toast = "磁盘上的项目已经被替换，已停止写入；课程内容没有改变，请重新打开项目。";
           this.notify();
           return false;
         }
@@ -1867,15 +2162,15 @@ class WorkbenchStore {
           const warning = recoveryWarning(clearResult);
           if (warning) this.noteRecoveryWarning(warning);
         } catch (error) {
-          this.noteRecoveryWarning(error?.message || "恢复日志清理失败");
+          this.noteRecoveryWarning("恢复记录暂时没有清理，但课程内容已经保存。你可以继续使用。");
         }
         if (this.data.project.updated_at !== revision) continue;
         try {
-          await this.bridge.saveSession(this.session());
+          await this.persistSession(this.session());
         } catch (error) {
           // The canonical project is already on disk; losing the reader
           // position must not be reported as a failed save of the project.
-          this.ui.toast = `项目已保存，但无法记录上次阅读位置：${error?.message || error || "未知原因"}`;
+          this.ui.toast = "课程已经保存，但上次阅读位置没有记住。课程内容不受影响，你可以继续使用。";
         }
         if (this.data.project.updated_at !== revision) continue;
         this.saveStatus = "已保存";
@@ -1886,7 +2181,7 @@ class WorkbenchStore {
       if (this.bridge.isNative() && typeof error?.message === "string" && /project_(?:not_open|lock_lost|lock_not_owned)/.test(error.message)) {
         this.clearNativeLease();
         this.saveStatus = "保存失败";
-        this.ui.toast = error.message;
+        this.ui.toast = userFacingError(error, "保存没有完成。课程内容没有改变，请稍后再试。");
         this.notify();
         return false;
       }
@@ -1895,7 +2190,7 @@ class WorkbenchStore {
         return false;
       }
       this.saveStatus = "保存失败";
-      this.ui.toast = error?.message || "保存失败";
+      this.ui.toast = userFacingError(error, "保存没有完成。课程内容没有改变，请稍后再试。");
       this.notify();
       return false;
     }
@@ -1904,9 +2199,9 @@ class WorkbenchStore {
   }
   async captureExternalConflict(error) {
     this.saveStatus = "外部修改冲突";
-    this.ui.toast = "project.json 已在工作台外被修改，已暂停自动保存";
+    this.ui.toast = "课程文件在其他地方发生了变化，保存已暂停以免覆盖内容。你仍可继续查看；请选择重新载入、合并或保留本地版本。";
     this.externalConflict = await this.bridge.inspectExternalModification(this.data).catch((inspectionError) => ({
-      inspection_error: inspectionError?.message || "无法读取磁盘版本",
+      inspection_error: inspectionError?.message || "无法读取磁盘差异",
       current: null,
     }));
     this.notify();
@@ -1933,7 +2228,7 @@ class WorkbenchStore {
           this.notify();
         });
       } catch (error) {
-        this.ui.toast = error?.message || "重新载入失败";
+        this.ui.toast = userFacingError(error, "重新载入没有完成。当前内容没有改变，请重试。");
         this.notify();
       }
       return;
@@ -1960,7 +2255,7 @@ class WorkbenchStore {
           await this.applyExternalResolution(merged, "已按无冲突内容自动合并");
         });
       } catch (error) {
-        this.ui.toast = error?.message || "自动合并失败";
+        this.ui.toast = userFacingError(error, "自动合并没有完成。当前内容没有改变，请重新载入或保留本地版本。");
         this.notify();
       }
       return;
@@ -1969,7 +2264,7 @@ class WorkbenchStore {
       try {
         await this.flushQueue(() => this.applyExternalResolution(this.data, "已明确保留本地版本"));
       } catch (error) {
-        this.ui.toast = error?.message || "保留本地版本失败";
+        this.ui.toast = userFacingError(error, "保留本地版本没有完成。当前内容没有改变，请重试。");
         this.notify();
       }
     }
@@ -2040,7 +2335,7 @@ class WorkbenchStore {
     this.clearNativeLease();
     this.bridge.restoreProjectDir(null, false);
     if (keepSession) return;
-    await this.bridge.saveSession({ project_dir: null }).catch(() => {});
+    await this.persistSession({ project_dir: null }).catch(() => {});
   }
   noteRecoveryWarning(value) {
     const warning = recoveryWarning(value);
@@ -2056,26 +2351,10 @@ class WorkbenchStore {
    * make "关闭 → 重启 → 继续工作" silently restart at the top of the course.
    */
   session() {
-    const project_dir = this.bridge.projectDir || null;
-    return {
-      project_dir,
-      project_id: this.data.project?.id || null,
-      active_content_item_id: this.ui.activeId,
-      mode: this.ui.mode,
-      right_panel: this.ui.rightPanel,
-      route: this.ui.route,
-      selected_block_id: this.ui.selectedBlockId,
-      // AI reader position only: the provider list, the credential presence
-      // map, the execution log, the assembled context and the last answer all
-      // stay out of the session, because the session writer rejects
-      // credential-shaped keys and none of them is a reader position.
-      ai_scope: this.ui.aiScope,
-      ai_provider_id: this.ui.aiProviderId,
-      ai_model: this.ui.aiModel,
-      left_collapsed: this.ui.leftCollapsed,
-      right_collapsed: this.ui.rightCollapsed,
-      tabs: this.tabs,
-    };
+    const projectDir = this.bridge.projectDir || null;
+    const projectId = this.data.project?.id || null;
+    const reader = this.readerState();
+    return this.sessionWithReader(projectDir, projectId, reader);
   }
   isProjectData(value) {
     return Boolean(value && typeof value === "object" && value.project && Array.isArray(value.content_items) && Array.isArray(value.blocks));
@@ -2086,13 +2365,14 @@ class WorkbenchStore {
     let recovery = null;
     try {
       session = await this.bridge.loadSession();
+      this.rememberSession(session);
       if (!this.bridge.isNative() || this.bridge.projectDir) {
         persisted = await this.bridge.readProject();
         if (this.bridge.isNative() && persisted != null) {
           this.markNativeLease(this.bridge.projectDir);
           if (!this.isProjectData(persisted)) {
             await this.closeNativeProject(this.bridge.projectDir).catch(() => {});
-            throw new Error("项目目录中没有可识别的 project.json");
+            throw new Error("这个文件夹不是可用的课程项目，请选择正确的项目后再试。");
           }
         }
         recovery = await this.bridge.readRecoveryJournal();
@@ -2104,7 +2384,7 @@ class WorkbenchStore {
         persisted = null;
         recovery = null;
       }
-      this.ui.toast = error?.message || String(error || "无法读取本地项目");
+      this.ui.toast = userFacingError(error, "无法读取项目。课程内容没有改变，请重新打开项目后再试。");
     }
     if (this.bridge.isNative() && this.bridge.projectDir && !this.hasNativeLease()) {
       await this.forgetNativeProject();
@@ -2127,21 +2407,26 @@ class WorkbenchStore {
         canonical: this.data,
         saved_at: journalSavedAt,
       };
-      this.ui.toast = "检测到未完成自动保存，请选择恢复或保留磁盘版本";
+      this.ui.toast = "发现未完成的保存；磁盘版本没有改变，请选择恢复暂存内容或保留磁盘版本。";
     } else if (journalProject && !project) {
       this.data = migrateUiProject(journalProject);
       this.trackProjectIdentity();
-      this.ui.toast = "已载入未完成自动保存内容";
+      this.ui.toast = "已载入未完成的保存内容。请检查后继续编辑，确认无误后再保存。";
     } else if (project) {
       this.data = migrateUiProject(project);
       this.trackProjectIdentity();
+      // The browser service already has one configured project root. After a
+      // refresh, reopen its shell directly instead of showing the first-launch
+      // launcher and making the user click "继续工作" again. Native startup
+      // keeps its existing launcher/window behavior.
+      if (!this.bridge.isNative()) this.ui.screen = "project";
     }
     await this.restoreSession(session);
     if (this.bridge.isNative() && this.bridge.projectDir && persisted) {
       // Written *after* the reader position is restored: saving first would
       // persist empty defaults over the session, so quitting an untouched
       // window would forget where the user was.
-      await this.bridge.saveSession(this.session()).catch(() => {});
+      await this.persistSession(this.session()).catch(() => {});
     }
     if (this.bridge.isNative() && !this.nativeDropUnlisten) {
       this.nativeDropUnlisten = await this.bridge.listenNativeDrops((paths) => {
@@ -2156,50 +2441,19 @@ class WorkbenchStore {
   /** Restore the reader's position.  Never invents course state. */
   async restoreSession(session = null) {
     session ??= await this.bridge.loadSession();
-    if (!session) return;
-    if (session.project_id && session.project_id !== this.data.project.id) return;
-    const known = (id) => Boolean(id) && this.data.content_items.some((item) => item.id === id);
-    if (known(session.active_content_item_id)) this.ui.activeId = session.active_content_item_id;
-    if (this.ui.activeId === null || !known(this.ui.activeId)) {
-      this.ui.activeId = this.resumeLessonId() || this.data.content_items[0]?.id || null;
-    }
-    if (typeof session.mode === "string" && ["writing", "structure", "layout", "preview"].includes(session.mode)) {
-      this.ui.mode = session.mode;
-    }
-    if (typeof session.right_panel === "string" && RIGHT_PANEL_KEYS.includes(session.right_panel)) {
-      this.ui.rightPanel = session.right_panel;
-    }
-    if (typeof session.route === "string" && ROUTES.includes(session.route)) {
-      this.ui.route = session.route;
-    }
-    this.ui.leftCollapsed = Boolean(session.left_collapsed);
-    this.ui.rightCollapsed = Boolean(session.right_collapsed);
-    if (typeof session.selected_block_id === "string" && this.ui.activeId && blocksFor(this.data, this.ui.activeId).some((block) => block.id === session.selected_block_id)) {
-      this.ui.selectedBlockId = session.selected_block_id;
-    } else {
-      this.ui.selectedBlockId = null;
-    }
-    // AI reader position.  Only these three fields travel in the session; a
-    // provider id is not checked against the shipped catalog because a saved
-    // custom provider legitimately carries an id the catalog does not know.
-    if (typeof session.ai_scope === "string" && ["course", "lesson", "block"].includes(session.ai_scope)) {
-      this.ui.aiScope = session.ai_scope;
-    }
-    if (typeof session.ai_provider_id === "string" && session.ai_provider_id.trim()) {
-      this.ui.aiProviderId = session.ai_provider_id.trim();
-    }
-    if (typeof session.ai_model === "string") {
-      this.ui.aiModel = session.ai_model.trim();
-    }
+    this.rememberSession(session);
+    if (!this.isProjectData(this.data)) return;
+    const projectId = this.data.project.id;
+    const cached = this.nativeProjectSessions.get(projectId);
+    const candidate = cached && (!this.bridge.isNative() || cached.project_dir === this.bridge.projectDir)
+      ? cached
+      : session?.project_id === projectId &&
+          (!this.bridge.isNative() || session.project_dir === this.bridge.projectDir)
+      ? session
+      : null;
+    const reader = this.normalizeReaderState(this.data, candidate || {}, "overview");
+    this.applyReaderState(reader);
     this.aiSyncScope();
-    this.tabs = Array.isArray(session.tabs)
-      ? session.tabs
-        .filter((tab) => this.data.content_items.some((item) => item.id === tab.content_item_id))
-        .map((tab) => ({ content_item_id: tab.content_item_id, mode: tab.mode || "writing", pinned: Boolean(tab.pinned), scroll_top: Number(tab.scroll_top) || 0 }))
-      : [];
-    if (this.ui.activeId && !this.tabs.some((tab) => tab.content_item_id === this.ui.activeId)) {
-      this.tabs.push({ content_item_id: this.ui.activeId, mode: this.ui.mode, pinned: false, scroll_top: 0 });
-    }
     this.notify();
   }
   async newProject(title = "未命名课程", projectDir = "") {
@@ -2210,34 +2464,53 @@ class WorkbenchStore {
       const previousLeaseActive = this.hasNativeLease(previousProjectDir);
       const restoreProjectDir = previousLeaseActive ? previousProjectDir : null;
       const restoreProjectDirFromUrl = previousLeaseActive ? previousProjectDirFromUrl : false;
-      let targetLeaseActive = false;
-      let targetRollbackAttempted = false;
+      let restoreSession = null;
+      let targetOpened = false;
       try {
         if (previousLeaseActive && previousProjectDir !== projectDir && !await this.flush()) {
           throw new Error("当前项目保存失败，请重试后再切换项目");
         }
+        this.nativeSwitching = true;
+        restoreSession = previousLeaseActive ? this.session() : null;
         this.bridge.setProjectDir(projectDir);
         const created = await this.bridge.command("project.create", { title });
+        targetOpened = true;
+        // A non-null create result means the shell may already own the target
+        // lease, even if the returned payload is unusable.
         this.markNativeLease(projectDir);
-        targetLeaseActive = true;
+        if (!this.isProjectData(created)) throw new Error("新课程没有创建成功。当前项目没有改变，请重试。");
+        const targetData = migrateUiProject(created);
+        const targetSession = this.targetSession(targetData, projectDir, "map");
+        await this.persistSession(targetSession);
         if (previousLeaseActive && previousProjectDir !== projectDir) {
-          try {
-            await this.closeNativeProject(previousProjectDir);
-          } catch (error) {
-            targetRollbackAttempted = true;
-            await this.rollbackNativeTarget(projectDir, restoreProjectDir, restoreProjectDirFromUrl, error);
-          }
+          await this.closeNativeProject(previousProjectDir);
         }
-        this.assetPreview.clear();
-        this.applyNewProject(created);
-        await this.bridge.saveSession(this.session()).catch(() => {});
-      } catch (error) {
-        if (targetLeaseActive && !targetRollbackAttempted) {
-          await this.rollbackNativeTarget(projectDir, restoreProjectDir, restoreProjectDirFromUrl, error);
-          return;
-        }
-        this.ui.toast = error?.message || "无法新建项目";
+        this.commitNativeProject(
+          targetData,
+          this.normalizeReaderState(targetData, targetSession, "map"),
+        );
+        this.ui.toast = `已创建《${this.data.project.title}》`;
         this.notify();
+      } catch (error) {
+        if (targetOpened) {
+          try {
+            await this.rollbackNativeTarget(
+              projectDir,
+              restoreProjectDir,
+              restoreProjectDirFromUrl,
+              error,
+              restoreSession,
+            );
+          } catch (rollbackError) {
+            error = rollbackError;
+          }
+        } else {
+          this.bridge.restoreProjectDir(restoreProjectDir, restoreProjectDirFromUrl);
+        }
+        this.ui.toast = userFacingError(error, "无法新建课程。当前项目没有改变，请重试。");
+        this.notify();
+      } finally {
+        this.nativeSwitching = false;
       }
       return;
     }
@@ -2248,6 +2521,25 @@ class WorkbenchStore {
     this.ui.route = "map";
     this.scheduleSave();
     this.notify();
+  }
+  commitNativeProject(project, reader) {
+    this.assetPreview.clear();
+    this.data = project;
+    this.trackProjectIdentity();
+    this.history = [];
+    this.future = [];
+    this.localSnapshots.clear();
+    this.pendingRecovery = null;
+    this.externalConflict = null;
+    this.ui.screen = "project";
+    this.ui.focusRequirementId = null;
+    this.ui.gridEditing = false;
+    this.ui.assetPicker = null;
+    this.ui.assetUsageId = null;
+    this.ui.editingRequirementId = null;
+    this.applyReaderState(reader);
+    this.resetAiState();
+    this.saveStatus = "已保存";
   }
   applyNewProject(project) {
     this.data = this.isProjectData(project) ? migrateUiProject(project) : project;
@@ -2276,7 +2568,7 @@ class WorkbenchStore {
       if (!dir) return;
       await this.newProject(title, dir);
     } catch (error) {
-      this.ui.toast = error?.message || "无法新建项目";
+      this.ui.toast = userFacingError(error, "无法新建课程。当前项目没有改变，请重试。");
       this.notify();
     }
   }
@@ -2297,82 +2589,66 @@ class WorkbenchStore {
     const previousProjectDir = this.bridge.projectDir;
     const previousProjectDirFromUrl = this.bridge.projectDirFromUrl;
     const previousLeaseActive = this.hasNativeLease(previousProjectDir);
+    if (previousLeaseActive && previousProjectDir === projectDir) return;
     const restoreProjectDir = previousLeaseActive ? previousProjectDir : null;
     const restoreProjectDirFromUrl = previousLeaseActive ? previousProjectDirFromUrl : false;
-    // A provisional target lease exists once a project was actually opened.
-    // With no project selected yet there is nothing to switch away from, so an
-    // empty or rejected open leaves nothing to hand back.
-    let provisional = false;
-    let rollbackAttempted = false;
-    let emptyResult = false;
+    let restoreSession = null;
+    let targetOpened = false;
     try {
+      // The old canonical project and its reader position are durable before
+      // target acquisition.  A conflict therefore aborts without touching the
+      // old lease or session pointer.
       if (previousLeaseActive && previousProjectDir !== projectDir && !await this.flush()) {
         throw new Error("当前项目保存失败，请重试后再切换项目");
       }
+      this.nativeSwitching = true;
+      restoreSession = previousLeaseActive ? this.session() : null;
       this.bridge.setProjectDir(projectDir);
-      // `openProject` is the high-level command that also acquires the lease,
-      // so it must be what the switch actually calls.
+      // `openProject` acquires the target lease and reads its canonical data.
       const opened = await this.bridge.openProject();
-      // Until the first read reports "nothing here", assume the target lease
-      // may be ours: a thrown read (busy/locked) and an unusable payload both
-      // leave a provisional lease that must be handed back.  Only an explicit
-      // empty result proves we never held one.
-      provisional = true;
-      if (opened == null) {
-        emptyResult = true;
-        throw new Error("这个文件夹里没有可识别的 project.json");
-      }
-      if (!this.isProjectData(opened)) throw new Error("项目目录中没有可识别的 project.json");
+      if (opened == null) throw new Error("这个文件夹不是可用的课程项目，请选择正确的项目后再试。");
+      targetOpened = true;
+      // A non-null open result may have acquired a lease even when validation
+      // below rejects its project payload; rollback must track that lease.
       this.markNativeLease(projectDir);
-      await this.bridge.saveSession(this.session()).catch(() => {});
+      if (!this.isProjectData(opened)) throw new Error("这个文件夹不是可用的课程项目，请选择正确的项目后再试。");
+      const targetData = migrateUiProject(opened);
+      const targetSession = this.targetSession(targetData, projectDir, "overview");
+      // Save only a fully constructed target identity.  In particular, this
+      // is never `this.session()`, whose data/UI still describe the old project.
+      await this.persistSession(targetSession);
       if (previousLeaseActive && previousProjectDir !== projectDir) {
+        await this.closeNativeProject(previousProjectDir);
+      }
+      this.commitNativeProject(
+        targetData,
+        this.normalizeReaderState(targetData, targetSession, "overview"),
+      );
+      this.ui.toast = `已打开《${this.data.project.title}》`;
+      this.notify();
+    } catch (error) {
+      if (!targetOpened) {
+        // A rejected or empty project_open did not establish a target lease;
+        // never close a directory this instance does not own or rewrite the
+        // still-coherent old session.
+        this.bridge.restoreProjectDir(restoreProjectDir, restoreProjectDirFromUrl);
+      } else {
         try {
-          await this.closeNativeProject(previousProjectDir);
-        } catch (error) {
-          // The target lease was recorded, so release it before restoring the
-          // previous project path; rollbackNativeTarget re-throws diagnostics.
-          await this.rollbackNativeTarget(projectDir, restoreProjectDir, restoreProjectDirFromUrl, error).catch(() => {});
-          return;
+          await this.rollbackNativeTarget(
+            projectDir,
+            restoreProjectDir,
+            restoreProjectDirFromUrl,
+            error,
+            restoreSession,
+          );
+        } catch (rollbackError) {
+          error = rollbackError;
         }
       }
-      this.assetPreview.clear();
-      this.data = migrateUiProject(opened);
-      this.trackProjectIdentity();
-      this.history = [];
-      this.future = [];
-      this.localSnapshots.clear();
-      this.ui.screen = "project";
-      this.ui.route = "overview";
-      this.ui.mode = "writing";
-      this.ui.activeId = null;
-      this.ui.selectedBlockId = null;
-      this.ui.focusRequirementId = null;
-      this.ui.gridEditing = false;
-      this.ui.assetPicker = null;
-      this.ui.assetUsageId = null;
-      this.tabs = [];
-      this.saveStatus = "已保存";
-      await this.restoreSession(await this.bridge.loadSession());
-      this.resetAiState();
-      this.ui.toast = `已打开《${this.data.project.title}》`;
-    } catch (error) {
-      const ownsProvisionalLease = provisional && !rollbackAttempted &&
-        !(emptyResult && !restoreProjectDir);
-      if (!ownsProvisionalLease) {
-        // Nothing was opened over a previously selected project, so there is
-        // no lease to release here; only the path must be put back.
-        this.clearNativeLease(projectDir);
-        this.bridge.restoreProjectDir(restoreProjectDir, restoreProjectDirFromUrl);
-        await this.bridge.saveSession({ project_dir: restoreProjectDir }).catch(() => {});
-        this.ui.toast = error?.message || "无法打开项目";
-        this.notify();
-        return;
-      }
-      await this.rollbackNativeTarget(projectDir, restoreProjectDir, restoreProjectDirFromUrl, error).catch(() => {});
-      if (emptyResult) {
-        this.ui.toast = "这个文件夹里没有可识别的 project.json";
-        this.notify();
-      }
+      this.ui.toast = userFacingError(error, "无法打开项目。当前项目没有改变，请重试。");
+      this.notify();
+    } finally {
+      this.nativeSwitching = false;
     }
   }
   async openProjectFromPicker() {
@@ -2382,7 +2658,7 @@ class WorkbenchStore {
         if (!dir) return;
         await this.openProject(dir);
       } catch (error) {
-        this.ui.toast = error?.message || "无法打开项目";
+        this.ui.toast = userFacingError(error, "无法打开项目。当前项目没有改变，请重试。");
         this.notify();
       }
       return;
@@ -2406,10 +2682,10 @@ class WorkbenchStore {
         await this.restoreSession(session);
         this.ui.toast = `已打开《${this.data.project.title}》`;
       } else {
-        this.ui.toast = "还没有可打开的项目";
+        this.ui.toast = "还没有可打开的项目。请选择项目文件，或先新建一门课程。";
       }
     } catch (error) {
-      this.ui.toast = error?.message || "无法打开项目";
+      this.ui.toast = userFacingError(error, "无法打开项目。当前项目没有改变，请重试。");
     }
     // A failed open keeps the current project, so its AI panel must survive.
     if (!adopted) this.refreshAiSideFiles();
@@ -2464,7 +2740,7 @@ class WorkbenchStore {
     else this.tabs.push({ content_item_id: id, mode, pinned: false, scroll_top: 0 });
   }
   loadProjectPayload(value) {
-    if (!this.isProjectData(value)) throw new Error("项目文件缺少可识别的课程数据");
+    if (!this.isProjectData(value)) throw new Error("这个文件不是可用的课程项目，请选择正确的项目文件。");
     this.data = migrateUiProject(value);
       this.trackProjectIdentity();
     this.ui.screen = "project";
@@ -2533,7 +2809,7 @@ class WorkbenchStore {
   }
   async importNativeFiles(paths) {
     if (!this.bridge.isNative() || !this.bridge.projectDir) {
-      this.ui.toast = "请先打开项目，再导入素材";
+      this.ui.toast = "还没有打开课程项目，暂时不能导入素材。请先打开或新建项目。";
       this.notify();
       return;
     }
@@ -2543,7 +2819,7 @@ class WorkbenchStore {
     let receivedAsset = false;
     try {
       if (!await this.flush()) {
-        this.ui.toast = this.ui.toast || "素材导入前保存失败，请先重试";
+        this.ui.toast = this.ui.toast || "素材导入前没有保存成功，素材尚未导入。请先重试保存。";
         this.notify();
         return;
       }
@@ -2582,7 +2858,7 @@ class WorkbenchStore {
         ? `已导入 ${imported} 个素材；${this.recoveryWarning}`
         : `已导入 ${imported} 个素材`;
     } catch (error) {
-      this.ui.toast = error?.message || "素材导入失败";
+      this.ui.toast = userFacingError(error, "素材导入没有完成。课程内容没有改变，请重试。");
     }
     this.notify();
   }
@@ -2592,7 +2868,7 @@ class WorkbenchStore {
       const path = await this.bridge.selectFile();
       if (path) await this.importNativeFiles([path]);
     } catch (error) {
-      this.ui.toast = error?.message || "无法选择素材文件";
+      this.ui.toast = userFacingError(error, "没有选中可用的素材文件，请重试。");
       this.notify();
     }
   }
@@ -2632,7 +2908,7 @@ class WorkbenchStore {
         this.ui.toast = this.recoveryWarning
           ? `已将文件内容保存到媒体库；${this.recoveryWarning}`
           : "已将文件内容保存到媒体库";
-      } catch (error) { this.ui.toast = error?.message || "素材导入失败"; }
+      } catch (error) { this.ui.toast = userFacingError(error, "素材导入没有完成。课程内容没有改变，请重试。"); }
       this.ui.route = "media";
     } else {
       this.captureToInbox(new TextDecoder().decode(bytes), name.replace(/\.[^.]+$/, ""));
@@ -2662,6 +2938,13 @@ class WorkbenchStore {
     this.retainUiSelection();
     this.ui.toast = `已恢复：${change.label}`;
     this.scheduleSave();
+    this.notify();
+  }
+  /** Return to the launcher without releasing the active project lease. */
+  returnToLauncher() {
+    this.ui.screen = "launcher";
+    this.ui.palette = this.ui.capture = this.ui.preflight = this.ui.snapshot = false;
+    this.ui.assetPicker = null;
     this.notify();
   }
   enterProject() {
@@ -3378,7 +3661,7 @@ class WorkbenchStore {
       });
       this.ui.toast = "已从收件箱保存为素材";
     } catch (error) {
-      this.ui.toast = error?.message || "无法保存为素材";
+      this.ui.toast = userFacingError(error, "保存为素材没有完成。课程内容没有改变，请重试。");
     }
     this.notify();
   }
@@ -3558,7 +3841,7 @@ class WorkbenchStore {
       if (saved) this.localSnapshots.set(id, clone(saved));
     }
     if (!saved) {
-      this.ui.toast = "找不到这个历史版本";
+      this.ui.toast = "找不到这个历史版本。课程内容没有改变，请选择其他版本或继续编辑。";
       this.notify();
       return;
     }
@@ -3621,14 +3904,14 @@ class WorkbenchStore {
       const missingAssets = Math.max(local.missingAssets, errors.filter((issue) => issue.code === "missing_asset").length);
       this.ui.preflightReport = { ...local, missingAssets, blocking: blockingCount, warnings: warningCount, total: blockingCount + warningCount, issues: [...errors.map((issue) => ({ ...issue, severity: "blocking" })), ...warnings.map((issue) => ({ ...issue, severity: "warning" }))] };
     } catch (error) {
-      this.ui.preflightReport = { ...this.exportPreflight(), blocking: 1, issues: [{ severity: "blocking", message: error?.message || "无法运行原生导出前检查" }] };
+      this.ui.preflightReport = { ...this.exportPreflight(), blocking: 1, issues: [{ severity: "blocking", message: userFacingError(error, "导出检查没有完成。请稍后再试。") }] };
     }
     this.notify();
   }
   async exportCurrent(format = this.ui.publishFormat || "markdown") {
     const item = this.currentItem();
     if (!item) {
-      this.ui.toast = "请先选择要导出的课程内容";
+      this.ui.toast = "还没有可导出的课程内容。请先在课程地图创建一课，再运行导出。";
       this.notify();
       return;
     }
@@ -3650,13 +3933,13 @@ class WorkbenchStore {
         this.ui.toast = `导出完成：${files || 1} 个文件，可在 ${this.ui.lastExport.path} 打开`;
       } catch (error) {
         this.ui.lastExport = null;
-        this.ui.toast = `导出失败：${error?.message || "未知错误"}。源课程未被修改，可修复后重试。`;
+        this.ui.toast = `导出没有完成。源课程没有修改。${userFacingError(error, "请先修复导出前检查列出的问题，再重试。")}`;
       }
       this.notify();
       return;
     }
     try {
-      if (!["markdown", "html", "wechat"].includes(format)) throw new Error("浏览器审查壳仅下载 Markdown/HTML/富文本迁移版；完整 Web/PDF 请使用桌面版");
+      if (!["markdown", "html", "wechat"].includes(format)) throw new Error("浏览器只能下载 Markdown、HTML 或富文本结果；课程内容没有改变，请使用桌面应用导出其他格式。");
       const items = this.ui.publishScope === "course" ? this.data.content_items.filter((candidate) => !candidate.archived) : [item];
       const contents = items.map((candidate) => format === "markdown" ? browserMarkdown(this.data, candidate) : browserHtml(this.data, candidate)).join(format === "markdown" ? "\n" : "\n");
       const extension = format === "markdown" ? "md" : "html";
@@ -3664,7 +3947,7 @@ class WorkbenchStore {
       this.ui.lastExport = { format, scope: this.ui.publishScope, path: "浏览器下载目录", files: 1 };
       this.ui.toast = "已下载导出文件";
     } catch (error) {
-      this.ui.toast = error?.message || "导出失败";
+      this.ui.toast = userFacingError(error, "导出没有完成。源课程没有修改，请修复提示后重试。");
     }
     this.notify();
   }
@@ -3673,7 +3956,7 @@ class WorkbenchStore {
     if (!item) return;
     const report = this.exportPreflight();
     if (report.blocking) {
-      this.ui.toast = `仍有 ${report.blocking} 个严重问题，请先修复`;
+      this.ui.toast = `导出前检查还有 ${report.blocking} 个必须修复的问题。课程内容没有改变，请先修复后再记录发布`;
       this.notify();
       return;
     }
@@ -3685,7 +3968,7 @@ class WorkbenchStore {
         if (result?.publication) this.data.publications.unshift(result.publication);
         this.ui.toast = "已记录发布版本";
       } catch (error) {
-        this.ui.toast = error?.message || "发布记录失败";
+        this.ui.toast = userFacingError(error, "发布记录没有保存。课程内容没有改变，请重试。");
       }
       this.notify();
       return;
@@ -4160,6 +4443,7 @@ function handleAction(action, element, event) {
       store.notify();
       return;
     case "enter-project": store.enterProject(); return;
+    case "return-launcher": store.returnToLauncher(); return;
     case "new-project": void (store.bridge.isNative() ? store.newProjectFromPicker() : store.newProject()); return;
     case "confirm-blueprint": store.confirmBlueprint(element.dataset.id); return;
     case "discard-blueprint":
@@ -4309,7 +4593,7 @@ function handleAction(action, element, event) {
       else if (sub === "missing-media") {
         const target = store.map().lessons.find((lesson) => lesson.progress.missing_media > 0);
         if (target) store.openItem(target.id);
-        else store.ui.toast = "没有缺少素材的课程";
+        else store.ui.toast = "没有缺少素材的课程。你可以继续编辑或开始导出。";
       }
       store.scheduleSessionSave();
       store.notify();
@@ -4378,21 +4662,21 @@ function handleAction(action, element, event) {
       const format = element.dataset.format || store.ui.publishFormat || "markdown";
       store.ui.publishFormat = format;
       const report = store.ui.preflightReport || store.exportPreflight();
-      if (report.blocking) { store.ui.toast = `仍有 ${report.blocking} 个严重问题，请先修复`; store.notify(); return; }
+      if (report.blocking) { store.ui.toast = `导出前检查还有 ${report.blocking} 个必须修复的问题。请先返回检查并修复`; store.notify(); return; }
       store.ui.preflight = false;
       void store.exportCurrent(format);
       return;
     }
     case "export-anyway": {
       const report = store.exportPreflight();
-      if (report.blocking) { store.ui.toast = `仍有 ${report.blocking} 个严重问题，请先修复`; store.notify(); return; }
+      if (report.blocking) { store.ui.toast = `导出前检查还有 ${report.blocking} 个必须修复的问题。请先返回检查并修复`; store.notify(); return; }
       store.ui.preflight = false;
       void store.exportCurrent("markdown");
       return;
     }
     case "reveal-export":
       if (store.ui.lastExport?.path) {
-        void store.bridge.revealExport(store.ui.lastExport.path).catch((error) => store.say(error?.message || "无法定位导出结果"));
+        void store.bridge.revealExport(store.ui.lastExport.path).catch((error) => store.say(userFacingError(error, "找不到导出文件。你仍可在下载目录查看结果。")));
       }
       return;
     case "record-publication": void store.recordPublication(); return;
@@ -4500,7 +4784,7 @@ function bindEvents() {
           try {
             await store.importBrowserFile(file);
           } catch (error) {
-            store.ui.toast = error?.message || "无法导入文件";
+            store.ui.toast = userFacingError(error, "文件导入没有完成。课程内容没有改变，请重试。");
             store.notify();
           }
         }
@@ -4552,7 +4836,7 @@ function bindEvents() {
       event.preventDefault();
       dropZone.classList.remove("dragging");
       const file = event.dataTransfer.files[0];
-      if (file) store.importBrowserFile(file).catch((error) => { store.ui.toast = error?.message || "无法导入文件"; store.notify(); });
+      if (file) store.importBrowserFile(file).catch((error) => { store.ui.toast = userFacingError(error, "文件导入没有完成。课程内容没有改变，请重试。"); store.notify(); });
     });
   }
 
@@ -4668,7 +4952,7 @@ document.addEventListener("keydown", (event) => {
 const flushAndClose = async () => {
   try {
     await store.resolveNativeSwitchPending();
-    await store.flush();
+    if (!await store.flush()) return;
     // Only release a lease this instance actually owns; releasing an unowned
     // directory would create a guard file for a project we never opened.
     const hadLease = store.hasNativeLease();
@@ -4677,7 +4961,7 @@ const flushAndClose = async () => {
     }
     await store.bridge.confirmClose();
   } catch (error) {
-    store.ui.toast = error?.message || "关闭前保存失败";
+    store.ui.toast = userFacingError(error, "关闭前保存没有完成。课程内容没有改变，请先重试。");
     store.notify();
   }
 };

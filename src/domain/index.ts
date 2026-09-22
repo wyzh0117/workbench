@@ -22,6 +22,7 @@ export * from "../service/audit.ts";
 export * from "../service/commands.ts";
 export * from "../service/connectors.ts";
 export * from "../service/security.ts";
+export * from "../service/browser_session.ts";
 export * from "../service/storage.ts";
 export * from "../service/snapshots.ts";
 export * from "../service/desktop.ts";

@@ -13,10 +13,17 @@ export type RightPanel =
   | "versions";
 
 export interface WorkbenchSession {
+  /** Native sessions bind the reader position to this directory when present. */
+  project_dir?: string | null;
   project_id: string | null;
   active_content_item_id: string | null;
   mode: EditorMode;
   right_panel: RightPanel;
+  route?: string;
+  selected_block_id?: string | null;
+  ai_scope?: "course" | "lesson" | "block";
+  ai_provider_id?: string;
+  ai_model?: string;
   left_collapsed: boolean;
   right_collapsed: boolean;
   tabs: Array<{
@@ -25,9 +32,27 @@ export interface WorkbenchSession {
     pinned: boolean;
     scroll_top: number;
   }>;
+  /** Reader positions for other project identities visited in this process. */
+  project_sessions?: Record<string, NativeReaderSession>;
 }
 
-/** Native persistence keeps only the explicit project directory reference. */
+export interface NativeReaderSession {
+  project_dir: string;
+  project_id: string;
+  active_content_item_id: string | null;
+  mode: EditorMode;
+  right_panel: RightPanel;
+  route?: string;
+  selected_block_id?: string | null;
+  ai_scope?: "course" | "lesson" | "block";
+  ai_provider_id?: string;
+  ai_model?: string;
+  left_collapsed: boolean;
+  right_collapsed: boolean;
+  tabs: WorkbenchSession["tabs"];
+}
+
+/** A launch override may intentionally contain only the explicit directory. */
 export interface NativeWorkbenchSession {
   project_dir: string;
 }

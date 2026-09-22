@@ -6,7 +6,7 @@ use std::collections::HashMap;
 use std::fs::{self, File, OpenOptions};
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::{Component, Path, PathBuf};
-use std::process::Command as ProcessCommand;
+use std::process::{Command as ProcessCommand, Stdio};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::thread;
@@ -1107,7 +1107,7 @@ fn external_conflict_error(
     json!({
         "error": {
             "code": "external_modification_conflict",
-            "user_message": "检测到 project.json 已被外部修改，保存已阻止。",
+            "user_message": "课程文件在其他地方发生了变化，保存已暂停以免覆盖内容。课程内容没有改变，你可以继续查看；请重新载入、自动合并，或明确保留本地版本。",
             "technical_message": "Refusing to overwrite an externally modified canonical project",
             "severity": "blocking",
             "recoverable": true,
@@ -3890,9 +3890,9 @@ fn suggestion_apply(input: Value) -> Result<Value, String> {
 // ---------------------------------------------------------------------------
 // V0-T03 / Workstream C —— AI 传输、Provider 配置与执行记录
 //
-// 这三块都**不是** Canonical：Provider 目录（含凭据）与执行记录都写在应用数据目录的
-// `.workspace/ai/` 下，既不进 `project.json`，也不进导出包。读接口只回传「是否已配置」
-// 的布尔值，任何返回值或错误文本都不会带上凭据本身。
+// 这三块都**不是** Canonical：Provider 元数据与执行记录写在应用数据目录的
+// `.workspace/ai/` 下，凭据写入 macOS 系统钥匙串，既不进 `project.json`，也不进导出包。
+// 读接口只回传「是否已配置」的布尔值，任何返回值或错误文本都不会带上凭据本身。
 // ---------------------------------------------------------------------------
 
 /// 非 Canonical AI 存储目录（相对应用数据目录）。
@@ -3933,6 +3933,193 @@ fn ai_store_paths(base: &Path) -> AiStorePaths {
     }
 }
 
+#[cfg_attr(test, allow(dead_code))]
+const AI_KEYCHAIN_SERVICE: &str = "com.ai-course-workbench.ai";
+
+trait AiCredentialStore {
+    fn set(&self, provider_id: &str, value: &str) -> Result<(), String>;
+    fn get(&self, provider_id: &str) -> Result<Option<String>, String>;
+    fn delete(&self, provider_id: &str) -> Result<bool, String>;
+}
+
+fn keychain_failure(operation: &str) -> String {
+    let message = match operation {
+        "get" => "无法访问 macOS 系统钥匙串，无法确认 API Key 是否已配置",
+        "delete" => "无法访问 macOS 系统钥匙串，API Key 未删除",
+        _ => "无法访问 macOS 系统钥匙串，API Key 未保存",
+    };
+    format!("keychain_unavailable: {message}（{operation}）")
+}
+
+#[cfg_attr(test, allow(dead_code))]
+fn security_command(args: &[String], input: Option<&str>) -> Result<(i32, Vec<u8>), String> {
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = (args, input);
+        return Err(keychain_failure("unsupported-platform"));
+    }
+    #[cfg(target_os = "macos")]
+    {
+        let mut command = ProcessCommand::new("/usr/bin/security");
+        command
+            .args(args)
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null());
+        if input.is_some() {
+            command.stdin(Stdio::piped());
+        } else {
+            command.stdin(Stdio::null());
+        }
+        let mut child = command.spawn().map_err(|_| keychain_failure("process"))?;
+        if let Some(value) = input {
+            let Some(mut stdin) = child.stdin.take() else {
+                return Err(keychain_failure("stdin"));
+            };
+            stdin
+                .write_all(format!("{value}\n").as_bytes())
+                .map_err(|_| keychain_failure("stdin"))?;
+        }
+        let output = child
+            .wait_with_output()
+            .map_err(|_| keychain_failure("process"))?;
+        Ok((output.status.code().unwrap_or(-1), output.stdout))
+    }
+}
+
+#[cfg_attr(test, allow(dead_code))]
+struct MacKeychainStore {
+    account_prefix: String,
+}
+
+#[cfg_attr(test, allow(dead_code))]
+impl MacKeychainStore {
+    fn for_base(base: &Path) -> Self {
+        // The application-local base is not written as account metadata. A
+        // stable digest keeps native and browser project credentials isolated.
+        let digest = sha256_hex(base.to_string_lossy().as_bytes());
+        Self {
+            account_prefix: format!("project-{}:provider:", &digest[..32]),
+        }
+    }
+
+    fn account(&self, provider_id: &str) -> String {
+        format!("{}{}", self.account_prefix, provider_id)
+    }
+}
+
+impl AiCredentialStore for MacKeychainStore {
+    fn set(&self, provider_id: &str, value: &str) -> Result<(), String> {
+        let args = vec![
+            "add-generic-password".into(),
+            "-a".into(),
+            self.account(provider_id),
+            "-s".into(),
+            AI_KEYCHAIN_SERVICE.into(),
+            "-U".into(),
+            "-w".into(),
+        ];
+        let (code, _) = security_command(&args, Some(value))?;
+        if code == 0 {
+            Ok(())
+        } else {
+            Err(keychain_failure("set"))
+        }
+    }
+
+    fn get(&self, provider_id: &str) -> Result<Option<String>, String> {
+        let args = vec![
+            "find-generic-password".into(),
+            "-a".into(),
+            self.account(provider_id),
+            "-s".into(),
+            AI_KEYCHAIN_SERVICE.into(),
+            "-w".into(),
+        ];
+        let (code, stdout) = security_command(&args, None)?;
+        if code == 44 {
+            return Ok(None);
+        }
+        if code != 0 {
+            return Err(keychain_failure("get"));
+        }
+        let value = String::from_utf8(stdout)
+            .map_err(|_| keychain_failure("get"))?
+            .trim()
+            .to_owned();
+        Ok((!value.is_empty()).then_some(value))
+    }
+
+    fn delete(&self, provider_id: &str) -> Result<bool, String> {
+        let args = vec![
+            "delete-generic-password".into(),
+            "-a".into(),
+            self.account(provider_id),
+            "-s".into(),
+            AI_KEYCHAIN_SERVICE.into(),
+        ];
+        let (code, _) = security_command(&args, None)?;
+        match code {
+            0 => Ok(true),
+            44 => Ok(false),
+            _ => Err(keychain_failure("delete")),
+        }
+    }
+}
+
+#[cfg(test)]
+static TEST_AI_CREDENTIALS: OnceLock<Mutex<HashMap<String, String>>> = OnceLock::new();
+
+#[cfg(test)]
+struct TestAiCredentialStore {
+    namespace: String,
+}
+
+#[cfg(test)]
+impl AiCredentialStore for TestAiCredentialStore {
+    fn set(&self, provider_id: &str, value: &str) -> Result<(), String> {
+        TEST_AI_CREDENTIALS
+            .get_or_init(|| Mutex::new(HashMap::new()))
+            .lock()
+            .map_err(|_| keychain_failure("test-lock"))?
+            .insert(
+                format!("{}:{provider_id}", self.namespace),
+                value.to_owned(),
+            );
+        Ok(())
+    }
+
+    fn get(&self, provider_id: &str) -> Result<Option<String>, String> {
+        Ok(TEST_AI_CREDENTIALS
+            .get_or_init(|| Mutex::new(HashMap::new()))
+            .lock()
+            .map_err(|_| keychain_failure("test-lock"))?
+            .get(&format!("{}:{provider_id}", self.namespace))
+            .cloned())
+    }
+
+    fn delete(&self, provider_id: &str) -> Result<bool, String> {
+        Ok(TEST_AI_CREDENTIALS
+            .get_or_init(|| Mutex::new(HashMap::new()))
+            .lock()
+            .map_err(|_| keychain_failure("test-lock"))?
+            .remove(&format!("{}:{provider_id}", self.namespace))
+            .is_some())
+    }
+}
+
+fn ai_credential_store(base: &Path) -> Box<dyn AiCredentialStore> {
+    #[cfg(test)]
+    {
+        return Box::new(TestAiCredentialStore {
+            namespace: sha256_hex(base.to_string_lossy().as_bytes()),
+        });
+    }
+    #[cfg(not(test))]
+    {
+        Box::new(MacKeychainStore::for_base(base))
+    }
+}
+
 /// 凭据只属于当前用户：文件写完立刻收成 0600（尽力而为，失败不阻断写入）。
 fn restrict_ai_file_mode(path: &Path) {
     #[cfg(unix)]
@@ -3961,17 +4148,31 @@ fn ai_read_store(path: &Path, label: &str) -> Result<Value, String> {
     }
 }
 
-fn ai_write_store(path: &Path, value: &Value, label: &str) -> Result<(), String> {
+fn ai_write_store_with_backup(
+    path: &Path,
+    value: &Value,
+    label: &str,
+    keep_backup: bool,
+) -> Result<(), String> {
     let mut contents = serde_json::to_string_pretty(value)
         .map_err(|error| format!("无法序列化{label}: {error}"))?;
     contents.push('\n');
-    atomic_write_path(path, &contents, true)?;
+    atomic_write_path(path, &contents, keep_backup)?;
     restrict_ai_file_mode(path);
     Ok(())
 }
 
-fn ai_read_provider_store(path: &Path) -> Result<Map<String, Value>, String> {
-    let mut store = match ai_read_store(path, "AI Provider 配置")? {
+fn ai_write_store(path: &Path, value: &Value, label: &str) -> Result<(), String> {
+    ai_write_store_with_backup(path, value, label, true)
+}
+
+fn ai_write_provider_store(path: &Path, value: &Value, label: &str) -> Result<(), String> {
+    // Provider files contain metadata only; never create a plaintext backup.
+    ai_write_store_with_backup(path, value, label, false)
+}
+
+fn ai_normalize_provider_store(value: Value) -> Result<Map<String, Value>, String> {
+    let mut store = match value {
         Value::Null => Map::new(),
         Value::Object(map) => map,
         _ => return Err("AI Provider 配置格式无效".into()),
@@ -3979,12 +4180,100 @@ fn ai_read_provider_store(path: &Path) -> Result<Map<String, Value>, String> {
     if !store.get("providers").map(Value::is_array).unwrap_or(false) {
         store.insert("providers".into(), Value::Array(Vec::new()));
     }
-    if !store
-        .get("credentials")
-        .map(Value::is_object)
-        .unwrap_or(false)
+    Ok(store)
+}
+
+fn ai_read_provider_store(path: &Path) -> Result<Map<String, Value>, String> {
+    ai_normalize_provider_store(ai_read_store(path, "AI Provider 配置")?)
+}
+
+fn ai_migration_failure(operation: &str) -> String {
+    format!(
+        "keychain_unavailable: 历史 API Key 未能安全迁移到 macOS 系统钥匙串（{operation}），原文件未删除"
+    )
+}
+
+/// Read provider metadata and migrate historical plaintext credentials exactly
+/// once. The old JSON and `providers.bak` survive every failure path.
+fn ai_read_provider_store_secure(base: &Path) -> Result<Map<String, Value>, String> {
+    let paths = ai_store_paths(base);
+    let primary_exists = paths.providers.exists();
+    let primary = ai_read_provider_store(&paths.providers)?;
+    let backup_path = base.join("providers.bak");
+    let backup_exists = backup_path.exists();
+    let backup = if backup_exists {
+        Some(ai_normalize_provider_store(ai_read_store(
+            &backup_path,
+            "AI Provider 配置备份",
+        )?)?)
+    } else {
+        None
+    };
+    let mut store = if !primary_exists {
+        backup.clone().unwrap_or(primary)
+    } else {
+        primary
+    };
+    if let Some(providers) = store.get("providers").and_then(Value::as_array) {
+        for provider in providers {
+            if ai_forbidden_field_path(provider, "", ai_credential_field_name).is_some()
+                || ai_inline_credential_field(provider, "").is_some()
+            {
+                return Err(ai_migration_failure("provider-metadata"));
+            }
+        }
+    }
+    let has_extra_fields = store
+        .keys()
+        .any(|key| key != "providers" && key != "credentials");
+    let mut legacy = Map::new();
+    if let Some(credentials) = backup
+        .as_ref()
+        .and_then(|value| value.get("credentials"))
+        .and_then(Value::as_object)
     {
-        store.insert("credentials".into(), Value::Object(Map::new()));
+        legacy.extend(credentials.clone());
+    }
+    if let Some(credentials) = store.get("credentials").and_then(Value::as_object) {
+        legacy.extend(credentials.clone());
+    }
+    let needs_cleanup = !legacy.is_empty()
+        || backup_exists
+        || store.get("credentials").is_some()
+        || has_extra_fields;
+    if !needs_cleanup {
+        return Ok(store);
+    }
+
+    let credential_store = ai_credential_store(base);
+    for (provider_id, raw_value) in &legacy {
+        let value = raw_value
+            .as_str()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .ok_or_else(|| ai_migration_failure("invalid-credential"))?;
+        ai_validate_provider_id(provider_id)
+            .map_err(|_| ai_migration_failure("invalid-provider"))?;
+        credential_store
+            .set(provider_id, value)
+            .map_err(|_| ai_migration_failure("keychain-write"))?;
+        let verified = credential_store
+            .get(provider_id)
+            .map_err(|_| ai_migration_failure("keychain-read"))?;
+        if verified.as_deref() != Some(value) {
+            return Err(ai_migration_failure("keychain-verification"));
+        }
+    }
+    store.remove("credentials");
+    store.retain(|key, _| key == "providers");
+    ai_write_provider_store(
+        &paths.providers,
+        &Value::Object(store.clone()),
+        "AI Provider 配置",
+    )
+    .map_err(|_| ai_migration_failure("metadata-write"))?;
+    if backup_exists {
+        fs::remove_file(&backup_path).map_err(|_| ai_migration_failure("backup-cleanup"))?;
     }
     Ok(store)
 }
@@ -4001,15 +4290,8 @@ fn ai_read_execution_store(path: &Path) -> Result<Map<String, Value>, String> {
     Ok(store)
 }
 
-fn ai_credential_value(store: &Map<String, Value>, provider_id: &str) -> Option<String> {
-    store
-        .get("credentials")
-        .and_then(Value::as_object)
-        .and_then(|credentials| credentials.get(provider_id))
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(ToOwned::to_owned)
+fn ai_keychain_credential(base: &Path, provider_id: &str) -> Result<Option<String>, String> {
+    ai_credential_store(base).get(provider_id)
 }
 
 /// 执行记录里必须丢弃的字段名：沿用 `sensitive_key` 的词表，再显式补上
@@ -4168,6 +4450,50 @@ fn ai_credential_field_name(name: &str) -> bool {
     .any(|needle| lowered.contains(needle))
 }
 
+/// A credential-shaped query parameter is secret even when the field itself is
+/// the otherwise-safe `base_url` metadata field.
+fn ai_inline_credential_field(value: &Value, prefix: &str) -> Option<String> {
+    match value {
+        Value::Object(fields) => {
+            for (key, child) in fields {
+                let path = if prefix.is_empty() {
+                    key.clone()
+                } else {
+                    format!("{prefix}.{key}")
+                };
+                if key == "base_url" {
+                    if let Some(url) = child.as_str() {
+                        let query = url
+                            .split_once('?')
+                            .map(|(_, query)| {
+                                query.split_once('#').map(|(part, _)| part).unwrap_or(query)
+                            })
+                            .unwrap_or("");
+                        for parameter in query.split('&') {
+                            let Some((name, raw_value)) = parameter.split_once('=') else {
+                                continue;
+                            };
+                            let decoded_name =
+                                ai_percent_decode(name).unwrap_or_else(|| name.to_owned());
+                            if !raw_value.is_empty() && ai_credential_field_name(&decoded_name) {
+                                return Some(format!("{path}[query:{decoded_name}]"));
+                            }
+                        }
+                    }
+                }
+                if let Some(found) = ai_inline_credential_field(child, &path) {
+                    return Some(found);
+                }
+            }
+            None
+        }
+        Value::Array(items) => items.iter().enumerate().find_map(|(index, child)| {
+            ai_inline_credential_field(child, &format!("{prefix}[{index}]"))
+        }),
+        _ => None,
+    }
+}
+
 /// Provider ID 必须可用于文件名/键名：与浏览器壳的 `PROVIDER_ID_PATTERN` 一致。
 fn ai_valid_provider_id(provider_id: &str) -> bool {
     let mut characters = provider_id.chars();
@@ -4275,7 +4601,7 @@ const AI_SECRET_LABELS: [&str; 21] = [
     "token",
 ];
 
-/// 擦除素材：从 `providers.json` 读出（best-effort，读不到就只剩模式擦除）。
+/// 擦除素材：从系统钥匙串读取；无法确认所有凭据时，调用方必须拒绝读写。
 #[derive(Default, Clone)]
 struct AiSecrets {
     /// 精确替换用的形态：`<scheme> <value>` 与裸 `<value>`，长的在前。
@@ -4284,55 +4610,46 @@ struct AiSecrets {
     has_short: bool,
 }
 
-fn ai_stored_secrets(base: &Path) -> AiSecrets {
-    // 凭据文件坏掉不能挡住执行记录的写入：读不到就只有模式擦除。
-    let Ok(store) = ai_read_provider_store(&ai_store_paths(base).providers) else {
-        return AiSecrets::default();
-    };
-    let schemes: HashMap<String, String> = store
+fn ai_stored_secrets(base: &Path) -> Result<AiSecrets, String> {
+    let store = ai_read_provider_store_secure(base)?;
+    let providers = store
         .get("providers")
         .and_then(Value::as_array)
-        .map(|providers| {
-            providers
-                .iter()
-                .filter_map(|provider| {
-                    let object = provider.as_object()?;
-                    let id = object.get("id").and_then(Value::as_str)?.trim().to_owned();
-                    let scheme = field(object, &["auth_scheme", "authScheme"])
-                        .and_then(Value::as_str)
-                        .unwrap_or("")
-                        .trim()
-                        .to_owned();
-                    Some((id, scheme))
-                })
-                .collect()
-        })
+        .cloned()
         .unwrap_or_default();
+    let credential_store = ai_credential_store(base);
     let mut forms: Vec<String> = Vec::new();
     let mut has_short = false;
-    if let Some(credentials) = store.get("credentials").and_then(Value::as_object) {
-        for (provider_id, raw) in credentials {
-            let Some(value) = raw
-                .as_str()
-                .map(str::trim)
-                .filter(|value| !value.is_empty())
-            else {
-                continue;
-            };
-            if value.chars().count() < AI_MIN_EXACT_SECRET_CHARS {
-                has_short = true;
-            }
-            if let Some(scheme) = schemes.get(provider_id) {
-                if !scheme.is_empty() {
-                    forms.push(format!("{scheme} {value}"));
-                }
-            }
-            forms.push(value.to_owned());
+    for provider in providers {
+        let Some(object) = provider.as_object() else {
+            continue;
+        };
+        let Some(provider_id) = object.get("id").and_then(Value::as_str) else {
+            continue;
+        };
+        let value = credential_store
+            .get(provider_id)
+            .map_err(|_| "无法安全读取系统钥匙串，未生成或读取 AI 执行记录".to_owned())?;
+        let Some(value) = value else { continue };
+        let value = value.trim();
+        if value.is_empty() {
+            continue;
         }
+        if value.chars().count() < AI_MIN_EXACT_SECRET_CHARS {
+            has_short = true;
+        }
+        let scheme = field(object, &["auth_scheme", "authScheme"])
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .trim();
+        if !scheme.is_empty() {
+            forms.push(format!("{scheme} {value}"));
+        }
+        forms.push(value.to_owned());
     }
     forms.sort_by(|left, right| right.chars().count().cmp(&left.chars().count()));
     forms.dedup();
-    AiSecrets { forms, has_short }
+    Ok(AiSecrets { forms, has_short })
 }
 
 /// 精确值替换；短于 4 个字符的交给标签规则（替换会搅碎普通文本）。
@@ -4795,38 +5112,22 @@ fn ai_provider_records(store: &Map<String, Value>) -> Vec<Value> {
 }
 
 /// Provider 列表 + `configured` 布尔表；**永远不含凭据本身**。
-fn ai_connection_view(store: &Map<String, Value>) -> Value {
+fn ai_connection_view(store: &Map<String, Value>, configured: Map<String, Value>) -> Value {
     let providers = ai_provider_records(store);
-    let credentials = store.get("credentials").and_then(Value::as_object);
-    let mut configured = Map::new();
-    for provider in &providers {
-        if let Some(id) = provider.get("id").and_then(Value::as_str) {
-            let has_credential = credentials
-                .and_then(|map| map.get(id))
-                .and_then(Value::as_str)
-                .map(|value| !value.trim().is_empty())
-                .unwrap_or(false);
-            configured.insert(id.to_owned(), json!(has_credential));
-        }
-    }
-    if let Some(credentials) = credentials {
-        for (id, value) in credentials {
-            let has_credential = value
-                .as_str()
-                .map(|value| !value.trim().is_empty())
-                .unwrap_or(false);
-            configured
-                .entry(id.clone())
-                .or_insert_with(|| json!(has_credential));
-        }
-    }
     json!({ "providers": providers, "configured": Value::Object(configured) })
 }
 
 fn ai_connection_list_at(base: &Path) -> Result<Value, String> {
-    let paths = ai_store_paths(base);
-    let store = ai_read_provider_store(&paths.providers)?;
-    Ok(ai_connection_view(&store))
+    let store = ai_read_provider_store_secure(base)?;
+    let credential_store = ai_credential_store(base);
+    let mut configured = Map::new();
+    for provider in ai_provider_records(&store) {
+        if let Some(id) = provider.get("id").and_then(Value::as_str) {
+            let present = credential_store.get(id)?.is_some();
+            configured.insert(id.to_owned(), json!(present));
+        }
+    }
+    Ok(ai_connection_view(&store, configured))
 }
 
 fn ai_connection_save_at(base: &Path, provider: &Value) -> Result<Value, String> {
@@ -4855,6 +5156,14 @@ fn ai_connection_save_at(base: &Path, provider: &Value) -> Result<Value, String>
             json!({ "field": field_path }),
         ));
     }
+    if let Some(field_path) = ai_inline_credential_field(provider, "") {
+        return Err(structured_ai_error(
+            "invalid_request",
+            &format!("Provider 配置中出现了不允许的密钥查询参数「{field_path}」。"),
+            Some("API Key 必须通过「保存密钥」单独提交。"),
+            json!({ "field": field_path }),
+        ));
+    }
     let mut record = match ai_strip_sensitive(provider, ai_sensitive_key) {
         Value::Object(map) => map,
         _ => return Err(ai_invalid_request("Provider 配置必须是 JSON 对象。")),
@@ -4863,7 +5172,7 @@ fn ai_connection_save_at(base: &Path, provider: &Value) -> Result<Value, String>
     let record = Value::Object(record);
 
     let paths = ai_store_paths(base);
-    let mut store = ai_read_provider_store(&paths.providers)?;
+    let mut store = ai_read_provider_store_secure(base)?;
     let providers = store
         .get_mut("providers")
         .and_then(Value::as_array_mut)
@@ -4874,13 +5183,13 @@ fn ai_connection_save_at(base: &Path, provider: &Value) -> Result<Value, String>
         Some(index) => providers[index] = record.clone(),
         None => providers.push(record.clone()),
     }
-    ai_write_store(&paths.providers, &Value::Object(store), "AI Provider 配置")?;
+    ai_write_provider_store(&paths.providers, &Value::Object(store), "AI Provider 配置")?;
     Ok(json!({ "provider": record }))
 }
 
 fn ai_connection_delete_at(base: &Path, provider_id: &str) -> Result<Value, String> {
     let paths = ai_store_paths(base);
-    let mut store = ai_read_provider_store(&paths.providers)?;
+    let mut store = ai_read_provider_store_secure(base)?;
     let removed_provider = store
         .get_mut("providers")
         .and_then(Value::as_array_mut)
@@ -4891,22 +5200,20 @@ fn ai_connection_delete_at(base: &Path, provider_id: &str) -> Result<Value, Stri
             providers.len() != before
         })
         .unwrap_or(false);
-    let removed_credential = store
-        .get_mut("credentials")
-        .and_then(Value::as_object_mut)
-        .map(|credentials| credentials.remove(provider_id).is_some())
-        .unwrap_or(false);
+    let removed_credential = ai_credential_store(base).get(provider_id)?.is_some();
+    if removed_credential {
+        ai_credential_store(base).delete(provider_id)?;
+    }
     let removed = removed_provider || removed_credential;
     if removed {
-        ai_write_store(&paths.providers, &Value::Object(store), "AI Provider 配置")?;
+        ai_write_provider_store(&paths.providers, &Value::Object(store), "AI Provider 配置")?;
     }
     Ok(json!({ "provider_id": provider_id, "removed": removed }))
 }
 
-/// 保存凭据。`value` 只出现在写入内容里：返回值、错误文本、日志一行都不带它。
+/// 保存凭据。`value` 只出现在钥匙串写入内容里：返回值、错误文本、日志一行都不带它。
 fn ai_secret_set_at(base: &Path, provider_id: &str, value: &str) -> Result<Value, String> {
     let provider_id = ai_validate_provider_id(provider_id)?;
-    // 长度上限与浏览器壳一致；错误文本只说明问题，绝不含 value 本身。
     let value = value.trim();
     if value.is_empty() {
         return Err(ai_invalid_request("API Key 不能为空。"));
@@ -4916,28 +5223,22 @@ fn ai_secret_set_at(base: &Path, provider_id: &str, value: &str) -> Result<Value
             "API Key 过长，请确认粘贴的内容是否正确。",
         ));
     }
+    let store = ai_read_provider_store_secure(base)?;
+    ai_credential_store(base).set(&provider_id, value)?;
+    // Only metadata is persisted. A failed write leaves the Keychain value
+    // available and never creates a plaintext fallback.
     let paths = ai_store_paths(base);
-    let mut store = ai_read_provider_store(&paths.providers)?;
-    store
-        .get_mut("credentials")
-        .and_then(Value::as_object_mut)
-        .ok_or("AI Provider 配置格式无效")?
-        .insert(provider_id.clone(), json!(value));
-    // 失败路径只回传 IO/序列化错误，绝不把 value 拼进消息。
-    ai_write_store(&paths.providers, &Value::Object(store), "AI Provider 配置")?;
+    ai_write_provider_store(&paths.providers, &Value::Object(store), "AI Provider 配置")?;
     Ok(json!({ "provider_id": provider_id }))
 }
 
 fn ai_secret_delete_at(base: &Path, provider_id: &str) -> Result<Value, String> {
-    let paths = ai_store_paths(base);
-    let mut store = ai_read_provider_store(&paths.providers)?;
-    let removed = store
-        .get_mut("credentials")
-        .and_then(Value::as_object_mut)
-        .map(|credentials| credentials.remove(provider_id).is_some())
-        .unwrap_or(false);
+    ai_validate_provider_id(provider_id)?;
+    let store = ai_read_provider_store_secure(base)?;
+    let removed = ai_credential_store(base).delete(provider_id)?;
     if removed {
-        ai_write_store(&paths.providers, &Value::Object(store), "AI Provider 配置")?;
+        let paths = ai_store_paths(base);
+        ai_write_provider_store(&paths.providers, &Value::Object(store), "AI Provider 配置")?;
     }
     Ok(json!({ "provider_id": provider_id, "removed": removed }))
 }
@@ -5171,9 +5472,8 @@ fn ai_request_spec(base: &Path, input: &Value) -> Result<AiRequestSpec, String> 
                     json!({}),
                 ));
             }
-            let paths = ai_store_paths(base);
-            let store = ai_read_provider_store(&paths.providers)?;
-            Some(ai_credential_value(&store, &provider_id).ok_or_else(|| {
+            ai_read_provider_store_secure(base)?;
+            Some(ai_keychain_credential(base, &provider_id)?.ok_or_else(|| {
                 structured_ai_error(
                     "missing_credential",
                     &format!("AI 服务商「{provider_id}」还没有配置 API Key。"),
@@ -5204,7 +5504,7 @@ fn ai_request_spec(base: &Path, input: &Value) -> Result<AiRequestSpec, String> 
         timeout_ms,
         // 存储里的每个凭据（含 `<scheme> <value>` 形态）都参与擦除，
         // 而不是只擦本次注入的那一个。
-        secrets: ai_stored_secrets(base),
+        secrets: ai_stored_secrets(base)?,
     })
 }
 
@@ -5480,8 +5780,8 @@ fn ai_execution_record_failed(reason: &str) -> String {
 /// 所以调用方看到的最新在前顺序不会因为「补写决定」而改变。旧实现留下的同一个
 /// `id` 的多余行，也会在这一次替换里一并清掉。
 fn ai_execution_append_at(base: &Path, record: &Value) -> Result<Value, String> {
-    // 凭据文件坏掉不能挡住执行记录：读不到就只做模式擦除。
-    let secrets = ai_stored_secrets(base);
+    // 无法确认全部凭据时拒绝写入，避免执行记录成为泄漏通道。
+    let secrets = ai_stored_secrets(base)?;
     let mut cleaned = ai_sanitize_record(record, &secrets.forms);
     let object = cleaned
         .as_object_mut()
@@ -5532,8 +5832,8 @@ fn ai_execution_append_at(base: &Path, record: &Value) -> Result<Value, String> 
 fn ai_execution_list_at(base: &Path, limit: usize) -> Result<Value, String> {
     let paths = ai_store_paths(base);
     let store = ai_read_execution_store(&paths.executions)?;
-    // 读取路径同样擦一遍（纵深防御）：修复前写下的记录里可能还留着粘进去的密钥。
-    let secrets = ai_stored_secrets(base);
+    // 读取路径同样擦一遍（纵深防御）：无法确认全部凭据时拒绝返回记录。
+    let secrets = ai_stored_secrets(base)?;
     let mut records: Vec<Value> = store
         .get("records")
         .and_then(Value::as_array)
@@ -6357,15 +6657,81 @@ mod tests {
                 .mode()
                 & 0o777;
             assert_eq!(mode, 0o600, "AI 存储必须是 0600");
-            // 覆盖写入留下的 `.bak` 同样带着凭据，也必须只有本人可读。
-            let backup_mode = fs::metadata(base.join("providers.bak"))
-                .expect("backup should exist")
-                .permissions()
-                .mode()
-                & 0o777;
-            assert_eq!(backup_mode, 0o600, "凭据备份同样必须是 0600");
+            // Keychain adoption must never create a plaintext provider backup.
+            assert!(
+                !base.join("providers.bak").exists(),
+                "AI metadata must not leave a plaintext backup"
+            );
+            let stored =
+                fs::read_to_string(base.join(AI_PROVIDERS_FILE)).expect("metadata should exist");
+            assert!(
+                !stored.contains(secret),
+                "providers.json must not contain the credential"
+            );
         }
 
+        let _ = fs::remove_dir_all(directory);
+    }
+
+    #[test]
+    fn ai_plaintext_provider_store_migrates_to_test_secure_store() {
+        let directory = test_directory("ai-migration");
+        let base = ai_test_base(&directory);
+        let key = "sk-native-migration-test";
+        let legacy = json!({
+            "providers": [{ "id": "deepseek", "label": "DeepSeek" }],
+            "credentials": { "deepseek": key },
+        });
+        fs::create_dir_all(&base).expect("AI base should exist");
+        fs::write(
+            base.join(AI_PROVIDERS_FILE),
+            serde_json::to_vec_pretty(&legacy).unwrap(),
+        )
+        .expect("legacy provider file should be writable");
+        fs::write(
+            base.join("providers.bak"),
+            serde_json::to_vec_pretty(&legacy).unwrap(),
+        )
+        .expect("legacy backup should be writable");
+
+        let listed = ai_connection_list_at(&base).expect("legacy values should migrate");
+        assert_eq!(listed["configured"]["deepseek"], json!(true));
+        let metadata = fs::read_to_string(base.join(AI_PROVIDERS_FILE)).unwrap();
+        assert!(!metadata.contains(key), "metadata must not contain the key");
+        assert!(
+            !metadata.contains("credentials"),
+            "metadata must not contain a credential map"
+        );
+        assert!(
+            !base.join("providers.bak").exists(),
+            "legacy backup must be removed after migration"
+        );
+
+        ai_secret_delete_at(&base, "deepseek").expect("test secure store should delete");
+        let _ = fs::remove_dir_all(directory);
+    }
+
+    #[test]
+    fn ai_plaintext_migration_failure_keeps_the_source_file() {
+        let directory = test_directory("ai-migration-failure");
+        let base = ai_test_base(&directory);
+        let key = "sk-native-migration-failure";
+        let legacy = serde_json::to_string(&json!({
+            "providers": [{ "id": "deepseek", "label": "DeepSeek" }],
+            "credentials": { "../invalid": key },
+        }))
+        .unwrap();
+        fs::create_dir_all(&base).expect("AI base should exist");
+        fs::write(base.join(AI_PROVIDERS_FILE), &legacy).expect("legacy file should be writable");
+        let failed = ai_connection_list_at(&base).expect_err("invalid migration must fail closed");
+        assert!(
+            !failed.contains(key),
+            "migration failure must not echo the key"
+        );
+        assert_eq!(
+            fs::read_to_string(base.join(AI_PROVIDERS_FILE)).unwrap(),
+            legacy
+        );
         let _ = fs::remove_dir_all(directory);
     }
 
@@ -6503,6 +6869,33 @@ mod tests {
         assert!(
             !base.join(AI_PROVIDERS_FILE).exists(),
             "被拒绝的配置不得落盘"
+        );
+
+        let inline = ai_connection_save_at(
+            &base,
+            &json!({
+                "id": "inline-url",
+                "base_url": "https://example.test/v1?api_key=sk-inline-must-not-save",
+            }),
+        )
+        .expect_err("URL query credentials must be rejected");
+        assert!(inline.contains("密钥查询参数"), "got: {inline}");
+        assert!(
+            !inline.contains("sk-inline-must-not-save"),
+            "error must not echo key"
+        );
+        let encoded_inline = ai_connection_save_at(
+            &base,
+            &json!({
+                "id": "encoded-inline-url",
+                "base_url": "https://example.test/v1?%61pi_key=sk-encoded-must-not-save",
+            }),
+        )
+        .expect_err("encoded URL query credentials must be rejected");
+        assert!(encoded_inline.contains("api_key"), "got: {encoded_inline}");
+        assert!(
+            !encoded_inline.contains("sk-encoded-must-not-save"),
+            "error must not echo encoded key"
         );
 
         let bad_id = ai_connection_save_at(&base, &json!({ "id": "../evil" }))
@@ -6929,7 +7322,7 @@ mod tests {
             .expect("provider should save");
         ai_secret_set_at(&base, "tiny", "e").expect("short secret should save");
 
-        let secrets = ai_stored_secrets(&base);
+        let secrets = ai_stored_secrets(&base).expect("credential store should be readable");
         assert!(secrets.has_short, "1 字符凭据必须被识别为「不能精确替换」");
 
         ai_execution_append_at(
@@ -6981,7 +7374,7 @@ mod tests {
         ai_connection_save_at(&base, &json!({ "id": "deepseek", "auth_scheme": "Bearer" }))
             .expect("provider should save");
         ai_secret_set_at(&base, "deepseek", key).expect("secret should save");
-        let secrets = ai_stored_secrets(&base);
+        let secrets = ai_stored_secrets(&base).expect("credential store should be readable");
         assert!(!secrets.has_short);
 
         // 普通标识符（无数字、无大写）必须活下来。

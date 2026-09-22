@@ -102,7 +102,7 @@ export class ServiceError extends Error {
     this.error = {
       code: error.code,
       user_message: String(
-        redactSecrets(error.user_message ?? "操作未完成"),
+        redactSecrets(error.user_message ?? "这项操作没有完成。工作台仍可继续使用，请重试。"),
       ),
       technical_message: String(
         redactSecrets(
@@ -154,7 +154,7 @@ export function asErrorObject(
       return {
         code: candidate.code,
         user_message: String(
-          redactSecrets(candidate.user_message ?? "操作未完成"),
+          redactSecrets(candidate.user_message ?? "这项操作没有完成。工作台仍可继续使用，请重试。"),
         ),
         technical_message: String(
           redactSecrets(
@@ -177,11 +177,11 @@ export function asErrorObject(
     : String(error ?? "未知错误");
   return {
     code: fallbackCode,
-    user_message: "操作未完成，请重试。",
+    user_message: "这项操作没有完成。工作台仍可继续使用，请重试。",
     technical_message: String(redactSecrets(message)),
     severity: "recoverable",
     recoverable: true,
-    recommended_action: "重试；如果问题持续，请查看日志。",
+    recommended_action: "请重试；如果问题持续，请重新打开项目。",
     details: {},
   };
 }

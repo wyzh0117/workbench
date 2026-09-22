@@ -24,13 +24,19 @@
     section.appendChild(title);
     section.appendChild(lead);
     if (detail) {
+      var details = document.createElement("details");
+      details.className = "diagnostic";
+      var summaryNode = document.createElement("summary");
+      summaryNode.textContent = "显示技术信息";
+      details.appendChild(summaryNode);
       var pre = document.createElement("pre");
       pre.textContent = detail;
-      section.appendChild(pre);
+      details.appendChild(pre);
+      section.appendChild(details);
     }
     var hint = document.createElement("p");
     hint.className = "muted";
-    hint.textContent = "项目文件没有被改动。请重新启动应用；如果仍然失败，请把上面的信息一并反馈。";
+    hint.textContent = "项目文件没有被改动。请重新启动应用；如果仍然失败，再展开技术信息并一并反馈。";
     section.appendChild(hint);
     app.textContent = "";
     app.appendChild(section);

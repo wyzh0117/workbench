@@ -728,22 +728,23 @@ Deno.test("the panel names the AI storage location of the running shell", async 
     store.bridge.isNative = () => false;
     store.notify();
     assert(
-      root.innerHTML.includes("本项目目录的 .workspace/ai"),
-      "浏览器壳必须说明密钥在本项目目录的 .workspace/ai",
+      root.innerHTML.includes("macOS 系统钥匙串（本机浏览器服务）"),
+      "浏览器壳必须说明密钥写入 macOS 系统钥匙串",
     );
-    assert(!root.innerHTML.includes("本机应用数据目录"), "浏览器壳不得声称使用应用数据目录");
-    assert(root.innerHTML.includes("钥匙串"), "必须如实说明钥匙串适配器尚未安装");
+    assert(!root.innerHTML.includes("本项目目录的 .workspace/ai"), "浏览器壳不得声称密钥在项目文件");
+    assert(root.innerHTML.includes("项目文件只保留服务商元数据"), "必须说明项目文件不保存密钥");
     store.bridge.isNative = () => true;
     store.notify();
     assert(
-      root.innerHTML.includes("本机应用数据目录"),
-      "桌面壳必须说明密钥在本机应用数据目录（app-global）",
+      root.innerHTML.includes("macOS 系统钥匙串"),
+      "桌面壳必须说明密钥写入 macOS 系统钥匙串",
     );
     assert(
-      !root.innerHTML.includes("本项目目录的 .workspace/ai"),
-      "桌面壳不得声称密钥在本项目目录",
+      !root.innerHTML.includes("本机应用数据目录") &&
+        !root.innerHTML.includes("本项目目录的 .workspace/ai"),
+      "桌面壳不得声称密钥在项目文件",
     );
-    assert(root.innerHTML.includes("0600"), "必须如实说明文件权限");
+    assert(root.innerHTML.includes("项目文件只保留服务商元数据"), "必须说明项目文件不保存密钥");
   } finally {
     restore();
   }
@@ -1093,9 +1094,9 @@ Deno.test("the panel never renders a provider credential value", async () => {
       "面板绝不能渲染密钥值",
     );
     assert(
-      root.innerHTML.includes(".workspace") &&
-        root.innerHTML.includes("钥匙串"),
-      "面板必须说明密钥保存位置与尚未安装钥匙串适配器",
+      root.innerHTML.includes("macOS 系统钥匙串") &&
+        root.innerHTML.includes("项目文件只保留服务商元数据"),
+      "面板必须说明密钥保存于系统钥匙串且项目文件不保存密钥",
     );
     // Deleting asks for confirmation; a headless shell has no dialog, so the
     // test approves it explicitly.

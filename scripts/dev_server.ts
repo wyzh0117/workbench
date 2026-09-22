@@ -1,4 +1,5 @@
 import { join, normalize, relative } from "node:path";
+import { asErrorObject } from "../src/service/errors.ts";
 import { HIGH_LEVEL_COMMANDS, READ_QUERIES } from "../src/service/commands.ts";
 import { DesktopService } from "../src/service/desktop.ts";
 
@@ -46,15 +47,19 @@ function json(value: unknown, status = 200): Response {
   );
 }
 
-function errorResponse(message: string, status = 400): Response {
-  return json({
-    error: {
+function errorResponse(value: unknown, status = 400): Response {
+  const error = typeof value === "string"
+    ? {
       code: "bridge_request_failed",
-      user_message: message,
+      user_message: value,
+      technical_message: value,
+      severity: "recoverable",
       recoverable: true,
-      recommended_action: "检查输入后重试。",
-    },
-  }, status);
+      recommended_action: "检查提示后重试。",
+      details: {},
+    }
+    : asErrorObject(value, "bridge_request_failed");
+  return json({ error }, status);
 }
 
 async function requestBody(request: Request): Promise<Record<string, unknown>> {
@@ -68,6 +73,24 @@ async function requestBody(request: Request): Promise<Record<string, unknown>> {
     throw new Error(
       caught instanceof Error ? caught.message : "请求 JSON 无效",
     );
+  }
+}
+
+async function bridgeSession(request: Request): Promise<Response> {
+  if (request.method === "GET") {
+    // The service validates the sidecar against the current project before it
+    // returns anything. A missing/corrupt/inaccessible record is just null.
+    return json({ value: await desktop.loadBrowserSession() });
+  }
+  if (request.method !== "POST") {
+    return new Response("Method not allowed", { status: 405 });
+  }
+  try {
+    const body = await requestBody(request);
+    await desktop.saveBrowserSession(body.session);
+    return json({ value: null });
+  } catch (caught) {
+    return json({ error: asErrorObject(caught, "browser_session_unavailable") }, 400);
   }
 }
 
@@ -93,7 +116,7 @@ async function bridgeQuery(request: Request): Promise<Response> {
       value: await desktop.queries.execute(name, body.input ?? {}),
     });
   } catch (caught) {
-    return errorResponse(caught instanceof Error ? caught.message : "查询失败");
+    return errorResponse(caught);
   }
 }
 
@@ -198,6 +221,9 @@ const server = Deno.serve(
           project_root: projectRoot,
         });
       }
+      if (url.pathname === "/api/session" && ["GET", "POST"].includes(request.method)) {
+        return await bridgeSession(request);
+      }
       if (url.pathname === "/api/command" && request.method === "POST") {
         return await bridgeCommand(request);
       }
@@ -214,10 +240,7 @@ const server = Deno.serve(
       }
       return await staticFile(url.pathname);
     } catch (caught) {
-      return errorResponse(
-        caught instanceof Error ? caught.message : "请求失败",
-        400,
-      );
+      return errorResponse(caught, 400);
     }
   },
 );

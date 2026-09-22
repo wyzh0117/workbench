@@ -1,7 +1,107 @@
+import {
+  appendBlock,
+  createDocument,
+  createEmptyProjectData,
+  initializeContentStatuses,
+  now,
+} from "../src/domain/index.ts";
 import { createSerialQueue, recoveryWarning } from "../app/recovery.js";
 
 function assert(condition: unknown, message: string): asserts condition {
   if (!condition) throw new Error(message);
+}
+
+function switchProject(title: string): any {
+  const data = createEmptyProjectData(title);
+  const stage = data.stages[0];
+  const contentId = crypto.randomUUID();
+  const document = createDocument(data, contentId);
+  data.content_items.push({
+    id: contentId,
+    project_id: data.project.id,
+    stage_id: stage?.id ?? null,
+    code: "S01-01",
+    title: `${title} 第一课`,
+    type: "lesson",
+    description: "",
+    order_index: 0,
+    document_id: document.id,
+    archived: false,
+    created_at: now(),
+    updated_at: now(),
+  });
+  initializeContentStatuses(data, contentId);
+  appendBlock(data, contentId, "paragraph", `${title} 正文`);
+  return data;
+}
+
+function nativeSwitchBridge(
+  projects: Record<string, any>,
+  initialDir: string | null,
+  persistedSession: any = null,
+) {
+  let currentDir = initialDir;
+  let latestSession = persistedSession ? structuredClone(persistedSession) : null;
+  const sessions: any[] = [];
+  const calls: string[] = [];
+  const locked = new Set<string>();
+  const bridge: any = {
+    projectDir: currentDir,
+    projectDirFromUrl: false,
+    isNative: () => true,
+    setProjectDir: (value: string) => {
+      currentDir = value;
+      bridge.projectDir = value;
+    },
+    restoreProjectDir: (value: string | null) => {
+      currentDir = value;
+      bridge.projectDir = value;
+    },
+    openProject: async () => {
+      if (currentDir && locked.has(currentDir)) throw new Error("project_locked: 项目已被占用");
+      const project = currentDir ? projects[currentDir] : null;
+      if (!project) throw new Error("项目目录不存在");
+      return structuredClone(project);
+    },
+    readProject: async () => currentDir && projects[currentDir]
+      ? structuredClone(projects[currentDir])
+      : null,
+    readRecoveryJournal: async () => null,
+    listenNativeDrops: async () => () => {},
+    writeRecoveryJournal: async () => {},
+    writeProject: async (project: any) => {
+      if (currentDir) projects[currentDir] = structuredClone(project);
+    },
+    clearRecoveryJournal: async () => {},
+    projectIdentity: async () => currentDir && projects[currentDir]
+      ? projects[currentDir].project.id
+      : null,
+    saveSession: async (session: any) => {
+      const payload = structuredClone(session);
+      if (payload.project_dir) {
+        const project = projects[payload.project_dir];
+        assert(project != null, `session must not point at an unknown directory: ${payload.project_dir}`);
+        assert(
+          payload.project_id === project.project.id,
+          `session identity mismatch for ${payload.project_dir}`,
+        );
+      }
+      sessions.push(payload);
+      latestSession = payload;
+    },
+    loadSession: async () => {
+      if (!currentDir && latestSession?.project_dir) {
+        currentDir = latestSession.project_dir;
+        bridge.projectDir = currentDir;
+      }
+      return latestSession ? structuredClone(latestSession) : null;
+    },
+    closeProject: async (projectDir: string) => {
+      calls.push(`close:${projectDir}`);
+    },
+    command: async () => ({}),
+  };
+  return { bridge, sessions, calls, locked };
 }
 
 Deno.test("UI recovery queue serializes saves and survives a failed task", async () => {
@@ -40,6 +140,150 @@ Deno.test("UI surfaces backend recovery warnings from import results", () => {
     "warning arrays must preserve recovery warnings",
   );
   assert(recoveryWarning({ warning: "普通提示" }) === "", "unrelated warnings must stay quiet");
+});
+
+Deno.test("native project transitions keep A to B to A reader positions and session identities", async () => {
+  const runtime = globalThis as typeof globalThis & { document?: unknown; __TAURI__?: unknown };
+  const previousDocument = runtime.document;
+  const previousTauri = runtime.__TAURI__;
+  const previousFetch = globalThis.fetch;
+  const root = {
+    innerHTML: "",
+    querySelector: () => null,
+    querySelectorAll: () => [],
+    classList: { add: () => {}, remove: () => {}, toggle: () => {} },
+  };
+  runtime.document = {
+    querySelector: () => root,
+    querySelectorAll: () => [],
+    addEventListener: () => undefined,
+  };
+  runtime.__TAURI__ = undefined;
+  globalThis.fetch = async () => { throw new Error("test fetch disabled"); };
+  try {
+    const { WorkbenchStore } = await import("../app/main.js?native-transition-identity-test");
+    const projects: Record<"A" | "B", any> = { A: switchProject("项目 A"), B: switchProject("项目 B") };
+    const first = nativeSwitchBridge(projects, "A");
+    const store: any = new WorkbenchStore(first.bridge);
+    store.data = structuredClone(projects.A);
+    store.trackProjectIdentity();
+    store.ui.screen = "project";
+    store.ui.activeId = projects.A.content_items[0].id;
+    store.ui.mode = "structure";
+    store.ui.rightPanel = "media";
+    store.ui.route = "media";
+    store.tabs = [{ content_item_id: store.ui.activeId, mode: "structure", pinned: true, scroll_top: 42 }];
+    store.markNativeLease("A");
+    await store.persistSession(store.session());
+
+    await store.openProject("B");
+    assert(first.bridge.projectDir === "B", "successful switch must point at B");
+    assert(store.data.project.id === projects.B.project.id, "B must be canonical in memory after the switch");
+    assert(store.ui.activeId === projects.B.content_items[0].id, "B must not inherit A's active lesson");
+    assert(store.ui.mode === "writing", "B without a saved position must use its default mode");
+
+    store.ui.mode = "preview";
+    store.ui.rightPanel = "status";
+    store.ui.route = "publish";
+    store.ui.activeId = projects.B.content_items[0].id;
+    await store.flush();
+    await store.openProject("A");
+    assert(first.bridge.projectDir === "A", "second switch must return to A");
+    assert(store.data.project.id === projects.A.project.id, "A must be canonical after returning");
+    assert(store.ui.activeId === projects.A.content_items[0].id, "A's saved lesson must return");
+    assert(store.ui.mode === "structure", "A's saved mode must return");
+    assert(store.ui.rightPanel === "media", "A's saved panel must return");
+    assert(store.ui.route === "media", "A's saved route must return");
+    assert(store.tabs[0]?.pinned === true && store.tabs[0]?.scroll_top === 42, "A's saved tab position must return");
+
+    // Immediate save and close must continue to use the committed A identity.
+    await store.flush();
+    assert(first.sessions.at(-1)?.project_dir === "A", "immediate save must persist A, not the previous target");
+    assert(first.sessions.at(-1)?.project_id === projects.A.project.id, "immediate save must persist A's ID");
+    await store.closeNativeProject("A");
+    assert(!store.hasNativeLease("A"), "immediate close must release only A's owned lease");
+
+    for (const payload of first.sessions) {
+      if (!payload.project_dir) continue;
+      const project = projects[payload.project_dir as "A" | "B"];
+      assert(project != null, "every persisted directory must be a known project");
+      assert(payload.project_id === project.project.id, "every persisted top-level session must match its directory");
+      for (const [id, record] of Object.entries(payload.project_sessions || {}) as Array<[string, any]>) {
+        const recordProject = projects[record.project_dir as "A" | "B"];
+        assert(recordProject != null, "nested session records must point at known projects");
+        assert(id === record.project_id, "nested session key must match project_id");
+        assert(record.project_id === recordProject.project.id, "nested session identity must match its directory");
+      }
+    }
+
+    const restart = nativeSwitchBridge(projects, null, first.sessions.at(-1));
+    const restarted: any = new WorkbenchStore(restart.bridge);
+    await restarted.initialize();
+    assert(restart.bridge.projectDir === "A", "restart must select the last committed project");
+    assert(restarted.data.project.id === projects.A.project.id, "restart must load the committed project");
+    assert(restarted.ui.activeId === projects.A.content_items[0].id, "restart must restore A's reading position");
+    assert(restarted.ui.mode === "structure" && restarted.ui.route === "media", "restart must restore A's mode and view");
+  } finally {
+    runtime.document = previousDocument;
+    runtime.__TAURI__ = previousTauri;
+    globalThis.fetch = previousFetch;
+  }
+});
+
+Deno.test("native failed transitions keep the old session for missing, invalid, and locked targets", async () => {
+  const runtime = globalThis as typeof globalThis & { document?: unknown; __TAURI__?: unknown };
+  const previousDocument = runtime.document;
+  const previousTauri = runtime.__TAURI__;
+  const previousFetch = globalThis.fetch;
+  const root = {
+    innerHTML: "",
+    querySelector: () => null,
+    querySelectorAll: () => [],
+    classList: { add: () => {}, remove: () => {}, toggle: () => {} },
+  };
+  runtime.document = {
+    querySelector: () => root,
+    querySelectorAll: () => [],
+    addEventListener: () => undefined,
+  };
+  runtime.__TAURI__ = undefined;
+  globalThis.fetch = async () => { throw new Error("test fetch disabled"); };
+  try {
+    const { WorkbenchStore } = await import("../app/main.js?native-transition-failure-test");
+    const projects: Record<"A" | "B", any> = { A: switchProject("项目 A"), B: switchProject("项目 B") };
+    const first = nativeSwitchBridge(projects, "A");
+    first.locked.add("B");
+    const store: any = new WorkbenchStore(first.bridge);
+    store.data = structuredClone(projects.A);
+    store.trackProjectIdentity();
+    store.ui.activeId = projects.A.content_items[0].id;
+    store.ui.mode = "preview";
+    store.ui.route = "media";
+    store.markNativeLease("A");
+    await store.persistSession(store.session());
+
+    await store.openProject("B");
+    await store.openProject("missing");
+    assert(first.bridge.projectDir === "A", "missing or locked targets must restore the old path");
+    assert(store.data.project.id === projects.A.project.id, "missing or locked targets must keep old data");
+    assert(first.calls.every((call: string) => call !== "close:B" && call !== "close:missing"), "unopened targets must never be closed");
+    assert(first.sessions.at(-1)?.project_dir === "A", "failed target opens must retain the old directory");
+    assert(first.sessions.at(-1)?.project_id === projects.A.project.id, "failed target opens must retain the old identity");
+
+    first.locked.delete("B");
+    first.bridge.openProject = async () => ({ malformed: true });
+    await store.openProject("B");
+    assert(first.bridge.projectDir === "A", "malformed target data must roll back the old path");
+    assert(first.calls.at(-1) === "close:B", "malformed target data must release its provisional target lease");
+    assert(first.sessions.at(-1)?.project_dir === "A", "rollback must restore the complete old session");
+    assert(first.sessions.at(-1)?.project_id === projects.A.project.id, "rollback must restore the old project ID");
+    assert(first.sessions.at(-1)?.mode === "preview" && first.sessions.at(-1)?.route === "media", "rollback must restore old reader state");
+    assert(store.data.project.id === projects.A.project.id && store.ui.mode === "preview", "rollback must keep old in-memory reader state");
+  } finally {
+    runtime.document = previousDocument;
+    runtime.__TAURI__ = previousTauri;
+    globalThis.fetch = previousFetch;
+  }
 });
 
 Deno.test("WorkbenchStore flush retries a mutation that lands during save", async () => {

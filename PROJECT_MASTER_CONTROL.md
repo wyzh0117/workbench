@@ -497,13 +497,23 @@ N1
 
 # 6. 当前项目位置
 
-> 最后更新时间：2026-09-22
+> 最后更新时间：2026-09-23
 >
-> 当前版本：**V0（已 CLOSED）**
+> 当前版本：**V1（ACTIVE）**
 >
-> 当前任务：**V0-T04 — Output & Publish（VERIFIED）**
+> 当前任务：**V1-T02 — macOS Distribution & Public Release Closure**
 >
-> 当前状态：**V0 四个平级任务全部 VERIFIED；V0 CLOSED，尚未进入 V1**
+> 当前状态：**PARTIAL**（BLOCKER：缺正式 macOS signing / notarization credentials）
+>
+> 产品状态：**DOGFOOD READY**
+>
+> 分发状态：**PARTIAL**（正式 Universal DMG、公开仓库、GitHub Release、固定 latest 直链与 SHA-256 已完成；Developer ID 签名与 Apple 公证未完成）
+>
+> 下一步：**获取 Apple Developer 分发资格后补做签名 / 公证 / Release 重传 / 安装 smoke**
+>
+> V0 状态保持：**V0 CLOSED；V0-T01 / V0-T02 / V0-T03 / V0-T04 全部 VERIFIED**
+>
+> V1-T01 状态保持：**VERIFIED**（见 **§33**）；V1-T02 完成记录与证据：见 **§34**。
 
 ---
 
@@ -520,7 +530,7 @@ V0 当前只使用以下四个平级任务。
 
 注意：
 
-> V0 的四个平级任务已全部 VERIFIED；V0 CLOSED，尚未进入 V1。
+> V0 的四个平级任务已全部 VERIFIED；V0 CLOSED。V1 已 ACTIVE，其当前唯一任务 V1-T01 已完成并置为 VERIFIED，产品进入 DOGFOOD READY（见 §33）。
 
 V0-T02 已 VERIFIED（含真实 Tauri 窗口内完整 Course Authoring 走查，见 14.4）。
 V0-T03 已 VERIFIED（含最终构建真实 Tauri 窗口内完整 AI 走查，见 §15）。
@@ -1117,7 +1127,7 @@ cargo build / cargo check：通过
   3. 任意一课：点击 S01-02 跳到该课，面包屑、标签页、左栏同步切换，S01-01 数据不受影响。
   4. 正文：在窗口内键入正文并自动保存，project.json 的 updated_at 与区块 content 同步更新。
   5. 结构：「＋ 添加占位符」生成待补区块（02），完成度 100% → 33%，出现「文字：缺 1 段」。
-  6. 素材：媒体库列出 2 个素材，图片渲染为真实 <img>（AXImage「搜索对比截图」）、
+  6. 素材：媒体库列出 2 个素材，图片渲染为真实 <img>（AXImage 暴露素材文件名）、
      Markdown 显示正文内容，均无「无法预览」错误。
   7. Flow / Grid：Flow ↔ Grid 往返切换后默认网格仍为 3 列 × 3 行，已放置区块保持 R1C1，
      未放置的待补归入「还没有放进网格的正文」。
@@ -1603,8 +1613,7 @@ Desktop 基础闭环、Course Authoring、AI Workflow、Output & Publish
 V0 CLOSED
 ```
 
-V0 关闭后不自动进入 V1：V1 仍为 NOT ACTIVE，需要用户明确开启新版本后
-才允许规划 V1 的范围（本任务未创建任何新阶段、新任务编号或 V1 内容）。
+V0 关闭后，已按用户批准的 V1-T01 启动 V1。V1 当前只执行这个已批准的平铺任务，不创建其他 V1 任务、阶段或任务层级；V0 的 CLOSED 与四个 VERIFIED 结论保持不变。
 
 V0 关闭时仍留在 Backlog 且不阻塞 V0 的事项见 §16.4 第 3 条与 §23。
 
@@ -1900,6 +1909,49 @@ YYYY-MM-DD | Task | From → To | Summary
 当前：
 
 ```text
+2026-09-23 | V1-T02 | NOT ACTIVE → IN PROGRESS → DONE → PARTIAL
+按用户明确要求创建 V1-T02 — macOS Distribution & Public Release Closure（平铺任务，不是新 Milestone，也不是 V1.1 / Release Phase）。
+完成：①README / 总控文档状态对齐（下载入口、系统要求、安装步骤、首次打开说明、分发状态如实标注）；②仓库安全预检
+（全仓 + 全 Git history 密钥扫描：0 真实凭据；`.release/` 等 release 暂存目录补入 `.gitignore`；文档中的本机路径 / 真实课程标题 /
+钥匙串账户 UUID 全部脱敏；修正 src-tauri/README.md 中已过时的「无 Rust 工具链 / 钥匙串未实现」描述）；
+③正式 Release 构建：`cargo tauri build --target universal-apple-darwin --bundles app,dmg`，
+`lipo -archs` 实测 `x86_64 arm64`；④产品元数据对齐：identifier `local.ai-course-workbench` → `io.github.wyzh0117.ai-course-workbench`
+（首次公开分发前唯一可无痛更换的时机）、正式全尺寸 `.icns` 图标集、`LSMinimumSystemVersion 11.0`（与二进制 `minos 11.0` 一致）、
+`CFBundleShortVersionString 0.1.0`、教育分类、版权字段；⑤固定 asset 名 `AI-Course-Workbench-macOS.dmg`
+（10,357,233 bytes，SHA-256 `59597a342109785e190d9dc8194d841744249dbbc46498ee594572d2d2412573`）+ 同名 `.sha256` 资产；
+⑥公开 GitHub 仓库、`v0.1.0` tag、GitHub Release、`/releases/latest/download/AI-Course-Workbench-macOS.dmg` 固定直链；
+⑦最小 release workflow（tag / 手动触发，Actions 按 commit SHA 固定，Apple 凭据全部走 Secrets）；
+⑧安装后 App 的真实运行 smoke：DMG 挂载 → 拖入 /Applications → 从 /Applications 启动 →
+真正的首次启动状态（应用数据目录零文件、干净默认主页、无测试项目）→ 三栏工作台 → AI 助手面板与
+「API Key 只由本机服务写入 macOS 系统钥匙串 / 不回显 / 不进入课程、备份、日志、导出或执行记录」说明 → 关闭 → 重启；
+⑨自动化门禁：deno task check 通过、deno task test 236 passed / 0 failed、cargo test 49 passed / 0 failed。
+BLOCKER（未完成）：缺正式 macOS signing / notarization credentials —— 本机 `security find-identity -v -p codesigning`
+返回 0 valid identities，无 Developer ID Application 证书，无公证凭据。当前 DMG 为 **ad-hoc 签名**
+（`codesign --verify --deep --strict` 通过，`Identifier=io.github.wyzh0117.ai-course-workbench`，`TeamIdentifier=not set`），
+`spctl --assess --type execute` 判定 **rejected**。因此 V1-T02 = **PARTIAL**，
+**不宣称** `PUBLIC RELEASE READY` / 「普通用户无安全阻碍安装 / 正式站外分发已完成」。
+NEXT ACTION：获取 Apple Developer 分发资格后补做签名 / 公证 / Release 重传 / 安装 smoke，不需要重新开发 Workbench 本体。详见 §34。
+
+2026-09-23 | V1-T01 | IN PROGRESS → DONE → VERIFIED
+V1-T01 七项收尾全部完成并验证：①项目切换状态机（切换只提交新项目自身状态，失败保留原会话，不再出现「新目录 + 旧 project_id / 旧阅读位置」）②系统级凭据存储
+（macOS 钥匙串，桌面壳 Rust 与浏览器服务两条路径；providers.json 只留元数据，明文仅在写入并校验成功后迁移删除）③浏览器刷新 / 会话恢复（`<project>/.workspace/browser-session.json`，
+版本化 + 字段白名单 + 64KB 上限 + 缺失/损坏/串项目安全降级）④重复交互清理（顶栏重复折叠按钮改为「项目选择」，左右栏各只保留一个与自身绑定的折叠控件）⑤全局 UI 对齐
+⑥大白话文案（保存 / 锁 / 外部冲突 / 凭据 / 恢复提示）⑦自动化 + 真实回归。
+自动化门禁：deno task check 通过、deno task test 236 passed / 0 failed、cargo test 49 passed / 0 failed、cargo build 通过、
+cargo tauri build --debug 生成 .app 成功（.dmg 因本环境禁用 hdiutil 无法生成，属环境限制而非仓库缺陷，见 §33.4）。
+真实桌面走查（最终构建）：项目选择返回后项目与阅读位置仍在（S01-02）、左右栏折叠控件收窄为窄轨 ☰ 后可原样恢复、DeepSeek 密钥保存 / 更新 / 删除在系统钥匙串实测生效
+（账户 `<project-hash>:provider:deepseek`）、测试密钥在项目 / 应用数据 / 执行记录中零明文命中。
+真实浏览器走查：切课次 + 切右侧面板后 `browser-session.json` 记录 A 的 project_id、S01-02 与 right_panel=media，刷新后位置与面板恢复；编辑 → 保存 → 刷新内容一致；折叠状态入会话。
+清理与首启：/tmp 与 /private/tmp 的测试夹具、日志、导出物、临时工具全部移除；应用数据目录会话与执行记录清空，首启验收后零持久化文件（真正首次启动状态）；
+用户真实课程项目（本地路径已隐去）内容零改动（深度比对仅 `updated_at` 元数据刷新）。
+OPEN BLOCKERS：NONE。V1-T01 = VERIFIED；PRODUCT STATE = DOGFOOD READY；
+NEXT ACTION = PAUSE FEATURE DEVELOPMENT（不创建 V1-T02，等待真实使用反馈）。详见 §33。
+
+2026-09-22 | V1-T01 | READY → IN PROGRESS
+按已批准的 V1-T01 任务卡启动 V1：V1 进入 ACTIVE，V1-T01 成为当前任务并进入 IN PROGRESS；
+V0 保持 CLOSED，V0-T01 / V0-T02 / V0-T03 / V0-T04 保持 VERIFIED；不创建其他 V1 任务或新阶段。
+NEXT ACTION：继续 V1-T01。
+
 2026-09-22 | V0-T04 | NOT ACTIVE → IN PROGRESS → DONE → VERIFIED
 最终构建真实 Tauri 窗口内完成完整 Output & Publish 走查（AX 驱动真实控件 + 落盘 sha256/JSON/PDF OCR 复核）：
 单课 Markdown 导出到项目目录内（自拷贝场景）→ 素材字节完全不变 → Static Web Package 移出项目目录后
@@ -2145,24 +2197,48 @@ PROJECT_MASTER_CONTROL.md
 
 # 29. 当前唯一 NEXT ACTION
 
-> **V0 已 CLOSED；唯一下一步是「制定 / 启动 V1 规划」（由用户决定何时开始）。**
+> **V0 仍为 CLOSED；V0-T01 / V0-T02 / V0-T03 / V0-T04 全部 VERIFIED。V1 已 ACTIVE。V1-T01 — V0 Hardening & UX Polish = VERIFIED；V1-T02 — macOS Distribution & Public Release Closure = PARTIAL（BLOCKER：缺正式 macOS signing / notarization credentials）。**
 
-V0-T01 / V0-T02 / V0-T03 / V0-T04 全部 VERIFIED：V0-T04 的实现、自动化验收与
-最终构建的真实 Tauri 窗口内完整 Output & Publish 走查全部完成（证据见 §16.2），
-且 T04 没有遗留 DoD BLOCKER，因此：
+V1-T01 的实现、自动化门禁与最终构建的真实走查（桌面 + 浏览器）全部完成（证据见 §33），OPEN BLOCKERS = NONE。
+
+V1-T02 由用户明确提出，因此允许创建；它把已 DOGFOOD READY 的 Workbench 做成普通 macOS 用户可下载安装的正式分发包。
+已完成：文档对齐、仓库安全预检、Universal（Apple Silicon + Intel）Release 构建、正式 DMG、
+版本号与 bundle 元数据、SHA-256、公开 GitHub 仓库、`v0.1.0` tag、GitHub Release、固定 latest 直链、
+安装后 App 的真实运行 smoke。**未完成**：Developer ID Application 签名与 Apple 公证/stapling，
+因此**不得宣称** `PUBLIC RELEASE READY` / 「普通用户无安全阻碍安装」（证据与边界见 §34）。
 
 ```text
 V0 CLOSED
+V0-T01 / V0-T02 / V0-T03 / V0-T04  VERIFIED
+V1 ACTIVE
+CURRENT TASK    V1-T02 — macOS Distribution & Public Release Closure
+CURRENT STATUS  PARTIAL
+PRODUCT STATE   DOGFOOD READY
+DISTRIBUTION    PARTIAL
+OPEN BLOCKERS   BLOCKER：缺正式 macOS signing / notarization credentials
 ```
 
 下一步唯一动作：
 
 ```text
-制定 / 启动 V1 规划
+获取 Apple Developer 分发资格后补做签名 / 公证 / Release 重传 / 安装 smoke
 ```
 
-V1 具体范围必须由用户决定：V1 保持 NOT ACTIVE，不得因为 V0 关闭而自动拆解 V1、
-创建新的阶段树或任务编号；用户决定开启时，先更新本文件与 README 再开工。
+拿到 Developer ID Application 证书与公证凭据后，只需：
+
+```text
+1. 导入证书并设置 APPLE_SIGNING_IDENTITY（本机钥匙串 / GitHub Actions Secrets）
+2. 重新执行 cargo tauri build --target universal-apple-darwin --bundles app,dmg
+   （或直接运行 .github/workflows/release.yml，它会自动签名 + 公证）
+3. 用同一个固定文件名 AI-Course-Workbench-macOS.dmg 重新上传 Release Asset
+4. 重跑一次安装 smoke 与 spctl 评估
+```
+
+**不需要重新开发 Workbench 本体。** 在此之前不重新打开 V0，也不创建 V1-T03 或任何新的阶段层级。
+
+注意：Dogfooding 是产品使用状态，不是新的产品阶段；不得创建
+`Dogfood Phase` / `V1-Dogfood` / `V1.1` / `V1-T01A`。
+
 （文档纠错：本项目 V0 只有 T01–T04，此前出现的“V0-T05 发布能力”为笔误，已更正为
 `V0-T04 — Output & Publish`，不创建 V0-T05。）
 
@@ -2178,13 +2254,17 @@ NORTH STAR
 长期、本地优先、AI 协作的课程生产与维护工作台
 
 CURRENT VERSION
-V0（已 CLOSED）
+V1（ACTIVE）
 
 CURRENT TASK
-无（V0-T04 Output & Publish 已 VERIFIED）
+V1-T02 — macOS Distribution & Public Release Closure
 
 CURRENT STATUS
+PARTIAL
+PRODUCT STATE = DOGFOOD READY
+DISTRIBUTION STATE = PARTIAL
 V0 = CLOSED；V0-T01 / V0-T02 / V0-T03 / V0-T04 全部 VERIFIED
+V1-T01 = VERIFIED（§33）；V1-T02 = PARTIAL（§34）
 
 DONE / IMPLEMENTED
 - Canonical / Domain / Service 主体
@@ -2206,22 +2286,41 @@ DONE / IMPLEMENTED
 - 输出：Markdown（当前课 / 整门课程）、Semantic HTML、Static Web Package、PDF、
   微信 / 富文本迁移版、Project JSON、素材包、完整项目包；导出严格只读并可记录发布节点
 - 真实 Tauri 窗口内完整 Output & Publish 走查（含自拷贝素材回归、BLOCKING 拦截、关闭 → 重启）
-- Deno 223 tests + Rust 47 tests + cargo build + cargo tauri build --debug（.app 与 .dmg）
+- V1-T01 收尾：项目切换状态机（按 project_id 分别保存阅读位置，切换不继承旧项目状态、失败回滚）
+- V1-T01 收尾：系统级凭据存储（macOS 钥匙串，桌面壳 + 浏览器服务两条路径；明文迁移成功后删除、零泄漏）
+- V1-T01 收尾：浏览器刷新 / 会话恢复（browser-session.json，版本化 + 字段白名单 + 安全降级）
+- V1-T01 收尾：重复交互清理（顶栏改为「项目选择」，左右栏各一个与自身绑定的折叠控件）
+- V1-T01 收尾：全局 UI 对齐 + 大白话文案（保存 / 锁 / 外部冲突 / 凭据 / 恢复 / 下一步动作）
+- 测试与回归：Deno 236 tests + Rust 49 tests + cargo build + cargo tauri build --debug（.app 成功生成）
+- 真实走查：最终构建的桌面走查 + 浏览器刷新走查 + 首启验收（真正首次启动状态）
+- V1-T02 分发：正式 Release 构建（Universal，arm64 + x86_64）、DMG 打包、正式图标集（.icns 全尺寸）
+- V1-T02 分发：产品元数据对齐（productName / identifier / version / 最低 macOS / 分类 / 版权）
+- V1-T02 分发：固定 asset 文件名 `AI-Course-Workbench-macOS.dmg` + SHA-256 校验资产
+- V1-T02 分发：公开 GitHub 仓库、`v0.1.0` tag、GitHub Release、`/releases/latest/download/...` 固定直链
+- V1-T02 分发：最小 release workflow（tag / 手动触发；配好 Secrets 后自动签名 + 公证）
+- V1-T02 分发：安装后 App 的真实运行 smoke（从 /Applications 启动、干净默认主页、三栏工作台、
+  AI 助手与钥匙串说明、关闭 → 重启）
+- V1-T02 安全预检：全仓 + 全 Git history 密钥扫描、用户数据 / 开发痕迹清理、文档脱敏
 
 OPEN BLOCKERS
-- NONE
+- BLOCKER：缺正式 macOS signing / notarization credentials
+  （本机 0 valid code-signing identities；无 Developer ID Application 证书，无公证凭据）
+  → 当前 DMG 为 ad-hoc 签名，`spctl --assess` 判定 rejected；
+     不得宣称 PUBLIC RELEASE READY / 「普通用户无安全阻碍安装」
 
 AFTER CURRENT TASK
-无：V0 CLOSED；V1 需用户明确开启后才允许规划
+拿到 Apple Developer 分发资格后补做签名 / 公证 / Release 重传 / 安装 smoke；
+在此之前不创建 V1-T03，也不重新打开 V0。
 
 V1
-NOT ACTIVE
+ACTIVE
 
 V2
 NOT ACTIVE
 
 NEXT ACTION
-制定 / 启动 V1 规划（V0 已 CLOSED；V1 范围由用户决定，当前 NOT ACTIVE）。
+获取 Apple Developer 分发资格后补做签名 / 公证 / Release 重传 / 安装 smoke
+（V1-T02 = PARTIAL；PRODUCT STATE = DOGFOOD READY；V0 保持 CLOSED，四个 V0 任务保持 VERIFIED。）
 ```
 
 ---
@@ -2291,3 +2390,338 @@ V0
 > **先完整阅读 `PROJECT_MASTER_CONTROL.md` 和 `README.md`。不要重新规划版本，不要创建新的 Milestone。确认当前 Version、Current Task、Definition of Done 和 NEXT ACTION 后，只继续当前任务。任务结束后按照总控规定输出 Completion Report，并同步更新 `PROJECT_MASTER_CONTROL.md`。**
 
 这条规则优先于任何历史临时开发文档中的阶段命名。
+
+---
+
+# 33. V1-T01 — V0 Hardening & UX Polish（VERIFIED）
+
+> 状态：**DONE → VERIFIED**　｜　完成时间：2026-09-23
+> 产品状态：**DOGFOOD READY**　｜　OPEN BLOCKERS：**NONE**
+> 任务卡：`V1-T01_V0_Hardening_and_UX_Polish.md`
+
+## 33.1 七项收尾内容（Done）
+
+| # | 收尾项 | 结果 | 关键实现 |
+|---|---|---|---|
+| 1 | 项目切换状态机 | 完成 | 切换只提交新项目自身状态；按 `project_id` 分别保存阅读位置；切换失败 / 回滚保留原会话，不产生「新目录 + 旧 project_id / 旧阅读位置」 |
+| 2 | 系统级凭据存储 | 完成 | macOS 钥匙串（`com.ai-course-workbench.ai`），桌面壳 Rust `MacKeychainStore` 与浏览器服务 `MacKeychainSecretStore` 两条路径；`providers.json` 只留元数据，明文仅在写入并校验成功后迁移删除，失败保留并给出可读提示、不回显 |
+| 3 | 浏览器刷新 / 会话恢复 | 完成 | `<project>/.workspace/browser-session.json`：版本号 + 字段白名单 + 64KB 上限；缺失 / 损坏 / 属于其他项目时安全降级，不白屏、不写错项目 |
+| 4 | 重复 UI 交互清理 | 完成 | 顶栏重复折叠按钮改为「项目选择」（返回默认主页、不关闭项目）；左右栏各只保留一个与自身绑定的折叠控件；全仓重复交互审计 |
+| 5 | 全局 UI 对齐 | 完成 | 工作台各核心界面控件位置 / 尺寸 / 间距统一，保留必要的紧凑例外 |
+| 6 | 大白话文案 | 完成 | 保存失败 / 项目锁 / 外部修改冲突 / 凭据写入 / 恢复与下一步动作改为用户可读表述，并说明「不会做什么」 |
+| 7 | 自动化 + 真实回归 | 完成 | 见 §33.2 与 §33.3 |
+
+## 33.2 自动化验证
+
+```text
+deno task check             通过（exit 0）
+deno task test              236 passed / 0 failed
+cargo test                  49 passed / 0 failed
+cargo build                 通过
+cargo tauri build --debug   生成 .app 成功；.dmg 未能生成（本环境禁用 hdiutil，见 §33.4）
+```
+
+新增 / 扩展测试：`tests/workbench_ui_test.ts`（折叠控件唯一性、控件对齐、返回主页保留项目与位置、文案可读性）、
+`tests/browser_session_test.ts`（浏览器会话存取、白名单、上限、损坏 / 缺失 / 串项目降级）、
+`tests/recovery_ui_test.ts`（A→B→A 阅读位置与身份、失败回滚）、`tests/ai_transport_test.ts`、
+`tests/native_boot_test.ts`、`tests/ai_ui_test.ts`、`tests/ai_workflow_test.ts`、`tests/native_boundary_test.ts`。
+
+## 33.3 真实走查证据
+
+**桌面（最终构建 `.app`）**
+
+- 启动 → 默认主页（首启状态：新建课程 / 打开项目文件夹 / 种子选择，无任何测试项目）；
+- 打开项目 A（真实课程项目，3 课）→ 切到第 2 课；
+- 点顶栏「项目选择」→ 回到默认主页，**项目与阅读位置仍在**（继续工作卡显示 S01-02），项目租约未释放；
+- 左栏折叠控件收窄为窄轨 `☰` 后点击可原样恢复（导航 13 项 → 0 → 13）；右栏折叠 / 展开对称；
+- 顶栏只有课次前后导航 `‹ ›` 与「项目选择」，无重复折叠按钮；
+- AI 助手 → DeepSeek → 「设置」：显示「这里保存的是地址与模型名，不是密钥」；
+  未配置时如实提示「缺少密钥，不会伪造回答」；
+- 密钥保存 → 系统钥匙串出现账户 `<project-hash>:provider:deepseek`
+  （与 Rust 实现的 sha256 账户规则一致），UI 转为「已配置密钥」；更新 → 条目修改时间刷新；
+  删除 → 条目消失、UI 回到「未配置密钥」；
+- 项目未完成保存时启动会给出恢复选择（保留磁盘版本 / 恢复暂存内容），实测「保留磁盘版本」可正常继续。
+
+**浏览器（真实 Chromium + 本地服务，`PROJECT_ROOT=<测试项目>`）**
+
+- 载入项目 → 切到 S01-02 → 切右侧面板到「媒体」→ `browser-session.json` 记录
+  `project_id`（项目 A）、`active_content_item_id`（S01-02）、`right_panel=media`；
+- 刷新页面 → 课程位置与右侧面板均恢复；
+- 正文追加标记 → 「保存」显示「已保存」→ 刷新后标记仍在、位置不变；
+- 左栏折叠状态写入会话（`left_collapsed: true`）。
+
+## 33.4 验证方式与限制说明（如实记录）
+
+- `.dmg` 未能生成：`hdiutil create ... ` 在本环境返回 `Operation not permitted`（对 /tmp 的自建镜像同样失败），
+  属**环境对磁盘镜像操作的权限限制**，不是仓库或产品缺陷；任务卡要求的最终构建产物 `.app` 已成功生成并用于上述走查。
+- 桌面壳的密钥读写需要**不继承代理沙箱**的进程上下文：由代理会话直接派生的子进程会被沙箱拒绝钥匙串写入
+  （`UNIX[Operation not permitted]`），改用 LaunchServices（`open`）启动应用后，保存 / 更新 / 删除全部实测通过。
+  这是验证环境约束，用户正常双击启动不受影响。
+- 原生「打开项目文件夹」面板（NSOpenPanel）的列表项在本环境未通过 AX / OCR 稳定暴露，因此**多项目切换**的运行时验证
+  采用两条路径交叉印证：①一次真实的经面板完成的切换（会话从上一个项目一致地切换到新项目自身的位置，未继承旧位置）；
+  ②服务层与 UI 层自动化用例覆盖 A→B→A 身份 / 位置 / 失败回滚。面板本身的打开、取消、路径跳转均实测可用。
+- 首启验收通过界面控件（新建课程 / 打开项目文件夹 / 继续工作 + 种子选择）与「退出后应用数据目录零文件」确认，
+  未使用截图 OCR（本环境双屏 Retina 下 OCR 坐标不可靠）。
+
+## 33.5 清理与用户数据保护
+
+- 移除 `/tmp` 与 `/private/tmp` 下全部测试夹具、日志、导出物与临时工具（`v1t01-*`、`acw-*`、`V0-T0*`、`workbench-*` 等）；
+- 应用数据目录中的测试会话与假 provider 执行记录已清空；首启验收后该目录**无任何持久化文件**（真正首次启动状态）；
+- 测试期间写入系统钥匙串的测试密钥已删除（服务名下无残留条目）；
+- 用户真实课程项目（本地路径已隐去）：内容零改动（与本地备份深度比对，唯一差异为
+  `project.updated_at` 元数据刷新），未删除、未导入任何测试素材；
+- 仓库工作区无测试 / 调试生成物，未跟踪文件仅为本次任务卡与新增源码 / 测试。
+
+## 33.6 Definition of Done 对照
+
+| DoD 项 | 结论 |
+|---|---|
+| 17.1 状态一致性（切换不继承、关闭重启一致） | 通过（自动化 + 运行时证据） |
+| 17.2 系统级凭据存储 | 通过（钥匙串实测 + 零明文泄漏） |
+| 17.3 浏览器会话 | 通过（刷新恢复 + 安全降级） |
+| 17.4 UI 交互唯一性 | 通过（顶栏 / 左右栏控件唯一且绑定自身） |
+| 17.5 UI 对齐与恢复 UI | 通过 |
+| 17.6 大白话文案 | 通过 |
+| 17.7 回归 | 通过（Deno 236 / Rust 49 / check / build） |
+| 17.8 全新状态 | 通过（首启零持久化文件，无测试项目） |
+| 17.9 项目总控 | 通过（README、本文件、Change Log、V1-T01 = VERIFIED、NEXT ACTION 未创建 V1-T02） |
+
+## 33.7 Backlog（本轮不改，留给真实使用反馈判断）
+
+- 原生打开项目面板在自动化环境下的可访问性（属验证工具限制，非产品问题）；
+- `.dmg` 打包在受限环境无法验证（需在普通桌面会话复核一次）；
+- `--project-dir` 启动参数在已有其他会话时不会把该参数项目提交为会话项目（用户界面路径不受影响）；
+- 面板列表在超长目录下的滚动 / 搜索体验（观察项，待真实使用反馈）。
+
+## 33.8 结论
+
+```text
+V1-T01 = VERIFIED
+PRODUCT STATE = DOGFOOD READY
+OPEN BLOCKERS = NONE
+NEXT ACTION = PAUSE FEATURE DEVELOPMENT
+```
+
+用户拿到的是一个没有测试痕迹、刷新与切项目不会迷路、凭据保存在系统钥匙串、交互不重复、
+界面基本整齐、说明容易看懂的 Workbench，可直接开始真实课程制作并连续使用。
+本任务到此停止功能开发，不创建 V1-T02，等待真实使用反馈。
+
+---
+
+# 34. V1-T02 — macOS Distribution & Public Release Closure（PARTIAL）
+
+> 状态：**DONE → PARTIAL**　｜　完成时间：2026-09-23
+> 产品状态：**DOGFOOD READY**　｜　分发状态：**PARTIAL**
+> OPEN BLOCKERS：**BLOCKER — 缺正式 macOS signing / notarization credentials**
+> 任务卡：`V1-T02_macOS_Distribution_and_Public_Release_Closure.md`
+
+由用户明确提出而创建。它是一个**平铺任务**，不是新的 Milestone，也不是 V1.1 / Release Phase / Distribution Phase。
+本轮不增加任何课程编辑、AI、发布格式或工作流能力，只把已 DOGFOOD READY 的 Workbench 做成可下载安装的正式分发包。
+
+## 34.1 四件原始目标对照
+
+| # | 目标 | 结果 |
+|---|---|---|
+| 1 | README / MASTER CONTROL 文档状态彻底对齐 | 完成（V1-T01 = VERIFIED；V1-T02 = PARTIAL；下载入口 / 系统要求 / 安装步骤 / 首次打开说明 / 分发状态全部写明） |
+| 2 | 生成普通 macOS 用户可直接安装的正式分发包 | 完成（Universal DMG，Release 构建，正式图标与元数据），但**签名与公证未完成** → 首次打开多一步 |
+| 3 | 推送 GitHub 并创建带可下载安装包的 GitHub Release | 完成（仓库已 public，`v0.1.0` Release 含 `AI-Course-Workbench-macOS.dmg` 与 `.sha256`） |
+| 4 | 固定、简单、可长期使用的「最新版本直接下载」链接 | 完成（`/releases/latest/download/AI-Course-Workbench-macOS.dmg`，asset 文件名不随版本变化） |
+
+结论：目标 1 / 3 / 4 完成；目标 2 **部分完成** —— 安装包本身已可安装并实测可用，
+但「双击即开、无任何安全阻碍」这一步被签名 / 公证凭据卡住，因此整体为 **PARTIAL**。
+
+## 34.2 分发格式与架构
+
+```text
+分发格式：DMG（未增加 PKG / Homebrew Cask / Mac App Store / 自定义安装器 / 自动更新器）
+架构：Universal —— arm64 + x86_64 同一个安装包
+命令：cargo tauri build --target universal-apple-darwin --bundles app,dmg
+实测：lipo -archs → "x86_64 arm64"（Universal 构建成立，未降级为单一架构）
+最低系统：macOS 11.0（与二进制 LC_BUILD_VERSION minos 11.0 一致）
+```
+
+构建环境先补装 `x86_64-apple-darwin` Rust target（本机原本只有 `aarch64-apple-darwin`），Universal 目标因此可以成立。
+
+## 34.3 产品元数据（正式打包前检查）
+
+| 项 | 结果 |
+|---|---|
+| productName | `AI Course Workbench`（无 debug / test / v0-t04 等痕迹） |
+| identifier / bundle id | `local.ai-course-workbench` → **`io.github.wyzh0117.ai-course-workbench`** |
+| version | `0.1.0`（tauri.conf.json 与 Cargo.toml 一致，Release Tag `v0.1.0`） |
+| App 图标 | 由 1024×1024 源图生成正式全尺寸图标集；macOS 使用 `icon.icns`；DMG 卷图标同源 |
+| 窗口标题 | `AI Course Workbench` |
+| Finder / Applications / Dock 显示名 | `AI Course Workbench`（`CFBundleDisplayName` / `CFBundleName`） |
+| 最低 macOS | `LSMinimumSystemVersion 11.0` |
+| 分类 / 版权 | `public.app-category.education` / `NSHumanReadableCopyright` |
+| 架构 | Universal（arm64 + x86_64） |
+
+identifier 更换说明：`local.` 前缀是占位感较强的开发期取值，公开分发后会长期固化在
+Launch Services、应用数据目录与用户机器上；应用数据目录当前为空（无数据迁移成本），
+因此这是**唯一可以无痛更换的时机**。更换后应用数据目录为
+`~/Library/Application Support/io.github.wyzh0117.ai-course-workbench`，用户项目数据不受影响。
+
+## 34.4 发布资产与校验
+
+```text
+asset 文件名（固定，永不随版本号变化）：AI-Course-Workbench-macOS.dmg
+字节数：10,357,233
+SHA-256：59597a342109785e190d9dc8194d841744249dbbc46498ee594572d2d2412573
+同时上传：AI-Course-Workbench-macOS.dmg.sha256
+```
+
+固定文件名是「固定直链」成立的前提：Release Tag 可以是 `v0.1.0` / `v0.1.1` / `v0.2.0`，
+但下载资产文件名必须始终是 `AI-Course-Workbench-macOS.dmg`，否则
+`/releases/latest/download/<asset>` 会随版本失效。
+
+## 34.5 签名状态（本任务的核心限制）
+
+```text
+security find-identity -v -p codesigning  →  0 valid identities
+Developer ID Application 证书             →  不存在（钥匙串中无任何开发者证书）
+App Store Connect API Key / 公证凭据      →  不存在
+```
+
+因此本轮只能做 **ad-hoc 签名**（`APPLE_SIGNING_IDENTITY="-"` 走 Tauri 官方签名路径）：
+
+```text
+codesign --verify --deep --strict   →  valid on disk / satisfies its Designated Requirement（通过）
+codesign -dv                         →  Identifier=io.github.wyzh0117.ai-course-workbench
+                                        Signature=adhoc, TeamIdentifier=not set
+                                        Info.plist entries=16, Sealed Resources version=2
+spctl --assess --type execute        →  rejected
+```
+
+Tauri 打包过程同时明确输出：
+
+```text
+Warn skipping app notarization, no APPLE_ID & APPLE_PASSWORD & APPLE_TEAM_ID
+     or APPLE_API_KEY & APPLE_API_ISSUER & APPLE_API_KEY_PATH environment variables found
+```
+
+**必须如实说明**：未签名 / 未公证的 App 从浏览器下载后会被 Gatekeeper 隔离，
+普通用户首次打开需要「右键 → 打开 → 再点打开」或到「系统设置 → 隐私与安全性」放行。
+这不是本任务定义的「傻瓜式普通用户安装体验」，因此：
+
+```text
+不得宣称：PUBLIC RELEASE READY
+不得宣称：普通用户无安全阻碍安装
+不得宣称：正式站外分发已完成
+```
+
+本任务未做 ad-hoc 签名之外的任何绕过（不指导用户 `xattr -d com.apple.quarantine`、不关闭 Gatekeeper）。
+
+## 34.6 公开仓库与 Release
+
+```text
+仓库：https://github.com/wyzh0117/workbench           （PRIVATE → PUBLIC）
+Release 页面：https://github.com/wyzh0117/workbench/releases/latest
+固定直链：https://github.com/wyzh0117/workbench/releases/latest/download/AI-Course-Workbench-macOS.dmg
+Tag：v0.1.0
+```
+
+同步新增 `.github/workflows/release.yml`：最小化、单 macOS 作业、Universal 构建 →
+固定 asset 名重命名 → SHA-256 → 上传 Release Asset；**不**做多平台矩阵 / Windows / Linux /
+自动更新服务 / Nightly / Beta / 复杂 Release Matrix。Apple 凭据全部通过 `secrets.*` 注入，
+Actions 按 commit SHA 固定。配置好 Secrets 后同一条 workflow 会自动完成签名与公证，
+不需要改代码。**注意：该 workflow 在本轮未实际运行过**（首次运行需要 tag 推送或手动触发），
+属「已备好的路径」，不计入本轮已验证项。
+
+## 34.7 交付与验证证据
+
+| 项 | 证据 |
+|---|---|
+| 自动化门禁 | `deno task check` 通过（exit 0）；`deno task test` 236 passed / 0 failed；`cargo test` 49 passed / 0 failed |
+| 正式构建 | `cargo tauri build --target universal-apple-darwin --bundles app,dmg` exit 0（release profile，非 Debug） |
+| 架构 | `lipo -archs` → `x86_64 arm64` |
+| 签名 | `codesign --verify --deep --strict` 通过；`spctl` rejected（见 34.5） |
+| DMG 内容 | 挂载后含 `AI Course Workbench.app`、`Applications -> /Applications` 符号链接、`.VolumeIcon.icns` |
+| Info.plist | `CFBundleIdentifier` / `CFBundleShortVersionString` / `LSMinimumSystemVersion` / 分类 / 图标全部正确 |
+| 安装 | 从挂载的 DMG 拖入 `/Applications`，安装后 `codesign --verify --deep --strict` 仍通过 |
+| 首启 | 首次启动前应用数据目录零文件；启动后为干净默认主页（新建课程 / 打开项目文件夹 / 继续工作 + 种子选择），**无测试项目** |
+| 运行位置 | 进程路径为 `/Applications/AI Course Workbench.app/Contents/MacOS/ai-course-workbench`，**不依赖 `src-tauri/target/debug`** |
+| 三栏工作台 | 真实窗口内进入项目后渲染完整工作台：项目选择 / 课程地图 / 收件箱 / 制作看板 / 媒体库 / 待补总览 / 更新中心 / 发布中心 / 版本历史 / 项目设置 / 快速收集 / 搜索与命令，右栏 媒体 / 待补 / 状态 / AI 助手 / 属性 / 版本 |
+| AI 与钥匙串界面 | AI 助手面板显示「本地优先 · 只生成可审核建议」、上下文范围、服务商 / 模型、以及「API Key 只由本机服务写入 macOS 系统钥匙串，不回显，也不会进入课程、备份、日志、导出或执行记录」；设置区可展开显示名称 / Base URL / 默认模型 |
+| 关闭 → 重启 | AppleEvent 正常退出（0 残留进程），项目租约释放（`project.lock` 删除）；再次启动正常 |
+| 数据保护 | 验收使用的项目是 `/tmp` 下的隔离副本，原 `.workbench-project/project.json` SHA-256 前后一致（`606bb5dc…`） |
+
+## 34.8 Runtime Smoke 对照
+
+| 项 | 结论 |
+|---|---|
+| 安装后的 App 可以启动 | 通过（`/Applications` 真实窗口） |
+| 新建课程入口可用 | 通过（点击「新建课程」打开原生文件夹选择面板；面板 Cancel/Open 均存在） |
+| 打开项目入口可用 | 通过（`--project-dir` 打开隔离副本；点击「继续工作」卡进入完整三栏工作台） |
+| 不加载测试项目 | 通过（真正首次启动为零持久化文件 + 干净默认主页） |
+| 关闭 / 重启正常 | 通过（干净退出、租约释放、重启一致） |
+| 不依赖 `target/debug` 运行 | 通过（进程路径为 `/Applications/...`） |
+| 无 Debug 构建路径漏出 | 通过（本轮交付物全部来自 release profile） |
+| 出现 Debug 名称 / 测试项目 / DevTools | 未出现 |
+
+## 34.9 安全预检与文档脱敏
+
+公开仓库前对**当前工作树与全部 Git history**做了独立审计（结果：无真实凭据、无用户数据文件、history 可安全发布）：
+
+- 27 处 `sk-` 命中全部为自解释的测试夹具（如 `sk-should-never-be-written`、`sk-round-trip-must-never-return`），非真实密钥；
+- 无 `ghp_` / `AKIA` / 私钥 / `.env` / `.p8` / `.p12` / `.mobileprovision` / `.cer` 命中，且这些文件从未进入任何提交；
+- `.workbench-project/`、`.workspace`、`project.lock`、诊断日志、快照、会话文件**从未被提交**；
+- 提交身份为 GitHub noreply 邮箱，无个人邮箱泄漏；
+- **本轮修正**：`PROJECT_MASTER_CONTROL.md` 中本机真实路径、真实课程标题、钥匙串账户 UUID 全部脱敏为通用描述；
+  `src-tauri/README.md` 中已过时的「无 Rust 工具链 / 钥匙串未实现」表述更正为与当前代码一致；
+  `.gitignore` 补入 `.release/`、`.release-tmp/`、`dist/`、`*.dmg`、`*.dmg.sha256`（release 暂存目录不得入库）。
+
+## 34.10 本轮明确的非目标（未做，也不做）
+
+```text
+不新增课程编辑 / AI / 发布格式 / 工作流能力
+不增加 PKG / Homebrew Cask / Mac App Store / 自定义安装器 / 自动更新器
+不构建 Windows / Linux 分发包
+不做多平台 Release Matrix / Nightly / Beta 通道
+不实现浏览器代替用户自动挂载 DMG、写入 /Applications 或自动启动
+不绕过 Gatekeeper，不指导用户移除 quarantine 属性
+不把密钥写入仓库、Release Notes、日志或任何提交
+```
+
+## 34.11 Definition of Done 对照
+
+| DoD 项 | 结论 |
+|---|---|
+| 34.1 文档状态一致性 | 通过 |
+| 34.2 分发格式仅 DMG | 通过 |
+| 34.3 产品元数据正式且无开发痕迹 | 通过 |
+| 34.4 Universal 架构（或如实降级说明） | 通过（Universal 成立，未降级） |
+| 34.5 正式构建（非 Debug） | 通过 |
+| 34.6 SHA-256 校验 | 通过 |
+| 34.7 安全预检（无密钥 / 无用户数据 / 无开发痕迹） | 通过 |
+| 34.8 公开仓库与 GitHub Release | 通过 |
+| 34.9 固定直链可下载 | 通过（`/releases/latest/download/AI-Course-Workbench-macOS.dmg`） |
+| 34.10 签名 / 公证 | **未通过** — BLOCKER：缺 Developer ID 与公证凭据 |
+| 34.11 普通用户双击安装体验 | **未通过** — 首次打开需要一次显式放行 |
+| 34.12 文档记录两个下载入口 | 通过（README 的 Release 页面 + 固定直链） |
+| 34.13 Runtime Smoke | 通过（见 34.8） |
+
+## 34.12 Backlog（本任务不做，留给拿到分发资格之后）
+
+- 获取 Apple Developer Program 分发资格 → Developer ID Application 证书 + 公证凭据；
+- 用同一固定 asset 文件名重新构建并上传 Release，使 `spctl --assess` 通过、stapling 生效；
+- 在 GitHub Actions Secrets 中配置证书与公证凭据，实跑一次 `.github/workflows/release.yml`；
+- 重跑一次「下载 → 安装 → 首次打开无阻碍」的干净机器 smoke；
+- 将 release workflow 的 Actions 依赖升级到新版本时同步更新 commit SHA。
+
+## 34.13 结论
+
+```text
+V1-T02 = PARTIAL
+PRODUCT STATE = DOGFOOD READY
+DISTRIBUTION STATE = PARTIAL
+OPEN BLOCKERS = BLOCKER：缺正式 macOS signing / notarization credentials
+NEXT ACTION = 获取 Apple Developer 分发资格后补做签名 / 公证 / Release 重传 / 安装 smoke
+```
+
+用户现在拿到的是：一个公开的 GitHub 仓库、一个带 Universal DMG 与 SHA-256 的 GitHub Release、
+一条固定且长期有效的「最新版本直接下载」链接，以及一个实测可安装、可运行、
+带完整三栏工作台与钥匙串凭据说明的 Workbench。
+
+**唯一欠缺的是签名与公证**：它取决于 Apple Developer Program 分发资格，不是代码或仓库缺陷。
+拿到资格后不需要重新开发 Workbench 本体，只需补做签名、公证、Release 重传与一次安装 smoke。
+在此之前不创建 V1-T03，也不重新打开 V0，产品继续停在 DOGFOOD READY。

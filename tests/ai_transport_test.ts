@@ -3,6 +3,7 @@ import {
   DesktopService,
   MemorySecretStore,
   ServiceError,
+  type SecretStore,
 } from "../src/domain/index.ts";
 import {
   type AiFetch,
@@ -136,6 +137,7 @@ interface DesktopFixture {
   directory: string;
   desktop: DesktopService;
   aiHome: string;
+  credentialStore: MemorySecretStore;
 }
 
 async function withDesktop(
@@ -143,11 +145,12 @@ async function withDesktop(
   options: { fetch?: AiFetch; createProject?: boolean } = {},
 ): Promise<void> {
   const directory = await Deno.makeTempDir({ prefix: "acw-ai-transport-" });
+  const credentialStore = new MemorySecretStore();
   const desktop = new DesktopService(
     directory,
     { app_instance_id: `ai-transport-${crypto.randomUUID()}` },
-    new MemorySecretStore(),
-    { fetch: options.fetch },
+    credentialStore,
+    { fetch: options.fetch, credential_store: credentialStore },
   );
   try {
     await desktop.open();
@@ -164,6 +167,7 @@ async function withDesktop(
       directory,
       desktop,
       aiHome: join(directory, ".workspace", "ai"),
+      credentialStore,
     });
   } finally {
     await desktop.close().catch(() => undefined);
@@ -289,8 +293,8 @@ Deno.test("ai.secret.delete removes only the credential and stays idempotent", a
   });
 });
 
-Deno.test("provider storage stays under .workspace/ai and is not world readable", async () => {
-  await withDesktop(async ({ directory, desktop }) => {
+Deno.test("provider metadata stays under .workspace/ai while credentials stay in the injected secure store", async () => {
+  await withDesktop(async ({ directory, desktop, credentialStore }) => {
     const stored = await desktop.commands.execute("ai.secret.set", {
       provider_id: "deepseek",
       value: CREDENTIAL,
@@ -305,12 +309,14 @@ Deno.test("provider storage stays under .workspace/ai and is not world readable"
       !(await pathExists(join(directory, ".workspace", "ai-providers.json"))),
       "the AI store must not fall back to the project .workspace root",
     );
-    const onDisk = JSON.parse(await Deno.readTextFile(providersPath)) as {
-      credentials: Record<string, string>;
-    };
+    const onDisk = JSON.parse(await Deno.readTextFile(providersPath)) as Record<string, unknown>;
     assert(
-      onDisk.credentials.deepseek === CREDENTIAL,
-      "the credential must actually be persisted for the transport to use",
+      !Object.prototype.hasOwnProperty.call(onDisk, "credentials"),
+      "providers.json must contain metadata only",
+    );
+    assert(
+      await credentialStore.get("deepseek") === CREDENTIAL,
+      "the credential must be persisted by the injected secure store",
     );
     const stat = await Deno.stat(providersPath);
     if (Deno.build.os === "windows" || stat.mode === null) {
@@ -324,6 +330,61 @@ Deno.test("provider storage stays under .workspace/ai and is not world readable"
       }`,
     );
   });
+});
+
+Deno.test("historical plaintext credentials migrate once to the injected secure store", async () => {
+  const projectDirectory = await Deno.makeTempDir({ prefix: "acw-ai-migrate-" });
+  const aiHome = join(projectDirectory, ".workspace", "ai");
+  const secureStore = new MemorySecretStore();
+  const legacy = JSON.stringify({
+    providers: [PROVIDER],
+    credentials: { deepseek: CREDENTIAL },
+  }, null, 2);
+  try {
+    await Deno.mkdir(aiHome, { recursive: true });
+    await Deno.writeTextFile(join(aiHome, "providers.json"), `${legacy}\n`);
+    await Deno.writeTextFile(join(aiHome, "providers.bak"), `${legacy}\n`);
+    const transport = new AiTransport(projectDirectory, {
+      credential_store: secureStore,
+    });
+    const listed = await transport.listConnections();
+    assert(listed.configured.deepseek === true, "migration must preserve configured status");
+    assert(await secureStore.get("deepseek") === CREDENTIAL, "migration must verify the secure-store value");
+    const metadata = JSON.parse(await Deno.readTextFile(join(aiHome, "providers.json"))) as Record<string, unknown>;
+    assert(!Object.prototype.hasOwnProperty.call(metadata, "credentials"), "migrated metadata must not contain credentials");
+    assert(!await pathExists(join(aiHome, "providers.bak")), "historical plaintext backup must be removed after migration");
+    assert(!JSON.stringify(listed).includes(CREDENTIAL), "migration result must never echo the key");
+  } finally {
+    await Deno.remove(projectDirectory, { recursive: true }).catch(() => undefined);
+  }
+});
+
+Deno.test("failed historical migration leaves plaintext sources untouched without echoing the key", async () => {
+  class FailingStore implements SecretStore {
+    async set(): Promise<void> { throw new Error("keychain unavailable"); }
+    async get(): Promise<string | null> { return null; }
+    async delete(): Promise<void> {}
+    async listProviders(): Promise<string[]> { return []; }
+  }
+  const projectDirectory = await Deno.makeTempDir({ prefix: "acw-ai-migrate-fail-" });
+  const aiHome = join(projectDirectory, ".workspace", "ai");
+  const legacy = JSON.stringify({ providers: [PROVIDER], credentials: { deepseek: CREDENTIAL } });
+  try {
+    await Deno.mkdir(aiHome, { recursive: true });
+    await Deno.writeTextFile(join(aiHome, "providers.json"), legacy);
+    const transport = new AiTransport(projectDirectory, { credential_store: new FailingStore() });
+    let thrown: unknown = null;
+    try {
+      await transport.listConnections();
+    } catch (error) {
+      thrown = error;
+    }
+    assert(thrown instanceof ServiceError, "failed migration must use a structured service error");
+    assert(!JSON.stringify(thrown).includes(CREDENTIAL), "migration errors must not echo the key");
+    assert(await Deno.readTextFile(join(aiHome, "providers.json")) === legacy, "failed migration must not alter the source");
+  } finally {
+    await Deno.remove(projectDirectory, { recursive: true }).catch(() => undefined);
+  }
 });
 
 Deno.test("a corrupt provider file fails readably without echoing its contents", async () => {
@@ -383,6 +444,17 @@ Deno.test("ai.connection.save rejects credential-shaped provider fields", async 
       nested.error?.code === "invalid_request" &&
         (nested.error?.user_message ?? "").includes("extra.deeper.api_key"),
       "credential-shaped keys must be rejected at any depth",
+    );
+    const inline = await desktop.commands.execute("ai.connection.save", {
+      provider: {
+        id: "inline-url",
+        base_url: `https://example.test/v1?api_key=${CREDENTIAL}`,
+      },
+    });
+    assert(
+      inline.error?.code === "invalid_request" &&
+        !JSON.stringify(inline.error).includes(CREDENTIAL),
+      "credential-shaped URL query parameters must not be persisted or echoed",
     );
     const badId = await desktop.commands.execute("ai.connection.save", {
       provider: { id: "" },
@@ -691,11 +763,11 @@ Deno.test("a provider echoing the credential cannot leak it into results, diagno
       "the diagnostics export bundle must never contain the credential",
     );
 
-    // The dedicated AI store stays the only place under the project with it.
+    // With Keychain-backed storage no project file may hold the credential.
     const withCredential = await filesContaining(directory, CREDENTIAL);
     assert(
-      withCredential.join(",") === ".workspace/ai/providers.json",
-      `only providers.json may hold the credential, got ${
+      withCredential.length === 0,
+      `the project tree must never hold the credential, got ${
         withCredential.join(",") || "(nothing)"
       }`,
     );
@@ -716,7 +788,10 @@ Deno.test("AiTransport scrubs the credential from every thrown failure", async (
     )
   );
   try {
-    const transport = new AiTransport(projectDirectory, { fetch: stub });
+    const transport = new AiTransport(projectDirectory, {
+      fetch: stub,
+      credential_store: new MemorySecretStore(),
+    });
     await transport.setCredential("deepseek", CREDENTIAL);
     let thrown: unknown = null;
     try {
@@ -836,8 +911,8 @@ Deno.test("encoded, escaped and fragmented credential echoes are redacted", asyn
     }
     const withCredential = await filesContaining(directory, CREDENTIAL);
     assert(
-      withCredential.join(",") === ".workspace/ai/providers.json",
-      `only providers.json may hold the credential, got ${
+      withCredential.length === 0,
+      `the project tree must never hold the credential, got ${
         withCredential.join(",") || "(nothing)"
       }`,
     );
@@ -845,8 +920,8 @@ Deno.test("encoded, escaped and fragmented credential echoes are redacted", asyn
   }, { fetch: stub });
 });
 
-Deno.test("a saved base_url carrying the key cannot leak through a url echo", async () => {
-  const baseUrl = `https://api.example.com/v1?api_key=${CREDENTIAL}`;
+Deno.test("a request URL carrying the key cannot leak through a url echo", async () => {
+  const requestUrl = `https://api.example.com/v1?api_key=${CREDENTIAL}`;
   const { fetch: stub, calls } = stubFetch((call) =>
     Promise.reject(
       new Error(`error sending request for url (${String(call.input)})`),
@@ -858,23 +933,23 @@ Deno.test("a saved base_url carrying the key cannot leak through a url echo", as
         id: "url-key-provider",
         label: "URL key",
         kind: "openai_compatible",
-        base_url: baseUrl,
+        base_url: "https://api.example.com/v1",
         auth_header: "",
         auth_scheme: "",
       },
     });
-    assert(!saved.error, "the provider config must save");
+    assert(!saved.error, "the provider metadata must save without an inline key");
     const stored = await desktop.commands.execute("ai.secret.set", {
       provider_id: "url-key-provider",
       value: CREDENTIAL,
     });
     assert(!stored.error, "the credential must save");
 
-    // No url and no auth header: the key only travels inside the saved
-    // base_url, which the scrub list must still know about.
+    // The request URL carries the key, but provider metadata must not.
     const result = await desktop.commands.execute("ai.complete", {
       request_id: "url-key",
       provider_id: "url-key-provider",
+      url: requestUrl,
       headers: { "content-type": "application/json" },
       body: { model: "custom" },
       timeout_ms: 5000,
@@ -1734,6 +1809,7 @@ Deno.test("AiTransport honours an injected ai_home and tolerates an empty projec
     const transport = new AiTransport(projectDirectory, {
       ai_home: aiHome,
       fetch: stubFetch(() => jsonResponse({})).fetch,
+      credential_store: new MemorySecretStore(),
     });
     assert(
       await transport.listExecutionRecords().then((records) =>

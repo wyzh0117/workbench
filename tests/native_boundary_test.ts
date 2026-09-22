@@ -150,8 +150,10 @@ Deno.test("native shell exposes explicit project and high-level workflows", () =
     "native commands must not claim delegated success",
   );
   assert(
-    lib.includes("当前原生壳未配置操作系统钥匙串"),
-    "secret fallback must be explicit unsupported",
+    lib.includes("AI_KEYCHAIN_SERVICE") &&
+      lib.includes("MacKeychainStore") &&
+      lib.includes("历史 API Key 未能安全迁移"),
+    "native AI credentials must use macOS Keychain with fail-closed migration",
   );
   assert(
     app.includes('"project.open": "project_open"') &&
@@ -172,7 +174,8 @@ Deno.test("native shell exposes explicit project and high-level workflows", () =
       app.includes('external_modification_conflict') &&
       app.includes("nativeLeaseDirs") &&
       app.includes("hasNativeLease") &&
-      app.includes("targetLeaseActive") &&
+      app.includes("nativeProjectSessions") &&
+      app.includes("nativeSwitching") &&
       app.includes("nativeSwitchPending") &&
       app.includes("rollbackNativeTarget") &&
       app.includes("onDragDropEvent") &&
@@ -207,8 +210,9 @@ Deno.test("native shell exposes explicit project and high-level workflows", () =
   const openProjectBlock = app.slice(openProjectStart, openProjectEnd);
   assert(
     openProjectBlock.indexOf("await this.flush()") < openProjectBlock.indexOf("this.bridge.setProjectDir(projectDir)") &&
-      openProjectBlock.indexOf("this.closeNativeProject(previousProjectDir)") > openProjectBlock.indexOf("saveSession"),
-    "open project switching must preserve the old lease until the target is saved successfully",
+      openProjectBlock.indexOf("await this.persistSession(targetSession)") < openProjectBlock.indexOf("this.closeNativeProject(previousProjectDir)") &&
+      !openProjectBlock.includes("await this.bridge.saveSession(this.session())"),
+    "open project switching must save a target identity before releasing the old lease",
   );
   assert(
     newProjectBlock.includes("await this.rollbackNativeTarget") &&
@@ -219,7 +223,7 @@ Deno.test("native shell exposes explicit project and high-level workflows", () =
   );
   assert(
     app.includes("this.bridge.restoreProjectDir(null, false)") &&
-      app.includes("await this.bridge.saveSession({ project_dir: null })") &&
+      app.includes("await this.persistSession({ project_dir: null })") &&
       app.includes("const hadLease = store.hasNativeLease()") &&
       app.includes("if (store.hasNativeLease()) await store.closeNativeProject()"),
     "failed session recovery and close must clear stale paths and skip unowned release",
@@ -283,17 +287,18 @@ Deno.test("native shell exposes explicit project and high-level workflows", () =
     "native persistence, import, export and publication must carry the selected directory",
   );
   assert(
-    app.includes("project_dir: this.projectDir || null") &&
+    app.includes("project_dir: requestedDir || currentDir") &&
       // The native session stores the reader position next to the directory, so
       // relaunching the desktop app resumes the same lesson, mode and panel.
       app.includes("active_content_item_id: this.ui.activeId") &&
       app.includes("mode: this.ui.mode") &&
       app.includes("right_panel: this.ui.rightPanel") &&
+      app.includes("project_sessions") &&
       !app.includes("data-project-dir") &&
       app.includes('"select_folder"') &&
       app.includes('return await this.invoke("project.open", {})') &&
       !app.includes('invoke("open_project"') &&
-      app.includes("await this.bridge.saveSession({ project_dir: null })"),
+      app.includes("await this.persistSession({ project_dir: null })"),
     "native session and launcher must use the folder picker instead of manual paths",
   );
   assert(
@@ -307,7 +312,7 @@ Deno.test("native shell exposes explicit project and high-level workflows", () =
       app.includes("if (!await this.flush())") &&
       app.includes("this.decodeBytes(await invoke") &&
       app.includes("content_item_id: contentItemId") &&
-      app.includes("无法导入文件") &&
+      app.includes("文件导入没有完成") &&
       (app + shared).includes(".webm,.mov,.m4v"),
     "native picker, drag/drop, recovery cleanup and contextual asset import must stay in the UI boundary",
   );

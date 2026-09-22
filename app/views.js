@@ -73,6 +73,26 @@ export function createViews(store) {
   };
   const isImageLike = (asset) =>
     asset && (asset.type === "image" || asset.type === "gif");
+  const PREFLIGHT_ISSUE_LABELS = {
+    canonical_invalid: "课程内容不完整",
+    missing_asset: "引用的素材文件找不到",
+    unsafe_path: "素材位置不安全",
+    unsupported_format: "当前格式暂不支持",
+    open_requirements: "还有待补内容",
+    media_downgrade: "部分媒体会降级为附件说明",
+    layout_overflow: "内容超出排版范围",
+  };
+  const issueMessage = (issue) => {
+    const message = typeof issue?.message === "string" ? issue.message.trim() : "";
+    return message || PREFLIGHT_ISSUE_LABELS[issue?.code] || "导出前检查发现一项需要处理的问题";
+  };
+  const issueDiagnostics = (issue) => {
+    const code = typeof issue?.code === "string" ? issue.code.trim() : "";
+    const path = typeof issue?.path === "string" ? issue.path.trim() : "";
+    if (!code && !path) return "";
+    const lines = [code ? `代码：${code}` : "", path ? `位置：${path}` : ""].filter(Boolean).join("\n");
+    return `<details class="diagnostic"><summary>显示技术信息</summary><code>${esc(lines)}</code></details>`;
+  };
 
   /**
    * A thumbnail only uses an <img> for real images.  Text bundles are previewed
@@ -80,22 +100,23 @@ export function createViews(store) {
    */
   const assetThumb = (asset) => {
     const preview = assetPreview(asset);
+    const label = asset.title || asset.filename || "素材";
     if (preview && preview.failed) {
-      return `<span class="asset-thumb">⚠</span>`;
+      return `<span class="asset-thumb" role="img" aria-label="${esc(label)}预览失败" title="预览失败；请打开媒体库查看，或重新导入文件">⚠</span>`;
     }
     const url = previewUrl(asset);
     if (url && isImageLike(asset)) {
       return `<img class="asset-image" src="${esc(url)}" alt="${
-        esc(asset.title || asset.filename)
+        esc(label)
       }" loading="lazy" />`;
     }
     const text = previewText(asset);
     if (text) {
-      return `<span class="asset-doc">${
+      return `<span class="asset-doc" title="打开媒体库查看完整内容">${
         esc(text.replace(/\s+/g, " ").trim().slice(0, 60) || "空文档")
       }</span>`;
     }
-    return `<span class="asset-thumb">${assetLabel(asset.type).slice(0, 1)}</span>`;
+    return `<span class="asset-thumb" title="正在读取素材预览">${assetLabel(asset.type).slice(0, 1)}</span>`;
   };
 
   /* ---------------------------------------------------------------- shell */
@@ -114,7 +135,7 @@ export function createViews(store) {
     return `<section class="launcher">
       <div class="launcher-orb">✦</div><p class="eyebrow">AI COURSE WORKBENCH</p>
       <h1>把一套课程，从想法做到发布</h1>
-      <p class="muted launcher-copy">本地优先、结构化保存，正文、待补、素材、排版和版本都在同一个工作台里。</p>
+      <p class="muted launcher-copy">课程内容会保存在本机；正文、待补、素材、排版和版本都在同一个工作台里。</p>
       <div class="launcher-actions"><button class="primary big" data-action="new-project">新建课程</button><button class="secondary big" data-action="${native ? "open-project-dir" : "open-file"}">${native ? "打开项目文件夹" : "打开现有项目"}</button>${native ? "" : PROJECT_FILE_PICKER}</div>
       <div class="recent-card"><div><span class="eyebrow">继续工作</span><h2>${esc(project.title)}</h2><p class="muted">${
       resume
@@ -123,7 +144,7 @@ export function createViews(store) {
             ? "这一课已完成"
             : esc(resume.progress.reasons[0] || "可以继续编辑")
         }`
-        : "还没有课程内容"
+        : "还没有课程内容。现在可以新建第一课，之后随时回来继续。"
     }</p>${map.lesson_count ? `<div class="progress-track"><span style="width:${map.progress}%"></span></div><small class="muted">整门课程 ${map.complete_count}/${map.lesson_count} 课完成 · 待补 ${map.open_requirements} 项</small>` : ""}</div><button class="primary" data-action="enter-project">继续工作 <span>→</span></button></div>
       <div class="seed-choices"><span class="muted">你现在有什么？</span>${[
       "课程概论",
@@ -138,8 +159,8 @@ export function createViews(store) {
     ].map((label) => `<button data-action="enter-project">${label}</button>`).join("")}</div>
       <p class="small muted">${
       native
-        ? "项目文件夹通过系统选择器打开；不需要手输路径。"
-        : "首次启动会先进入项目启动器；日常工作只需要使用自然语言界面。"
+        ? "选择项目文件夹即可开始；不需要手输路径。"
+        : "可以打开现有课程，也可以先新建一门课程。"
     }</p>
     </section>${overlay()}${toast()}`;
   }
@@ -165,17 +186,24 @@ export function createViews(store) {
 
   function topbarView(item) {
     const map = courseMap(store.data, item ? item.id : null);
-    return `<header class="topbar"><div class="brand"><button class="icon-button" data-action="toggle-left" title="收起左栏">${
-      store.ui.leftCollapsed ? "☰" : "‹"
-    }</button><span class="brand-mark">✦</span><span>AI Course Workbench</span></div><div class="project-name"><span class="dot"></span>${
+    const saveHint = store.saveStatus === "已保存"
+      ? "课程内容已保存"
+      : store.saveStatus === "正在保存…"
+      ? "正在保存课程内容"
+      : store.saveStatus === "外部修改冲突"
+      ? "保存已暂停；课程文件在其他地方发生了变化，请先处理提示"
+      : store.saveStatus === "保存失败"
+      ? "这次没有保存成功；请查看提示后重试"
+      : "课程内容的保存状态";
+    return `<header class="topbar"><div class="brand"><button class="secondary launcher-return" data-action="return-launcher" title="返回项目选择；当前项目不会关闭">⌂ <span>项目选择</span></button><span class="brand-mark">✦</span><span>AI Course Workbench</span></div><div class="project-name"><span class="dot"></span>${
       esc(store.data.project.title)
     }<span class="chevron">⌄</span></div><div class="lesson-switch">${
       item
-        ? `<button class="icon-button" data-action="prev-lesson" title="上一课" ${
+        ? `<button class="icon-button" data-action="prev-lesson" title="打开上一课" ${
           map.previous_id ? "" : "disabled"
-        }>‹</button><span class="lesson-pill" title="当前课程">${
+        }>‹</button><span class="lesson-pill" title="当前课程：${esc(item.title)}">${
           esc(item.code)
-        }｜${esc(item.title)}</span><button class="icon-button" data-action="next-lesson" title="下一课" ${
+        }｜${esc(item.title)}</span><button class="icon-button" data-action="next-lesson" title="打开下一课" ${
           map.next_id ? "" : "disabled"
         }>›</button>`
         : ""
@@ -183,11 +211,9 @@ export function createViews(store) {
       store.saveStatus === "保存失败" || store.saveStatus === "外部修改冲突"
         ? "error"
         : ""
-    }">${store.saveStatus === "已保存" ? "✓ " : ""}${
+    }" title="${saveHint}">${store.saveStatus === "已保存" ? "✓ " : ""}${
       esc(store.saveStatus)
-    }</span><button class="icon-button" data-action="undo" title="撤销">↶</button><button class="icon-button" data-action="redo" title="恢复">↷</button><button class="secondary" data-action="route" data-route="map">课程地图</button><button class="secondary" data-action="save-project">保存</button><button class="secondary" data-action="save-version">保存版本</button><button class="secondary" data-action="preview">预览</button><button class="primary" data-action="preflight">导出</button><button class="icon-button" data-action="toggle-right" title="收起右栏">${
-      store.ui.rightCollapsed ? "☰" : "›"
-    }</button></div></header>
+    }</span><button class="icon-button" data-action="undo" title="撤销上一次编辑">↶</button><button class="icon-button" data-action="redo" title="恢复上一次编辑">↷</button><button class="secondary" data-action="route" data-route="map">课程地图</button><button class="secondary" data-action="save-project">保存</button><button class="secondary" data-action="save-version">保存版本</button><button class="secondary" data-action="preview">预览</button><button class="primary" data-action="preflight">导出</button></div></header>
     <div class="tabs"><button class="tab home-tab ${
       store.ui.route === "overview" ? "active" : ""
     }" data-action="route" data-route="overview">项目概览</button>${
@@ -222,7 +248,7 @@ export function createViews(store) {
       ["versions", "版本历史", "◷"],
       ["settings", "项目设置", "⚙"],
     ];
-    return `<aside class="left-panel panel"><div class="panel-heading"><span>工作台</span><button class="icon-button" data-action="toggle-left">‹</button></div><nav>${
+    return `<aside class="left-panel panel"><div class="panel-heading"><span>工作台</span><button class="icon-button" data-action="toggle-left" title="${store.ui.leftCollapsed ? "展开左栏" : "收起左栏"}">${store.ui.leftCollapsed ? "☰" : "‹"}</button></div><nav>${
       nav.map(([route, label, icon]) =>
         `<button class="nav-item ${
           store.ui.route === route ? "active" : ""
@@ -315,14 +341,14 @@ export function createViews(store) {
       : "";
     const map = courseMap(store.data, store.ui.activeId);
     if (map.lesson_count === 0 && !draft) {
-      return `<section class="page"><div class="page-head"><div><span class="eyebrow">课程地图</span><h1>课程结构</h1><p class="muted">结构只维护一次，正文、看板和发布中心都会从这里读取。</p></div><button class="primary" data-action="add-map-item">＋ 新建课程内容</button></div><div class="empty-state"><div class="empty-icon">▦</div><h2>这门课程还没有内容</h2><p class="muted">先建立第一课，之后可以随时从课程地图回到任何一课。</p><button class="primary" data-action="add-map-item">新建第一课</button></div></section>`;
+      return `<section class="page"><div class="page-head"><div><span class="eyebrow">课程地图</span><h1>课程结构</h1><p class="muted">课程还没有内容，可以先建第一课；之后正文、看板和发布中心都会从这里读取。</p></div><button class="primary" data-action="add-map-item">＋ 新建课程内容</button></div><div class="empty-state"><div class="empty-icon">▦</div><h2>还没有课程内容</h2><p class="muted">现在可以新建第一课；课程地图会保留你的后续编辑。</p><button class="primary" data-action="add-map-item">新建第一课</button></div></section>`;
     }
     return `<section class="page"><div class="page-head"><div><span class="eyebrow">课程地图</span><h1>${
       esc(map.project_title)
     }</h1><p class="muted">${
       map.lesson_count
         ? `共 ${map.lesson_count} 课 · 已完成 ${map.complete_count} 课 · 待补 ${map.open_requirements} 项 · 缺素材 ${map.missing_media} 处`
-        : "还没有内容"
+        : "还没有内容，可以先新建第一课"
     }</p>${
       map.lesson_count
         ? `<div class="progress-track wide"><span style="width:${map.progress}%"></span></div>`
@@ -342,7 +368,7 @@ export function createViews(store) {
         }</span></div><div class="map-items">${
           stage.lessons.length
             ? stage.lessons.map(mapItem).join("")
-            : `<div class="side-empty">这个阶段还没有内容</div>`
+            : `<div class="side-empty">这个阶段还没有内容，可以先新建一课。</div>`
         }</div></div>`
       ).join("")
     }</div></section>`;
@@ -369,15 +395,15 @@ export function createViews(store) {
         : esc(progress.reasons[0] || nextStep)
     }</span></span><span class="map-arrow">›</span></button><div class="map-item-tools"><button class="icon-button" data-action="rename-lesson" data-id="${
       lesson.id
-    }" title="重命名">✎</button><button class="icon-button" data-action="move-lesson" data-id="${
+    }" title="重命名这一课">✎</button><button class="icon-button" data-action="move-lesson" data-id="${
       lesson.id
-    }" data-direction="up" title="上移" ${
+    }" data-direction="up" title="上移这一课" ${
       lesson.order_index === 0 ? "disabled" : ""
     }>↑</button><button class="icon-button" data-action="move-lesson" data-id="${
       lesson.id
-    }" data-direction="down" title="下移">↓</button><button class="icon-button danger" data-action="delete-lesson" data-id="${
+    }" data-direction="down" title="下移这一课">↓</button><button class="icon-button danger" data-action="delete-lesson" data-id="${
       lesson.id
-    }" title="删除这一课">🗑</button></div></div>`;
+    }" title="删除这一课（需要确认）">🗑</button></div></div>`;
   }
 
   /* ------------------------------------------------------ lesson editor */
@@ -387,7 +413,7 @@ export function createViews(store) {
     if (!item) {
       return emptyState(
         "还没有课程内容",
-        "先从课程地图创建一项内容。",
+        "课程还没有可编辑的内容。打开课程地图新建一项，就可以继续。",
         "map",
         "打开课程地图",
       );
@@ -472,7 +498,7 @@ export function createViews(store) {
 
   function writingView(item, view) {
     if (!view || view.blocks.length === 0) {
-      return `${blockToolbar()}<div class="empty-state inline"><div class="empty-icon">✎</div><h2>这一课还没有正文</h2><p class="muted">从一段正文开始，之后可以随时插入素材或占位符。</p><div class="modal-actions"><button class="primary" data-action="add-block">＋ 正文</button><button class="secondary" data-action="add-heading">＋ 标题</button><button class="secondary" data-action="add-placeholder">＋ 占位符</button></div></div>`;
+      return `${blockToolbar()}<div class="empty-state inline"><div class="empty-icon">✎</div><h2>这一课还没有正文</h2><p class="muted">课程内容还可以继续编辑。先写一段正文，也可以先加标题或留下待补项。</p><div class="modal-actions"><button class="primary" data-action="add-block">＋ 正文</button><button class="secondary" data-action="add-heading">＋ 标题</button><button class="secondary" data-action="add-placeholder">＋ 占位符</button></div></div>`;
     }
     return `${blockToolbar()}<div class="block-list">${
       view.blocks.map((block, index) => blockCard(block, index)).join("")
@@ -502,23 +528,23 @@ export function createViews(store) {
       selected ? " selected" : ""
     }${focused ? " focused" : ""}" data-block-id="${block.id}" data-requirement-id="${
       block.requirement_id || ""
-    }" draggable="true"><div class="block-rail"><span class="block-handle" title="拖动排序">⠿</span><span class="block-order">${
+    }" draggable="true"><div class="block-rail"><span class="block-handle" title="拖动以调整正文顺序">⠿</span><span class="block-order">${
       String(index + 1).padStart(2, "0")
     }</span></div><div class="block-main">${
       blockBody(block, requirement)
     }</div><div class="block-bar"><button class="icon-button" data-action="insert-block-below" data-id="${
       block.id
-    }" title="在下方插入">＋</button><button class="icon-button" data-action="select-block" data-id="${
+    }" title="在这块正文下方插入">＋</button><button class="icon-button" data-action="select-block" data-id="${
       block.id
-    }" title="选中">◎</button><button class="icon-button" data-action="move-block" data-id="${
+    }" title="选中这块正文">◎</button><button class="icon-button" data-action="move-block" data-id="${
       block.id
-    }" data-direction="up" title="上移" ${
+    }" data-direction="up" title="上移这块正文" ${
       index === 0 ? "disabled" : ""
     }>↑</button><button class="icon-button" data-action="move-block" data-id="${
       block.id
-    }" data-direction="down" title="下移">↓</button><button class="icon-button danger" data-action="delete-block" data-id="${
+    }" data-direction="down" title="下移这块正文">↓</button><button class="icon-button danger" data-action="delete-block" data-id="${
       block.id
-    }" title="删除这一块">🗑</button></div></article>`;
+    }" title="删除这块正文">🗑</button></div></article>`;
   }
 
   function blockBody(block, requirement) {
@@ -601,7 +627,7 @@ export function createViews(store) {
         }</pre>`;
       }
       if (preview && preview.failed) {
-        return `<div class="media-slot failed">无法预览：${esc(preview.error || "素材不可读")}</div>`;
+        return `<div class="media-slot failed"><b>这个素材暂时无法预览。</b><small>课程内容仍可继续；请重新导入文件，或到媒体库查看。</small></div>`;
       }
       if (preview && preview.url) {
         // Bytes are available but this type has no in-editor renderer.
@@ -643,7 +669,7 @@ export function createViews(store) {
 
   function structureView(item, view) {
     if (!view || view.blocks.length === 0) {
-      return `<div class="empty-state inline"><h2>还没有可调整的结构</h2><p class="muted">先在正文里写一段内容。</p><button class="primary" data-action="mode" data-mode="writing">回到正文</button></div>`;
+      return `<div class="empty-state inline"><h2>还没有可调整的结构</h2><p class="muted">这门课还没有正文，所以暂时没有结构可以调整。先回到正文继续写。</p><button class="primary" data-action="mode" data-mode="writing">回到正文</button></div>`;
     }
     const placementOf = (blockId) =>
       view.placements.find((placement) => placement.block_id === blockId);
@@ -697,7 +723,7 @@ export function createViews(store) {
   function layoutView(item, view) {
     const layout = view ? view.lesson.layout : null;
     if (!layout) {
-      return `<div class="empty-state"><div class="empty-icon">▦</div><h2>还没有排版版本</h2><p class="muted">创建一个排版版本后，就能在 Flow 或 Grid 中放置同一份正文。</p><button class="primary" data-action="create-layout">创建排版版本</button></div>`;
+      return `<div class="empty-state"><div class="empty-icon">▦</div><h2>还没有排版版本</h2><p class="muted">正文还没有排版位置。创建一个版本后，就可以继续安排内容。</p><button class="primary" data-action="create-layout">创建排版版本</button></div>`;
     }
     const mode = layout.mode === "flow" ? "flow" : "grid";
     const toolbar = `<div class="layout-toolbar"><button class="secondary ${
@@ -768,13 +794,13 @@ export function createViews(store) {
           esc(block.summary || "（空）")
         }</span><div class="placement-actions"><button data-action="move-placement" data-id="${
           placement.id
-        }" data-dr="-1" data-dc="0" title="上移">↑</button><button data-action="move-placement" data-id="${
+        }" data-dr="-1" data-dc="0" title="上移排版元素">↑</button><button data-action="move-placement" data-id="${
           placement.id
-        }" data-dr="1" data-dc="0" title="下移">↓</button><button data-action="move-placement" data-id="${
+        }" data-dr="1" data-dc="0" title="下移排版元素">↓</button><button data-action="move-placement" data-id="${
           placement.id
-        }" data-dr="0" data-dc="-1" title="左移">←</button><button data-action="move-placement" data-id="${
+        }" data-dr="0" data-dc="-1" title="向左移动排版元素">←</button><button data-action="move-placement" data-id="${
           placement.id
-        }" data-dr="0" data-dc="1" title="右移">→</button><button data-action="resize-placement" data-id="${
+        }" data-dr="0" data-dc="1" title="向右移动排版元素">→</button><button data-action="resize-placement" data-id="${
           placement.id
         }" data-dw="1" title="加宽">＋宽</button><button data-action="resize-placement" data-id="${
           placement.id
@@ -862,7 +888,7 @@ export function createViews(store) {
     }</span><span>${
       placedCount ? `已放置 ${placedCount} 块` : "还没有网格放置"
     }</span><span>正文 ${view.blocks.length} 块</span></div><article class="preview-paper">${
-      body || `<p class="muted">这一课还没有正文。</p>`
+      body || `<p class="muted">这一课还没有正文。回到正文视图写一段，预览会自动更新。</p>`
     }</article><div class="preview-assets"><span class="eyebrow">本课引用的素材（${
       gallery.length
     } 个已在正文中显示）</span>${
@@ -874,7 +900,7 @@ export function createViews(store) {
             } · ${esc(assetLabel(block.asset.type))}</span>`
           ).join("")
         }</div>`
-        : `<span class="muted small">这一课还没有使用素材</span>`
+        : `<span class="muted small">这一课还没有使用素材，可以继续写正文。</span>`
     }</div>`;
   }
 
@@ -884,7 +910,7 @@ export function createViews(store) {
       return showNotes
         ? `<div class="preview-placeholder">${
           esc(block.label)
-        }：素材还没有选择</div>`
+        }：还没有选择素材。你可以继续编辑，或回到媒体库添加。</div>`
         : "";
     }
     // Markdown and other text bundles render their real content, which is the
@@ -924,9 +950,7 @@ export function createViews(store) {
     const backlog = requirementBacklog(store.data);
     const map = courseMap(store.data, store.ui.activeId);
     if (backlog.total === 0) {
-      return `<section class="page"><div class="page-head"><div><span class="eyebrow">长期维护</span><h1>待补总览</h1><p class="muted">整门课程的待补内容会集中出现在这里。</p></div></div><div class="empty-state"><div class="empty-icon">✓</div><h2>整门课程没有待补内容</h2><p class="muted">还有 ${
-        map.lesson_count - map.complete_count
-      } 课没有完成状态上的收尾。</p><button class="primary" data-action="route" data-route="map">回到课程地图</button></div></section>`;
+      return `<section class="page"><div class="page-head"><div><span class="eyebrow">长期维护</span><h1>待补总览</h1><p class="muted">整门课程的待补内容会集中出现在这里。</p></div></div><div class="empty-state"><div class="empty-icon">✓</div><h2>目前没有待补内容</h2><p class="muted">课程没有需要补充的项目，可以继续检查课程地图或开始发布。</p><button class="primary" data-action="route" data-route="map">回到课程地图</button></div></section>`;
     }
     const groups = [...backlog.by_lesson.entries()];
     return `<section class="page"><div class="page-head"><div><span class="eyebrow">长期维护</span><h1>待补总览 <sup>${
@@ -996,7 +1020,7 @@ export function createViews(store) {
             ? "这一课已经完成"
             : esc(resume.progress.reasons.slice(0, 2).join("；"))
         }</small></div></div>`
-        : `<div class="side-empty">还没有课程内容</div>`
+        : `<div class="side-empty">还没有课程内容。打开课程地图新建一课，就可以继续。</div>`
     }</div><div class="card"><div class="card-head"><h2>待处理</h2><button class="text-button" data-action="route" data-route="backlog">查看全部 →</button></div><ul class="task-list"><li><span class="task-dot orange"></span><span>收件箱</span><b>${openInbox}</b></li><li><span class="task-dot purple"></span><span>待补内容</span><b>${
       map.open_requirements
     }</b></li><li><span class="task-dot blue"></span><span>缺素材</span><b>${
@@ -1136,7 +1160,7 @@ export function createViews(store) {
             asset.id
           }">删除</button></div></article>`;
         }).join("")
-        : `<div class="empty-state inline"><h2>还没有素材</h2><p class="muted">拖入图片、GIF、视频或 Markdown 文件。</p></div>`
+        : `<div class="empty-state inline"><h2>还没有素材</h2><p class="muted">课程还没有素材。拖入文件，或点击“添加素材”后继续。</p></div>`
     }</div></section>`;
   }
 
@@ -1154,7 +1178,7 @@ export function createViews(store) {
         ).join("")
         : emptyState(
           "还没有命名版本",
-          "重要节点可以保存一个容易理解的版本名。",
+          "课程还没有可回到的历史节点。保存一个版本后，就可以随时恢复。",
           "save-version",
           "保存版本",
         )
@@ -1183,7 +1207,7 @@ export function createViews(store) {
       <div class="card publish-card"><h2>1. 选择输出范围</h2><div class="segmented"><button class="${courseScope ? "" : "active"}" data-action="publish-scope" data-scope="lesson">当前课${item ? ` · ${esc(item.code)}` : ""}</button><button class="${courseScope ? "active" : ""}" data-action="publish-scope" data-scope="course">整门课程</button></div><p class="muted">${courseScope ? `整门课程 · ${store.data.content_items.filter((candidate) => !candidate.archived).length} 课` : view ? `${esc(item.title)} · 完成 ${view.progress.percentage}% · 待补 ${view.progress.open_requirements} 项` : "尚未选择课程"}</p></div>
       <div class="card publish-card"><h2>2. 选择格式</h2><div class="format-grid">${formats.map(([key, label, detail]) => `<button class="format-card ${store.ui.publishFormat === key ? "active" : ""}" data-action="publish-format" data-format="${key}"><b>${label}</b><small>${detail}</small></button>`).join("")}</div><div class="modal-actions"><button class="primary" data-action="preflight">检查并导出 ${esc(formats.find(([key]) => key === store.ui.publishFormat)?.[1] || "输出")}</button></div></div>
       ${last ? `<div class="card publish-card success-card"><h2>最近一次导出</h2><p><b>${esc(last.format)}</b> · ${last.scope === "course" ? "整门课程" : "当前课"} · ${last.files} 个文件</p><p class="muted">实际位置：<code>${esc(last.path)}</code></p><p class="muted">输出不依赖 Workbench 运行。</p>${store.bridge.isNative() ? `<button class="secondary" data-action="reveal-export">在 Finder 中显示</button>` : ""}</div>` : ""}
-      <div class="card publish-card"><h2>发布记录</h2><p class="muted">发布记录只记录用户确认过的发布节点，不是课程内容的第二份真相。</p><button class="secondary" data-action="record-publication">记录已发布</button></div><div class="version-list">${publications.map((publication) => `<article class="version-card"><span class="version-icon">↗</span><div><b>${esc(publication.version_label)}</b><p>${esc(publication.platform)} · ${esc(publication.status)}</p><small>${esc(publication.published_at || "")}</small></div></article>`).join("") || `<div class="empty-state"><h2>还没有发布记录</h2><p class="muted">导出并实际迁移后，可以记录这个发布节点。</p></div>`}</div></section>`;
+      <div class="card publish-card"><h2>发布记录</h2><p class="muted">发布记录只记录你确认过的发布节点，不会改变课程内容。</p><button class="secondary" data-action="record-publication">记录已发布</button></div><div class="version-list">${publications.map((publication) => `<article class="version-card"><span class="version-icon">↗</span><div><b>${esc(publication.version_label)}</b><p>${esc(publication.platform)} · ${esc(publication.status)}</p><small>${esc(publication.published_at || "")}</small></div></article>`).join("") || `<div class="empty-state"><h2>还没有发布记录</h2><p class="muted">导出并实际迁移后，可以记录这个发布节点；课程内容不会因此改变。</p></div>`}</div></section>`;
   }
 
   function simplePage(title, description, icon) {
@@ -1223,7 +1247,7 @@ export function createViews(store) {
             : ""
         }</button>`
       ).join("")
-    }<button class="icon-button collapse-right" data-action="toggle-right">›</button></div><div class="right-content" data-panel-scope="${
+    }<button class="icon-button collapse-right" data-action="toggle-right" title="${store.ui.rightCollapsed ? "展开右栏" : "收起右栏"}">${store.ui.rightCollapsed ? "☰" : "›"}</button></div><div class="right-content" data-panel-scope="${
       item ? esc(item.code) : "未选择课程"
     }"><div class="scope-banner">作用对象：<b>${
       item ? `${esc(item.code)}｜${esc(item.title)}` : "未选择课程"
@@ -1244,38 +1268,38 @@ export function createViews(store) {
 
   function mediaPanel(view) {
     const assets = store.data.assets.filter((asset) => !asset.archived);
+    const query = String(store.ui.assetQuery || "").trim().toLowerCase();
+    const visibleAssets = assets.filter((asset) =>
+      !query ||
+      asset.filename.toLowerCase().includes(query) ||
+      String(asset.title).toLowerCase().includes(query)
+    );
     const used = view ? view.lesson.media_count : 0;
     return `<div class="side-head"><div><span class="eyebrow">当前课程</span><h2>媒体库</h2></div><button class="icon-button" data-action="open-file" title="添加素材">＋</button></div><label class="field-label">搜索素材<input class="select" data-asset-search placeholder="输入文件名" value="${
       esc(store.ui.assetQuery || "")
     }" /></label>${PROJECT_FILE_PICKER}<p class="side-note">本课已引用 ${used} 个素材。${
       store.ui.selectedBlockId ? "选择素材会插入当前选中的区块。" : "先选中一个正文区块，再插入素材。"
     }</p><div class="side-list">${
-      assets.length
-        ? assets.filter((asset) =>
-          !store.ui.assetQuery ||
-          asset.filename.toLowerCase().includes(
-            String(store.ui.assetQuery).toLowerCase(),
-          ) ||
-          String(asset.title).toLowerCase().includes(
-            String(store.ui.assetQuery).toLowerCase(),
-          )
-        ).map((asset) => {
+      visibleAssets.length
+        ? visibleAssets.map((asset) => {
           const usages = usagesForAsset(store.data, asset.id);
           return `<div class="side-item asset-row" data-asset-id="${
             asset.id
           }"><span class="side-thumb-wrap">${assetThumb(asset)}</span><span class="side-item-body"><b>${
             esc(asset.filename)
           }</b><small>${esc(assetLabel(asset.type))} · ${
-            usages.length ? `已使用 ${usages.length} 处` : "未使用"
+            usages.length ? `已使用 ${usages.length} 处` : "还没有被引用"
           }</small></span><span class="side-item-tools">${
             store.ui.selectedBlockId
               ? `<button class="icon-button" data-action="insert-asset" data-id="${asset.id}" title="插入选中区块">＋</button>`
               : ""
           }<button class="icon-button" data-action="show-asset-usage" data-id="${
             asset.id
-          }" title="查看使用位置">?</button></span></div>`;
+          }" title="查看这个素材的使用位置">?</button></span></div>`;
         }).join("")
-        : `<div class="side-empty">还没有素材<br /><button class="text-button" data-action="open-file">添加第一个素材</button></div>`
+        : assets.length
+        ? `<div class="side-empty">没有找到匹配的素材。换一个文件名继续搜索。</div>`
+        : `<div class="side-empty">还没有素材。点击“添加素材”导入第一个文件。</div>`
     }</div>${
       store.ui.assetUsageId ? assetUsagePanel(store.ui.assetUsageId) : ""
     }`;
@@ -1287,7 +1311,7 @@ export function createViews(store) {
     );
     if (!asset) return "";
     const usages = usagesForAsset(store.data, assetId);
-    return `<div class="usage-box"><div class="side-head"><b>使用位置</b><button class="icon-button" data-action="hide-asset-usage">×</button></div>${
+    return `<div class="usage-box"><div class="side-head"><b>使用位置</b><button class="icon-button" data-action="hide-asset-usage" title="关闭使用位置">×</button></div>${
       usages.length
         ? usages.map((usage) => {
           const item = store.data.content_items.find((candidate) =>
@@ -1313,7 +1337,7 @@ export function createViews(store) {
   }
 
   function requirementsPanel(view) {
-    if (!view) return `<div class="side-empty">先选择一课</div>`;
+    if (!view) return `<div class="side-empty">还没有选中课程。先在左侧选择一课，就可以继续。</div>`;
     const gaps = view.lesson.gaps;
     const requirements = view.requirements;
     const open = requirements.filter((requirement) =>
@@ -1324,7 +1348,7 @@ export function createViews(store) {
     );
     return `<div class="side-head"><div><span class="eyebrow">完成这一课</span><h2>待补 <sup>${
       open.length
-    }</sup></h2></div><button class="icon-button" data-action="add-placeholder" title="新占位符">＋</button></div><div class="gap-summary"><div><b>${
+    }</sup></h2></div><button class="icon-button" data-action="add-placeholder" title="新增待补占位符">＋</button></div><div class="gap-summary"><div><b>${
       gaps.content
     }</b><span>内容待补</span></div><div><b>${
       gaps.layout
@@ -1333,7 +1357,7 @@ export function createViews(store) {
     }</b><span>缺素材</span></div></div><div class="modal-actions compact"><button class="secondary" data-action="add-requirement-text">＋ 文字待补</button><button class="secondary" data-action="add-requirement-image">＋ 图片待补</button></div><div class="side-list">${
       open.length
         ? open.map((requirement) => requirementRow(requirement)).join("")
-        : `<div class="side-empty">这一课没有未完成的待补内容</div>`
+        : `<div class="side-empty">这一课没有未完成的待补内容，可以继续写正文或查看预览。</div>`
     }</div>${
       done.length
         ? `<details class="done-group"><summary>已完成 ${done.length} 项</summary>${
@@ -1429,7 +1453,7 @@ export function createViews(store) {
   }
 
   function statusPanel(view) {
-    if (!view) return `<div class="side-empty">先选择一课</div>`;
+    if (!view) return `<div class="side-empty">还没有选中课程。先在左侧选择一课，就可以继续。</div>`;
     return `<div class="side-head"><div><span class="eyebrow">由你决定</span><h2>制作状态</h2></div></div><label class="field-label">课程标题<input class="select" data-lesson-title value="${
       esc(view.lesson.title)
     }" /></label><div class="status-list">${
@@ -1575,7 +1599,7 @@ export function createViews(store) {
             } 字</small></li>`
           ).join("")
         }</ul>`
-        : `<p class="ai-hint">按当前勾选，这次不会发送任何课程内容。</p>`
+        : `<p class="ai-hint">按当前勾选，这次不会发送任何课程内容。请选择至少一项内容后再预览或运行。</p>`
     }
       <div class="ai-excluded"><b>不会发送</b>${
       excluded.length
@@ -1653,15 +1677,15 @@ export function createViews(store) {
       <pre class="ai-answer">${esc(result.answer)}</pre>
       ${
       pendingDraft
-        ? `<button class="primary full" data-action="ai-open-draft" data-id="${esc(pendingDraft)}">打开 Diff 审核</button>`
+        ? `<button class="primary full" data-action="ai-open-draft" data-id="${esc(pendingDraft)}">打开修改对照</button>`
         : ""
     }
       <p class="ai-hint">${
       result.change_draft_id
-        ? "这次回答带有可审核的修改，已在下面生成 Diff；在应用之前课程内容不会改变。"
+        ? "这次回答带有可审核的修改，下面会显示修改前后；确认前课程内容不会改变。"
         : result.suggestion_id
-        ? "已把这次回答保存成建议（记录在 project.json 的 suggestions 里），正文没有被修改。"
-        : "这次没有生成可保存的建议。"
+        ? "这次回答已保存为建议，正文没有改动。"
+        : "这次没有生成可保存的建议；你仍可继续编辑。"
     }</p>
     </div>`;
   }
@@ -1681,10 +1705,10 @@ export function createViews(store) {
     const validation = draft.validation || null;
     const reviewing = draft.status === "reviewing";
     return `<div class="ai-block ai-diff">
-      <div class="ai-block-head"><b>修改草稿 · Diff</b><span class="badge ${
+      <div class="ai-block-head"><b>修改草稿 · 修改对照</b><span class="badge ${
       draft.status === "applied" ? "done" : draft.status === "discarded" ? "warning" : "open"
     }">${esc(AI_DRAFT_STATUS_LABELS[draft.status] || draft.status)}</span></div>
-      <p class="ai-hint">这份 Diff 来自模型回答，逐条对照后再决定。应用会写入历史，可以用「撤销」回到应用前。</p>
+      <p class="ai-hint">下面列出修改前后内容。逐条看过后再决定；应用后可以用“撤销”回到应用前。</p>
       ${
       rows.map((row, index) => {
         const reason = operations[index] ? String(operations[index].reason || "") : "";
@@ -1724,7 +1748,7 @@ export function createViews(store) {
         <button class="secondary" data-action="ai-reject-draft" ${
       reviewing ? "" : "disabled"
     }>拒绝</button>
-        <button class="text-button" data-action="ai-dismiss-draft">关闭 Diff</button>
+        <button class="text-button" data-action="ai-dismiss-draft">关闭修改对照</button>
       </div>
     </div>`;
   }
@@ -1758,14 +1782,14 @@ export function createViews(store) {
         review.state ? ` · 审核：${esc(AI_REVIEW_LABELS[review.state] || review.state)}` : ""
       }</dd>${
         record.error_code
-          ? `<dt>错误</dt><dd>${esc(record.error_code)}${
-            record.error_message ? `｜${esc(record.error_message)}` : ""
+          ? `<dt>状态</dt><dd>这次执行没有完成${
+            record.error_message ? `：${esc(record.error_message)}` : "，可以检查设置后再试"
           }</dd>`
           : ""
       }</dl>
         ${
         draftId
-          ? `<button class="text-button" data-action="ai-open-draft" data-id="${esc(draftId)}">打开这次 Diff</button>`
+          ? `<button class="text-button" data-action="ai-open-draft" data-id="${esc(draftId)}">打开这次修改对照</button>`
           : ""
       }
       </article>`;
@@ -1781,9 +1805,7 @@ export function createViews(store) {
       open
         ? records.length
           ? `<div class="ai-execution-list">${records.map(row).join("")}</div>`
-          : `<p class="side-note">还没有这门课程的执行记录。运行一次 AI 后，这里会列出时间、范围、服务商、状态与审核结果；记录保存在${
-            store.aiStorageLabel ? store.aiStorageLabel() : "本机 AI 配置目录"
-          }，不属于课程内容。</p>`
+          : `<p class="side-note">还没有这门课程的执行记录。运行一次 AI 后，这里会显示时间、范围、服务商和结果；这些记录不属于课程内容。</p>`
         : ""
     }
     </div>`;
@@ -1883,7 +1905,7 @@ export function createViews(store) {
             candidate === model ? "selected" : ""
           }>${esc(candidate)}</option>`
         ).join("")
-        : `<option value="">${esc(model || "还没有可用模型")}</option>`
+        : `<option value="">${esc(model || "还没有可用模型，请先在设置中添加")}</option>`
     }</select></label>
       <div class="ai-provider-state">
         <span class="ai-key-state ${
@@ -1907,8 +1929,8 @@ export function createViews(store) {
       <p class="side-note" data-ai-storage="${
       store.bridge.isNative() ? "native" : "browser"
     }">API Key 只由本机服务写入${
-      store.aiStorageLabel ? store.aiStorageLabel() : "本机 AI 配置"
-    }，不回显、不进入 project.json、不进入导出包，也不会写进执行记录。系统钥匙串适配器尚未安装：文件权限是 0600，但没有加密，明文保存在本机磁盘上。</p>
+      store.aiStorageLabel ? store.aiStorageLabel() : "macOS 系统钥匙串"
+    }，不回显，也不会进入课程、备份、日志、导出或执行记录。项目文件只保留服务商元数据；密钥不会写入项目文件。</p>
     </div>
 
     <div class="ai-block">
@@ -1920,7 +1942,7 @@ export function createViews(store) {
     }">${store.ui.aiWantsChanges === true ? "✓" : "○"} 要求修改课程内容</button>
       <p class="ai-hint">${
       store.ui.aiWantsChanges === true
-        ? "会要求模型给出可审核的修改；仍然只会生成 Diff，确认后才写入正文。"
+        ? "会要求模型给出可审核的修改；仍然只会生成修改对照，确认后才写入正文。"
         : "默认只让模型解释、提问或给建议，不要求它改正文。"
     }</p>
       <div class="ai-run-row">
@@ -1951,17 +1973,17 @@ export function createViews(store) {
     }">${esc(AI_STATUS_LABELS[status] || status)}</span></div>
       ${
       error
-        ? `<div class="ai-error"><b>${esc(error.code || "provider_error")}</b><p>${
-          esc(error.message || "这次 AI 请求没有成功。")
-        }</p>${
+        ? `<div class="ai-error"><b>这次 AI 没有完成</b><p>${
+          esc(error.message || "这次请求没有成功。")
+        }</p><p>课程内容没有改动，你可以检查设置后重试。</p>${
           error.recommended_action
             ? `<p class="muted">下一步：${esc(error.recommended_action)}</p>`
             : ""
         }</div>`
         : `<p class="ai-hint">${
           status === "idle"
-            ? "还没有运行过。运行结果会显示在这里，并保留执行记录。"
-            : "当前没有错误。"
+            ? "还没有运行过。开始运行后，结果会显示在这里；课程内容不会自动改动。"
+            : "当前没有错误，可以继续。"
         }</p>`
     }
     </div>
@@ -1972,7 +1994,7 @@ export function createViews(store) {
   }
 
   function propertiesPanel(view) {
-    if (!view) return `<div class="side-empty">先选择一课</div>`;
+    if (!view) return `<div class="side-empty">还没有选中课程。先在左侧选择一课，就可以继续。</div>`;
     const lesson = view.lesson;
     const item = store.currentItem();
     const stage = store.data.stages.find((candidate) =>
@@ -2013,7 +2035,7 @@ export function createViews(store) {
           selected.asset
             ? esc(selected.asset.filename)
             : selected.media
-            ? "缺失"
+            ? "缺失，请到媒体库重新选择"
             : "—"
         }</dd><dt>待补</dt><dd>${
           selected.requirement_id ? "有" : "无"
@@ -2084,9 +2106,9 @@ export function createViews(store) {
       const externalEntries = conflict.external_diff?.entries || [];
       const localEntries = conflict.local_diff?.entries || [];
       const mergeConflicts = conflict.merge?.conflicts || [];
-      return `<div class="overlay"><div class="conflict-modal modal" data-stop-click="true"><div class="modal-head"><div><span class="eyebrow">EXTERNAL MODIFICATION CONFLICT</span><h2>project.json 已在工作台外被修改</h2></div></div><p class="muted">为避免静默覆盖，手动保存和自动保存都已暂停。磁盘版本仍保持不变。</p>${
+      return `<div class="overlay"><div class="conflict-modal modal" data-stop-click="true"><div class="modal-head"><div><span class="eyebrow">保存已暂停</span><h2>课程文件在其他地方发生了变化</h2></div></div><p class="muted">为避免覆盖别人的修改，手动保存和自动保存都已暂停；磁盘版本没有改变。你可以继续查看，下一步请选择重新载入、自动合并，或在确认后保留本地版本。</p>${
         conflict.inspection_error
-          ? `<p class="conflict-error">${esc(conflict.inspection_error)}</p>`
+          ? `<p class="conflict-error">暂时无法读取磁盘差异。你仍可重新载入，或明确保留本地版本。</p><details class="diagnostic"><summary>显示技术信息</summary><code>${esc(conflict.inspection_error)}</code></details>`
           : ""
       }<div class="conflict-summary"><span>磁盘变化 <b>${
         externalEntries.length
@@ -2098,12 +2120,12 @@ export function createViews(store) {
         (mergeConflicts.length ? mergeConflicts : externalEntries).slice(0, 12)
           .map((entry) =>
             `<div><code>${
-              esc(entry.path || "project.json")
+              esc(entry.path || "课程数据")
             }</code><small>${
               mergeConflicts.length ? "本地与外部都修改了此处" : "磁盘版本已变化"
             }</small></div>`
           ).join("") ||
-        `<div><code>project.json</code><small>文件内容或存在状态已变化</small></div>`
+        `<div><span>课程文件</span><small>文件内容或是否存在发生变化</small></div>`
       }</div><div class="modal-actions"><button class="secondary" data-action="external-reload">重新载入磁盘版本</button><button class="secondary" data-action="external-merge">预览并自动合并</button>${
         mergeConflicts.length
           ? `<button class="primary danger" data-action="external-keep-local">明确保留本地版本</button>`
@@ -2116,7 +2138,7 @@ export function createViews(store) {
       const savedAt = pending.saved_at
         ? new Date(pending.saved_at).toLocaleString("zh-CN")
         : "未知时间";
-      return `<div class="overlay"><div class="conflict-modal modal" data-stop-click="true"><div class="modal-head"><div><span class="eyebrow">RECOVERY JOURNAL</span><h2>检测到未完成自动保存</h2></div></div><p class="muted">磁盘版本保持不变；自动保存内容来自 ${esc(savedAt)}，包含 ${recoveredBlocks} 个正文区块。请选择是否恢复。</p><div class="modal-actions"><button class="secondary" data-action="recovery-discard">保留磁盘版本</button><button class="primary" data-action="recovery-restore">恢复自动保存</button></div></div></div>`;
+      return `<div class="overlay"><div class="conflict-modal modal" data-stop-click="true"><div class="modal-head"><div><span class="eyebrow">恢复</span><h2>发现未完成的保存</h2></div></div><p class="muted">上次保存没有完成，磁盘版本没有改变。暂存内容来自 ${esc(savedAt)}，包含 ${recoveredBlocks} 个正文区块。请选择恢复暂存内容，或保留磁盘版本继续工作。</p><div class="modal-actions"><button class="secondary" data-action="recovery-discard">保留磁盘版本</button><button class="primary" data-action="recovery-restore">恢复暂存内容</button></div></div></div>`;
     }
     if (store.ui.assetPicker) {
       const target = store.ui.assetPicker;
@@ -2126,7 +2148,7 @@ export function createViews(store) {
         : target.requirementId
         ? "用素材完成这条待补"
         : "插入当前课";
-      return `<div class="overlay" data-action="close-overlay"><div class="asset-picker modal" data-stop-click="true"><div class="modal-head"><div><span class="eyebrow">MEDIA PICKER</span><h2>选择素材</h2></div><button class="icon-button" data-action="close-overlay">×</button></div><p class="muted">${context}。选择后会建立真实引用，可以在媒体库看到使用位置。</p>${
+      return `<div class="overlay" data-action="close-overlay"><div class="asset-picker modal" data-stop-click="true"><div class="modal-head"><div><span class="eyebrow">MEDIA PICKER</span><h2>选择素材</h2></div><button class="icon-button" data-action="close-overlay" title="关闭素材选择">×</button></div><p class="muted">${context}。选择后会建立真实引用，可以在媒体库看到使用位置。</p>${
         assets.length
           ? `<div class="picker-grid">${
             assets.map((asset) =>
@@ -2137,7 +2159,7 @@ export function createViews(store) {
               }</b><small>${esc(assetLabel(asset.type))}</small></button>`
             ).join("")
           }</div>`
-          : `<div class="side-empty">媒体库还没有素材<button class="text-button" data-action="pick-asset-import">现在导入</button></div>`
+          : `<div class="side-empty">媒体库还没有素材。<button class="text-button" data-action="pick-asset-import">现在导入</button></div>`
       }</div></div>`;
     }
     if (store.ui.palette) {
@@ -2146,7 +2168,7 @@ export function createViews(store) {
       }</div><div class="palette-hint"><kbd>↑↓</kbd> 选择 <kbd>↵</kbd> 打开 <kbd>Esc</kbd> 关闭</div></div></div>`;
     }
     if (store.ui.capture) {
-      return `<div class="overlay" data-action="close-overlay"><div class="capture modal" data-stop-click="true"><div class="modal-head"><div><span class="eyebrow">QUICK CAPTURE</span><h2>快速收集</h2></div><button class="icon-button" data-action="close-overlay">×</button></div><textarea autofocus data-capture-input placeholder="写点什么，或粘贴网页链接……"></textarea><label class="field-label">放入<select class="select"><option>${
+      return `<div class="overlay" data-action="close-overlay"><div class="capture modal" data-stop-click="true"><div class="modal-head"><div><span class="eyebrow">QUICK CAPTURE</span><h2>快速收集</h2></div><button class="icon-button" data-action="close-overlay" title="关闭快速收集">×</button></div><textarea autofocus data-capture-input placeholder="写点什么，或粘贴网页链接……"></textarea><label class="field-label">放入<select class="select"><option>${
         esc(store.data.project.title)
       }</option></select></label><div class="modal-actions"><button class="secondary" data-action="close-overlay">取消</button><button class="primary" data-action="submit-capture">放入收件箱</button></div></div></div>`;
     }
@@ -2154,7 +2176,7 @@ export function createViews(store) {
       const report = store.ui.preflightReport || store.exportPreflight();
       const issues = Array.isArray(report.issues) ? report.issues : [];
       const formatNames = { markdown: "Markdown", html: "Semantic HTML", web: "Static Web Package", pdf: "PDF", wechat: "微信 / 富文本", json: "Project JSON", asset_package: "素材包", full_project: "完整项目包" };
-      return `<div class="overlay" data-action="close-overlay"><div class="preflight modal" data-stop-click="true"><div class="modal-head"><div><span class="eyebrow">EXPORT PREFLIGHT</span><h2>导出前检查</h2></div><button class="icon-button" data-action="close-overlay">×</button></div><p><b>${store.ui.publishScope === "course" ? "整门课程" : "当前课"}</b> → <b>${esc(formatNames[store.ui.publishFormat] || store.ui.publishFormat)}</b></p><p class="muted">检查只读 Canonical，不调用 AI。BLOCKING 会生成损坏结果，必须修复；WARNING 可确认后继续，并会按说明降级。</p><div class="check-list">${[
+      return `<div class="overlay" data-action="close-overlay"><div class="preflight modal" data-stop-click="true"><div class="modal-head"><div><span class="eyebrow">导出前检查</span><h2>导出前检查</h2></div><button class="icon-button" data-action="close-overlay" title="关闭导出前检查">×</button></div><p><b>${store.ui.publishScope === "course" ? "整门课程" : "当前课"}</b> → <b>${esc(formatNames[store.ui.publishFormat] || store.ui.publishFormat)}</b></p><p class="muted">先检查课程内容和素材。标为“必须修复”的问题会阻止导出；“提示”可以确认后继续。检查不会修改课程，也不会调用 AI。</p><div class="check-list">${[
         ["内容级待补", report.content, false],
         ["当前排版待补", report.layout, false],
         ["缺失素材文件", report.missingAssets, true],
@@ -2163,10 +2185,10 @@ export function createViews(store) {
         ["未加载字体", report.fonts, false],
         ["外部引用", report.external, false],
         ["媒体降级", report.mediaDowngrades || 0, false],
-      ].map(([label, count, blocking]) => `<div><span class="check ${count ? blocking ? "danger" : "warning" : "ok"}">${count || "✓"}</span><span>${label}</span><b>${count}</b></div>`).join("")}</div>${issues.length ? `<div class="issue-list">${issues.map((issue) => `<article class="${issue.severity === "blocking" ? "issue-blocking" : "issue-warning"}"><b>${issue.severity === "blocking" ? "BLOCKING" : "WARNING"}</b><span>${esc(issue.message || issue.code || "导出问题")}</span></article>`).join("")}</div>` : ""}<div class="preflight-total">BLOCKING <strong>${report.blocking}</strong> · WARNING <strong>${report.warnings}</strong></div>${report.blocking ? `<p class="error-text">当前不能导出：请返回修复上面的严重问题。不会生成半成品，也不会修改源课程。</p>` : report.warnings ? `<p class="muted">可以继续；待补不会进入正式正文，无法交互的媒体会显示为附件说明。</p>` : `<p class="success-text">检查通过，可以生成完整输出。</p>`}<div class="modal-actions"><button class="secondary" data-action="close-overlay">返回修复</button><button class="primary" data-action="export-format" data-format="${esc(store.ui.publishFormat)}" ${report.blocking ? "disabled" : ""}>${report.warnings ? "确认警告并导出" : "开始导出"}</button></div></div></div>`;
+      ].map(([label, count, blocking]) => `<div><span class="check ${count ? blocking ? "danger" : "warning" : "ok"}">${count || "✓"}</span><span>${label}</span><b>${count}</b></div>`).join("")}</div>${issues.length ? `<div class="issue-list">${issues.map((issue) => `<article class="${issue.severity === "blocking" ? "issue-blocking" : "issue-warning"}"><b>${issue.severity === "blocking" ? "必须修复" : "提示"}</b><span>${esc(issueMessage(issue))}</span>${issueDiagnostics(issue)}</article>`).join("")}</div>` : ""}<div class="preflight-total">必须修复 <strong>${report.blocking}</strong> · 提示 <strong>${report.warnings}</strong></div>${report.blocking ? `<p class="error-text">当前不能导出：请先修复上面标为“必须修复”的问题。不会生成半成品，也不会修改源课程。</p>` : report.warnings ? `<p class="muted">可以继续；确认后，待补内容不会进入正式正文，无法交互的媒体会以附件说明呈现。</p>` : `<p class="success-text">检查通过，可以生成输出；源课程不会被修改。</p>`}<div class="modal-actions"><button class="secondary" data-action="close-overlay">返回继续修复</button><button class="primary" data-action="export-format" data-format="${esc(store.ui.publishFormat)}" ${report.blocking ? "disabled" : ""}>${report.warnings ? "确认提示并导出" : "开始导出"}</button></div></div></div>`;
     }
     if (store.ui.snapshot) {
-      return `<div class="overlay" data-action="close-overlay"><div class="capture modal" data-stop-click="true"><div class="modal-head"><div><span class="eyebrow">长期历史</span><h2>保存版本</h2></div><button class="icon-button" data-action="close-overlay">×</button></div><label class="field-label">版本名称<input data-snapshot-name placeholder="例如：第一课正文定稿" /></label><label class="field-label">备注<textarea data-snapshot-note placeholder="记录这个节点为什么重要"></textarea></label><div class="modal-actions"><button class="secondary" data-action="close-overlay">取消</button><button class="primary" data-action="submit-snapshot">保存版本</button></div></div></div>`;
+      return `<div class="overlay" data-action="close-overlay"><div class="capture modal" data-stop-click="true"><div class="modal-head"><div><span class="eyebrow">长期历史</span><h2>保存版本</h2></div><button class="icon-button" data-action="close-overlay" title="关闭保存版本">×</button></div><label class="field-label">版本名称<input data-snapshot-name placeholder="例如：第一课正文定稿" /></label><label class="field-label">备注<textarea data-snapshot-note placeholder="记录这个节点为什么重要"></textarea></label><div class="modal-actions"><button class="secondary" data-action="close-overlay">取消</button><button class="primary" data-action="submit-snapshot">保存版本</button></div></div></div>`;
     }
     return "";
   }
@@ -2247,7 +2269,7 @@ export function createViews(store) {
       }"><span class="result-type">${result.type}</span><b>${
         esc(result.label)
       }</b><span>↵</span></button>`
-    ).join("") || `<div class="no-results">没有找到匹配内容</div>`;
+    ).join("") || `<div class="no-results">没有找到匹配内容。换一个关键词，或按 Esc 关闭搜索。</div>`;
   }
 
   function toastView(esc) {

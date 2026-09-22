@@ -23,11 +23,15 @@ import {
   type AiTransportOptions,
 } from "./ai_transport.ts";
 import { AuditLog } from "./audit.ts";
+import { BrowserSessionStore } from "./browser_session.ts";
 import { CommandBus, type CommandContext, QueryBus } from "./commands.ts";
 import { EventBus } from "./events.ts";
-import { error } from "./errors.ts";
+import { error, ServiceError } from "./errors.ts";
 import { JobManager } from "./jobs.ts";
-import { MemorySecretStore, type SecretStore } from "./security.ts";
+import {
+  MacKeychainSecretStore,
+  type SecretStore,
+} from "./security.ts";
 import { DiagnosticLogger } from "./diagnostics.ts";
 import {
   createSearchIndex,
@@ -82,6 +86,8 @@ function normalizeImportSources(value: unknown): ImportSource[] {
 /** Small composition root for the UI bridge; all system access stays behind it. */
 export class DesktopService {
   readonly store: ProjectDirectoryStore;
+  /** Browser reader metadata is separate from canonical project storage. */
+  readonly browserSession: BrowserSessionStore;
   readonly events = new EventBus();
   readonly jobs = new JobManager();
   readonly audit = new AuditLog();
@@ -102,10 +108,11 @@ export class DesktopService {
   constructor(
     directory: string,
     options: ProjectDirectoryOptions = {},
-    secrets: SecretStore = new MemorySecretStore(),
+    secrets: SecretStore = new MacKeychainSecretStore(),
     aiOptions: AiTransportOptions = {},
   ) {
     this.store = new ProjectDirectoryStore(directory, options);
+    this.browserSession = new BrowserSessionStore(this.store.directory);
     this.aiOptions = aiOptions;
     this.diagnostics = new DiagnosticLogger(
       join(directory, ".workspace", "diagnostics"),
@@ -1364,6 +1371,70 @@ export class DesktopService {
     this.queries.register("diagnostics.export", async () => {
       return await this.diagnostics.exportBundle();
     });
+  }
+
+  /**
+   * Read a browser resume pointer only after checking the current canonical
+   * project. Missing, corrupt, stale, or inaccessible records are equivalent
+   * to no pointer so the launcher remains usable.
+   */
+  async loadBrowserSession(): Promise<Record<string, unknown> | null> {
+    let project: ProjectData;
+    try {
+      project = await this.store.readProject();
+    } catch {
+      return null;
+    }
+    const projectId = project?.project?.id;
+    if (typeof projectId !== "string" || !projectId.trim()) return null;
+    return await this.browserSession.load(projectId);
+  }
+
+  /** Save UI-only browser metadata after resolving the canonical identity. */
+  async saveBrowserSession(value: unknown): Promise<void> {
+    let project: ProjectData;
+    try {
+      project = await this.store.readProject();
+    } catch (caught) {
+      throw error(
+        "browser_session_unavailable",
+        "上次阅读位置暂时无法保存，但课程内容仍可继续使用。",
+        `Cannot validate browser session project: ${caught instanceof Error ? caught.message : "unknown failure"}`,
+        {
+          recoverable: true,
+          recommended_action: "重新打开项目后重试；课程内容不会因此改变。",
+          details: {},
+        },
+      );
+    }
+    const projectId = project?.project?.id;
+    if (typeof projectId !== "string" || !projectId.trim()) {
+      throw error(
+        "browser_session_unavailable",
+        "当前没有可识别的课程项目，阅读位置未保存。",
+        "Cannot save browser session without a canonical project identity",
+        {
+          recoverable: true,
+          recommended_action: "先打开一个有效的课程项目。",
+          details: {},
+        },
+      );
+    }
+    try {
+      await this.browserSession.save(value, projectId);
+    } catch (caught) {
+      if (caught instanceof ServiceError) throw caught;
+      throw error(
+        "browser_session_unavailable",
+        "上次阅读位置暂时无法保存，但课程内容仍可继续使用。",
+        `Cannot save browser session: ${caught instanceof Error ? caught.message : "unknown failure"}`,
+        {
+          recoverable: true,
+          recommended_action: "检查项目目录权限后重试；课程内容不会因此改变。",
+          details: {},
+        },
+      );
+    }
   }
 
   async open(): Promise<ProjectData | null> {

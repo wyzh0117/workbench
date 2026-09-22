@@ -6,6 +6,16 @@ target/
 # Stray compiler output at the repo root (`rustc file.rs` writes ./rust_out).
 rust_out
 
+# ---- Release staging -------------------------------------------------------
+# Scratch space for a local release build: the renamed DMG, its .sha256, the
+# checksum comparison and the mount point used by the install smoke. All of it
+# is either reproducible or uploaded as a GitHub Release asset, never committed.
+.release/
+.release-tmp/
+dist/
+*.dmg
+*.dmg.sha256
+
 # ---- Local workbench data --------------------------------------------------
 # The app's own working project: Canonical project.json, imported assets, and
 # the rebuildable .workspace caches (index.json, snapshots, diagnostics) plus

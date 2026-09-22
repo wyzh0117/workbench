@@ -8,16 +8,23 @@
  * one request and how to map the answer back to a structured result.
  *
  * Non-canonical local state, never part of `project.json` and never exported:
- *   <project>/.workspace/ai/providers.json    provider configs + credentials (0600)
+ *   <project>/.workspace/ai/providers.json    provider metadata only
  *   <project>/.workspace/ai/executions.json   bounded execution log (max 200)
+ * Credentials are held by macOS Keychain; historical plaintext values are
+ * migrated once and removed only after verified Keychain storage succeeds.
  *
  * The JSON shapes are shared with the native (Rust) transport so the two
  * shells stay interchangeable.
  */
 
+import { createHash } from "node:crypto";
 import { dirname, join, normalize } from "node:path";
 import { id } from "../domain/util.ts";
 import { error, redactSecrets, ServiceError } from "./errors.ts";
+import {
+  MacKeychainSecretStore,
+  type SecretStore,
+} from "./security.ts";
 
 /** Provider configuration the page may persist.  Never contains a credential. */
 export interface AiProviderConfig {
@@ -65,10 +72,12 @@ export type AiFetch = (
 export interface AiTransportOptions {
   /** Injectable for tests; defaults to the platform `fetch`. */
   fetch?: AiFetch;
-  /** Directory holding `providers.json` / `executions.json`. */
+  /** Directory holding provider metadata / executions. */
   ai_home?: string;
   /** Shared in-flight registry so `ai.cancel` keeps working across projects. */
   requests?: Map<string, AbortController>;
+  /** System-secure credential backend; tests inject an isolated fake store. */
+  credential_store?: SecretStore;
   read_only?: boolean;
   max_records?: number;
 }
@@ -447,6 +456,41 @@ function findForbiddenField(value: unknown, path = ""): string | null {
   return null;
 }
 
+/** Query-string API keys are secrets even when the containing field is `base_url`. */
+function findInlineCredentialField(value: unknown, path = ""): string | null {
+  if (Array.isArray(value)) {
+    for (let index = 0; index < value.length; index += 1) {
+      const found = findInlineCredentialField(value[index], `${path}[${index}]`);
+      if (found) return found;
+    }
+    return null;
+  }
+  if (!isPlainRecord(value)) return null;
+  for (const [key, child] of Object.entries(value)) {
+    const field = path ? `${path}.${key}` : key;
+    if (typeof child === "string" && key === "base_url") {
+      const query = child.split("?", 2)[1]?.split("#", 1)[0] ?? "";
+      for (const part of query.split("&")) {
+        const [name, rawValue] = part.split("=", 2);
+        if (!name || !rawValue) continue;
+        let decodedName = name;
+        try {
+          decodedName = decodeURIComponent(name);
+        } catch {
+          // An invalid query escape is still treated as ordinary metadata here;
+          // URL validation will report it at request time without echoing it.
+        }
+        if (CREDENTIAL_FIELD.test(decodedName)) {
+          return `${field}[query:${decodedName}]`;
+        }
+      }
+    }
+    const found = findInlineCredentialField(child, field);
+    if (found) return found;
+  }
+  return null;
+}
+
 function assertJsonOnly(value: unknown, depth = 0): void {
   if (depth > MAX_PROVIDER_DEPTH) {
     throw invalidRequest(
@@ -493,6 +537,7 @@ export function normalizeProviderConfig(value: unknown): AiProviderConfig {
     );
   }
   const forbidden = findForbiddenField(value);
+  const inlineCredential = findInlineCredentialField(value);
   if (forbidden) {
     const leaf = forbidden.split(".").at(-1) ?? forbidden;
     const hint = leaf === "requires_credential"
@@ -502,6 +547,13 @@ export function normalizeProviderConfig(value: unknown): AiProviderConfig {
       `服务商配置中出现了不允许的字段「${forbidden}」。`,
       `Credential-shaped provider field rejected: ${forbidden}`,
       `${hint}允许的字段：${SAFE_PROVIDER_FIELDS}。`,
+    );
+  }
+  if (inlineCredential) {
+    throw invalidRequest(
+      `服务商配置中出现了不允许的密钥查询参数「${inlineCredential}」。`,
+      `Inline credential query parameter rejected: ${inlineCredential}`,
+      "API Key 必须通过「保存密钥」单独提交。",
     );
   }
   assertJsonOnly(value);
@@ -549,12 +601,11 @@ export function normalizeProviderConfig(value: unknown): AiProviderConfig {
 /** Read one persisted provider entry; invalid entries are ignored. */
 function coerceProviderEntry(value: unknown): AiProviderConfig | null {
   if (!isPlainRecord(value)) return null;
+  if (findForbiddenField(value) || findInlineCredentialField(value)) return null;
   const providerId = typeof value.id === "string" ? value.id.trim() : "";
   if (!isSafeProviderId(providerId)) return null;
   try {
-    const cloned = cloneJsonValue(JSON.parse(JSON.stringify(value)));
-    if (!isPlainRecord(cloned)) return null;
-    return { ...(cloned as AiProviderConfig), id: providerId };
+    return normalizeProviderConfig(value);
   } catch {
     return null;
   }
@@ -562,13 +613,24 @@ function coerceProviderEntry(value: unknown): AiProviderConfig | null {
 
 interface AiProvidersState {
   providers: AiProviderConfig[];
-  credentials: Record<string, string>;
 }
 
-function normalizeProvidersState(value: unknown): AiProvidersState | null {
+interface ParsedAiProvidersState extends AiProvidersState {
+  /** Historical plaintext values only; consumed by one-time migration. */
+  credentials: Record<string, string>;
+  /** Unknown root fields are stripped so metadata cannot become a secret sink. */
+  hasExtraFields: boolean;
+  /** Historical provider entries are rewritten to the allow-listed shape. */
+  providerMetadataChanged: boolean;
+}
+
+function normalizeProvidersState(value: unknown): ParsedAiProvidersState | null {
   if (!isPlainRecord(value)) return null;
   const rawProviders = value.providers;
   if (rawProviders !== undefined && !Array.isArray(rawProviders)) return null;
+  const hasExtraFields = Object.keys(value).some((key) =>
+    key !== "providers" && key !== "credentials"
+  );
   const rawCredentials = value.credentials;
   if (rawCredentials !== undefined && !isPlainRecord(rawCredentials)) return null;
   const providers: AiProviderConfig[] = [];
@@ -577,12 +639,14 @@ function normalizeProvidersState(value: unknown): AiProvidersState | null {
     if (provider) providers.push(provider);
     if (providers.length >= MAX_PROVIDERS) break;
   }
+  const providerMetadataChanged = rawProviders !== undefined &&
+    JSON.stringify(rawProviders) !== JSON.stringify(providers);
   const credentials: Record<string, string> = {};
   for (const [key, child] of Object.entries(rawCredentials ?? {})) {
     if (!isSafeProviderId(key)) continue;
     if (typeof child === "string" && child.length > 0) credentials[key] = child;
   }
-  return { providers, credentials };
+  return { providers, credentials, hasExtraFields, providerMetadataChanged };
 }
 
 function responseHeaders(response: Response): Record<string, string> {
@@ -695,6 +759,13 @@ function normalizeMaxRecords(value: unknown): number {
   return Math.min(Math.max(Math.round(value), 1), MAX_EXECUTIONS);
 }
 
+function projectKeychainPrefix(projectDirectory: string): string {
+  // Scope browser-service credentials to the project without putting the
+  // user's filesystem path in visible Keychain account metadata.
+  const digest = createHash("sha256").update(projectDirectory).digest("hex");
+  return `project-${digest.slice(0, 32)}:provider:`;
+}
+
 /**
  * AI transport + connection/credential/execution store for one project
  * directory.  Construct it per project; it never caches across directories.
@@ -707,6 +778,7 @@ export class AiTransport {
   private readonly requestRegistry: Map<string, AbortController>;
   private readonly readOnly: boolean;
   private readonly recordLimit: number;
+  private readonly credentialStore: SecretStore;
 
   constructor(projectDirectory: string, options: AiTransportOptions = {}) {
     this.projectDirectory = normalize(projectDirectory);
@@ -720,6 +792,9 @@ export class AiTransport {
     this.requestRegistry = options.requests ?? new Map<string, AbortController>();
     this.readOnly = options.read_only === true;
     this.recordLimit = normalizeMaxRecords(options.max_records);
+    this.credentialStore = options.credential_store ?? new MacKeychainSecretStore({
+      accountPrefix: projectKeychainPrefix(this.projectDirectory),
+    });
   }
 
   get providersPath(): string {
@@ -730,15 +805,29 @@ export class AiTransport {
     return join(this.home, EXECUTIONS_FILE);
   }
 
+  private assertWritable(): void {
+    if (this.readOnly) {
+      throw error(
+        "read_only_project",
+        "当前项目以只读方式打开，无法保存 AI 配置。",
+        "Refusing to mutate system-secure AI credentials for a read-only project",
+        {
+          recoverable: false,
+          recommended_action: "切换到编辑模式后重试。",
+          details: {},
+        },
+      );
+    }
+  }
+
   // ---------------------------------------------------------------- connections
 
   /** Providers plus credential *presence*; never a credential value. */
   async listConnections(): Promise<AiConnectionList> {
     const state = await this.readProviders();
     const configured: Record<string, boolean> = {};
-    for (const provider of state.providers) configured[provider.id] = false;
-    for (const providerId of Object.keys(state.credentials)) {
-      configured[providerId] = true;
+    for (const provider of state.providers) {
+      configured[provider.id] = (await this.credentialStore.get(provider.id)) !== null;
     }
     return {
       providers: state.providers.map((provider) => structuredClone(provider)),
@@ -754,6 +843,7 @@ export class AiTransport {
       ? input.provider
       : input;
     const provider = normalizeProviderConfig(candidate);
+    this.assertWritable();
     const state = await this.readProviders();
     const index = state.providers.findIndex((entry) =>
       entry.id === provider.id
@@ -771,30 +861,29 @@ export class AiTransport {
     return { provider: structuredClone(provider) };
   }
 
-  /** Remove a provider config and any credential stored for it. */
+  /** Remove a provider config and any system-keychain credential stored for it. */
   async deleteConnection(
     providerId: string,
   ): Promise<{ provider_id: string; removed: boolean }> {
     const key = assertProviderId(providerId);
+    this.assertWritable();
     const state = await this.readProviders();
     const before = state.providers.length;
     state.providers = state.providers.filter((entry) => entry.id !== key);
-    const hadCredential = Object.prototype.hasOwnProperty.call(
-      state.credentials,
-      key,
-    );
-    delete state.credentials[key];
+    const hadCredential = (await this.credentialStore.get(key)) !== null;
+    if (hadCredential) await this.credentialStore.delete(key);
     const removed = state.providers.length !== before || hadCredential;
     if (removed) await this.writeProviders(state);
     return { provider_id: key, removed };
   }
 
-  /** Store a credential.  The value is written to disk and never returned. */
+  /** Store a credential in the system Keychain; the value is never returned. */
   async setCredential(
     providerId: string,
     value: string,
   ): Promise<{ provider_id: string }> {
     const key = assertProviderId(providerId);
+    this.assertWritable();
     if (typeof value !== "string" || value.trim().length === 0) {
       throw invalidRequest(
         "密钥不能为空。",
@@ -810,7 +899,9 @@ export class AiTransport {
       );
     }
     const state = await this.readProviders();
-    state.credentials[key] = trimmed;
+    // Keychain write happens before metadata only-write. If metadata fails,
+    // the key remains recoverable and no plaintext fallback is created.
+    await this.credentialStore.set(key, trimmed);
     await this.writeProviders(state);
     return { provider_id: key };
   }
@@ -819,15 +910,10 @@ export class AiTransport {
     providerId: string,
   ): Promise<{ provider_id: string; removed: boolean }> {
     const key = assertProviderId(providerId);
-    const state = await this.readProviders();
-    const removed = Object.prototype.hasOwnProperty.call(
-      state.credentials,
-      key,
-    );
-    if (removed) {
-      delete state.credentials[key];
-      await this.writeProviders(state);
-    }
+    this.assertWritable();
+    await this.readProviders();
+    const removed = (await this.credentialStore.get(key)) !== null;
+    if (removed) await this.credentialStore.delete(key);
     return { provider_id: key, removed };
   }
 
@@ -856,22 +942,23 @@ export class AiTransport {
     const provider = providerId
       ? state.providers.find((entry) => entry.id === providerId)
       : undefined;
-    const storedCredential = providerId ? state.credentials[providerId] : undefined;
+    const storedCredential = providerId
+      ? await this.credentialStore.get(providerId)
+      : null;
+    const storedCredentials = await this.credentialsForProviders(state.providers);
     const url = assertTransportUrl(this.resolveRequestUrl(candidate, state));
     const headers = normalizeHeaders(candidate.headers);
     const auth = normalizeAuth(candidate.auth);
-    // Scrub from the STORED credential, not only from the injected header: a
-    // provider with an empty `auth_header` still has a key on disk, and a saved
-    // `base_url` can carry it in its query string.
+    // Scrub from the system-stored credential, not only from the injected
+    // header: a saved base_url can carry a key in its query string.
     const scheme = auth?.scheme ||
       (typeof provider?.auth_scheme === "string" ? provider.auth_scheme : "");
     const credentials = storedCredential
       ? credentialScrubList(storedCredential, scheme)
       : [];
     // A credential too short to replace exactly would shred ordinary words, so
-    // while any such credential is stored no provider text is kept at all; the
-    // structured `details` fields still describe the failure.
-    const exactScrubUnsafe = Object.values(state.credentials).some((value) => {
+    // while any such credential is stored no provider text is kept at all.
+    const exactScrubUnsafe = storedCredentials.some((value) => {
       const trimmed = value.trim();
       return trimmed.length > 0 && trimmed.length < MIN_EXACT_SECRET_CHARS;
     });
@@ -956,11 +1043,13 @@ export class AiTransport {
     }
     // Every credential this project stores is scrubbed from the record's free
     // text, so a key pasted into the instruction box cannot reach the file.
-    const sanitized = sanitizeExecutionRecord(
-      record,
-      0,
-      await this.storedCredentialScrubList(),
-    );
+    let scrubList: string[];
+    try {
+      scrubList = await this.storedCredentialScrubList();
+    } catch (caught) {
+      throw this.executionFailure(caught);
+    }
+    const sanitized = sanitizeExecutionRecord(record, 0, scrubList);
     const existingId = typeof sanitized.id === "string" ? sanitized.id.trim() : "";
     const recordId = existingId || id();
     sanitized.id = recordId;
@@ -998,10 +1087,11 @@ export class AiTransport {
       : DEFAULT_LIST_LIMIT;
     const cap = Math.min(Math.max(parsedLimit, 1), MAX_EXECUTIONS);
     const records = await this.readExecutions();
+    const scrubList = await this.storedCredentialScrubList();
     return records
       .slice(Math.max(0, records.length - cap))
       .reverse()
-      .map((record) => structuredClone(record));
+      .map((record) => sanitizeExecutionRecord(record, 0, scrubList));
   }
 
   // ------------------------------------------------------------------ internals
@@ -1354,51 +1444,135 @@ export class AiTransport {
   }
 
   /**
-   * Every credential spelling stored for this project.  Best effort: a corrupt
-   * provider file must never stop the execution log from being written.
+   * Every credential spelling stored for this project. This deliberately
+   * fails closed: without a complete scrub list, no execution record may be
+   * written or returned.
    */
   private async storedCredentialScrubList(): Promise<string[]> {
-    try {
-      const state = await this.readProviders();
-      const secrets: string[] = [];
-      for (const credential of Object.values(state.credentials)) {
-        secrets.push(...credentialScrubList(credential, ""));
-      }
-      return [...new Set(secrets)];
-    } catch {
-      return [];
-    }
+    const state = await this.readProviders();
+    return [...new Set(
+      await this.credentialsForProviders(state.providers).then((values) =>
+        values.flatMap((value) => credentialScrubList(value, ""))
+      ),
+    )];
   }
 
-  private async readProviders(): Promise<AiProvidersState> {
+  private async credentialsForProviders(
+    providers: readonly AiProviderConfig[],
+  ): Promise<string[]> {
+    const providerIds = new Set(providers.map((provider) => provider.id));
+    // Injectable fakes can enumerate their isolated accounts; the macOS
+    // adapter intentionally does not enumerate the user's Keychain.
+    for (const providerId of await this.credentialStore.listProviders()) {
+      providerIds.add(providerId);
+    }
+    const values: string[] = [];
+    for (const providerId of providerIds) {
+      const value = await this.credentialStore.get(providerId);
+      if (value) values.push(value);
+    }
+    return values;
+  }
+
+  private migrationFailure(operation: string): ServiceError {
+    return error(
+      "ai_credential_migration_failed",
+      "历史 API Key 未能安全迁移到 macOS 系统钥匙串，原文件未删除。",
+      `Credential migration failed (${operation})`,
+      {
+        recoverable: true,
+        recommended_action: "确认 macOS 钥匙串可用后重试；在迁移完成前不要共享项目目录。",
+        details: { operation, path: ".workspace/ai/providers.json" },
+      },
+    );
+  }
+
+  private async readLegacyDocument(
+    path: string,
+  ): Promise<ParsedAiProvidersState | null> {
     let stat: Deno.FileInfo;
     try {
-      stat = await Deno.stat(this.providersPath);
+      stat = await Deno.lstat(path);
     } catch (caught) {
-      if (isNotFound(caught)) return { providers: [], credentials: {} };
+      if (isNotFound(caught)) return null;
       throw this.unreadable(caught);
     }
-    if (!stat.isFile) {
-      throw this.unreadable(new Error("providers.json is not a regular file"));
-    }
-    if (stat.size > MAX_PROVIDERS_FILE_BYTES) {
-      throw this.unreadable(
-        new Error(`providers.json is ${stat.size} bytes`),
-      );
+    if (stat.isSymlink || !stat.isFile || stat.size > MAX_PROVIDERS_FILE_BYTES) {
+      throw this.unreadable(new Error("provider metadata file is invalid"));
     }
     let parsed: unknown;
     try {
-      parsed = JSON.parse(await Deno.readTextFile(this.providersPath));
+      parsed = JSON.parse(await Deno.readTextFile(path));
     } catch (caught) {
       throw this.unreadable(caught);
     }
-    const state = normalizeProvidersState(parsed);
-    if (!state) {
-      throw this.unreadable(
-        new Error("providers.json does not match the expected shape"),
-      );
+    if (isPlainRecord(parsed) && Array.isArray(parsed.providers)) {
+      for (const provider of parsed.providers) {
+        if (findForbiddenField(provider) || findInlineCredentialField(provider)) {
+          throw this.migrationFailure("provider-metadata");
+        }
+      }
     }
+    if (isPlainRecord(parsed) && isPlainRecord(parsed.credentials)) {
+      for (const [providerId, rawValue] of Object.entries(parsed.credentials)) {
+        if (typeof rawValue !== "string") {
+          throw this.migrationFailure("invalid-credential");
+        }
+        if (rawValue.trim() && !isSafeProviderId(providerId)) {
+          throw this.migrationFailure("invalid-provider");
+        }
+      }
+    }
+    const state = normalizeProvidersState(parsed);
+    if (!state) throw this.unreadable(new Error("provider metadata is invalid"));
     return state;
+  }
+
+  /**
+   * Read provider metadata and migrate any historical plaintext credentials in
+   * one transaction-like sequence. The old file is retained until every key
+   * has been written and verified in Keychain and metadata-only JSON succeeds.
+   */
+  private async readProviders(): Promise<AiProvidersState> {
+    const primary = await this.readLegacyDocument(this.providersPath);
+    const backupPath = join(this.home, "providers.bak");
+    const backup = await this.readLegacyDocument(backupPath);
+    const state = primary ?? backup;
+    if (!state) return { providers: [] };
+
+    const credentials = {
+      ...(backup?.credentials ?? {}),
+      ...(primary?.credentials ?? {}),
+    };
+    const hasLegacyShape = primary?.credentials !== undefined ||
+      backup?.credentials !== undefined || primary?.hasExtraFields === true ||
+      backup?.hasExtraFields === true || primary?.providerMetadataChanged === true ||
+      backup?.providerMetadataChanged === true ||
+      (backup !== null && primary === null);
+    if (hasLegacyShape) {
+      if (this.readOnly) throw this.migrationFailure("read-only-project");
+      for (const [providerId, rawValue] of Object.entries(credentials)) {
+        const value = rawValue.trim();
+        if (!value) continue;
+        try {
+          await this.credentialStore.set(providerId, value);
+          const verified = await this.credentialStore.get(providerId);
+          if (verified !== value) throw new Error("keychain verification failed");
+        } catch {
+          // Neither providers.json nor providers.bak is removed on failure.
+          throw this.migrationFailure("keychain-write");
+        }
+      }
+      try {
+        await this.writeProviders({ providers: state.providers });
+        if (backup !== null) await Deno.remove(backupPath);
+      } catch {
+        // Metadata write/removal failures leave the old plaintext source intact
+        // so a retry cannot lose the user's credential.
+        throw this.migrationFailure("metadata-cleanup");
+      }
+    }
+    return { providers: state.providers };
   }
 
   private unreadable(caught: unknown): ServiceError {
@@ -1407,23 +1581,20 @@ export class AiTransport {
     const reason = caught instanceof Error ? caught.name : typeof caught;
     return error(
       "ai_connection_unreadable",
-      "无法读取 AI 服务商配置，请检查项目 .workspace/ai/providers.json。",
+      "无法读取 AI 服务商设置（ai/providers.json）。课程内容不受影响，请在 AI 面板重新设置后重试；原文件没有改动。",
       `Failed to read ${this.providersPath} (${reason})`,
       {
         recoverable: true,
-        recommended_action: "修复或删除该文件后重新打开 AI 面板。",
+        recommended_action: "在 AI 面板重新保存服务商设置后重试；课程内容不会因此改变。",
         details: { path: ".workspace/ai/providers.json" },
       },
     );
   }
 
   private async writeProviders(state: AiProvidersState): Promise<void> {
-    const contents = `${
-      JSON.stringify({
-        providers: state.providers,
-        credentials: state.credentials,
-      }, null, 2)
-    }\n`;
+    // Provider metadata is deliberately the only JSON content. Credentials
+    // belong to the system Keychain, never to providers.json or its backups.
+    const contents = `${JSON.stringify({ providers: state.providers }, null, 2)}\n`;
     try {
       await this.writeFile(this.providersPath, contents);
     } catch (caught) {

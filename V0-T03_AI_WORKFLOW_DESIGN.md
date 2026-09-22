@@ -297,7 +297,7 @@ Record 形状（**不含任何 secret / 不含正文全文**）：
 
 命令：`ai.cancel` → `{ request_id }` → `{ cancelled: boolean }`
 
-命令：`ai.connection.list` → `{ providers: AiProviderConfig[], credentials: { [provider_id]: boolean } }`
+命令：`ai.connection.list` → `{ providers: AiProviderConfig[], configured: { [provider_id]: boolean } }`
 命令：`ai.connection.save` → `{ provider }`（**不含密钥**）
 命令：`ai.connection.delete` → `{ provider_id }`
 命令：`ai.secret.set` → `{ provider_id, value }` → `{ provider_id }`（**绝不回显 value**）
@@ -307,11 +307,10 @@ Record 形状（**不含任何 secret / 不含正文全文**）：
 命令：`ai.execution.list` → `{ limit }` → `{ records: [] }`
 
 存储位置（两壳一致，均为**非 Canonical**）：
-- `<project>/.workspace/ai-providers.json`（provider 配置 + 密钥，文件权限 0600）
-- `<project>/.workspace/ai-executions.json`（执行记录，有界，最多 200 条）
+- Provider 元数据写入桌面壳应用数据目录 `.workspace/ai/providers.json`、浏览器服务项目目录 `<project>/.workspace/ai/providers.json`；API Key 由两条路径写入 macOS 系统钥匙串（Windows 为明确非目标）
+- 执行记录写入同一作用域的 `executions.json`（有界，最多 200 条）
 
-> 说明：系统钥匙串适配器尚未安装；密钥放在 `.workspace`（既不在 `project.json`、
-> 不在 Canonical、不进入任何导出包），UI 必须如实告知用户这一点。
+> 说明：历史 `providers.json` / `providers.bak` 中的明文密钥只在写入并校验成功后迁移到系统钥匙串并删除；失败时保留原文件，不回显密钥。
 
 ## 4. UI 契约（Workstream D）
 

@@ -3,6 +3,144 @@ import type { ProjectData } from "../domain/types.ts";
 import { id } from "../domain/util.ts";
 import { error, ServiceError } from "./errors.ts";
 
+const KEYCHAIN_COMMAND = "/usr/bin/security";
+const KEYCHAIN_SERVICE = "com.ai-course-workbench.ai";
+const KEYCHAIN_ACCOUNT_PREFIX = "provider:";
+
+function keychainFailure(operation: string): ServiceError {
+  const userMessage = operation === "delete"
+    ? "无法访问 macOS 系统钥匙串，API Key 没有删除。"
+    : operation === "get"
+    ? "无法访问 macOS 系统钥匙串，无法确认 API Key 是否已配置。"
+    : "无法访问 macOS 系统钥匙串，API Key 没有保存。";
+  return error(
+    "keychain_unavailable",
+    userMessage,
+    `系统钥匙串操作失败（${operation}）`,
+    {
+      recoverable: true,
+      recommended_action: "确认已登录 macOS 钥匙串并重试；课程文件未被修改。",
+      details: { operation },
+    },
+  );
+}
+
+function keychainAccount(provider: string, accountPrefix: string): string {
+  const value = provider.trim();
+  if (!value || /[\r\n]/.test(value)) throw keychainFailure("invalid-account");
+  return `${accountPrefix}${value}`;
+}
+
+/**
+ * macOS Keychain-backed secret store used by the local browser service and by
+ * generic service commands.  The `security` CLI is invoked with argv arrays;
+ * writes are supplied on stdin so the value is never placed in process argv.
+ * Tests must inject `MemorySecretStore` (or another SecretStore) instead.
+ */
+export class MacKeychainSecretStore implements SecretStore {
+  readonly service: string;
+  readonly accountPrefix: string;
+  private readonly knownProviders = new Set<string>();
+
+  constructor(options: { service?: string; accountPrefix?: string } = {}) {
+    this.service = options.service?.trim() || KEYCHAIN_SERVICE;
+    this.accountPrefix = options.accountPrefix?.trim() || KEYCHAIN_ACCOUNT_PREFIX;
+  }
+
+  private ensureSupported(): void {
+    if (Deno.build.os !== "darwin") throw keychainFailure("unsupported-platform");
+  }
+
+  private async run(
+    args: string[],
+    input?: string,
+  ): Promise<{ code: number; stdout: string }> {
+    this.ensureSupported();
+    try {
+      const command = new Deno.Command(KEYCHAIN_COMMAND, {
+        args,
+        stdin: input === undefined ? "null" : "piped",
+        stdout: "piped",
+        stderr: "piped",
+      });
+      const child = command.spawn();
+      if (input !== undefined) {
+        const writer = child.stdin.getWriter();
+        await writer.write(new TextEncoder().encode(`${input}\n`));
+        await writer.close();
+      }
+      const output = await child.output();
+      return {
+        code: output.code,
+        stdout: new TextDecoder().decode(output.stdout),
+      };
+    } catch {
+      // Do not return security(1)'s stderr: it can contain user/keychain
+      // metadata and is not actionable at the renderer boundary.
+      throw keychainFailure("process");
+    }
+  }
+
+  async set(provider: string, value: string): Promise<void> {
+    if (!value) throw error("secret_invalid", "凭据不能为空。", "Empty secret rejected", {
+      recoverable: false,
+      recommended_action: null,
+      details: {},
+    });
+    const account = keychainAccount(provider, this.accountPrefix);
+    const result = await this.run([
+      "add-generic-password",
+      "-a",
+      account,
+      "-s",
+      this.service,
+      "-U",
+      "-w",
+    ], value);
+    if (result.code !== 0) throw keychainFailure("set");
+    this.knownProviders.add(provider.trim());
+  }
+
+  async get(provider: string): Promise<string | null> {
+    const account = keychainAccount(provider, this.accountPrefix);
+    const result = await this.run([
+      "find-generic-password",
+      "-a",
+      account,
+      "-s",
+      this.service,
+      "-w",
+    ]);
+    // `security` uses status 44 when no matching generic password exists.
+    if (result.code === 44) return null;
+    if (result.code !== 0) throw keychainFailure("get");
+    const value = result.stdout.trim();
+    if (value.length > 0) this.knownProviders.add(provider.trim());
+    return value.length > 0 ? value : null;
+  }
+
+  async delete(provider: string): Promise<void> {
+    const account = keychainAccount(provider, this.accountPrefix);
+    const result = await this.run([
+      "delete-generic-password",
+      "-a",
+      account,
+      "-s",
+      this.service,
+    ]);
+    if (result.code !== 0 && result.code !== 44) throw keychainFailure("delete");
+    this.knownProviders.delete(provider.trim());
+  }
+
+  async listProviders(): Promise<string[]> {
+    // The security CLI does not provide a safe, stable machine-readable list
+    // for a service. Return only accounts this process has explicitly used;
+    // callers also query provider metadata after a restart.
+    return [...this.knownProviders];
+  }
+}
+
+/** Provider-scoped secret boundary; production implementations must be system-secure. */
 export interface SecretStore {
   set(provider: string, value: string): Promise<void>;
   get(provider: string): Promise<string | null>;
@@ -10,7 +148,7 @@ export interface SecretStore {
   listProviders(): Promise<string[]>;
 }
 
-/** Testable local boundary. A desktop adapter can replace this with Keychain. */
+/** Injectable in-memory fake; production defaults to MacKeychainSecretStore. */
 export class MemorySecretStore implements SecretStore {
   private readonly values = new Map<string, string>();
 

@@ -540,7 +540,7 @@ const AI_FAILURE_DEFAULTS = {
   missing_credential: {
     message: "这个 Provider 还没有配置 API Key，请求被拒绝了。",
     action:
-      "请在「AI 设置」里为这个 Provider 填写 API Key；密钥只保存在本机 .workspace，不会写入课程文件。",
+      "请在「AI 设置」里为这个 Provider 填写 API Key；密钥由本机服务写入 macOS 系统钥匙串，不会写入课程文件。",
   },
   timeout: {
     message: "AI 请求超时了（默认 60 秒内没有响应），课程内容没有改动。",

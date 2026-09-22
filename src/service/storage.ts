@@ -716,11 +716,11 @@ export class ProjectDirectoryStore {
         !this.isLockStale(null, Date.now(), lockMtimeMs)) {
         throw new ServiceError({
           code: "project_locked",
-          user_message: "该项目已在另一窗口或进程中编辑。",
+          user_message: "这个项目正在其他窗口或进程中使用。为避免覆盖，当前操作没有写入；现有课程内容没有改变。",
           technical_message:
             "Project lock is currently being written or is malformed",
           recoverable: true,
-          recommended_action: "稍后重试，或确认强制接管。",
+          recommended_action: "关闭其他窗口后重试；如果确认无人使用，再重新打开项目。",
           details: {},
         });
       }
@@ -731,10 +731,10 @@ export class ProjectDirectoryStore {
       ) {
         throw new ServiceError({
           code: "project_locked",
-          user_message: "该项目已在另一窗口或进程中编辑。",
+          user_message: "这个项目正在其他窗口或进程中使用。为避免覆盖，当前操作没有写入；现有课程内容没有改变。",
           technical_message: `Project lock held by ${existing.app_instance_id}`,
           recoverable: true,
-          recommended_action: "选择只读打开、切换到已有窗口，或确认强制接管。",
+          recommended_action: "关闭其他窗口后重试；如果确认无人使用，再重新打开项目。",
           details: {
             app_instance_id: existing.app_instance_id,
             heartbeat: existing.heartbeat,
@@ -782,10 +782,10 @@ export class ProjectDirectoryStore {
       if (caught instanceof Deno.errors.AlreadyExists) {
         throw new ServiceError({
           code: "project_locked",
-          user_message: "该项目已在另一窗口或进程中编辑。",
+          user_message: "这个项目正在其他窗口或进程中使用。为避免覆盖，当前操作没有写入；现有课程内容没有改变。",
           technical_message: "Lock acquisition race",
           recoverable: true,
-          recommended_action: "选择只读打开或重试。",
+          recommended_action: "关闭其他窗口后重试；如果确认无人使用，再重新打开项目。",
           details: {},
         });
       }
@@ -886,7 +886,7 @@ export class ProjectDirectoryStore {
     ) {
       throw error(
         "external_modification_conflict",
-        "检测到 project.json 已被外部修改，保存已阻止。",
+        "课程文件在其他地方发生了变化，保存已暂停以免覆盖内容。课程内容没有改变，你可以继续查看；请重新载入、自动合并，或明确保留本地版本。",
         "Refusing to overwrite an externally modified canonical project",
         {
           recoverable: true,
@@ -1010,7 +1010,7 @@ export class ProjectDirectoryStore {
     ) {
       throw error(
         "external_modification_conflict",
-        "检测到 project.json 已被外部修改，自动保存已阻止。",
+        "课程文件在其他地方发生了变化，自动保存已暂停以免覆盖内容。课程内容没有改变，你可以继续查看；请处理保存提示后再继续。",
         "Refusing autosave after an external canonical modification",
         {
           recoverable: true,
@@ -1113,7 +1113,7 @@ export class ProjectDirectoryStore {
       if (fingerprintsDiffer(expectedCurrent, current)) {
         throw error(
           "external_modification_conflict",
-          "处理期间 project.json 再次发生变化，请重新查看差异。",
+          "处理期间课程文件又发生了变化，当前选择没有写入。请重新查看最新版本后再试。",
           "External canonical changed while conflict resolution was pending",
           {
             recoverable: true,
@@ -1247,7 +1247,7 @@ export class ProjectDirectoryStore {
       ) {
         throw error(
           "external_modification_conflict",
-          "检测到 project.json 已被外部修改，版本保存已阻止。",
+          "课程文件在其他地方发生了变化，版本保存已暂停以免覆盖内容。课程内容没有改变，请先处理保存提示后再试。",
           "Refusing snapshot creation after external modification",
           {
             recoverable: true,
