@@ -2757,12 +2757,12 @@ Actions 按 commit SHA 固定。配置好 Secrets 后同一条 workflow 会自�
 - 在 GitHub Actions Secrets 中配置证书与公证凭据，实跑一次 `.github/workflows/release.yml`；
 - 重跑一次「下载 → 安装 → 首次打开无阻碍」的干净机器 smoke；
 - 将 release workflow 的 Actions 依赖升级到新版本时同步更新 commit SHA；
-- 用 `--remap-path-prefix` 重新构建，去掉二进制里内嵌的 `/Users/<本机用户>/.cargo/registry/...`
+- 用 `--remap-path-prefix` 重新构建，去掉二进制里内嵌的本机 Cargo registry 绝对路径
   panic 位置元数据（属卫生问题，非泄漏；会改变 SHA，适合与下一次签名发版一起做）；
 - 仓库当前**没有 LICENSE**（公开仓库默认「保留所有权利」）。是否开源、用哪个许可证属用户决策，
   本轮不擅自添加；
-- 两份 Release 资产的 `downloadCount` 目前都是 0：还没有第三方真正下载过；
-  Intel 切片与 macOS 11.0 最低版本都还没有在真实机器上跑过。
+- 两份 Release 资产的下载计数目前只有发版本机自己的匿名校验下载（各 2 次），
+  还没有任何第三方真正下载过；Intel 切片与 macOS 11.0 最低版本都还没有在真实机器上跑过。
 
 ## 34.13 独立复核与据其修正
 
