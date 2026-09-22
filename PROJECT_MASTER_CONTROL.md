@@ -2611,6 +2611,23 @@ Warn skipping app notarization, no APPLE_ID & APPLE_PASSWORD & APPLE_TEAM_ID
 
 本任务未做 ad-hoc 签名之外的任何绕过（不指导用户 `xattr -d com.apple.quarantine`、不关闭 Gatekeeper）。
 
+**隔离状态实测**：把 Release 资产重新匿名下载后，按浏览器行为打上 quarantine 属性
+（`com.apple.quarantine = 0083;<hex 时间>;Safari;`），挂载、取出 App 再评估：
+
+```text
+spctl --assess --type execute --verbose=4 "/tmp/qtest/AI Course Workbench.app"
+  →  rejected（exit 3）
+```
+
+即**普通用户从浏览器下载拿到的就是这个被拦截的状态**，上面的「首次打开说明」不是推测。
+
+**如实记录一处未实测项**：`README.md` 给出的「右键 → 打开 → 再点打开」是 macOS 对
+**签名有效但没有 Developer ID** 的 App 提供的标准放行路径，本包
+`codesign --verify --deep --strict` 通过、满足自己的 Designated Requirement，正属于这一类；
+但该 GUI 放行动作在本环境无法被自动化执行（无法投递右键菜单点击），
+因此**本轮只实测了放行前的拦截状态，没有实测放行之后的首次启动**。
+想在真机上确认这一点，需要人工在「应用程序」里右键打开一次。
+
 ## 34.6 公开仓库与 Release
 
 ```text

@@ -87,6 +87,10 @@ BLOCKER            = 缺正式 macOS signing / notarization credentials
   也不宣称 `PUBLIC RELEASE READY`。
 - 拿到正确的 Apple Developer 分发资格后，只需要补做签名、公证、重新上传 Release 与
   一次安装 smoke，**不需要重新开发 Workbench 本体**（见 `.github/workflows/release.yml`）。
+- **实测**：把 Release 资产重新匿名下载、按浏览器行为加上隔离属性后，
+  `spctl --assess --type execute` 判定 `rejected` —— 上面「首次打开说明」写的就是用户真实会遇到的状态。
+- **一处未实测项**：「右键 → 打开」放行**之后**的首次启动没有在自动化环境里实测过
+  （无法自动投递右键菜单操作），只实测了放行**之前**的拦截状态。
 
 ---
 
