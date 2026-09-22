@@ -2614,10 +2614,39 @@ Warn skipping app notarization, no APPLE_ID & APPLE_PASSWORD & APPLE_TEAM_ID
 ## 34.6 公开仓库与 Release
 
 ```text
-仓库：https://github.com/wyzh0117/workbench           （PRIVATE → PUBLIC）
+仓库：https://github.com/wyzh0117/workbench           （PRIVATE → PUBLIC，已生效）
 Release 页面：https://github.com/wyzh0117/workbench/releases/latest
+Release Tag：v0.1.0（annotated，指向 90872bd）
+Release 标题：AI Course Workbench v0.1.0 — macOS (Universal)
+Release 状态：已发布（isDraft=false, isPrerelease=false）
+Release Assets：
+  AI-Course-Workbench-macOS.dmg           10,357,233 bytes
+  AI-Course-Workbench-macOS.dmg.sha256    96 bytes
 固定直链：https://github.com/wyzh0117/workbench/releases/latest/download/AI-Course-Workbench-macOS.dmg
-Tag：v0.1.0
+```
+
+GitHub 侧独立记录的资产摘要与本机一致，说明上传过程未损坏文件：
+
+```text
+GitHub asset digest : sha256:59597a342109785e190d9dc8194d841744249dbbc46498ee594572d2d2412573
+本机 shasum -a 256  :     59597a342109785e190d9dc8194d841744249dbbc46498ee594572d2d2412573
+```
+
+**匿名（未登录）下载链验证** —— 这是「固定直链」是否真的成立的关键证据：
+
+```text
+GET /releases/latest
+  → 302 → https://github.com/wyzh0117/workbench/releases/tag/v0.1.0
+
+GET /releases/latest/download/AI-Course-Workbench-macOS.dmg   （不带任何 Authorization）
+  → 200，由 GitHub CDN（release-assets.githubusercontent.com）返回
+  → 下载得到 10,357,233 bytes
+  → 下载文件 SHA-256 == Release Notes 中记录的 SHA-256          ✅ 完全一致
+
+GET /releases/latest/download/AI-Course-Workbench-macOS.dmg.sha256
+  → 返回 "59597a34…  AI-Course-Workbench-macOS.dmg"
+
+GET https://github.com/wyzh0117/workbench                      → 200（匿名可访问）
 ```
 
 同步新增 `.github/workflows/release.yml`：最小化、单 macOS 作业、Universal 构建 →
@@ -2626,6 +2655,11 @@ Tag：v0.1.0
 Actions 按 commit SHA 固定。配置好 Secrets 后同一条 workflow 会自动完成签名与公证，
 不需要改代码。**注意：该 workflow 在本轮未实际运行过**（首次运行需要 tag 推送或手动触发），
 属「已备好的路径」，不计入本轮已验证项。
+
+本轮发版时曾临时停用该 workflow，以免它在 tag 推送时用未签名的 CI 产物覆盖本机已验证并
+通过安装 smoke 的 DMG；Release 建好后又重新启用（当前状态 active）。
+**因此后续推送 `v*` tag 会触发一次 CI 构建**：在 Secrets 配好之前它会产出一个未签名 DMG，
+配好之后才会产出已签名已公证的 DMG。
 
 ## 34.7 交付与验证证据
 
