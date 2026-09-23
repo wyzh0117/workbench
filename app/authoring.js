@@ -48,6 +48,104 @@ export const TEXT_BLOCK_TYPES = [
  */
 export const COMPLETION_DIMENSIONS = ["content", "media", "layout", "review"];
 
+/**
+ * The nine course-input sources the schema defines (`course_seeds.source_type`).
+ * The launcher's "你现在有什么？" entries are these, so a chip can never claim a
+ * capability the Domain does not have.
+ */
+export const SEED_SOURCE_TYPES = [
+  "overview",
+  "outline",
+  "toc",
+  "articles",
+  "folder",
+  "spreadsheet",
+  "conversations",
+  "wizard",
+  "blank",
+];
+
+/** Which of them can be turned into a course map from pasted text. */
+export const SEED_TEXT_SOURCES = [
+  "overview",
+  "outline",
+  "toc",
+  "articles",
+  "spreadsheet",
+  "conversations",
+];
+
+/** @type {Record<string, { label: string, hint: string, placeholder: string }>} */
+export const SEED_SOURCE_HINTS = {
+  overview: {
+    label: "课程概论",
+    hint: "先写清楚这门课要讲什么；每个换行会成为一节课。想让某一行成为阶段，用「#」或「1.」开头。",
+    placeholder: "例如：这是一门给新同事看的入职课程，先讲公司怎么运转，再讲日常工具……\n# 第一阶段 入门\n第一课 认识界面",
+  },
+  outline: {
+    label: "课程大纲",
+    hint: "粗纲就够：用「#」或「1.」开头的行是阶段，其余每行是一节课。",
+    placeholder: "# 第一阶段 入门\n第一课 认识界面\n第二课 第一个作品\n# 第二阶段 进阶",
+  },
+  toc: {
+    label: "教材目录",
+    hint: "把教材目录整段粘进来即可；章节行用「#」或「1.」开头会变成阶段，其余行成为课。",
+    placeholder: "# 第一章 认识 AI\n第一节 它和过去的工具哪里不同\n第二节 什么值得交给 AI",
+  },
+  articles: {
+    label: "已有文章",
+    hint: "粘贴文章标题或正文，一行一篇会拆成多课；阶段行请用「#」或「1.」开头。",
+    placeholder: "如何写好开场\n怎么讲清一个概念\n练习题怎么设计",
+  },
+  folder: {
+    label: "资料文件夹",
+    hint: "导入文件夹还没有实现；先把目录里的文件名粘贴到「教材目录」里。",
+    placeholder: "",
+  },
+  spreadsheet: {
+    label: "表格",
+    hint: "从表格里复制一列课名粘贴进来，一行一课；阶段行请用「#」或「1.」开头。",
+    placeholder: "第一课……\n第二课……",
+  },
+  conversations: {
+    label: "AI 对话",
+    hint: "把和 AI 聊出来的结构粘贴进来，和课程大纲一样按行拆分：用「#」或「1.」开头的行是阶段。",
+    placeholder: "粘贴对话里那段课程结构……\n# 第一阶段 入门\n第一课 认识界面",
+  },
+  wizard: {
+    label: "一步步创建",
+    hint: "先建空课程，在课程地图里一课一课加。",
+    placeholder: "",
+  },
+  blank: {
+    label: "空白课程",
+    hint: "完全空白开始。",
+    placeholder: "",
+  },
+};
+
+/**
+ * The Requirement types the Domain supports.  This mirrors
+ * `ENUMS.requirement_type` in `src/domain/store.ts` (canonical validation
+ * rejects anything else) and is the one list every surface reads, so the
+ * properties panel, the 待补 backlog, the course map and the AI draft
+ * validator cannot drift from each other.
+ */
+export const REQUIREMENT_TYPES = [
+  "text",
+  "image",
+  "gif",
+  "video",
+  "audio",
+  "table",
+  "chart",
+  "quote",
+  "case",
+  "link",
+  "data",
+  "other",
+];
+
 /** @type {Record<string, string>} */
 const DIMENSION_LABELS = {
   content: "正文",
@@ -98,6 +196,129 @@ export function blockSummary(block, asset = null) {
   }
   const text = textOf(block.content).replace(/\s+/g, " ").trim();
   return text;
+}
+
+/**
+ * Block sizing, the second implementation's height system (P2-2).
+ *
+ * A block frame is the only size container: it grows with its content up to a
+ * tier ceiling, and past that ceiling the frame itself scrolls.  There is no
+ * manual resize and no second scroll box inside the frame, so the tier is a
+ * pure function of the block's type and text — which is also why it can be
+ * tested without a layout engine.
+ */
+export const SHORT_BLOCK_TYPES = [
+  "heading",
+  "quote",
+  "callout",
+  "divider",
+  "placeholder",
+];
+export const LONG_BLOCK_TYPES = ["paragraph", "code", "list", "exercise"];
+/**
+ * Ceilings: short blocks stop at Medium, long blocks stop at Large.
+ * @type {{ short: "medium" | "large", long: "medium" | "large" }}
+ */
+export const BLOCK_SIZE_CEILING = { short: "medium", long: "large" };
+/**
+ * Default tier before any content arrives.
+ * @type {{ short: "small" | "medium" | "large", long: "small" | "medium" | "large" }}
+ */
+export const BLOCK_SIZE_BASE = {
+  short: "small",
+  long: "medium",
+};
+/**
+ * Lines a block can show before it steps up a tier.  A "line" is either a hard
+ * newline or roughly one wrapped line of the writing column.
+ */
+/** @type {{ short: number, long: number }} */
+export const BLOCK_TIER_LINES = { short: 2, long: 6 };
+/** Characters that still fit on one wrapped line of the writing column. */
+export const BLOCK_LINE_CHARS = 34;
+
+/**
+ * Short blocks (a heading, a quote) and long blocks (body text, code) grow
+ * differently: a heading may only ever become Medium, body text may only ever
+ * shrink back to Medium.
+ *
+ * @param {string} type
+ * @returns {"short" | "long"}
+ */
+export function blockSizeKind(type) {
+  return LONG_BLOCK_TYPES.includes(String(type)) ? "long" : "short";
+}
+
+/**
+ * How many display lines a block's text needs, without touching the DOM.
+ *
+ * @param {unknown} text
+ * @returns {number}
+ */
+export function estimateBlockLines(text) {
+  const raw = typeof text === "string" ? text : textOf(text);
+  if (!raw) return 1;
+  const hard = raw.split("\n").length;
+  const wrapped = Math.ceil(raw.length / BLOCK_LINE_CHARS);
+  return Math.max(1, hard, wrapped);
+}
+
+/**
+ * The tier a block's frame should use right now.  Monotonic in the amount of
+ * content: growth steps up, shrinking steps back down, and the ceiling holds.
+ *
+ * @param {string} type
+ * @param {unknown} text
+ * @returns {"small" | "medium" | "large"}
+ */
+export function blockSizeTier(type, text) {
+  return blockSizeTierForLines(blockSizeKind(type), estimateBlockLines(text));
+}
+
+/**
+ * The same rule, expressed in measured lines.  The editor knows the real line
+ * count once the field is laid out, so live typing uses this instead of the
+ * text-length estimate and both paths stay on one rule.
+ *
+ * @param {"short" | "long"} kind
+ * @param {number} lines
+ * @returns {"small" | "medium" | "large"}
+ */
+export function blockSizeTierForLines(kind, lines) {
+  const count = Number.isFinite(lines) ? Number(lines) : 0;
+  /** @type {"small" | "medium" | "large"} */
+  const tier = count > BLOCK_TIER_LINES[kind]
+    ? grownTier(kind)
+    : BLOCK_SIZE_BASE[kind];
+  return tier;
+}
+
+/**
+ * The tier a block reaches once its content outgrows the first step.
+ *
+ * @param {"short" | "long"} kind
+ * @returns {"medium" | "large"}
+ */
+export function grownTier(kind) {
+  return kind === "long" ? "large" : "medium";
+}
+
+/**
+ * Everything the block frame needs for sizing, derived from the block itself.
+ *
+ * @param {{ type: string, text?: unknown } | null | undefined} block
+ * @returns {{ kind: "short" | "long", tier: "small" | "medium" | "large", lines: number, ceiling: string }}
+ */
+export function blockSizeView(block) {
+  const type = block ? String(block.type) : "paragraph";
+  const text = block ? block.text : "";
+  const kind = blockSizeKind(type);
+  return {
+    kind,
+    tier: blockSizeTier(type, text),
+    lines: estimateBlockLines(text),
+    ceiling: BLOCK_SIZE_CEILING[kind],
+  };
 }
 
 /**
@@ -557,12 +778,13 @@ function lessonSummaryLine(blocks) {
 export function blockView(data, block) {
   const asset = assetForBlock(data, block);
   const media = MEDIA_BLOCK_TYPES.includes(block.type);
+  const text = textOf(block.content);
   return {
     id: block.id,
     type: block.type,
     order_index: block.order_index ?? 0,
     label: blockLabel(block.type),
-    text: textOf(block.content),
+    text,
     summary: blockSummary(block, asset),
     level: typeof (block.settings || {}).level === "number"
       ? Number(block.settings.level)
@@ -570,6 +792,8 @@ export function blockView(data, block) {
     settings: block.settings || {},
     media,
     asset,
+    /** P2-2: the frame's tier, derived from this block's own text. */
+    size: blockSizeView({ type: block.type, text }),
     asset_missing: media && !asset,
     requirement_id: typeof (block.settings || {}).requirement_id === "string"
       ? String(block.settings.requirement_id)
@@ -926,6 +1150,74 @@ export function placementGrid(placement, grid) {
     row: `${rowStart + 1}/${rowEnd + 1}`,
     column: `${columnStart + 1}/${columnEnd + 1}`,
   };
+}
+
+/**
+ * Every cell of a grid, in reading order.
+ *
+ * @param {import("../src/domain/types.ts").JsonObject} grid
+ * @returns {Array<{ row: number, column: number }>}
+ */
+export function gridCells(grid) {
+  const rows = Math.max(1, Array.isArray(grid.rows) ? grid.rows.length : 1);
+  const columns = Math.max(1, Array.isArray(grid.columns) ? grid.columns.length : 1);
+  const cells = [];
+  for (let row = 0; row < rows; row += 1) {
+    for (let column = 0; column < columns; column += 1) cells.push({ row, column });
+  }
+  return cells;
+}
+
+/**
+ * Cells already occupied by placements, as `row:column` keys.  `exceptId`
+ * leaves one placement out, so a block being moved never blocks itself.
+ *
+ * @param {Array<{ id?: string, row_start: number, row_end: number, column_start: number, column_end: number }>} placements
+ * @param {string | null} [exceptId]
+ * @returns {Set<string>}
+ */
+export function occupiedCells(placements, exceptId = null) {
+  const taken = new Set();
+  for (const placement of placements || []) {
+    if (exceptId && placement.id === exceptId) continue;
+    for (let row = placement.row_start; row < placement.row_end; row += 1) {
+      for (let column = placement.column_start; column < placement.column_end; column += 1) {
+        taken.add(`${row}:${column}`);
+      }
+    }
+  }
+  return taken;
+}
+
+/**
+ * The cells a block of the given span can be dropped into right now, in
+ * reading order.  This is what highlights "可放置 Cell" during a move and what
+ * the store validates against, so the highlight and the write can never
+ * disagree.
+ *
+ * @param {import("../src/domain/types.ts").JsonObject} grid
+ * @param {Array<{ id?: string, row_start: number, row_end: number, column_start: number, column_end: number }>} placements
+ * @param {{ rowSpan?: number, columnSpan?: number, exceptId?: string | null }} [options]
+ * @returns {Array<{ row: number, column: number }>}
+ */
+export function freeCellsFor(grid, placements, options = {}) {
+  const rows = Math.max(1, Array.isArray(grid.rows) ? grid.rows.length : 1);
+  const columns = Math.max(1, Array.isArray(grid.columns) ? grid.columns.length : 1);
+  const rowSpan = Math.max(1, Math.min(rows, Number(options.rowSpan) || 1));
+  const columnSpan = Math.max(1, Math.min(columns, Number(options.columnSpan) || 1));
+  const taken = occupiedCells(placements, options.exceptId ?? null);
+  const free = [];
+  for (const cell of gridCells(grid)) {
+    if (cell.row + rowSpan > rows || cell.column + columnSpan > columns) continue;
+    let fits = true;
+    for (let row = cell.row; row < cell.row + rowSpan && fits; row += 1) {
+      for (let column = cell.column; column < cell.column + columnSpan; column += 1) {
+        if (taken.has(`${row}:${column}`)) { fits = false; break; }
+      }
+    }
+    if (fits) free.push(cell);
+  }
+  return free;
 }
 
 /**

@@ -38,6 +38,8 @@ Deno.test("native shell exposes explicit project and high-level workflows", () =
       "restore_snapshot",
       "import_preview",
       "import_confirm",
+      "course_seed_create",
+      "blueprint_build",
       "asset_import",
       "select_file",
       "select_folder",
@@ -365,4 +367,77 @@ Deno.test("native boundary has no fs or shell Tauri capability", () => {
     "bridge token comparison must be protected",
   );
   assert(lib.includes("白名单动作"), "bridge actions must be allow-listed");
+});
+
+Deno.test("every project command the app sends natively has a shell mapping", () => {
+  // A command can be listed as project-scoped and still fail at runtime when
+  // `nativeCommand` has no snake_case name for it: Tauri rejects the dotted
+  // name and the user only sees a generic toast.  Keep the two tables equal.
+  const list = app.slice(
+    app.indexOf("const NATIVE_PROJECT_COMMANDS"),
+    app.indexOf("const clone = (value)"),
+  );
+  const scoped = [...list.matchAll(/"(?<name>[a-z][a-z0-9_.]+)"/g)].map((match) =>
+    match.groups!.name
+  );
+  assert(scoped.length >= 10, "the project-scoped command list must parse");
+  const mapping = app.slice(
+    app.indexOf("  nativeCommand(command) {"),
+    app.indexOf("  async selectFolder()"),
+  );
+  for (const name of scoped) {
+    assert(
+      mapping.includes(`"${name}":`),
+      `${name} is project-scoped, so nativeCommand must map it to a shell command`,
+    );
+  }
+});
+
+Deno.test("every single-struct shell command is nested by the app payload builder", () => {
+  // A Tauri command declared as `fn x(input: Value)` only accepts
+  // `{ input: { ... } }`.  Sending bare keys fails at the IPC layer with an
+  // English message the toast layer deliberately hides, so the mismatch is
+  // invisible in the UI: assert it here instead.
+  const mapping = app.slice(
+    app.indexOf("  nativeCommand(command) {"),
+    app.indexOf("  async selectFolder()"),
+  );
+  const scopedList = app.slice(
+    app.indexOf("const NATIVE_PROJECT_COMMANDS"),
+    app.indexOf("const clone = (value)"),
+  );
+  const scoped = [...scopedList.matchAll(/"(?<name>[a-z][a-z0-9_.]+)"/g)].map((
+    match,
+  ) => match.groups!.name);
+  const pairs = [...mapping.matchAll(/"([a-z][a-z0-9_.]+)":\s*"([a-z_]+)"/g)]
+    .map((match) => ({ dotted: match[1]!, native: match[2]! }))
+    // Only project-scoped commands travel through the payload builder; the
+    // other mappings either resolve their own storage or are explicit
+    // unsupported stubs that always answer with a typed error.
+    .filter((pair) => scoped.includes(pair.dotted));
+  assert(pairs.length >= 10, "the native command map must parse");
+  const nested = app.slice(
+    app.indexOf("    // These commands take one `input: Value` struct"),
+    app.indexOf("    return { ...input, project_dir: projectDir };"),
+  );
+  for (const { dotted, native } of pairs) {
+    const signature = lib.match(
+      new RegExp(`fn ${native}\\(([^)]*)\\)`),
+    );
+    if (!signature) continue;
+    const parameters = signature[1]!.split(",").map((part) => part.trim())
+      .filter(Boolean);
+    if (parameters.length !== 1 || !/^input:\s*Value$/.test(parameters[0]!)) {
+      continue;
+    }
+    assert(
+      nested.includes(`"${dotted}"`),
+      `${dotted} maps to ${native}(input: Value), so the payload must be nested`,
+    );
+  }
+  assert(
+    nested.includes('"course.seed.create"') &&
+      nested.includes('"blueprint.build"'),
+    "the seed commands take one input struct",
+  );
 });

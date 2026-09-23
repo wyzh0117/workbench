@@ -33,9 +33,14 @@ function keychainAccount(provider: string, accountPrefix: string): string {
 
 /**
  * macOS Keychain-backed secret store used by the local browser service and by
- * generic service commands.  The `security` CLI is invoked with argv arrays;
- * writes are supplied on stdin so the value is never placed in process argv.
- * Tests must inject `MemorySecretStore` (or another SecretStore) instead.
+ * generic service commands.  The `security` CLI is invoked with argv arrays,
+ * and a write is only reported as successful after it has been read back.
+ *
+ * The secret is the argument of `-w` on purpose.  `security` documents a
+ * trailing `-w` as "prompt me", and it reads that prompt from the terminal, not
+ * from stdin: piping the value stored an EMPTY password while still exiting 0,
+ * so a key could look saved and never be readable.  Tests must inject
+ * `MemorySecretStore` (or another SecretStore) instead.
  */
 export class MacKeychainSecretStore implements SecretStore {
   readonly service: string;
@@ -51,25 +56,16 @@ export class MacKeychainSecretStore implements SecretStore {
     if (Deno.build.os !== "darwin") throw keychainFailure("unsupported-platform");
   }
 
-  private async run(
-    args: string[],
-    input?: string,
-  ): Promise<{ code: number; stdout: string }> {
+  private async run(args: string[]): Promise<{ code: number; stdout: string }> {
     this.ensureSupported();
     try {
       const command = new Deno.Command(KEYCHAIN_COMMAND, {
         args,
-        stdin: input === undefined ? "null" : "piped",
+        stdin: "null",
         stdout: "piped",
         stderr: "piped",
       });
-      const child = command.spawn();
-      if (input !== undefined) {
-        const writer = child.stdin.getWriter();
-        await writer.write(new TextEncoder().encode(`${input}\n`));
-        await writer.close();
-      }
-      const output = await child.output();
+      const output = await command.output();
       return {
         code: output.code,
         stdout: new TextDecoder().decode(output.stdout),
@@ -96,8 +92,13 @@ export class MacKeychainSecretStore implements SecretStore {
       this.service,
       "-U",
       "-w",
-    ], value);
+      value,
+    ]);
     if (result.code !== 0) throw keychainFailure("set");
+    // Verify the round trip: `security` can exit 0 without storing anything
+    // usable, and a secret that cannot be read back is not "configured".
+    const stored = await this.get(provider).catch(() => null);
+    if (stored !== value.trim()) throw keychainFailure("set");
     this.knownProviders.add(provider.trim());
   }
 

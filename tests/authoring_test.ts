@@ -411,3 +411,57 @@ Deno.test("resume picks the last lesson with work and status options resolve by 
     "unknown status names must not resolve",
   );
 });
+
+Deno.test("the course-input hints teach the structure the Domain really builds", async () => {
+  const { SEED_SOURCE_HINTS, SEED_TEXT_SOURCES } = await import(
+    "../app/authoring.js"
+  );
+  const { createCourseSeed, buildBlueprintDraft } = await import(
+    "../src/domain/course.ts"
+  );
+  for (const type of SEED_TEXT_SOURCES) {
+    const entry = SEED_SOURCE_HINTS[type];
+    assert(entry, `${type} must describe itself`);
+    // The parser only promotes lines starting with # or `1.` to a stage, so a
+    // hint that promises "indentation means hierarchy" would be a lie.
+    assert(
+      entry.hint.includes("「#」") && entry.hint.includes("「1.」"),
+      `${type} must teach the real stage markers`,
+    );
+    assert(
+      !entry.hint.includes("缩进"),
+      `${type} must not promise indentation the parser ignores`,
+    );
+  }
+  const placeholder = SEED_SOURCE_HINTS.outline?.placeholder ?? "";
+  assert(placeholder.length > 0, "the outline example must exist");
+  const data = createEmptyProjectData("大纲占位示例");
+  const seed = createCourseSeed(data, {
+    source_type: "outline",
+    raw_text: placeholder,
+  });
+  const draft = buildBlueprintDraft(data, seed.id);
+  const nodes = data.blueprint_nodes
+    .filter((node) => node.blueprint_id === draft.id)
+    .sort((left, right) => left.order_index - right.order_index);
+  const stages = nodes.filter((node) => node.node_type === "stage").map((
+    node,
+  ) => node.title);
+  const lessons = nodes.filter((node) => node.node_type === "content").map((
+    node,
+  ) => node.title);
+  assert(
+    stages.join(",") === "第一阶段 入门,第二阶段 进阶",
+    `the outline example must produce the stages it shows, got ${stages.join(",")}`,
+  );
+  assert(
+    lessons.join(",") === "第一课 认识界面,第二课 第一个作品",
+    `the outline example must produce lessons under its stages, got ${
+      lessons.join(",")
+    }`,
+  );
+  assert(
+    draft.title === "第一阶段 入门",
+    `the draft is named after the first meaningful line, got ${draft.title}`,
+  );
+});

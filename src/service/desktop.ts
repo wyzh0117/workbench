@@ -1180,6 +1180,27 @@ export class DesktopService {
         },
       };
     });
+    this.commands.register("ai.models.list", async (input) => {
+      this.assertAiProjectOpen();
+      const result = await this.aiTransport().listAiModels(input);
+      const candidate = input && typeof input === "object"
+        ? input as { provider_id?: unknown }
+        : {};
+      return {
+        value: result,
+        audit: {
+          object_type: "ai",
+          object_id: typeof candidate.provider_id === "string"
+            ? candidate.provider_id
+            : null,
+          action: "list_models",
+          metadata: {
+            provider_id: result.provider_id,
+            count: result.models.length,
+          },
+        },
+      };
+    });
     this.commands.register("ai.complete", async (input) => {
       this.assertAiProjectOpen();
       const result = await this.aiTransport().completeAiRequest(input, {});

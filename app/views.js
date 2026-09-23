@@ -11,9 +11,14 @@
 
 import { PROJECT_FILE_PICKER } from "./constants.js";
 import {
+  REQUIREMENT_TYPES,
+  SEED_SOURCE_HINTS,
+  SEED_TEXT_SOURCES,
   assetLabel,
   blockLabel,
+  blockSizeView,
   courseMap,
+  freeCellsFor,
   formatBytes,
   lessonView,
   placementGrid,
@@ -73,6 +78,12 @@ export function createViews(store) {
   };
   const isImageLike = (asset) =>
     asset && (asset.type === "image" || asset.type === "gif");
+  /**
+   * A real trash glyph.  The emoji (U+1F5D1) depends on an emoji font being
+   * installed and inherited `color`, which is how a delete control could end
+   * up invisible; an inline SVG always renders and follows `currentColor`.
+   */
+  const TRASH_ICON = `<svg class="trash-icon" viewBox="0 0 16 16" width="12" height="12" aria-hidden="true" focusable="false"><path fill="currentColor" d="M6.2 1.8h3.6l.5 1.1H13v1.5H3V2.9h2.7l.5-1.1ZM4.4 5.6h7.2l-.55 7.9a1.1 1.1 0 0 1-1.1 1.03H6.05A1.1 1.1 0 0 1 4.95 13.5L4.4 5.6Z"/></svg>`;
   const PREFLIGHT_ISSUE_LABELS = {
     canonical_invalid: "课程内容不完整",
     missing_asset: "引用的素材文件找不到",
@@ -146,23 +157,12 @@ export function createViews(store) {
         }`
         : "还没有课程内容。现在可以新建第一课，之后随时回来继续。"
     }</p>${map.lesson_count ? `<div class="progress-track"><span style="width:${map.progress}%"></span></div><small class="muted">整门课程 ${map.complete_count}/${map.lesson_count} 课完成 · 待补 ${map.open_requirements} 项</small>` : ""}</div><button class="primary" data-action="enter-project">继续工作 <span>→</span></button></div>
-      <div class="seed-choices"><span class="muted">你现在有什么？</span>${[
-      "课程概论",
-      "课程大纲",
-      "教材目录",
-      "已有文章",
-      "资料文件夹",
-      "表格",
-      "AI 对话",
-      "一步步创建",
-      "空白课程",
-    ].map((label) => `<button data-action="enter-project">${label}</button>`).join("")}</div>
       <p class="small muted">${
       native
-        ? "选择项目文件夹即可开始；不需要手输路径。"
+        ? "选择项目文件夹即可开始，不需要手输路径。"
         : "可以打开现有课程，也可以先新建一门课程。"
-    }</p>
-    </section>${overlay()}${toast()}`;
+    } 手上已经有课程概论、大纲、教材目录、文章、表格或 AI 对话时：进入课程后打开「课程地图」，粘贴进去先生成课程地图草稿，确认后才创建正式内容。</p>
+    </section>${overlay()}<div class="toast-slot" data-chrome-toast>${toast()}</div>`;
   }
 
   const launcher = () => launcherView(esc);
@@ -181,11 +181,14 @@ export function createViews(store) {
         ${rightPanelView()}
       </div>
       ${statusbarView(item)}
-    </div>${overlay()}${toast()}`;
+    </div>${overlay()}<div class="toast-slot" data-chrome-toast>${toast()}</div>`;
   }
 
-  function topbarView(item) {
-    const map = courseMap(store.data, item ? item.id : null);
+  /**
+   * The save indicator on its own, so an autosave can refresh just this chip
+   * (`patchChrome`) instead of rebuilding the editor the user is typing in.
+   */
+  function saveStateView() {
     const saveHint = store.saveStatus === "已保存"
       ? "课程内容已保存"
       : store.saveStatus === "正在保存…"
@@ -195,9 +198,26 @@ export function createViews(store) {
       : store.saveStatus === "保存失败"
       ? "这次没有保存成功；请查看提示后重试"
       : "课程内容的保存状态";
-    return `<header class="topbar"><div class="brand"><button class="secondary launcher-return" data-action="return-launcher" title="返回项目选择；当前项目不会关闭">⌂ <span>项目选择</span></button><span class="brand-mark">✦</span><span>AI Course Workbench</span></div><div class="project-name"><span class="dot"></span>${
-      esc(store.data.project.title)
-    }<span class="chevron">⌄</span></div><div class="lesson-switch">${
+    return `<span class="save-state ${
+      store.saveStatus === "保存失败" || store.saveStatus === "外部修改冲突"
+        ? "error"
+        : ""
+    }" data-chrome-save title="${saveHint}">${
+      store.saveStatus === "已保存" ? "✓ " : ""
+    }${esc(store.saveStatus)}</span>`;
+  }
+
+  function topbarView(item) {
+    const map = courseMap(store.data, item ? item.id : null);
+    return `<header class="topbar"><div class="brand"><button class="secondary launcher-return" data-action="return-launcher" title="返回项目选择；当前项目不会关闭">⌂ <span>项目选择</span></button><span class="brand-mark">✦</span><span>AI Course Workbench</span></div>${
+      store.ui.editingProjectTitle
+        ? `<div class="project-name editing"><span class="dot"></span><input class="project-title-input" data-project-title data-focus-key="project-title" value="${
+          esc(store.data.project.title)
+        }" aria-label="课程标题" /><span class="project-title-hint">Enter 保存 · Esc 取消</span></div>`
+        : `<div class="project-name" data-action="edit-project-title" role="button" tabindex="0" title="点击修改课程标题"><span class="dot"></span>${
+          esc(store.data.project.title)
+        }<span class="chevron">⌄</span></div>`
+    }<div class="lesson-switch">${
       item
         ? `<button class="icon-button" data-action="prev-lesson" title="打开上一课" ${
           map.previous_id ? "" : "disabled"
@@ -207,13 +227,7 @@ export function createViews(store) {
           map.next_id ? "" : "disabled"
         }>›</button>`
         : ""
-    }</div><div class="top-actions"><span class="save-state ${
-      store.saveStatus === "保存失败" || store.saveStatus === "外部修改冲突"
-        ? "error"
-        : ""
-    }" title="${saveHint}">${store.saveStatus === "已保存" ? "✓ " : ""}${
-      esc(store.saveStatus)
-    }</span><button class="icon-button" data-action="undo" title="撤销上一次编辑">↶</button><button class="icon-button" data-action="redo" title="恢复上一次编辑">↷</button><button class="secondary" data-action="route" data-route="map">课程地图</button><button class="secondary" data-action="save-project">保存</button><button class="secondary" data-action="save-version">保存版本</button><button class="secondary" data-action="preview">预览</button><button class="primary" data-action="preflight">导出</button></div></header>
+    }</div><div class="top-actions">${saveStateView()}<button class="icon-button" data-action="undo" title="撤销上一次编辑">↶</button><button class="icon-button" data-action="redo" title="恢复上一次编辑">↷</button><button class="secondary" data-action="route" data-route="map">课程地图</button><button class="secondary" data-action="save-project">保存</button><button class="secondary" data-action="save-version">保存版本</button><button class="secondary" data-action="preview">预览</button><button class="primary" data-action="preflight">导出</button></div></header>
     <div class="tabs"><button class="tab home-tab ${
       store.ui.route === "overview" ? "active" : ""
     }" data-action="route" data-route="overview">项目概览</button>${
@@ -315,6 +329,38 @@ export function createViews(store) {
 
   /* --------------------------------------------------------- course map */
 
+  /**
+   * "你现在有什么？" — every button here maps to a real course-input source the
+   * Domain supports, and the ones that cannot work yet say so instead of
+   * pretending.  Nothing is created until the user confirms the draft.
+   */
+  function seedCard() {
+    const active = store.ui.seedType;
+    const hint = active ? SEED_SOURCE_HINTS[active] : null;
+    return `<div class="card seed-card"><span class="eyebrow">你现在有什么？</span><h2>把已有的内容变成课程地图</h2><p class="muted">选中一类你手上已有的内容，粘贴进来，先生成一份课程地图草稿。确认草稿前不会创建正式阶段与内容。</p><div class="seed-grid">${
+      SEED_TEXT_SOURCES.map((type) => {
+        const entry = SEED_SOURCE_HINTS[type];
+        return `<button class="${
+          active === type ? "primary" : "secondary"
+        }" data-action="pick-seed" data-type="${type}" title="${
+          esc(entry.hint)
+        }">${esc(entry.label)}</button>`;
+      }).join("")
+    }<button class="secondary" disabled title="${
+      esc(SEED_SOURCE_HINTS.folder.hint)
+    }">资料文件夹（暂不支持）</button></div>${
+      hint
+        ? `<div class="seed-input"><label class="field-label">${
+          esc(hint.hint)
+        }<textarea data-seed-text data-focus-key="seed-text" placeholder="${
+          esc(hint.placeholder)
+        }">${esc(store.ui.seedText || "")}</textarea></label><div class="modal-actions"><button class="primary" data-action="build-blueprint" ${
+          store.ui.seedBusy ? "disabled" : ""
+        }>${store.ui.seedBusy ? "正在生成…" : "生成课程地图草稿"}</button><button class="text-button" data-action="cancel-seed">取消</button></div></div>`
+        : ""
+    }</div>`;
+  }
+
   function mapView() {
     const draft = (store.data.blueprint_drafts || []).find((candidate) =>
       candidate.status === "draft"
@@ -341,7 +387,9 @@ export function createViews(store) {
       : "";
     const map = courseMap(store.data, store.ui.activeId);
     if (map.lesson_count === 0 && !draft) {
-      return `<section class="page"><div class="page-head"><div><span class="eyebrow">课程地图</span><h1>课程结构</h1><p class="muted">课程还没有内容，可以先建第一课；之后正文、看板和发布中心都会从这里读取。</p></div><button class="primary" data-action="add-map-item">＋ 新建课程内容</button></div><div class="empty-state"><div class="empty-icon">▦</div><h2>还没有课程内容</h2><p class="muted">现在可以新建第一课；课程地图会保留你的后续编辑。</p><button class="primary" data-action="add-map-item">新建第一课</button></div></section>`;
+      return `<section class="page"><div class="page-head"><div><span class="eyebrow">课程地图</span><h1>课程结构</h1><p class="muted">课程还没有内容。可以先建第一课，也可以把手上已有的材料变成课程地图。</p></div><button class="primary" data-action="add-map-item">＋ 新建课程内容</button></div>${
+        seedCard()
+      }<div class="empty-state"><div class="empty-icon">▦</div><h2>还没有课程内容</h2><p class="muted">现在可以新建第一课；课程地图会保留你的后续编辑。</p><button class="primary" data-action="add-map-item">新建第一课</button></div></section>`;
     }
     return `<section class="page"><div class="page-head"><div><span class="eyebrow">课程地图</span><h1>${
       esc(map.project_title)
@@ -374,6 +422,22 @@ export function createViews(store) {
     }</div></section>`;
   }
 
+  /**
+   * What is still missing in one lesson.  A per-lesson percentage was a made-up
+   * number (it mixed six dimensions into one figure) and is replaced by the
+   * gap counts the course actually tracks.
+   */
+  function lessonGapLabel(lesson) {
+    const gaps = lesson.gaps || {};
+    const missing = lesson.progress?.missing_media || 0;
+    if (lesson.progress?.complete) return "已完成";
+    const parts = [];
+    if (gaps.total) parts.push(`待补 ${gaps.total} 项`);
+    if (missing) parts.push(`缺素材 ${missing} 项`);
+    if (!parts.length) parts.push("无待补");
+    return parts.join(" · ");
+  }
+
   function mapItem(lesson) {
     const progress = lesson.progress;
     const nextStep = nextStepLabel(lesson);
@@ -385,9 +449,7 @@ export function createViews(store) {
       esc(lesson.title)
     }</b><small>${esc(lesson.summary)}</small></span><span class="map-item-meta"><span class="badge ${
       progress.complete ? "done" : "open"
-    }">${
-      progress.complete ? "已完成" : `${progress.percentage}%`
-    }</span><span class="map-item-state">${
+    }">${lessonGapLabel(lesson)}</span><span class="map-item-state">${
       lesson.current
         ? "正在编辑"
         : progress.complete
@@ -403,7 +465,7 @@ export function createViews(store) {
       lesson.id
     }" data-direction="down" title="下移这一课">↓</button><button class="icon-button danger" data-action="delete-lesson" data-id="${
       lesson.id
-    }" title="删除这一课（需要确认）">🗑</button></div></div>`;
+    }" title="删除这一课（会先确认；可以用撤销恢复）">${TRASH_ICON}</button></div></div>`;
   }
 
   /* ------------------------------------------------------ lesson editor */
@@ -463,9 +525,9 @@ export function createViews(store) {
     const gaps = lesson.gaps;
     return `<div class="lesson-state"><span class="badge ${
       progress.complete ? "done" : "open"
-    }">${progress.complete ? "这一课已完成" : `${progress.percentage}% 完成`}</span><div class="progress-track"><span style="width:${
-      progress.percentage
-    }%"></span></div><div class="gap-counter">${
+    }">这一课${
+      progress.complete ? "已完成" : "还没完成"
+    }</span><div class="gap-counter">${
       gaps.by_type.image ? `<span>图片：缺 ${gaps.by_type.image} 张</span>` : ""
     }${gaps.by_type.gif ? `<span>GIF：缺 ${gaps.by_type.gif} 个</span>` : ""}${
       gaps.by_type.video ? `<span>视频：缺 ${gaps.by_type.video} 个</span>` : ""
@@ -524,11 +586,16 @@ export function createViews(store) {
         candidate.id === block.requirement_id
       )
       : null;
-    return `<article class="block block-${block.type}${
+    const size = block.size || blockSizeView(block);
+    return `<article class="block block-${block.type} block-size-${
+      size.tier
+    } block-kind-${size.kind}${
       selected ? " selected" : ""
-    }${focused ? " focused" : ""}" data-block-id="${block.id}" data-requirement-id="${
+    }${focused ? " focused" : ""}" data-block-id="${block.id}" data-block-size="${
+      size.tier
+    }" data-requirement-id="${
       block.requirement_id || ""
-    }" draggable="true"><div class="block-rail"><span class="block-handle" title="拖动以调整正文顺序">⠿</span><span class="block-order">${
+    }"><div class="block-rail"><span class="block-handle" draggable="true" title="按住拖动以调整正文顺序">⠿</span><span class="block-order">${
       String(index + 1).padStart(2, "0")
     }</span></div><div class="block-main">${
       blockBody(block, requirement)
@@ -544,7 +611,7 @@ export function createViews(store) {
       block.id
     }" data-direction="down" title="下移这块正文">↓</button><button class="icon-button danger" data-action="delete-block" data-id="${
       block.id
-    }" title="删除这块正文">🗑</button></div></article>`;
+    }" title="删除这块正文（可以用撤销恢复）">${TRASH_ICON}</button></div></article>`;
   }
 
   function blockBody(block, requirement) {
@@ -673,7 +740,7 @@ export function createViews(store) {
     }
     const placementOf = (blockId) =>
       view.placements.find((placement) => placement.block_id === blockId);
-    return `<div class="structure-toolbar"><span>结构视图操作的是同一份正文数据；点击一行可回到正文定位。</span><button class="secondary" data-action="add-placeholder">＋ 添加占位符</button></div><div class="structure-list">${
+    return `<div class="structure-toolbar"><span>结构视图只看结构：点击一行回到正文定位。调整先后顺序请到「排版 → Flow」。</span><button class="secondary" data-action="layout-mode" data-layout-mode="flow" title="到 Flow 调整正文先后顺序">到 Flow 调整顺序</button><button class="secondary" data-action="add-placeholder">＋ 添加占位符</button></div><div class="structure-list">${
       view.blocks.map((block, index) => {
         const placement = placementOf(block.id);
         const requirement = block.requirement_id
@@ -703,17 +770,9 @@ export function createViews(store) {
               placement.column_start + 1
             }</span>`
             : ""
-        }</span><button class="icon-button" data-action="move-block" data-id="${
+        }</span><button class="icon-button danger" data-action="delete-block" data-id="${
           block.id
-        }" data-direction="up" ${
-          index === 0 ? "disabled" : ""
-        }>↑</button><button class="icon-button" data-action="move-block" data-id="${
-          block.id
-        }" data-direction="down" ${
-          index === view.blocks.length - 1 ? "disabled" : ""
-        }>↓</button><button class="icon-button danger" data-action="delete-block" data-id="${
-          block.id
-        }">🗑</button></div>`;
+        }" title="删除这块正文（可以用撤销恢复）">${TRASH_ICON}</button></div>`;
       }).join("")
     }</div>`;
   }
@@ -732,8 +791,14 @@ export function createViews(store) {
       mode === "grid" ? "active-tool" : ""
     }" data-action="layout-mode" data-layout-mode="grid">Grid</button>${
       mode === "grid"
-        ? `<button class="secondary ${store.ui.gridEditing ? "active-tool" : ""}" data-action="grid-toggle-edit">编辑网格</button><button class="secondary" data-action="grid-add-col">＋ 列</button><button class="secondary" data-action="grid-add-row">＋ 行</button><button class="secondary" data-action="grid-remove-col">− 列</button><button class="secondary" data-action="grid-remove-row">− 行</button>`
-        : `<span class="toolbar-hint">Flow 是一维文档流：正文顺序保持不变。</span>`
+        ? `<button class="secondary ${store.ui.gridEditing ? "active-tool" : ""}" data-action="grid-toggle-edit" title="行列结构会影响所有已经放进网格的内容">${
+          store.ui.gridEditing ? "完成编辑网格" : "编辑网格"
+        }</button>${
+          store.ui.gridEditing
+            ? `<button class="secondary" data-action="grid-add-col">＋ 列</button><button class="secondary" data-action="grid-add-row">＋ 行</button><button class="secondary" data-action="grid-remove-col">− 列</button><button class="secondary" data-action="grid-remove-row">− 行</button><span class="toolbar-hint">正在编辑网格：这里改的是行列结构，所有位置都会跟着变。</span>`
+            : `<span class="toolbar-hint">网格当前 ${layout.grid_definition.columns.length} 列 × ${layout.grid_definition.rows.length} 行；需要增减行列时先点「编辑网格」。</span>`
+        }`
+        : `<span class="toolbar-hint">Flow 是一维文档流：这里调整的就是正文的先后顺序（写回 Canonical order）。</span>`
     }<span class="toolbar-separator"></span><button class="secondary" data-action="grid-autofill">一键排版全部正文</button></div>`;
     const meta = `<div class="layout-meta"><span><b>${
       esc(layout.name)
@@ -745,6 +810,10 @@ export function createViews(store) {
         : "正文顺序决定阅读顺序"
     }</span><button class="text-button" data-action="rename-layout">重命名排版</button></div>`;
     if (mode === "flow") {
+      const first = view.blocks[0] ? view.blocks[0].id : "";
+      const last = view.blocks.length
+        ? view.blocks[view.blocks.length - 1].id
+        : "";
       return `${toolbar}${meta}<div class="flow-canvas">${
         view.blocks.map((block, index) =>
           `<div class="flow-placement ${
@@ -755,25 +824,37 @@ export function createViews(store) {
             block.id
           }"><b>${esc(block.label)}</b><span>${
             esc(block.summary || "（空）")
-          }</span></button></div>`
+          }</span></button><span class="flow-move"><button class="icon-button" data-action="move-block" data-id="${
+            block.id
+          }" data-direction="up" title="在正文顺序里上移一块" ${
+            block.id === first ? "disabled" : ""
+          }>↑</button><button class="icon-button" data-action="move-block" data-id="${
+            block.id
+          }" data-direction="down" title="在正文顺序里下移一块" ${
+            block.id === last ? "disabled" : ""
+          }>↓</button></span></div>`
         ).join("")
-      }</div><p class="layout-note">Flow 负责上下流式排版；切到 Grid 时同一份正文会保留，不会复制内容。</p>`;
+      }</div><p class="layout-note">Flow 就是正文顺序本身：这里的上移 / 下移直接写回 Canonical Block order，结构视图与预览都跟着同一条顺序走。</p>`;
     }
     const grid = layout.grid_definition;
     const sections = view.sections;
     const placements = view.placements;
     const unplaced = view.unplaced_blocks;
-    return `${toolbar}${meta}<div class="section-strip">${
-      sections.map((section) =>
-        `<span class="section-chip"><button class="text-button" data-action="rename-section" data-id="${
-          section.id
-        }">${esc(section.name)}</button><small>第 ${
-          section.page_index + 1
-        } 段</small></span>`
-      ).join("") || `<span class="muted small">还没有分区</span>`
-    }<button class="secondary" data-action="grid-new-section">＋ 分区</button></div><div class="grid-wrap ${
+    // P2-4: while a block is being moved the canvas highlights every cell it
+    // can land in, and clicking one writes the new position.
+    const movingId = store.ui.movingPlacementId || "";
+    const moving = movingId
+      ? placements.find((placement) => placement.id === movingId) || null
+      : null;
+    const blockOf = (placement) =>
+      placement
+        ? view.blocks.find((block) => block.id === placement.block_id) || null
+        : null;
+    return `${toolbar}${meta}${sectionStrip(sections, placements)}<div class="grid-wrap ${
       store.ui.gridEditing ? "editing" : ""
-    }"><div class="grid-canvas" style="--cols:${
+    }">${
+      movingId ? movingBanner(moving, blockOf(moving)) : ""
+    }<div class="grid-canvas" style="--cols:${
       grid.columns.length
     };--rows:${grid.rows.length};">${
       store.ui.gridEditing ? gridLabels(grid) : ""
@@ -784,45 +865,107 @@ export function createViews(store) {
         );
         if (!block) return "";
         const cell = placementGrid(placement, grid);
-        return `<div class="placement ${
-          store.ui.selectedBlockId === block.id ? "selected" : ""
-        }" style="grid-row:${cell.row};grid-column:${cell.column};" data-placement="${
-          placement.id
-        }" data-structure-block="${placement.block_id}"><span class="placement-label">${
+        const isMoving = movingId === placement.id;
+        return `<div class="placement${
+          store.ui.selectedBlockId === block.id ? " selected" : ""
+        }${isMoving ? " moving" : ""}" style="grid-row:${cell.row};grid-column:${
+          cell.column
+        };" data-placement="${placement.id}" data-structure-block="${
+          placement.block_id
+        }" data-row="${placement.row_start}" data-col="${
+          placement.column_start
+        }" tabindex="0" title="左键点击：移动这块内容 · 右键点击：移出网格"><span class="placement-label">${
           esc(block.label)
         }</span><span class="placement-text">${
           esc(block.summary || "（空）")
-        }</span><div class="placement-actions"><button data-action="move-placement" data-id="${
-          placement.id
-        }" data-dr="-1" data-dc="0" title="上移排版元素">↑</button><button data-action="move-placement" data-id="${
-          placement.id
-        }" data-dr="1" data-dc="0" title="下移排版元素">↓</button><button data-action="move-placement" data-id="${
-          placement.id
-        }" data-dr="0" data-dc="-1" title="向左移动排版元素">←</button><button data-action="move-placement" data-id="${
-          placement.id
-        }" data-dr="0" data-dc="1" title="向右移动排版元素">→</button><button data-action="resize-placement" data-id="${
-          placement.id
-        }" data-dw="1" title="加宽">＋宽</button><button data-action="resize-placement" data-id="${
-          placement.id
-        }" data-dh="1" title="加高">＋高</button><button data-action="select-block" data-id="${
+        }</span><span class="placement-cell">R${
+          placement.row_start + 1
+        }C${placement.column_start + 1}</span><div class="placement-actions"><button data-action="select-block" data-id="${
           placement.block_id
-        }" title="编辑这块内容">✎</button><button data-action="unplace-block" data-id="${
+        }" title="编辑这块内容">✎</button><button data-action="resize-placement" data-id="${
+          placement.id
+        }" data-dw="1" title="加宽一列">＋宽</button><button data-action="resize-placement" data-id="${
+          placement.id
+        }" data-dw="-1" title="减宽一列">−宽</button><button data-action="resize-placement" data-id="${
+          placement.id
+        }" data-dh="1" title="加高一行">＋高</button><button data-action="resize-placement" data-id="${
+          placement.id
+        }" data-dh="-1" title="减高一行">−高</button><button data-action="unplace-block" data-id="${
           placement.block_id
-        }" title="移出网格">✕</button></div></div>`;
+        }" title="移出网格（也可以直接右键）">✕</button></div></div>`;
       }).join("")
-    }</div></div><div class="unplaced-strip"><span class="eyebrow">还没有放进网格的正文</span>${
+    }${
+      movingId ? moveTargets(view, grid, moving) : ""
+    }</div></div><div class="unplaced-strip"><span class="eyebrow" title="左键点击一块正文，它会落到第一个可用格子">还没有放进网格的正文</span>${
       unplaced.length
         ? `<div class="unplaced-list">${
           unplaced.map((block) =>
-            `<button class="secondary" data-action="place-block" data-id="${
+            `<button class="secondary unplaced-block" data-action="place-block" data-id="${
               block.id
-            }">＋ ${esc(block.label)}：${
+            }" title="左键点击：放进第一个可用格子">＋ ${esc(block.label)}：${
               esc((block.summary || "（空）").slice(0, 18))
             }</button>`
           ).join("")
         }</div>`
         : `<span class="muted small">全部正文都已经放进网格</span>`
-    }</div><p class="layout-note">网格只保存位置；正文、素材引用和待补仍然保存在原来的地方，Flow / Grid 切换不会复制内容。</p>`;
+    }</div><p class="layout-note">左键点正文上画布、左键点格子移动、右键移出；↑↓←→ 不再用于移动。网格只保存位置，正文、素材引用和待补仍然保存在原来的地方。</p>`;
+  }
+
+  /** The output-section strip above the canvas (P1-9). */
+  function sectionStrip(sections, placements) {
+    return `<div class="section-strip"><span class="section-strip-label" title="分区把网格里的一组位置归到同一次输出（多页导出时一页 = 一个分区）">输出分区</span>${
+      sections.map((section) =>
+        store.ui.editingSectionId === section.id
+          ? `<span class="section-chip editing"><input class="section-name-input" data-section-name data-focus-key="section-name" data-id="${
+            section.id
+          }" value="${esc(section.name)}" aria-label="分区名称" /><small>Enter 保存 · Esc 取消</small></span>`
+          : `<span class="section-chip"><button class="text-button" data-action="rename-section" data-id="${
+            section.id
+          }" title="重命名这个分区">${esc(section.name)}</button><small>${
+            placements.filter((placement) => placement.section_id === section.id).length
+          } 块 · 第 ${
+            section.page_index + 1
+          } 页</small><button class="icon-button danger" data-action="delete-section" data-id="${
+            section.id
+          }" title="删除这个分区（里面的内容会回到「未分区」，不会被删除）">${TRASH_ICON}</button></span>`
+      ).join("") || `<span class="muted small">还没有分区；所有内容都在「未分区」里</span>`
+    }<button class="secondary" data-action="grid-new-section" title="增加一个输出分区（多页导出时多一页）">＋ 分区</button></div>`;
+  }
+
+  /** The banner that names the block currently being moved (P2-4). */
+  function movingBanner(placement, block) {
+    return `<div class="grid-moving-banner" data-moving-placement="${
+      placement ? placement.id : ""
+    }"><b>正在移动：${
+      esc(block ? block.label : "这块内容")
+    }</b><span>点一个高亮格子放下，或按 Esc 取消。</span><button class="text-button" data-action="grid-cancel-move">取消移动</button></div>`;
+  }
+
+  /** Every cell the moving block can land in, highlighted and clickable. */
+  function moveTargets(view, grid, placement) {
+    if (!placement) return "";
+    const rowSpan = Math.max(1, placement.row_end - placement.row_start);
+    const columnSpan = Math.max(1, placement.column_end - placement.column_start);
+    const allowed = freeCellsFor(grid, view.placements, {
+      rowSpan,
+      columnSpan,
+      exceptId: placement.id,
+    });
+    return allowed.map((cell) => {
+      const current = cell.row === placement.row_start &&
+        cell.column === placement.column_start;
+      return `<button class="grid-cell-target${
+        current ? " current" : ""
+      }" style="grid-row:${cell.row + 1};grid-column:${
+        cell.column + 1
+      };" data-action="grid-move-to" data-id="${placement.id}" data-row="${
+        cell.row
+      }" data-col="${cell.column}" ${
+        current ? "disabled" : ""
+      } title="${
+        current ? "这块内容现在就在这里" : "把这块内容放到这里"
+      }">${current ? "当前" : "放这里"}</button>`;
+    }).join("");
   }
 
   function gridLabels(grid) {
@@ -835,13 +978,12 @@ export function createViews(store) {
 
   /* ------------------------------------------------------------ preview */
 
-  function previewView(item, view) {
-    if (!view) return "";
-    const showNotes = store.ui.showPreviewNotes !== false;
-    // Media blocks render their asset inline, so the gallery below the article
-    // only summarises what is already shown instead of adding a second copy.
-    const gallery = view.blocks.filter((block) => block.asset);
-    const body = view.blocks.map((block) => {
+  /**
+   * One block, rendered as preview HTML.  Flow and Grid both come through here,
+   * so a block can never look different depending on the layout mode.
+   */
+  function previewBlockHtml(block, showNotes) {
+    {
       switch (block.type) {
         case "heading": {
           const level = Math.max(1, Math.min(4, block.level || 2));
@@ -878,17 +1020,140 @@ export function createViews(store) {
             ? `<div class="preview-placeholder">这一段还是空的</div>`
             : "";
       }
+    }
+  }
+
+  /**
+   * A canvas extent that never clips content: a placement saved before the grid
+   * definition shrank must still be visible in the preview (the preflight
+   * reports the same case as a blocking `canvas_overflow`).
+   */
+  function previewExtent(placements, grid) {
+    let rows = Array.isArray(grid?.rows) ? grid.rows.length : 1;
+    let columns = Array.isArray(grid?.columns) ? grid.columns.length : 1;
+    for (const placement of placements) {
+      rows = Math.max(rows, Number(placement.row_end) || 1);
+      columns = Math.max(columns, Number(placement.column_end) || 1);
+    }
+    return { rows: Math.max(1, rows), columns: Math.max(1, columns) };
+  }
+
+  /**
+   * Grid projection: the same canonical blocks and the same LayoutInstance the
+   * export reads, drawn at their real row/column/span.  Sections are separate
+   * canvases because that is what a multi-page export does with them.
+   */
+  function previewGridHtml(view, layout, showNotes) {
+    const grid = layout.grid_definition || { columns: [1], rows: [1] };
+    const sections = view.sections || [];
+    const inSection = (placement, sectionId) => placement.section_id === sectionId;
+    const groups = [];
+    for (const section of sections) {
+      const placements = view.placements.filter((placement) =>
+        inSection(placement, section.id)
+      );
+      if (placements.length) {
+        groups.push({
+          title: `${section.name} · 第 ${section.page_index + 1} 页`,
+          grid: section.grid_definition || grid,
+          placements,
+        });
+      }
+    }
+    const loose = view.placements.filter((placement) =>
+      !sections.some((section) => inSection(placement, section.id))
+    );
+    if (loose.length) {
+      groups.push({
+        title: sections.length ? "未分区" : "",
+        grid,
+        placements: loose,
+      });
+    }
+    if (!groups.length) {
+      groups.push({ title: "", grid, placements: view.placements });
+    }
+    const canvases = groups.map((group) => {
+      const extent = previewExtent(group.placements, group.grid);
+      const cells = group.placements.map((placement) => {
+        const block = view.blocks.find((candidate) =>
+          candidate.id === placement.block_id
+        );
+        if (!block) return "";
+        const cell = placementGrid(placement, {
+          columns: new Array(extent.columns).fill(1),
+          rows: new Array(extent.rows).fill(1),
+        });
+        return `<div class="preview-grid-cell" style="grid-row:${
+          cell.row
+        };grid-column:${cell.column};" data-preview-block="${
+          block.id
+        }">${previewBlockHtml(block, showNotes)}</div>`;
+      }).join("");
+      return `<section class="preview-canvas">${
+        group.title
+          ? `<span class="preview-section-tag">${esc(group.title)}</span>`
+          : ""
+      }<div class="preview-grid" style="--cols:${extent.columns};--rows:${
+        extent.rows
+      };">${cells}</div></section>`;
     }).join("");
+    const placedIds = new Set(view.placements.map((placement) => placement.block_id));
+    const unplaced = view.blocks.filter((block) => !placedIds.has(block.id));
+    const unplacedHtml = unplaced.length
+      ? `<div class="preview-unplaced"><span class="eyebrow" title="这些正文还没有网格位置；导出时它们排在正文顺序的末尾">还没有放进网格（${
+        unplaced.length
+      } 块）</span>${
+        unplaced.map((block) =>
+          `<div class="preview-unplaced-item" data-preview-block="${
+            block.id
+          }">${previewBlockHtml(block, showNotes)}</div>`
+        ).join("")
+      }</div>`
+      : "";
+    return {
+      html: `${canvases}${unplacedHtml}`,
+      unplacedCount: unplaced.length,
+      grid,
+    };
+  }
+
+  function previewView(item, view) {
+    if (!view) return "";
+    const showNotes = store.ui.showPreviewNotes !== false;
+    // Media blocks render their asset inline, so the gallery below the article
+    // only summarises what is already shown instead of adding a second copy.
+    const gallery = view.blocks.filter((block) => block.asset);
     const layout = view.lesson.layout;
+    const gridMode = Boolean(
+      layout && layout.mode === "grid" && view.placements.length,
+    );
+    const projected = gridMode
+      ? previewGridHtml(view, layout, showNotes)
+      : null;
+    const body = gridMode ? "" : view.blocks.map((block) =>
+      previewBlockHtml(block, showNotes)
+    ).join("");
     const placedCount = view.placements.length;
-    return `<div class="preview-toolbar"><span>预览只读取同一份正文与素材引用，编辑时实时更新。</span><label class="checkbox-inline"><input type="checkbox" data-preview-notes ${
+    return `<div class="preview-toolbar"><span>预览只读取同一份正文与素材引用，编辑时实时更新。</span><label class="checkbox-inline"><input type="checkbox" data-preview-notes data-focus-key="preview-notes" ${
       showNotes ? "checked" : ""
     } /> 显示待补与空段落</label><button class="secondary" data-action="preflight">导出前检查</button></div><div class="preview-meta"><span>排版：${
       layout ? `${esc(layout.name)} · ${layout.mode === "flow" ? "Flow" : "Grid"}` : "未设置"
     }</span><span>${
-      placedCount ? `已放置 ${placedCount} 块` : "还没有网格放置"
-    }</span><span>正文 ${view.blocks.length} 块</span></div><article class="preview-paper">${
-      body || `<p class="muted">这一课还没有正文。回到正文视图写一段，预览会自动更新。</p>`
+      gridMode
+        ? `${projected.grid.columns.length} 列 × ${projected.grid.rows.length} 行 · 已放置 ${placedCount} 块${
+          projected.unplacedCount ? ` · 未上画布 ${projected.unplacedCount} 块` : ""
+        }`
+        : placedCount
+        ? `Flow 按正文顺序输出（${placedCount} 块已放置，不影响顺序）`
+        : "还没有网格放置"
+    }</span><span>正文 ${view.blocks.length} 块</span></div><article class="preview-paper${
+      gridMode ? " preview-paper-grid" : ""
+    }">${
+      gridMode
+        ? projected.html
+        : body ||
+          `<p class="muted">这一课还没有正文。回到正文视图写一段，预览会自动更新。</p>`
     }</article><div class="preview-assets"><span class="eyebrow">本课引用的素材（${
       gallery.length
     } 个已在正文中显示）</span>${
@@ -1084,7 +1349,7 @@ export function createViews(store) {
       );
       return status && status.option ? status.option : options[0] || "";
     };
-    return `<section class="page"><div class="page-head"><div><span class="eyebrow">制作进度</span><h1>制作看板</h1><p class="muted">状态由你决定，完整度由待补自动计算；拖动卡片即可改当前维度。</p></div><select class="select" data-board-dimension>${
+    return `<section class="page"><div class="page-head"><div><span class="eyebrow">制作进度</span><h1>制作看板</h1><p class="muted">状态由你决定，完整度由待补自动计算。先选维度，再拖动卡片。</p></div><label class="field-label board-dimension">正在修改的维度<select class="select" data-board-dimension aria-label="正在修改的状态维度">${
       [
         ["content", "正文"],
         ["media", "媒体"],
@@ -1097,7 +1362,7 @@ export function createViews(store) {
           dimension === key ? "selected" : ""
         }>${label}</option>`
       ).join("")
-    }</select></div><div class="kanban">${
+    }</select></label></div><div class="kanban">${
       options.map((option) =>
         `<div class="kanban-column" data-board-option="${
           esc(option)
@@ -1387,20 +1652,7 @@ export function createViews(store) {
       }" value="${esc(requirement.note)}" /></label><label class="field-label">类型<select class="select" data-requirement-type data-id="${
         requirement.id
       }">${
-        [
-          "text",
-          "image",
-          "gif",
-          "video",
-          "audio",
-          "table",
-          "chart",
-          "quote",
-          "case",
-          "link",
-          "data",
-          "other",
-        ].map((type) =>
+        REQUIREMENT_TYPES.map((type) =>
           `<option value="${type}" ${
             requirement.type === type ? "selected" : ""
           }>${requirementTypeLabel(type)}</option>`
@@ -1452,15 +1704,30 @@ export function createViews(store) {
     }">删除</button></div></div></div>`;
   }
 
+  /**
+   * Which six-dimensional status a select edits, and on which lesson.  The
+   * dimension name comes from the project's own `status_dimensions` row
+   * (through the authoring projection), never from a guess in the view.
+   */
+  function dimensionLabel(status) {
+    return status.label || status.name || status.key || "";
+  }
+
   function statusPanel(view) {
     if (!view) return `<div class="side-empty">还没有选中课程。先在左侧选择一课，就可以继续。</div>`;
-    return `<div class="side-head"><div><span class="eyebrow">由你决定</span><h2>制作状态</h2></div></div><label class="field-label">课程标题<input class="select" data-lesson-title value="${
+    return `<div class="side-head"><div><span class="eyebrow">正在修改</span><h2>制作状态</h2><p class="side-note">作用对象：<b>${
+      esc(view.lesson.code)
+    }｜${esc(view.lesson.title)}</b>。下面每行是一个状态维度。</p></div></div><label class="field-label">课程标题<input class="select" data-lesson-title value="${
       esc(view.lesson.title)
     }" /></label><div class="status-list">${
       view.progress.statuses.map((status) =>
-        `<label class="status-row"><span>${esc(status.label)}${
+        `<label class="status-row" title="状态维度：${
+          esc(dimensionLabel(status))
+        }"><span>${esc(dimensionLabel(status))}${
           status.terminal ? " ✓" : ""
-        }</span><select data-status-dim="${status.key}">${
+        }</span><select data-status-dim="${status.key}" aria-label="${
+          esc(dimensionLabel(status))
+        }状态">${
           store.statusOptions(status.key).map((option) =>
             `<option ${
               option === status.option ? "selected" : ""
@@ -1615,31 +1882,78 @@ export function createViews(store) {
     </div>`;
   }
 
-  /** Provider/base-url/model form.  It never renders a credential value. */
+  /**
+   * Provider/base-url/model form.  It never renders a credential value: the
+   * key field is a masked, unbound `<input type="password">` whose text lives
+   * only in the DOM until 保存密钥 reads it.
+   *
+   * Every field carries a `data-focus-key` so a render that lands mid-typing
+   * can put the caret (and the typed text) back where it was.
+   */
   function aiProviderFormView(descriptor, configured) {
     const form = store.ui.aiProviderForm;
     if (!form) return "";
-    const models = Array.isArray(form.models)
-      ? form.models.join(", ")
-      : String(form.models || "");
     const isFake = descriptor.id === "fake";
+    const discovered = Array.isArray(store.ui.aiModelOptions)
+      ? store.ui.aiModelOptions
+      : [];
+    const chosen = String(store.ui.aiChosenModel || form.default_model || "");
+    const manual = String(store.ui.aiManualModel || "");
+    const busy = store.ui.aiModelsBusy === true;
+    const failure = String(store.ui.aiModelsError || "");
+    const source = String(store.ui.aiModelSource || "");
     return `<div class="ai-provider-form">
-      <label class="field-label">显示名称<input class="select" data-ai-provider-label value="${
+      <label class="field-label">显示名称<input class="select" data-ai-provider-label data-focus-key="ai-provider-label" value="${
       esc(form.label || descriptor.label || "")
     }" /></label>
-      <label class="field-label">Base URL<input class="select" data-ai-base-url placeholder="https://api.example.com/v1" value="${
+      <label class="field-label">Base URL<input class="select" data-ai-base-url data-focus-key="ai-base-url" placeholder="https://api.example.com/v1" value="${
       esc(form.base_url || "")
-    }" ${isFake ? "disabled" : ""} /></label>
-      <label class="field-label">默认模型<input class="select" data-ai-default-model placeholder="例如 deepseek-chat" value="${
-      esc(form.default_model || "")
-    }" ${isFake ? "disabled" : ""} /></label>
-      <label class="field-label">可选模型（用逗号分隔）<input class="select" data-ai-models value="${
-      esc(models)
     }" ${isFake ? "disabled" : ""} /></label>
       ${
       isFake
-        ? `<p class="ai-hint">「本地确定性连接器」完全离线、不需要地址或密钥，因此没有可保存的配置。</p>`
-        : `<p class="ai-hint">这里保存的是地址与模型名，不是密钥；密钥用下面的「保存密钥」单独写入。</p>`
+        ? `<p class="ai-hint">「本地确定性连接器」完全离线、不需要地址或密钥，因此没有可保存的配置。</p>
+      <div class="ai-run-row"><button class="secondary" data-action="ai-edit-provider" data-id="custom">改为配置真实服务商</button></div>`
+        : `<p class="ai-hint">这里保存的是地址与模型名，不是密钥；密钥用下面的「保存密钥」单独写入。</p>
+      <div class="ai-run-row">
+        <button class="secondary" data-action="ai-discover-models" data-focus-key="ai-discover" ${
+          busy ? "disabled" : ""
+        }>${busy ? "正在读取模型…" : "读取模型"}</button>
+        <span class="ai-model-source">${
+          source === "remote"
+            ? `已从服务商读取到 ${discovered.length} 个模型`
+            : source === "manual"
+            ? "改为手动填写 Model ID"
+            : "还没有读取过模型"
+        }</span>
+      </div>
+      ${
+          failure
+            ? `<p class="ai-hint warning" data-ai-models-error>读取模型失败：${
+              esc(failure)
+            }。可以直接在下面手动填写 Model ID，不影响保存。</p>`
+            : ""
+        }
+      ${
+          discovered.length
+            ? `<div class="ai-model-list" data-ai-model-list>${
+              discovered.map((id) =>
+                `<button class="ai-model-chip${
+                  chosen === id && !manual ? " active" : ""
+                }" data-action="ai-pick-model" data-id="${
+                  esc(id)
+                }" aria-pressed="${chosen === id && !manual}">${esc(id)}</button>`
+              ).join("")
+            }</div>`
+            : ""
+        }
+      <label class="field-label">手动输入 Model ID（读取失败或需要未列出的模型时使用）<input class="select" data-ai-model-manual data-focus-key="ai-model-manual" placeholder="例如 deepseek-chat" value="${
+          esc(manual || (discovered.length ? "" : chosen))
+        }" /></label>
+      <p class="ai-hint">将要使用的模型：<b data-ai-model-preview>${
+          esc(manual || chosen || "（还没有选择）")
+        }</b><span data-ai-model-preview-note>${
+          manual ? "（手动填写）" : discovered.length ? "（来自读取结果）" : ""
+        }</span></p>`
     }
       <div class="ai-run-row">
         <button class="primary" data-action="ai-save-provider" ${
@@ -1656,7 +1970,7 @@ export function createViews(store) {
     }</p>
       ${
       isFake ? "" : `<div class="ai-run-row">
-        <input class="select" type="password" data-ai-secret autocomplete="off" placeholder="粘贴 API Key（不会回显）" />
+        <input class="select" type="password" data-ai-secret data-focus-key="ai-secret" autocomplete="off" placeholder="粘贴 API Key（不会回显）" />
         <button class="secondary" data-action="ai-save-secret">保存密钥</button>
       </div>
       <div class="ai-run-row"><button class="text-button danger" data-action="ai-delete-secret" ${
@@ -2003,6 +2317,11 @@ export function createViews(store) {
     const selected = store.ui.selectedBlockId
       ? view.blocks.find((block) => block.id === store.ui.selectedBlockId)
       : null;
+    const requirement = selected && selected.requirement_id
+      ? view.requirements.find((candidate) =>
+        candidate.id === selected.requirement_id
+      ) || null
+      : null;
     return `<div class="side-head"><div><span class="eyebrow">当前选择</span><h2>${
       selected ? esc(selected.label) : "这一课"
     }</h2></div></div>${
@@ -2039,7 +2358,23 @@ export function createViews(store) {
             : "—"
         }</dd><dt>待补</dt><dd>${
           selected.requirement_id ? "有" : "无"
-        }</dd></dl><div class="modal-actions"><button class="secondary" data-action="delete-block" data-id="${
+        }</dd></dl>${
+          selected.requirement_id && requirement
+            ? `<div class="properties-box properties-requirement"><span class="eyebrow">这块内容对应的待补</span><label class="field-label">待补类型<select class="select" data-block-requirement-type data-block-id="${
+              selected.id
+            }" data-id="${
+              selected.requirement_id
+            }" data-focus-key="block-requirement-type" title="和「待补」面板、课程地图、待补总览使用同一个类型">${
+              REQUIREMENT_TYPES.map((type) =>
+                `<option value="${type}" ${
+                  requirement.type === type ? "selected" : ""
+                }>${requirementTypeLabel(type)}</option>`
+              ).join("")
+            }</select></label><label class="field-label">待补备注<input class="select" data-requirement-note data-id="${
+              selected.requirement_id
+            }" value="${esc(requirement.note)}" /></label></div>`
+            : ""
+        }<div class="modal-actions"><button class="secondary" data-action="delete-block" data-id="${
           selected.id
         }">删除这一块</button><button class="text-button" data-action="clear-block-selection">取消选择</button></div></div>`
         : `<dl class="properties"><dt>编号</dt><dd>${
@@ -2052,9 +2387,11 @@ export function createViews(store) {
           lesson.media_count
         }</dd><dt>当前排版</dt><dd>${
           esc(lesson.layout ? lesson.layout.name : "未设置")
-        }</dd><dt>完成度</dt><dd>${
-          lesson.progress.percentage
-        }%</dd></dl><p class="side-note">点选一个正文区块后可以在这里改类型和内容。</p>`
+        }</dd><dt>待补</dt><dd>${
+          lesson.gaps.total ? `${lesson.gaps.total} 项` : "无"
+        }</dd><dt>缺素材</dt><dd>${
+          lesson.progress.missing_media || 0
+        } 项</dd></dl><p class="side-note">点选一个正文区块后可以在这里改类型和内容。</p>`
     }`;
   }
 
@@ -2075,7 +2412,7 @@ export function createViews(store) {
     // map, launcher), so it must never assume a current item.
     const view = item ? lessonView(store.data, item.id) : null;
     if (!item || !view) {
-      return `<footer class="statusbar"><span class="status-code">未选择课程</span><span>课程地图可进入任意一课</span><span class="status-spacer"></span><span>本地优先 · 自动保存</span></footer>`;
+      return `<footer class="statusbar" data-chrome-statusbar><span class="status-code">未选择课程</span><span>课程地图可进入任意一课</span><span class="status-spacer"></span><span>本地优先 · 自动保存</span></footer>`;
     }
     const completion = view.progress;
     const gaps = view.lesson.gaps;
@@ -2087,7 +2424,7 @@ export function createViews(store) {
     if (completion.missing_media) {
       parts.push(`素材缺失：${completion.missing_media}`);
     }
-    return `<footer class="statusbar"><span class="status-code">${
+    return `<footer class="statusbar" data-chrome-statusbar><span class="status-code">${
       esc(item.code)
     }｜${esc(item.title)}</span><span>正文：${
       esc(view.lesson.content_status || "待研究")
@@ -2163,12 +2500,12 @@ export function createViews(store) {
       }</div></div>`;
     }
     if (store.ui.palette) {
-      return `<div class="overlay" data-action="close-overlay"><div class="palette modal" data-stop-click="true"><div class="palette-input"><span>⌕</span><input autofocus data-palette-input placeholder="搜索课程、素材、命令……" /></div><div class="palette-results">${
+      return `<div class="overlay" data-action="close-overlay"><div class="palette modal" data-stop-click="true"><div class="palette-input"><span>⌕</span><input autofocus data-palette-input data-focus-key="palette" placeholder="搜索课程、素材、命令……" /></div><div class="palette-results">${
         paletteResults("")
       }</div><div class="palette-hint"><kbd>↑↓</kbd> 选择 <kbd>↵</kbd> 打开 <kbd>Esc</kbd> 关闭</div></div></div>`;
     }
     if (store.ui.capture) {
-      return `<div class="overlay" data-action="close-overlay"><div class="capture modal" data-stop-click="true"><div class="modal-head"><div><span class="eyebrow">QUICK CAPTURE</span><h2>快速收集</h2></div><button class="icon-button" data-action="close-overlay" title="关闭快速收集">×</button></div><textarea autofocus data-capture-input placeholder="写点什么，或粘贴网页链接……"></textarea><label class="field-label">放入<select class="select"><option>${
+      return `<div class="overlay" data-action="close-overlay"><div class="capture modal" data-stop-click="true"><div class="modal-head"><div><span class="eyebrow">QUICK CAPTURE</span><h2>快速收集</h2></div><button class="icon-button" data-action="close-overlay" title="关闭快速收集">×</button></div><textarea autofocus data-capture-input data-focus-key="capture" placeholder="写点什么，或粘贴网页链接……"></textarea><label class="field-label">放入<select class="select"><option>${
         esc(store.data.project.title)
       }</option></select></label><div class="modal-actions"><button class="secondary" data-action="close-overlay">取消</button><button class="primary" data-action="submit-capture">放入收件箱</button></div></div></div>`;
     }
@@ -2188,7 +2525,7 @@ export function createViews(store) {
       ].map(([label, count, blocking]) => `<div><span class="check ${count ? blocking ? "danger" : "warning" : "ok"}">${count || "✓"}</span><span>${label}</span><b>${count}</b></div>`).join("")}</div>${issues.length ? `<div class="issue-list">${issues.map((issue) => `<article class="${issue.severity === "blocking" ? "issue-blocking" : "issue-warning"}"><b>${issue.severity === "blocking" ? "必须修复" : "提示"}</b><span>${esc(issueMessage(issue))}</span>${issueDiagnostics(issue)}</article>`).join("")}</div>` : ""}<div class="preflight-total">必须修复 <strong>${report.blocking}</strong> · 提示 <strong>${report.warnings}</strong></div>${report.blocking ? `<p class="error-text">当前不能导出：请先修复上面标为“必须修复”的问题。不会生成半成品，也不会修改源课程。</p>` : report.warnings ? `<p class="muted">可以继续；确认后，待补内容不会进入正式正文，无法交互的媒体会以附件说明呈现。</p>` : `<p class="success-text">检查通过，可以生成输出；源课程不会被修改。</p>`}<div class="modal-actions"><button class="secondary" data-action="close-overlay">返回继续修复</button><button class="primary" data-action="export-format" data-format="${esc(store.ui.publishFormat)}" ${report.blocking ? "disabled" : ""}>${report.warnings ? "确认提示并导出" : "开始导出"}</button></div></div></div>`;
     }
     if (store.ui.snapshot) {
-      return `<div class="overlay" data-action="close-overlay"><div class="capture modal" data-stop-click="true"><div class="modal-head"><div><span class="eyebrow">长期历史</span><h2>保存版本</h2></div><button class="icon-button" data-action="close-overlay" title="关闭保存版本">×</button></div><label class="field-label">版本名称<input data-snapshot-name placeholder="例如：第一课正文定稿" /></label><label class="field-label">备注<textarea data-snapshot-note placeholder="记录这个节点为什么重要"></textarea></label><div class="modal-actions"><button class="secondary" data-action="close-overlay">取消</button><button class="primary" data-action="submit-snapshot">保存版本</button></div></div></div>`;
+      return `<div class="overlay" data-action="close-overlay"><div class="capture modal" data-stop-click="true"><div class="modal-head"><div><span class="eyebrow">长期历史</span><h2>保存版本</h2></div><button class="icon-button" data-action="close-overlay" title="关闭保存版本">×</button></div><label class="field-label">版本名称<input data-snapshot-name data-focus-key="snapshot-name" placeholder="例如：第一课正文定稿" /></label><label class="field-label">备注<textarea data-snapshot-note data-focus-key="snapshot-note" placeholder="记录这个节点为什么重要"></textarea></label><div class="modal-actions"><button class="secondary" data-action="close-overlay">取消</button><button class="primary" data-action="submit-snapshot">保存版本</button></div></div></div>`;
     }
     return "";
   }
@@ -2285,6 +2622,8 @@ export function createViews(store) {
     shellView,
     overlayView: overlay,
     toastView: toast,
+    statusbarView: () => statusbarView(store.currentItem()),
+    saveStateView,
     paletteResults,
   };
 }

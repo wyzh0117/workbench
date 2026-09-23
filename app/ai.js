@@ -24,6 +24,7 @@
 
 import {
   MEDIA_BLOCK_TYPES,
+  REQUIREMENT_TYPES,
   assetForBlock,
   assetLabel,
   blockLabel,
@@ -238,20 +239,8 @@ const AI_BLOCK_TYPES = [
   "placeholder",
   "embed",
 ];
-const AI_REQUIREMENT_TYPES = [
-  "text",
-  "image",
-  "gif",
-  "video",
-  "audio",
-  "table",
-  "chart",
-  "quote",
-  "case",
-  "link",
-  "data",
-  "other",
-];
+/** The shared Domain list; the AI draft validator must accept exactly这些. */
+const AI_REQUIREMENT_TYPES = REQUIREMENT_TYPES;
 const AI_PRIORITIES = ["low", "normal", "high"];
 const AI_CONTEXT_SOURCE_TYPES = [
   "document",

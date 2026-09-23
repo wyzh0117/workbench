@@ -2111,6 +2111,277 @@ fn append_inbox_item(project: &mut Value, item: Value) -> Result<String, String>
     Ok(id)
 }
 
+/// The Domain owns the seed/blueprint semantics (`src/domain/course.ts`), and
+/// the browser shell reaches them through the service. The desktop shell has no
+/// service process, so the two commands below mirror that module instead of
+/// inventing a second product behaviour: same node derivation, same
+/// content-type inference, and the same rule that a draft writes no formal
+/// Stage/ContentItem rows.
+fn uuid_v4() -> Result<String, String> {
+    let mut bytes = [0_u8; 16];
+    getrandom::fill(&mut bytes).map_err(|error| format!("无法生成标识: {error}"))?;
+    bytes[6] = (bytes[6] & 0x0f) | 0x40;
+    bytes[8] = (bytes[8] & 0x3f) | 0x80;
+    let hex: String = bytes.iter().map(|byte| format!("{byte:02x}")).collect();
+    Ok(format!(
+        "{}-{}-{}-{}-{}",
+        &hex[0..8],
+        &hex[8..12],
+        &hex[12..16],
+        &hex[16..20],
+        &hex[20..32]
+    ))
+}
+
+fn seed_content_type(title: &str) -> &'static str {
+    let normalized = title.to_lowercase();
+    if normalized.contains("练习") || normalized.contains("exercise") {
+        return "exercise";
+    }
+    if normalized.contains("案例") || normalized.contains("case") {
+        return "case";
+    }
+    if normalized.contains("总结") || normalized.contains("summary") {
+        return "summary";
+    }
+    if normalized.contains("测验") || normalized.contains("考试") || normalized.contains("assessment")
+    {
+        return "assessment";
+    }
+    if normalized.contains("参考") || normalized.contains("reference") {
+        return "reference";
+    }
+    "lesson"
+}
+
+/// Mirrors `^(#{1,6}|\d+[.)])\s*(.+)$` from the Domain.
+fn heading_title(line: &str) -> Option<String> {
+    let hashes = line.chars().take_while(|value| *value == '#').count();
+    if hashes >= 1 {
+        let rest = line[hashes.min(6)..].trim_start();
+        if !rest.is_empty() {
+            return Some(rest.trim().to_string());
+        }
+    }
+    let digits = line.chars().take_while(char::is_ascii_digit).count();
+    if digits > 0 {
+        let rest = &line[digits..];
+        let mut chars = rest.chars();
+        if matches!(chars.next(), Some('.') | Some(')')) {
+            let tail = chars.as_str().trim_start();
+            if !tail.is_empty() {
+                return Some(tail.trim().to_string());
+            }
+        }
+    }
+    None
+}
+
+fn strip_list_marker(line: &str) -> String {
+    let trimmed = line.trim();
+    let mut chars = trimmed.chars();
+    if let Some(first) = chars.next() {
+        if matches!(first, '-' | '*' | '+') {
+            return chars.as_str().trim_start().trim().to_string();
+        }
+    }
+    trimmed.to_string()
+}
+
+fn first_meaningful_line(raw_text: &str) -> String {
+    raw_text
+        .split('\n')
+        .map(|line| line.trim().trim_start_matches('#').trim())
+        .find(|line| !line.is_empty())
+        .unwrap_or_default()
+        .to_string()
+}
+
+fn seed_lines_to_nodes(raw_text: &str) -> Vec<Value> {
+    let lines: Vec<&str> = raw_text
+        .split('\n')
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .collect();
+    if lines.is_empty() {
+        return vec![
+            json!({
+                "node_type": "stage",
+                "title": "开始",
+                "suggested_type": "stage_intro",
+                "parent_index": Value::Null,
+            }),
+            json!({
+                "node_type": "content",
+                "title": "第一课",
+                "suggested_type": "lesson",
+                "parent_index": 0,
+            }),
+        ];
+    }
+    let mut nodes: Vec<Value> = Vec::new();
+    let mut current_stage: Option<usize> = None;
+    for line in lines {
+        if let Some(title) = heading_title(line) {
+            current_stage = Some(nodes.len());
+            nodes.push(json!({
+                "node_type": "stage",
+                "title": title,
+                "suggested_type": "stage_intro",
+                "parent_index": Value::Null,
+            }));
+            continue;
+        }
+        let stage_index = match current_stage {
+            Some(index) => index,
+            None => {
+                let index = nodes.len();
+                nodes.push(json!({
+                    "node_type": "stage",
+                    "title": "课程内容",
+                    "suggested_type": "stage_intro",
+                    "parent_index": Value::Null,
+                }));
+                current_stage = Some(index);
+                index
+            }
+        };
+        nodes.push(json!({
+            "node_type": "content",
+            "title": strip_list_marker(line),
+            "suggested_type": seed_content_type(line),
+            "parent_index": stage_index,
+        }));
+    }
+    nodes
+}
+
+#[tauri::command]
+fn course_seed_create(input: Value) -> Result<Value, String> {
+    let object = require_object(&input, "course_seed_create")?;
+    let project_dir = required_string(object, &["project_dir", "projectDir"], "项目目录")?;
+    let project_dir = explicit_project_dir(&project_dir, false)?;
+    let _lease_guard = require_active_project_lock(&project_dir)?;
+    let source_type = required_string(object, &["source_type", "sourceType"], "课程输入类型")?;
+    let raw_text = field(object, &["raw_text", "rawText"])
+        .and_then(Value::as_str)
+        .map(str::to_string);
+    let mut project = read_project_value(&project_dir)?;
+    let seed = json!({
+        "id": uuid_v4()?,
+        // The Domain keeps the pointer empty until the map is confirmed.
+        "project_id": Value::Null,
+        "source_type": source_type,
+        "raw_text": raw_text,
+        "source_files": [],
+        "metadata": {},
+        "created_at": rfc3339_now(),
+    });
+    {
+        let map = project.as_object_mut().ok_or("项目数据必须是 JSON 对象")?;
+        map.entry("course_seeds")
+            .or_insert_with(|| Value::Array(Vec::new()))
+            .as_array_mut()
+            .ok_or("项目的课程输入数据格式无效")?
+            .push(seed.clone());
+    }
+    touch_project_updated_at(&mut project)?;
+    write_project_value_unlocked(&project_dir, &project)?;
+    Ok(seed)
+}
+
+#[tauri::command]
+fn blueprint_build(input: Value) -> Result<Value, String> {
+    let object = require_object(&input, "blueprint_build")?;
+    let project_dir = required_string(object, &["project_dir", "projectDir"], "项目目录")?;
+    let project_dir = explicit_project_dir(&project_dir, false)?;
+    let _lease_guard = require_active_project_lock(&project_dir)?;
+    let course_seed_id = required_string(object, &["course_seed_id", "courseSeedId"], "课程输入")?;
+    let mut project = read_project_value(&project_dir)?;
+    let seed = project
+        .get("course_seeds")
+        .and_then(Value::as_array)
+        .and_then(|seeds| {
+            seeds.iter().find(|seed| {
+                seed.get("id").and_then(Value::as_str) == Some(course_seed_id.as_str())
+            })
+        })
+        .cloned()
+        .ok_or_else(|| format!("找不到课程输入: {course_seed_id}"))?;
+    let raw_text = seed
+        .get("raw_text")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .to_string();
+    let metadata_title = seed
+        .get("metadata")
+        .and_then(|value| value.get("title"))
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .trim()
+        .to_string();
+    let title = if !metadata_title.is_empty() {
+        metadata_title
+    } else {
+        let first = first_meaningful_line(&raw_text);
+        if first.is_empty() {
+            "未命名课程".to_string()
+        } else {
+            first
+        }
+    };
+    let draft_id = uuid_v4()?;
+    let draft = json!({
+        "id": draft_id.clone(),
+        "course_seed_id": course_seed_id,
+        "title": title,
+        "status": "draft",
+        "created_at": rfc3339_now(),
+        "confirmed_at": Value::Null,
+    });
+    let mut node_ids: Vec<Value> = Vec::new();
+    let mut nodes: Vec<Value> = Vec::new();
+    for (index, node) in seed_lines_to_nodes(&raw_text).iter().enumerate() {
+        let parent_id = node
+            .get("parent_index")
+            .and_then(Value::as_u64)
+            .map(|parent| {
+                node_ids
+                    .get(parent as usize)
+                    .cloned()
+                    .unwrap_or(Value::Null)
+            })
+            .unwrap_or(Value::Null);
+        let node_id = uuid_v4()?;
+        nodes.push(json!({
+            "id": node_id,
+            "blueprint_id": draft_id,
+            "parent_id": parent_id,
+            "node_type": node.get("node_type").cloned().unwrap_or_else(|| json!("content")),
+            "title": node.get("title").cloned().unwrap_or_else(|| json!("")),
+            "suggested_type": node.get("suggested_type").cloned().unwrap_or_else(|| json!("lesson")),
+            "order_index": index,
+        }));
+        node_ids.push(json!(node_id));
+    }
+    {
+        let map = project.as_object_mut().ok_or("项目数据必须是 JSON 对象")?;
+        map.entry("blueprint_drafts")
+            .or_insert_with(|| Value::Array(Vec::new()))
+            .as_array_mut()
+            .ok_or("项目的课程草稿数据格式无效")?
+            .push(draft.clone());
+        map.entry("blueprint_nodes")
+            .or_insert_with(|| Value::Array(Vec::new()))
+            .as_array_mut()
+            .ok_or("项目的课程节点数据格式无效")?
+            .extend(nodes.iter().cloned());
+    }
+    touch_project_updated_at(&mut project)?;
+    write_project_value_unlocked(&project_dir, &project)?;
+    Ok(json!({ "draft": draft, "nodes": nodes }))
+}
+
 #[tauri::command]
 fn import_confirm(preview: Value) -> Result<Value, String> {
     let object = require_object(&preview, "import_confirm")?;
@@ -3952,10 +4223,10 @@ fn keychain_failure(operation: &str) -> String {
 }
 
 #[cfg_attr(test, allow(dead_code))]
-fn security_command(args: &[String], input: Option<&str>) -> Result<(i32, Vec<u8>), String> {
+fn security_command(args: &[String]) -> Result<(i32, Vec<u8>), String> {
     #[cfg(not(target_os = "macos"))]
     {
-        let _ = (args, input);
+        let _ = args;
         return Err(keychain_failure("unsupported-platform"));
     }
     #[cfg(target_os = "macos")]
@@ -3963,27 +4234,60 @@ fn security_command(args: &[String], input: Option<&str>) -> Result<(i32, Vec<u8
         let mut command = ProcessCommand::new("/usr/bin/security");
         command
             .args(args)
+            .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::null());
-        if input.is_some() {
-            command.stdin(Stdio::piped());
-        } else {
-            command.stdin(Stdio::null());
-        }
-        let mut child = command.spawn().map_err(|_| keychain_failure("process"))?;
-        if let Some(value) = input {
-            let Some(mut stdin) = child.stdin.take() else {
-                return Err(keychain_failure("stdin"));
-            };
-            stdin
-                .write_all(format!("{value}\n").as_bytes())
-                .map_err(|_| keychain_failure("stdin"))?;
-        }
-        let output = child
-            .wait_with_output()
+        let output = command
+            .output()
             .map_err(|_| keychain_failure("process"))?;
         Ok((output.status.code().unwrap_or(-1), output.stdout))
     }
+}
+
+/// `security add-generic-password` arguments for one provider credential.
+///
+/// The secret is the ARGUMENT of `-w` on purpose. `security` documents `-w` as
+/// "Specify password to be added … Specify -w as the last option to be
+/// prompted": a trailing bare `-w` makes the tool read the password from the
+/// terminal, and with no TTY it stored an EMPTY password while still exiting 0.
+/// That is exactly how an API Key could look saved and never be readable.
+#[cfg_attr(test, allow(dead_code))]
+fn keychain_add_args(account: &str, service: &str, value: &str) -> Vec<String> {
+    vec![
+        "add-generic-password".into(),
+        "-a".into(),
+        account.into(),
+        "-s".into(),
+        service.into(),
+        // `-U` updates an existing item instead of failing, which also repairs
+        // an item an earlier broken write left empty.
+        "-U".into(),
+        "-w".into(),
+        value.into(),
+    ]
+}
+
+#[cfg_attr(test, allow(dead_code))]
+fn keychain_get_args(account: &str, service: &str) -> Vec<String> {
+    vec![
+        "find-generic-password".into(),
+        "-a".into(),
+        account.into(),
+        "-s".into(),
+        service.into(),
+        "-w".into(),
+    ]
+}
+
+#[cfg_attr(test, allow(dead_code))]
+fn keychain_delete_args(account: &str, service: &str) -> Vec<String> {
+    vec![
+        "delete-generic-password".into(),
+        "-a".into(),
+        account.into(),
+        "-s".into(),
+        service.into(),
+    ]
 }
 
 #[cfg_attr(test, allow(dead_code))]
@@ -4009,33 +4313,23 @@ impl MacKeychainStore {
 
 impl AiCredentialStore for MacKeychainStore {
     fn set(&self, provider_id: &str, value: &str) -> Result<(), String> {
-        let args = vec![
-            "add-generic-password".into(),
-            "-a".into(),
-            self.account(provider_id),
-            "-s".into(),
-            AI_KEYCHAIN_SERVICE.into(),
-            "-U".into(),
-            "-w".into(),
-        ];
-        let (code, _) = security_command(&args, Some(value))?;
-        if code == 0 {
-            Ok(())
-        } else {
-            Err(keychain_failure("set"))
+        // See `keychain_add_args`: the value must be the argument of `-w`, and
+        // the write has to be verified by reading it back before we report
+        // success.
+        let args = keychain_add_args(&self.account(provider_id), AI_KEYCHAIN_SERVICE, value);
+        let (code, _) = security_command(&args)?;
+        if code != 0 {
+            return Err(keychain_failure("set"));
+        }
+        match self.get(provider_id)? {
+            Some(stored) if stored == value.trim() => Ok(()),
+            _ => Err(keychain_failure("set")),
         }
     }
 
     fn get(&self, provider_id: &str) -> Result<Option<String>, String> {
-        let args = vec![
-            "find-generic-password".into(),
-            "-a".into(),
-            self.account(provider_id),
-            "-s".into(),
-            AI_KEYCHAIN_SERVICE.into(),
-            "-w".into(),
-        ];
-        let (code, stdout) = security_command(&args, None)?;
+        let args = keychain_get_args(&self.account(provider_id), AI_KEYCHAIN_SERVICE);
+        let (code, stdout) = security_command(&args)?;
         if code == 44 {
             return Ok(None);
         }
@@ -4050,14 +4344,8 @@ impl AiCredentialStore for MacKeychainStore {
     }
 
     fn delete(&self, provider_id: &str) -> Result<bool, String> {
-        let args = vec![
-            "delete-generic-password".into(),
-            "-a".into(),
-            self.account(provider_id),
-            "-s".into(),
-            AI_KEYCHAIN_SERVICE.into(),
-        ];
-        let (code, _) = security_command(&args, None)?;
+        let args = keychain_delete_args(&self.account(provider_id), AI_KEYCHAIN_SERVICE);
+        let (code, _) = security_command(&args)?;
         match code {
             0 => Ok(true),
             44 => Ok(false),
@@ -5711,6 +5999,209 @@ async fn ai_perform_request(spec: AiRequestSpec) -> Result<Value, String> {
     }
 }
 
+/// P2-1：读取服务商自己的模型列表（GET `{base_url}/models`）。
+///
+/// 密钥只在本机从钥匙串取出并作为鉴权头发出，绝不回传给前端；读取失败返回
+/// 结构化错误，由界面转成「手动填写 Model ID」，因此应用里不需要维护一份
+/// 会过期的模型名表。
+async fn ai_models_list_at(base: &Path, input: &Value) -> Result<Value, String> {
+    let payload = ai_payload(input, "ai_models_list")?;
+    let provider_id = field(&payload, &["provider_id", "providerId"])
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .unwrap_or("")
+        .to_owned();
+    if provider_id.is_empty() {
+        return Err(structured_ai_error(
+            "not_configured",
+            "还没有选择 AI 服务商，无法读取模型列表。",
+            Some("先在 AI 面板里选择并保存一个服务商。"),
+            json!({}),
+        ));
+    }
+    let state = ai_read_provider_store_secure(base)?;
+    let providers = state
+        .get("providers")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    let provider = providers
+        .iter()
+        .find(|entry| entry.get("id").and_then(Value::as_str) == Some(provider_id.as_str()))
+        .cloned();
+    let provider = match provider {
+        Some(provider) => provider,
+        None => {
+            return Err(structured_ai_error(
+                "not_configured",
+                &format!("找不到服务商「{provider_id}」的配置。"),
+                Some("先在 AI 面板里保存这个服务商，再读取模型列表。"),
+                json!({ "provider_id": provider_id }),
+            ))
+        }
+    };
+    let credential = match ai_keychain_credential(base, &provider_id)? {
+        Some(value) if !value.trim().is_empty() => value,
+        _ => {
+            return Err(structured_ai_error(
+                "missing_credential",
+                &format!("AI 服务商「{provider_id}」还没有配置 API Key。"),
+                Some("先保存 API Key，再读取模型列表；也可以直接手动填写 Model ID。"),
+                json!({ "provider_id": provider_id }),
+            ))
+        }
+    };
+    let base_url = field(&payload, &["base_url", "baseUrl"])
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned)
+        .or_else(|| {
+            provider
+                .get("base_url")
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(ToOwned::to_owned)
+        })
+        .ok_or_else(|| {
+            structured_ai_error(
+                "invalid_request",
+                "还没有填写 Base URL，无法读取模型列表。",
+                Some("在服务商设置里填写 Base URL 后重试。"),
+                json!({ "provider_id": provider_id }),
+            )
+        })?;
+    let endpoint = format!("{}/models", base_url.trim_end_matches('/'));
+    ai_validate_request_url(&endpoint)?;
+    let header = provider
+        .get("auth_header")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or("authorization")
+        .to_owned();
+    let scheme = provider
+        .get("auth_scheme")
+        .and_then(Value::as_str)
+        .unwrap_or("Bearer");
+    // 只保留真正会出现在报文里的凭据形状；短凭据一律不回显 Provider 正文。
+    let mut secret_forms: Vec<String> = vec![credential.trim().to_owned()];
+    if !scheme.trim().is_empty() {
+        secret_forms.push(format!("{} {}", scheme.trim(), credential.trim()));
+    }
+    let secrets = AiSecrets {
+        forms: secret_forms,
+        has_short: credential.trim().chars().count() < AI_MIN_EXACT_SECRET_CHARS,
+    };
+    let auth_value = if scheme.trim().is_empty() {
+        credential.clone()
+    } else {
+        format!("{} {}", scheme.trim(), credential)
+    };
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_millis(AI_DEFAULT_TIMEOUT_MS))
+        // 与对话请求一致：不跟随重定向，避免把自定义鉴权头转发到别的站点。
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
+        .map_err(|error| {
+            structured_ai_error(
+                "transport_unavailable",
+                "无法初始化 AI 网络客户端。",
+                Some("请重启工作台后重试。"),
+                json!({ "reason": ai_error_text_limit(&error.to_string(), AI_ERROR_TEXT_LIMIT) }),
+            )
+        })?;
+    let response = client
+        .get(&endpoint)
+        .header("accept", "application/json")
+        .header(header.as_str(), auth_value.as_str())
+        .send()
+        .await
+        .map_err(|error| {
+            ai_transport_error(
+                error,
+                AI_DEFAULT_TIMEOUT_MS,
+                &endpoint,
+                &secrets,
+                &provider_id,
+            )
+        })?;
+    let status = response.status();
+    let content_type = response
+        .headers()
+        .get(reqwest::header::CONTENT_TYPE)
+        .and_then(|value| value.to_str().ok())
+        .unwrap_or("")
+        .to_owned();
+    let bytes = response.bytes().await.map_err(|error| {
+        ai_transport_error(
+            error,
+            AI_DEFAULT_TIMEOUT_MS,
+            &endpoint,
+            &secrets,
+            &provider_id,
+        )
+    })?;
+    let text = String::from_utf8_lossy(&bytes).into_owned();
+    if !status.is_success() {
+        return Err(ai_status_error(
+            status.as_u16(),
+            &text,
+            &secrets,
+            &provider_id,
+            &endpoint,
+            &content_type,
+        ));
+    }
+    let parsed = serde_json::from_str::<Value>(&text).unwrap_or(Value::Null);
+    let models = ai_model_ids_from_payload(&parsed);
+    if models.is_empty() {
+        return Err(structured_ai_error(
+            "provider_error",
+            "服务商没有返回可识别的模型名。",
+            Some("可以在设置里手动填写 Model ID，不影响保存与运行。"),
+            json!({ "provider_id": provider_id, "endpoint": endpoint }),
+        ));
+    }
+    Ok(json!({
+        "provider_id": provider_id,
+        "models": models,
+        "endpoint": endpoint,
+    }))
+}
+
+/// 服务商实际返回的几种模型列表形状：`data[].id` / `models[].id|name` / 纯数组。
+fn ai_model_ids_from_payload(payload: &Value) -> Vec<String> {
+    let entries = match payload {
+        Value::Array(entries) => entries.clone(),
+        Value::Object(map) => map
+            .get("data")
+            .and_then(Value::as_array)
+            .or_else(|| map.get("models").and_then(Value::as_array))
+            .cloned()
+            .unwrap_or_default(),
+        _ => Vec::new(),
+    };
+    let mut ids: Vec<String> = entries
+        .iter()
+        .filter_map(|entry| match entry {
+            Value::String(text) => Some(text.trim().to_owned()),
+            Value::Object(map) => map
+                .get("id")
+                .or_else(|| map.get("name"))
+                .or_else(|| map.get("model"))
+                .and_then(Value::as_str)
+                .map(|value| value.trim().to_owned()),
+            _ => None,
+        })
+        .filter(|value| !value.is_empty())
+        .collect();
+    ids.sort();
+    ids.dedup();
+    ids
+}
+
 /// 发一次请求并把 `JoinHandle` 登记到 `requests`；取消时由 `ai_cancel_at` 中止。
 async fn ai_complete_at(
     base: &Path,
@@ -5910,6 +6401,12 @@ fn ai_secret_delete(app: AppHandle, request: tauri::ipc::Request<'_>) -> Result<
 }
 
 #[tauri::command]
+async fn ai_models_list(app: AppHandle, request: tauri::ipc::Request<'_>) -> Result<Value, String> {
+    let base = ai_store_dir(&app)?;
+    ai_models_list_at(&base, &ai_invoke_args(&request)).await
+}
+
+#[tauri::command]
 async fn ai_complete(
     app: AppHandle,
     state: State<'_, BridgeState>,
@@ -5960,6 +6457,248 @@ mod tests {
         ));
         fs::create_dir_all(&directory).expect("test directory should be created");
         directory
+    }
+
+    #[test]
+    fn model_ids_parse_from_the_shapes_real_providers_return() {
+        let openai = json!({ "data": [{ "id": "b" }, { "id": "a" }, { "id": "a" }] });
+        assert_eq!(ai_model_ids_from_payload(&openai), vec!["a", "b"]);
+        let ollama = json!({ "models": [{ "name": "llama3" }, { "id": "qwen" }] });
+        assert_eq!(ai_model_ids_from_payload(&ollama), vec!["llama3", "qwen"]);
+        let bare = json!(["only-one"]);
+        assert_eq!(ai_model_ids_from_payload(&bare), vec!["only-one"]);
+        // 没有模型名时返回空列表，绝不用本地表补一个猜测出来的名字。
+        assert!(ai_model_ids_from_payload(&json!({ "data": [] })).is_empty());
+        assert!(ai_model_ids_from_payload(&json!({})).is_empty());
+        assert!(ai_model_ids_from_payload(&Value::Null).is_empty());
+    }
+
+    #[test]
+    fn keychain_add_arguments_carry_the_secret_as_the_value_of_dash_w() {
+        let args = keychain_add_args("project-abc:provider:deepseek", "com.example.app", "sk-secret");
+        assert_eq!(args[0], "add-generic-password");
+        assert_eq!(args[1], "-a");
+        assert_eq!(args[2], "project-abc:provider:deepseek");
+        assert_eq!(args[3], "-s");
+        assert_eq!(args[4], "com.example.app");
+        // `-U` repairs an item a previous broken write left behind.
+        assert!(args.contains(&"-U".to_string()));
+        // A trailing bare `-w` means "prompt me", which stores an EMPTY
+        // password without a TTY. The secret must be its argument instead.
+        let dash_w = args.iter().position(|arg| arg == "-w").expect("`-w` must be present");
+        assert_eq!(
+            args.get(dash_w + 1).map(String::as_str),
+            Some("sk-secret"),
+            "the secret must be the argument of `-w`",
+        );
+        assert_eq!(args.last().map(String::as_str), Some("sk-secret"));
+    }
+
+    #[test]
+    fn keychain_read_and_delete_arguments_target_the_same_item_as_the_write() {
+        let write = keychain_add_args("account", "service", "secret");
+        let read = keychain_get_args("account", "service");
+        let delete = keychain_delete_args("account", "service");
+        for args in [&write, &read, &delete] {
+            assert_eq!(args[1], "-a");
+            assert_eq!(args[2], "account");
+            assert_eq!(args[3], "-s");
+            assert_eq!(args[4], "service");
+        }
+        // Reading prints only the password; a bare `-w` here is correct and is
+        // how the store verifies that a write really landed.
+        assert_eq!(read.last().map(String::as_str), Some("-w"));
+        assert!(!delete.contains(&"-w".to_string()));
+    }
+
+    fn write_test_project(directory: &Path) -> Value {
+        let project = json!({
+            "schema_version": 4,
+            "project": {
+                "id": "project-native-seed",
+                "title": "未命名课程",
+                "created_at": rfc3339_now(),
+                "updated_at": rfc3339_now(),
+            },
+            "stages": [],
+            "content_items": [],
+            "documents": [],
+            "course_seeds": [],
+            "blueprint_drafts": [],
+            "blueprint_nodes": [],
+        });
+        fs::write(
+            directory.join("project.json"),
+            serde_json::to_string_pretty(&project).expect("fixture should serialize"),
+        )
+        .expect("fixture should be written");
+        project
+    }
+
+
+    #[test]
+    fn seed_outline_lines_become_stages_and_contents() {
+        let nodes = seed_lines_to_nodes(
+            "# 第一阶段 入门\n第一课 认识界面\n- 第二课 练习：第一次对话\n第三课 案例复盘",
+        );
+        let types: Vec<&str> = nodes
+            .iter()
+            .map(|node| {
+                node.get("node_type")
+                    .and_then(Value::as_str)
+                    .unwrap_or("")
+            })
+            .collect();
+        assert_eq!(types, vec!["stage", "content", "content", "content"]);
+        assert_eq!(
+            nodes[0].get("title").and_then(Value::as_str),
+            Some("第一阶段 入门"),
+            "a markdown heading opens a stage"
+        );
+        assert_eq!(
+            nodes[2].get("title").and_then(Value::as_str),
+            Some("第二课 练习：第一次对话"),
+            "a leading bullet marker is not part of the lesson title"
+        );
+        assert_eq!(
+            nodes[2].get("suggested_type").and_then(Value::as_str),
+            Some("exercise"),
+            "the Domain infers an exercise from the title"
+        );
+        assert_eq!(
+            nodes[3].get("suggested_type").and_then(Value::as_str),
+            Some("case")
+        );
+        for node in nodes.iter().skip(1) {
+            assert_eq!(
+                node.get("parent_index").and_then(Value::as_u64),
+                Some(0),
+                "every lesson stays under the stage it followed"
+            );
+        }
+        let unmarked = seed_lines_to_nodes("第一阶段 入门\n第一课 认识界面");
+        assert_eq!(
+            unmarked[0].get("title").and_then(Value::as_str),
+            Some("课程内容"),
+            "lines without a stage marker land in one implicit stage"
+        );
+        assert_eq!(
+            unmarked[1].get("title").and_then(Value::as_str),
+            Some("第一阶段 入门"),
+            "an unmarked line is a lesson, never a stage"
+        );
+    }
+
+    #[test]
+    fn heading_lines_open_a_new_stage_and_an_empty_input_still_starts_somewhere() {
+        let nodes = seed_lines_to_nodes("## 第二阶段 进阶\n1. 让 AI 稳定理解需求\n2) 交付结果");
+        let types: Vec<&str> = nodes
+            .iter()
+            .map(|node| {
+                node.get("node_type")
+                    .and_then(Value::as_str)
+                    .unwrap_or("")
+            })
+            .collect();
+        assert_eq!(
+            types,
+            vec!["stage", "stage", "stage"],
+            "numbered lines are stage headings, exactly like the Domain regex"
+        );
+        assert_eq!(
+            nodes[1].get("title").and_then(Value::as_str),
+            Some("让 AI 稳定理解需求"),
+            "the number and the dot are not part of the stage title"
+        );
+        assert_eq!(
+            nodes[1].get("parent_index").cloned(),
+            Some(Value::Null),
+            "stage nodes stay at the top level"
+        );
+        let empty = seed_lines_to_nodes("   \n\n");
+        assert_eq!(empty.len(), 2, "an empty input gets one stage and one lesson");
+        assert_eq!(empty[0].get("title").and_then(Value::as_str), Some("开始"));
+        assert_eq!(empty[1].get("title").and_then(Value::as_str), Some("第一课"));
+        assert_eq!(
+            first_meaningful_line("### AI 五阶段成长课程\n第二阶段"),
+            "AI 五阶段成长课程",
+            "the draft title drops the markdown marker"
+        );
+        assert_eq!(first_meaningful_line(""), "");
+    }
+
+    #[test]
+    fn a_blueprint_draft_creates_no_formal_course_rows() {
+        let directory = test_directory("seed");
+        write_test_project(&directory);
+        let project_dir = directory.to_string_lossy().into_owned();
+        // Opening the project is what registers the lease and the save
+        // baseline; the seed commands run against an open project only.
+        project_open(project_dir.clone()).expect("the test project should open");
+        let seed = course_seed_create(json!({
+            "project_dir": project_dir,
+            "source_type": "outline",
+            "raw_text": "第一阶段 入门\n第一课 认识界面",
+        }))
+        .expect("creating a course seed should succeed");
+        assert_eq!(
+            seed.get("project_id"),
+            Some(&Value::Null),
+            "a seed stays unconfirmed until the map is confirmed"
+        );
+        let seed_id = seed
+            .get("id")
+            .and_then(Value::as_str)
+            .expect("the seed needs an id")
+            .to_string();
+        let built = blueprint_build(json!({
+            "project_dir": project_dir,
+            "course_seed_id": seed_id,
+        }))
+        .expect("building the draft should succeed");
+        assert_eq!(
+            built
+                .get("draft")
+                .and_then(|draft| draft.get("status"))
+                .and_then(Value::as_str),
+            Some("draft")
+        );
+        assert_eq!(
+            built
+                .get("draft")
+                .and_then(|draft| draft.get("confirmed_at"))
+                .cloned(),
+            Some(Value::Null)
+        );
+        let stored = read_project_value(&directory).expect("the project should be readable again");
+        assert_eq!(
+            stored
+                .get("blueprint_nodes")
+                .and_then(Value::as_array)
+                .map(Vec::len),
+            Some(3)
+        );
+        assert_eq!(
+            stored.get("stages").and_then(Value::as_array).map(Vec::len),
+            Some(0),
+            "a draft must not create formal stages"
+        );
+        assert_eq!(
+            stored
+                .get("content_items")
+                .and_then(Value::as_array)
+                .map(Vec::len),
+            Some(0),
+            "a draft must not create formal content items"
+        );
+        assert!(
+            blueprint_build(json!({
+                "project_dir": directory.to_string_lossy(),
+                "course_seed_id": "missing-seed",
+            }))
+            .is_err(),
+            "an unknown seed must be refused"
+        );
     }
 
     #[test]
@@ -8112,6 +8851,8 @@ pub fn run() {
             restore_snapshot,
             import_preview,
             import_confirm,
+            course_seed_create,
+            blueprint_build,
             asset_import,
             asset_read,
             select_file,
@@ -8131,6 +8872,7 @@ pub fn run() {
             ai_connection_delete,
             ai_secret_set,
             ai_secret_delete,
+            ai_models_list,
             ai_complete,
             ai_cancel,
             ai_execution_append,

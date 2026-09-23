@@ -120,6 +120,8 @@ async function bootStore(options: { executionWritesFail?: boolean } = {}) {
     secrets: new Map<string, string>(),
     executions: [] as Array<Record<string, any>>,
     executionWritesFail: options.executionWritesFail === true,
+    /** When true, `ai.secret.set` claims success but stores nothing. */
+    dropSecretWrites: false,
     calls: [] as BridgeCall[],
     completions: [] as BridgeCall[],
     cancels: [] as string[],
@@ -191,7 +193,11 @@ async function bootStore(options: { executionWritesFail?: boolean } = {}) {
         return { provider_id: providerId, removed: true };
       }
       case "ai.secret.set":
-        state.secrets.set(String(input.provider_id), String(input.value));
+        if (!state.dropSecretWrites) {
+          state.secrets.set(String(input.provider_id), String(input.value));
+        }
+        // A broken keychain write still reports success at the CLI boundary;
+        // only reading the credential back tells the truth.
         return { provider_id: input.provider_id, configured: true };
       case "ai.secret.delete":
         state.secrets.delete(String(input.provider_id));
@@ -1111,10 +1117,59 @@ Deno.test("the panel never renders a provider credential value", async () => {
       globalScope.confirm = previousConfirm;
     }
     assert(state.secrets.has("custom") === false, "删除密钥必须送达本机服务");
+    // V1-T02 P0-4: "已配置" is a fact reported by the shell, never an optimistic
+    // guess.  After a delete the panel re-reads the shell, so the key is gone
+    // from the map (undefined) rather than locally forced to false.
     assert(
-      store.ui.aiConfigured.custom === false,
-      "删除后必须把「已配置」翻回未配置",
+      !store.ui.aiConfigured.custom,
+      "删除后「已配置」必须来自本机服务的读回结果",
     );
+    assert(
+      state.calls.filter((call) => call.command === "ai.connection.list")
+        .length >= 3,
+      "保存与删除都必须以本机服务的读回结果为准，而不是乐观假设成功",
+    );
+  } finally {
+    restore();
+  }
+});
+
+Deno.test("a key the shell cannot read back is never reported as configured", async () => {
+  const { store, state, restore } = await bootStore();
+  try {
+    seedCourse(store);
+    state.providers = [{
+      id: "custom",
+      label: "自定义（OpenAI 兼容）",
+      kind: "openai_compatible",
+      base_url: "https://api.example.test/v1",
+      default_model: "demo-model",
+      models: ["demo-model"],
+    }];
+    await store.aiLoadProviders();
+    store.aiSetProvider("custom");
+    // V1-T02 P0-4: `security add-generic-password` exits 0 even when it stored
+    // an empty password, so the UI must never trust the write's own report.
+    state.dropSecretWrites = true;
+    const saved = await store.aiSaveSecret("sk-lost-in-the-keychain");
+    assert(saved === false, "aiSaveSecret must report the failure");
+    assert(
+      !store.ui.aiConfigured?.custom,
+      "a key that cannot be read back is not configured",
+    );
+    assert(
+      /没有读回/.test(String(store.ui.toast)) && /钥匙串/.test(String(store.ui.toast)),
+      "the toast must explain that the write could not be confirmed",
+    );
+    assert(
+      !JSON.stringify(store.ui).includes("sk-lost-in-the-keychain"),
+      "a failed key must still never enter UI state",
+    );
+    // The shell really is the source of truth: once it can report the key, the
+    // same panel shows 已配置 without any optimistic local flag.
+    state.dropSecretWrites = false;
+    assert(await store.aiSaveSecret("sk-real-key") === true, "a confirmed key must report success");
+    assert(store.ui.aiConfigured.custom === true, "a confirmed key must show as configured");
   } finally {
     restore();
   }

@@ -153,7 +153,7 @@ kbd { background: #f2f3f7; border: 1px solid #e0e2eb; border-radius: 4px; color:
 .editor-body { min-height: 450px; }
 .writing-toolbar, .structure-toolbar, .layout-toolbar, .preview-toolbar { align-items: center; display: flex; gap: 7px; margin-bottom: 16px; }
 .toolbar-hint, .structure-toolbar span, .preview-toolbar span { color: var(--muted); font-size: 11px; margin-left: auto; }
-.block-list { display: flex; flex-direction: column; gap: 5px; max-width: 800px; }.block { background: #fff; border: 1px solid transparent; border-radius: 8px; display: flex; gap: 11px; min-height: 70px; padding: 15px 14px; position: relative; }.block:hover { border-color: var(--line-strong); }.block.focused { border-color: #8d6be8; box-shadow: 0 0 0 3px rgba(141,107,232,.14); }.block-handle, .drag { color: #b7bbc7; cursor: grab; font-size: 17px; padding-top: 3px; }.block-main { flex: 1; }.block-text, .block-heading { background: transparent; border: 0; outline: none; resize: vertical; width: 100%; }.block-text { color: #373b45; line-height: 1.75; min-height: 41px; }.block-heading { font-size: 18px; font-weight: 700; }.block-type { color: #b0b3be; font-size: 10px; padding-top: 4px; }.placeholder-block { align-items: center; background: #fffbf4; border: 1px dashed #ecc78d; }.placeholder-icon { align-items: center; background: #fff0d5; border-radius: 7px; color: #c3832d; display: flex; height: 30px; justify-content: center; width: 30px; }.placeholder-block .block-main p { color: var(--muted); font-size: 12px; margin-top: 4px; }.placeholder-block .text-button { margin-left: auto; }.add-block-line { background: transparent; border: 1px dashed #cdd0dc; border-radius: 8px; color: var(--muted); margin-top: 10px; max-width: 800px; padding: 13px; width: 100%; }.add-block-line:hover { background: #fff; border-color: var(--primary); color: var(--primary); }
+.block-list { display: flex; flex-direction: column; gap: 5px; max-width: 800px; }.block { background: #fff; border: 1px solid transparent; border-radius: 8px; display: flex; gap: 11px; min-height: 70px; padding: 15px 14px; position: relative; }.block:hover { border-color: var(--line-strong); }.block.focused { border-color: #8d6be8; box-shadow: 0 0 0 3px rgba(141,107,232,.14); }.block-handle, .drag { color: #b7bbc7; cursor: grab; font-size: 17px; padding-top: 3px; }.block-main { flex: 1; }.block-text, .block-heading { background: transparent; border: 0; outline: none; resize: none; overflow: hidden; width: 100%; }.block-text { color: #373b45; line-height: 1.75; min-height: 41px; }.block-heading { font-size: 18px; font-weight: 700; }.block-type { color: #b0b3be; font-size: 10px; padding-top: 4px; }.placeholder-block { align-items: center; background: #fffbf4; border: 1px dashed #ecc78d; }.placeholder-icon { align-items: center; background: #fff0d5; border-radius: 7px; color: #c3832d; display: flex; height: 30px; justify-content: center; width: 30px; }.placeholder-block .block-main p { color: var(--muted); font-size: 12px; margin-top: 4px; }.placeholder-block .text-button { margin-left: auto; }.add-block-line { background: transparent; border: 1px dashed #cdd0dc; border-radius: 8px; color: var(--muted); margin-top: 10px; max-width: 800px; padding: 13px; width: 100%; }.add-block-line:hover { background: #fff; border-color: var(--primary); color: var(--primary); }
 .structure-list { background: #fff; border: 1px solid var(--line); border-radius: 9px; max-width: 850px; overflow: hidden; }.structure-row { align-items: center; border-bottom: 1px solid var(--line); display: flex; gap: 13px; min-height: 65px; padding: 9px 14px; }.structure-row:last-child { border: 0; }.order { color: #b2b5c0; font-family: ui-monospace, monospace; font-size: 11px; width: 24px; }.structure-content { display: flex; flex: 1; flex-direction: column; gap: 4px; }.structure-content b { font-size: 11px; }.structure-content span { color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .layout-toolbar { flex-wrap: wrap; }.layout-toolbar .active-tool { background: var(--primary-soft); border-color: #cbc5ff; color: var(--primary); }.toolbar-separator { background: var(--line-strong); height: 24px; margin: 0 3px; width: 1px; }.layout-meta { color: var(--muted); display: flex; font-size: 11px; justify-content: space-between; margin: 17px 0 10px; }.layout-meta b { color: var(--text); }.section-strip { display: flex; gap: 7px; margin-bottom: 14px; overflow-x: auto; }.section-chip { background: #eae8ff; border-radius: 5px; color: var(--primary-dark); font-size: 11px; padding: 6px 9px; }.section-chip small { color: #8982c9; margin-left: 5px; }.grid-wrap { background: #eef0f6; border: 1px solid var(--line-strong); border-radius: 10px; min-height: 510px; overflow: auto; padding: 32px; }.grid-canvas { background-color: #fff; background-image: linear-gradient(to right, rgba(98, 85, 216, .06) 1px, transparent 1px), linear-gradient(to bottom, rgba(98, 85, 216, .06) 1px, transparent 1px); border: 1px solid #d9dbe7; display: grid; gap: 10px; grid-template-columns: repeat(var(--cols), minmax(70px, 1fr)); grid-template-rows: repeat(var(--rows), minmax(58px, 1fr)); min-height: 430px; padding: 10px; position: relative; }.editing .grid-canvas { background-image: linear-gradient(to right, rgba(98, 85, 216, .18) 1px, transparent 1px), linear-gradient(to bottom, rgba(98, 85, 216, .18) 1px, transparent 1px); }.placement { align-items: center; background: linear-gradient(135deg, #f1efff, #f8f7ff); border: 1px solid #c8c2fa; border-radius: 7px; color: var(--primary-dark); display: flex; font-size: 12px; justify-content: center; min-height: 40px; overflow: visible; padding: 8px; position: relative; text-align: center; }.placement-actions { display: none; gap: 2px; position: absolute; right: 4px; top: -26px; }.editing .placement:hover .placement-actions, .placement:hover .placement-actions { display: flex; }.placement-actions button { align-items: center; background: #fff; border: 1px solid var(--line-strong); border-radius: 3px; color: var(--primary); display: inline-flex; font-size: 11px; height: 22px; justify-content: center; line-height: 1; width: 22px; }.track-labels { color: var(--primary); display: grid; font-size: 9px; pointer-events: none; position: absolute; z-index: 0; }.track-labels.cols { gap: 10px; grid-template-columns: repeat(var(--cols), minmax(70px, 1fr)); left: 10px; right: 10px; top: -17px; }.track-labels.rows { gap: 10px; grid-template-rows: repeat(var(--rows, 1), minmax(58px, 1fr)); bottom: 10px; left: -23px; top: 10px; }.layout-note { color: var(--muted); font-size: 11px; margin-top: 12px; }
 .preview-paper { background: #fff; border: 1px solid var(--line); border-radius: 8px; box-shadow: var(--shadow); margin: 0 auto; max-width: 650px; min-height: 530px; padding: 54px 62px; }.preview-paper h2 { font-size: 25px; line-height: 1.35; margin-bottom: 25px; }.preview-paper p { color: #414550; font-size: 15px; line-height: 2; margin-bottom: 20px; }.preview-placeholder { background: #fff6e5; border: 1px dashed #e9bd6d; border-radius: 6px; color: #ad7324; font-size: 13px; margin: 22px 0; padding: 15px; }
@@ -244,6 +244,19 @@ kbd { background: #f2f3f7; border: 1px solid #e0e2eb; border-radius: 4px; color:
 .block-divider { border: 0; border-top: 1px solid var(--line-strong); margin: 10px 0; width: 100%; }
 .block-quote { border-left: 3px solid var(--primary-soft); padding-left: 11px; }
 .block-code { font-family: ui-monospace, monospace; font-size: 12px; }
+/* P2-2 — the block frame is the only size container: it grows with its content
+   up to a tier ceiling, and past that ceiling the frame itself scrolls.  Short
+   blocks (heading / quote / callout) stop at Medium; long blocks (body text /
+   code) never shrink below Medium and stop at Large.  No inner resize, no
+   second scroll box. */
+.block-kind-short.block-size-small { max-height: 96px; }
+.block-kind-short.block-size-medium { max-height: 188px; }
+.block-kind-long.block-size-medium { max-height: 188px; }
+.block-kind-long.block-size-large { max-height: 340px; }
+.block[data-block-size] { overflow: auto; }
+.block[data-block-size] .block-main { min-width: 0; }
+.block[data-block-size] textarea { display: block; }
+.block-size-hint { color: #b0b3be; font-size: 10px; margin-left: 6px; }
 .icon-button.danger:hover { background: #fdeaea; color: #b3403f; }
 .text-button.danger { color: #b3403f; }
 
@@ -273,6 +286,11 @@ kbd { background: #f2f3f7; border: 1px solid #e0e2eb; border-radius: 4px; color:
 .structure-flags { display: flex; gap: 4px; }
 .flow-jump { background: none; display: flex; flex: 1; flex-direction: column; gap: 2px; text-align: left; }
 .flow-placement.selected { background: #f7f6ff; border-color: var(--primary); }
+/* P2-3 — Flow is where order is changed, so its move controls are stable and
+   clearly part of the row instead of appearing on hover. */
+.flow-move { display: flex; flex: 0 0 auto; gap: 3px; }
+.flow-move .icon-button { border: 1px solid var(--line); border-radius: 6px; padding: 3px 7px; }
+.flow-move .icon-button:disabled { opacity: .35; }
 
 /* Grid placement labels and the unplaced strip */
 .placement-label { color: var(--primary-dark); font-size: 9px; font-weight: 700; }
@@ -358,6 +376,9 @@ kbd { background: #f2f3f7; border: 1px solid #e0e2eb; border-radius: 4px; color:
 .success-text { color: var(--green); }
 
 .toast > * { pointer-events: auto; }
+/* The toast lives in a stable slot so the chrome can be refreshed without a
+   full re-render; the wrapper itself must not take part in layout. */
+.toast-slot { display: contents; }
 
 .asset-doc { color: #5d6474; display: block; font-size: 10px; line-height: 1.35; max-height: 100%; overflow: hidden; padding: 0 4px; }
 .media-document { background: #f6f7fb; border: 1px solid var(--line); border-radius: 7px; font-family: ui-monospace, monospace; font-size: 11px; margin: 0; max-height: 240px; overflow: auto; padding: 10px; white-space: pre-wrap; width: 100%; }
@@ -430,3 +451,106 @@ kbd { background: #f2f3f7; border: 1px solid #e0e2eb; border-radius: 4px; color:
 .ai-execution dl { display: grid; gap: 3px 8px; grid-template-columns: 44px 1fr; margin: 6px 0 0; }
 .ai-execution dt { color: var(--muted); font-size: 10px; }
 .ai-execution dd { font-size: 10px; margin: 0; overflow-wrap: anywhere; }
+
+/* ------------------------------------------------------------------ *
+ * V1-T02 P0-7 / P1-3: reachable placement tools, consistent delete buttons
+ *
+ * The placement toolbar used to sit ABOVE the block (top:-26px) and was
+ * revealed with display:none.  The 3px strip between the block and its own
+ * toolbar was not hovered by either element, so the mouse could never reach
+ * the buttons.  It now sits inside the block's own hover area, fades instead
+ * of popping, and waits briefly before hiding so a quick diagonal move still
+ * lands.  Keyboard users reach it through :focus-within.
+ * ------------------------------------------------------------------ */
+.placement:hover, .placement:focus-within { z-index: 8; }
+.placement-actions {
+  background: rgba(255, 255, 255, .96);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  box-shadow: var(--shadow);
+  display: flex;
+  gap: 2px;
+  opacity: 0;
+  padding: 2px;
+  pointer-events: none;
+  right: 4px;
+  top: 4px;
+  transition: opacity .12s ease .22s, visibility 0s linear .34s;
+  visibility: hidden;
+  z-index: 7;
+}
+.placement:hover .placement-actions,
+.placement:focus-within .placement-actions,
+.placement-actions:hover,
+.placement-actions:focus-within {
+  opacity: 1;
+  pointer-events: auto;
+  transition-delay: 0s;
+  visibility: visible;
+}
+.editing .placement .placement-actions { transition-delay: 0s; }
+
+/* P2-4 — grid blocks are operated with the mouse: left click enters move
+   mode, right click takes the block off the canvas, and the cell targets show
+   exactly where it can go.  Selection (not hover) keeps the size controls
+   visible, so they never disappear while the pointer travels to them. */
+.placement.selected { border-color: var(--primary); box-shadow: 0 0 0 2px rgba(141, 107, 232, .22); }
+.placement.selected .placement-actions { opacity: 1; pointer-events: auto; visibility: visible; transition-delay: 0s; }
+.placement.moving { border-style: dashed; border-color: #c3832d; }
+.placement-actions button { min-width: 22px; padding: 0 6px; white-space: nowrap; width: auto; }
+.placement-cell { bottom: 3px; color: #a9adba; font-size: 9px; position: absolute; right: 6px; }
+.grid-moving-banner {
+  align-items: center; background: #fff8ec; border: 1px solid #ecc78d; border-radius: 7px;
+  color: #8a5a12; display: flex; font-size: 11px; gap: 10px;
+  margin: 0 0 9px; padding: 7px 11px;
+}
+.grid-moving-banner b { color: #7a4d09; }
+.grid-cell-target {
+  background: rgba(141, 107, 232, .10); border: 1px dashed #9a8cf0; border-radius: 7px;
+  color: var(--primary-dark); cursor: pointer; font-size: 11px; font-weight: 650;
+  opacity: .95; padding: 6px; z-index: 6;
+}
+.grid-cell-target:hover { background: rgba(141, 107, 232, .28); border-style: solid; }
+.grid-cell-target.current { background: rgba(195, 131, 45, .12); border-color: #ecc78d; color: #8a5a12; cursor: default; }
+.unplaced-block { cursor: pointer; }
+.unplaced-block:hover { border-color: var(--primary); box-shadow: 0 0 0 2px rgba(141, 107, 232, .18); }
+
+/* A delete control is a normal button until you reach for it. */
+.icon-button.danger { background: transparent; color: #7d8391; }
+.icon-button.danger:hover { background: #fdeaea; color: #b3403f; }
+.icon-button { color: #7d8391; }
+.trash-icon { display: block; }
+
+/* ------------------------------------------------------------------ *
+ * V1-T02 P0-6: the preview really draws the grid
+ *
+ * Cells come from the LayoutInstance placements (same source as the layout
+ * editor and the export), so row/column/span and section grouping are visible
+ * before exporting.  Unplaced content is listed after the canvases instead of
+ * being silently rendered as if it had a position.
+ * ------------------------------------------------------------------ */
+.preview-paper-grid { background: transparent; border: 0; box-shadow: none; padding: 0; }
+.preview-canvas { background: #fff; border: 1px solid var(--line); border-radius: 10px; box-shadow: var(--shadow); margin-bottom: 14px; padding: 12px; }
+.preview-section-tag { background: var(--primary-soft); border-radius: 999px; color: var(--primary); display: inline-block; font-size: 10px; margin-bottom: 8px; padding: 2px 8px; }
+.preview-grid { display: grid; gap: 10px; grid-auto-rows: minmax(48px, auto); grid-template-columns: repeat(var(--cols, 3), minmax(0, 1fr)); grid-template-rows: repeat(var(--rows, 3), minmax(48px, auto)); }
+.preview-grid-cell { border: 1px dashed var(--line); border-radius: 8px; min-width: 0; overflow: hidden; padding: 8px; }
+.preview-grid-cell:empty { display: none; }
+.preview-unplaced { border: 1px dashed var(--line); border-radius: 10px; margin-top: 14px; padding: 12px; }
+.preview-unplaced .eyebrow { display: block; margin-bottom: 8px; }
+.preview-unplaced-item { border-top: 1px solid var(--line); padding: 6px 0; }
+.preview-unplaced-item:first-of-type { border-top: 0; }
+
+/* ------------------------------------------------------------------ *
+ * V1-T02 P1-1: the course-input card in 课程地图
+ * ------------------------------------------------------------------ */
+.seed-card { margin-bottom: 14px; }
+.seed-grid { display: flex; flex-wrap: wrap; gap: 6px; margin: 10px 0 2px; }
+.seed-input { border-top: 1px solid var(--line); margin-top: 12px; padding-top: 10px; }
+.seed-input textarea { min-height: 96px; }
+.board-dimension { max-width: 220px; }
+.section-strip-label { color: var(--muted); font-size: 10px; letter-spacing: .04em; margin-right: 4px; text-transform: uppercase; }
+.section-name-input { border: 1px solid var(--primary); border-radius: 6px; font: inherit; font-size: 11px; padding: 2px 6px; width: 120px; }
+.project-name[data-action] { cursor: text; }
+.project-name.editing { gap: 4px; }
+.project-title-input { border: 1px solid var(--primary); border-radius: 6px; font: inherit; font-size: 12px; max-width: 260px; padding: 2px 6px; }
+.project-title-hint { color: var(--muted); font-size: 10px; }

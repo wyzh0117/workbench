@@ -12,11 +12,16 @@ import { PROJECT_FILE_PICKER } from "./constants.js";
 import { createSerialQueue, recoveryWarning } from "./recovery.js";
 import {
   MEDIA_BLOCK_TYPES,
+  REQUIREMENT_TYPES,
+  SEED_TEXT_SOURCES,
   assetUsedElsewhere,
   blockLabel,
+  blockSizeTierForLines,
   blocksFor,
   courseMap,
+  freeCellsFor,
   lessonView,
+  placementsFor,
   requirementBacklog,
   resumeLessonId,
   statusOptionId,
@@ -65,6 +70,8 @@ const NATIVE_PROJECT_COMMANDS = new Set([
   "project.resolve",
   "import.preview",
   "import.confirm",
+  "course.seed.create",
+  "blueprint.build",
   "asset.import",
   "asset.read",
   "snapshot.create",
@@ -230,7 +237,15 @@ class DesktopBridge {
     }
     // These commands take one `input: Value` struct, so the whole payload is
     // nested; sending bare keys makes the shell reject the call outright.
-    if (["asset.import", "asset.read", "publication.record"].includes(command)) {
+    if (
+      [
+        "asset.import",
+        "asset.read",
+        "publication.record",
+        "course.seed.create",
+        "blueprint.build",
+      ].includes(command)
+    ) {
       return { input: { ...input, project_dir: projectDir } };
     }
     return { ...input, project_dir: projectDir };
@@ -322,6 +337,8 @@ class DesktopBridge {
       "project.resolve": "project_resolve",
       "import.preview": "import_preview",
       "import.confirm": "import_confirm",
+      "course.seed.create": "course_seed_create",
+      "blueprint.build": "blueprint_build",
       "asset.import": "asset_import",
       "asset.read": "asset_read",
       "snapshot.create": "create_snapshot",
@@ -346,6 +363,7 @@ class DesktopBridge {
       "ai.secret.set": "ai_secret_set",
       "ai.secret.delete": "ai_secret_delete",
       "ai.complete": "ai_complete",
+      "ai.models.list": "ai_models_list",
       "ai.cancel": "ai_cancel",
       "ai.execution.append": "ai_execution_append",
       "ai.execution.list": "ai_execution_list",
@@ -361,7 +379,8 @@ class DesktopBridge {
     if (!invoke) return null;
     return nativePath(await this.invokePicker(invoke, "select_file", {}));
   }
-  async openProject(projectDir) {
+  /** `project.open` for the directory currently selected on this bridge. */
+  async openProject() {
     return await this.invoke("project.open", {});
   }
   async selectExportPath(filename, format) {
@@ -882,6 +901,19 @@ class WorkbenchStore {
       aiRunId: null,
       /** Whether the next run should ask the model for concrete changes. */
       aiWantsChanges: false,
+      /**
+       * A control the next render should put the caret into, as a
+       * `data-focus-key` value ("ai-secret" after saving a provider config,
+       * for example).  Consumed once, never persisted.
+       */
+      focusField: "",
+      /** Inline editors: the course title in the topbar, one layout section. */
+      editingProjectTitle: false,
+      editingSectionId: null,
+      /** "你现在有什么？": which course-input source is being pasted. */
+      seedType: null,
+      seedText: "",
+      seedBusy: false,
     };
     this.tabs = [];
     this.history = [];
@@ -911,7 +943,16 @@ class WorkbenchStore {
     this.assetPreview = new AssetPreviewCache(bridge);
   }
   subscribe(listener) { this.listeners.add(listener); return () => this.listeners.delete(listener); }
-  notify() { this.listeners.forEach((listener) => listener()); }
+  notify() { this.listeners.forEach((listener) => listener("full")); }
+  /**
+   * A change that only touches the chrome around the editor — the save state,
+   * the status bar counters, the toast.  Autosave, typing and toasts all use
+   * this instead of `notify()`: rebuilding the whole shell 350ms after every
+   * keystroke is what used to destroy the caret, the selection and an
+   * in-flight IME composition.  A full render still happens for any change
+   * that alters structure (selection, mode, route, panels, modals).
+   */
+  notifyChrome() { this.listeners.forEach((listener) => listener("chrome")); }
   /**
    * Show a short-lived message.  Toasts are advisory: they must never sit on
    * top of the next action or claim state the project does not have.
@@ -922,10 +963,10 @@ class WorkbenchStore {
     if (this.ui.toast && options.sticky !== true) {
       this.toastTimer = setTimeout(() => {
         this.ui.toast = "";
-        this.notify();
+        this.notifyChrome();
       }, options.ttl ?? 6000);
     }
-    this.notify();
+    this.notifyChrome();
   }
   hasNativeLease(projectDir = this.bridge.projectDir) {
     return this.bridge.isNative() && Boolean(projectDir) && this.nativeLeaseDirs.has(projectDir);
@@ -1244,7 +1285,7 @@ class WorkbenchStore {
     clearTimeout(this.saveTimer);
     this.saveTimer = setTimeout(() => { void this.flush(); }, 350);
     clearTimeout(this.editTimer);
-    this.editTimer = setTimeout(() => { this.editTimer = 0; this.notify(); }, 600);
+    this.editTimer = setTimeout(() => { this.editTimer = 0; this.notifyChrome(); }, 600);
   }
   /**
    * Drop selection state that no longer points at canonical rows, so a stale
@@ -1911,11 +1952,6 @@ class WorkbenchStore {
   aiEditProvider(id) {
     const providerId = String(id || this.ui.aiProviderId || "").trim();
     if (providerId && providerId !== this.ui.aiProviderId) this.aiSetProvider(providerId);
-    if (this.ui.aiProviderForm) {
-      this.ui.aiProviderForm = null;
-      this.notify();
-      return;
-    }
     const descriptor = this.aiDescriptor();
     this.ui.aiProviderForm = {
       id: descriptor.id,
@@ -1925,6 +1961,86 @@ class WorkbenchStore {
       default_model: descriptor.default_model,
       models: Array.isArray(descriptor.models) ? descriptor.models : [],
     };
+    // 设置 always opens (or refreshes) the form.  It used to toggle shut on a
+    // second click, which closed the address/key fields exactly when the user
+    // was looking for them.
+    this.ui.focusField = this.ui.aiConfigured?.[descriptor.id] ? "" : "ai-secret";
+    this.notify();
+  }
+  /**
+   * P2-1: ask the provider what models it offers, using the credential that is
+   * already in the system store.  The list is never hardcoded, and a failure is
+   * not an error state: it switches the form to manual Model ID entry.
+   */
+  async aiDiscoverModels() {
+    const form = this.ui.aiProviderForm || {};
+    const providerId = String(form.id || this.ui.aiProviderId || "").trim();
+    const baseUrl = String(
+      (root.querySelector("[data-ai-base-url]") || {}).value || form.base_url || "",
+    ).trim();
+    if (!providerId || providerId === "fake") {
+      this.ui.toast = "离线连接器没有模型列表可以读取。";
+      this.notify();
+      return [];
+    }
+    if (!baseUrl) {
+      this.ui.aiModelsError = "请先填写 Base URL";
+      this.ui.aiModelSource = "manual";
+      this.ui.focusField = "ai-base-url";
+      this.notify();
+      return [];
+    }
+    if (this.ui.aiConfigured && this.ui.aiConfigured[providerId] === false) {
+      this.ui.aiModelsError = "还没有保存 API Key（读取模型需要密钥）";
+      this.ui.aiModelSource = "manual";
+      this.ui.focusField = "ai-secret";
+      this.notify();
+      return [];
+    }
+    this.ui.aiModelsBusy = true;
+    this.ui.aiModelsError = "";
+    this.notify();
+    let models = [];
+    try {
+      // Both shells answer this command: the desktop shell performs the GET in
+      // Rust, the browser shell through the local service.  Neither hands the
+      // key back to the page.
+      const result = await this.bridge.command("ai.models.list", {
+        provider_id: providerId,
+        base_url: baseUrl,
+      });
+      models = Array.isArray(result && result.models) ? result.models : [];
+    } catch (error) {
+      this.ui.aiModelsBusy = false;
+      this.ui.aiModelsError = this.aiFailureFrom(error).message;
+      this.ui.aiModelSource = "manual";
+      this.ui.focusField = "ai-model-manual";
+      this.notify();
+      return [];
+    }
+    this.ui.aiModelsBusy = false;
+    models = models.map((model) => String(model || "").trim()).filter(Boolean);
+    if (!models.length) {
+      this.ui.aiModelsError = "服务商没有返回任何模型名";
+      this.ui.aiModelSource = "manual";
+      this.ui.focusField = "ai-model-manual";
+      this.notify();
+      return [];
+    }
+    this.ui.aiModelOptions = models;
+    this.ui.aiModelSource = "remote";
+    this.ui.aiModelsError = "";
+    if (!models.includes(this.ui.aiChosenModel)) this.ui.aiChosenModel = models[0];
+    this.notify();
+    return models;
+  }
+  /** Pick one of the discovered models.  Manual entry always wins if filled. */
+  aiPickModel(id) {
+    const model = String(id || "").trim();
+    if (!model) return;
+    this.ui.aiChosenModel = model;
+    this.ui.aiManualModel = "";
+    if (this.ui.aiProviderForm) this.ui.aiProviderForm.default_model = model;
     this.notify();
   }
   /** Save a provider's address / model names.  Never a credential. */
@@ -1963,15 +2079,63 @@ class WorkbenchStore {
       this.notify();
       return false;
     }
-    this.ui.aiProviderForm = null;
+    this.ui.aiProviderForm = {
+      ...(this.ui.aiProviderForm || {}),
+      id: provider.id,
+      label: provider.label,
+      base_url: provider.base_url,
+      chat_path: provider.chat_path,
+      default_model: provider.default_model,
+      models: provider.models,
+    };
     await this.aiLoadProviders();
-    this.ui.toast = `已保存「${provider.label}」的地址与模型名（不包含密钥）`;
+    // The saved model is now the model: mirror it back into the form state so
+    // the preview line cannot keep showing a choice that was not saved.
+    this.ui.aiChosenModel = provider.default_model;
+    this.ui.aiManualModel = "";
+    // Keep the form open and move the caret to the key field: 保存配置 is the
+    // first half of "configure this provider", the key is the second.
+    this.ui.focusField = provider.id === "fake" ? "" : "ai-secret";
+    this.ui.toast = `已保存「${provider.label}」的地址与模型名（不包含密钥）${
+      provider.id === "fake" ? "" : "；接着可以粘贴 API Key"
+    }`;
     this.notify();
     return true;
   }
   /**
-   * Store one credential through the transport process.  The value is never
-   * kept in `ui`, in the DOM after submit, or in any log line.
+   * Make sure a provider has a record on disk before its key is stored.  A key
+   * for a provider the shell does not know reads back as "not configured", so
+   * an unsaved preset would silently lose its key on the next reload.
+   */
+  async ensureProviderRecord(providerId) {
+    const saved = (Array.isArray(this.ui.aiProviders) ? this.ui.aiProviders : [])
+      .some((entry) => entry && entry.id === providerId);
+    if (saved) return;
+    const descriptor = this.aiDescriptor();
+    if (!descriptor || descriptor.id !== providerId) return;
+    await this.bridge.command("ai.connection.save", {
+      provider: {
+        id: providerId,
+        label: descriptor.label || providerId,
+        kind: "openai_compatible",
+        base_url: String(descriptor.base_url || "").trim(),
+        chat_path: String(descriptor.chat_path || "/chat/completions"),
+        auth_header: String(descriptor.auth_header || "authorization"),
+        auth_scheme: String(descriptor.auth_scheme || "Bearer"),
+        default_model: String(descriptor.default_model || "").trim(),
+        models: Array.isArray(descriptor.models)
+          ? descriptor.models.map((model) => String(model).trim()).filter(Boolean)
+          : [],
+      },
+    });
+  }
+  /**
+   * Store one credential through the transport process.  The value lives only
+   * in the DOM node (a masked `<input type="password">`) until submit: it is
+   * never mirrored into `ui`, never kept after submit, never logged.
+   *
+   * "已配置密钥" is only ever claimed from the shell's own read-back
+   * (`ai.connection.list`), never from the fact that we called set().
    */
   async aiSaveSecret(value) {
     const providerId = String(this.ui.aiProviderId || "").trim();
@@ -1987,6 +2151,7 @@ class WorkbenchStore {
       return false;
     }
     try {
+      await this.ensureProviderRecord(providerId);
       await this.bridge.command("ai.secret.set", { provider_id: providerId, value: secret });
     } catch (error) {
       this.ui.aiError = this.aiFailureFrom(error);
@@ -1994,11 +2159,14 @@ class WorkbenchStore {
       this.notify();
       return false;
     }
-    this.ui.aiConfigured = { ...(this.ui.aiConfigured || {}), [providerId]: true };
+    await this.aiLoadProviders();
     this.ui.aiError = null;
-    this.ui.toast = `API Key 已保存到${this.aiStorageLabel()}（不回显，也不进入课程文件）`;
+    const configured = Boolean(this.ui.aiConfigured?.[providerId]);
+    this.ui.toast = configured
+      ? `API Key 已保存到${this.aiStorageLabel()}，并已读回确认（不回显，也不进入课程文件）`
+      : "密钥写入后没有读回，暂时不能确认保存成功。请重试；如果一直失败，请检查系统钥匙串权限。";
     this.notify();
-    return true;
+    return configured;
   }
   async aiDeleteSecret() {
     const providerId = String(this.ui.aiProviderId || "").trim();
@@ -2012,7 +2180,7 @@ class WorkbenchStore {
       this.notify();
       return false;
     }
-    this.ui.aiConfigured = { ...(this.ui.aiConfigured || {}), [providerId]: false };
+    await this.aiLoadProviders();
     this.ui.toast = "已删除本机保存的密钥；下次运行前需要重新填写";
     this.notify();
     return true;
@@ -2077,7 +2245,7 @@ class WorkbenchStore {
     this.saveStatus = "正在保存…";
     clearTimeout(this.saveTimer);
     this.saveTimer = setTimeout(() => { void this.flush(); }, 350);
-    this.notify();
+    this.notifyChrome();
   }
   scheduleSessionSave() {
     clearTimeout(this.sessionTimer);
@@ -2116,19 +2284,19 @@ class WorkbenchStore {
       // previous good file must stay intact and the user must be told.
       this.saveStatus = "保存失败";
       this.ui.toast = "这份课程里有一处关联不完整，暂时没有保存。你可以继续编辑；修复提示后再保存。";
-      this.notify();
+      this.notifyChrome();
       return false;
     }
     if (this.pendingRecovery) {
       this.saveStatus = "恢复待处理";
       this.ui.toast = "发现未完成的保存，当前不能继续保存。请先恢复暂存内容或保留磁盘版本。";
-      this.notify();
+      this.notifyChrome();
       return false;
     }
     if (this.nativeSwitchPending) {
       this.saveStatus = "保存失败";
       this.ui.toast = "项目切换尚未完成，请先完成锁回滚";
-      this.notify();
+      this.notifyChrome();
       return false;
     }
     try {
@@ -2153,7 +2321,7 @@ class WorkbenchStore {
         if (diskId && diskId !== expected) {
           this.saveStatus = "保存失败";
           this.ui.toast = "磁盘上的项目已经被替换，已停止写入；课程内容没有改变，请重新打开项目。";
-          this.notify();
+          this.notifyChrome();
           return false;
         }
         if (this.data.project.updated_at !== revision) continue;
@@ -2182,7 +2350,7 @@ class WorkbenchStore {
         this.clearNativeLease();
         this.saveStatus = "保存失败";
         this.ui.toast = userFacingError(error, "保存没有完成。课程内容没有改变，请稍后再试。");
-        this.notify();
+        this.notifyChrome();
         return false;
       }
       if (error?.code === "external_modification_conflict" || /external_modification_conflict/.test(String(error?.message || ""))) {
@@ -2191,10 +2359,10 @@ class WorkbenchStore {
       }
       this.saveStatus = "保存失败";
       this.ui.toast = userFacingError(error, "保存没有完成。课程内容没有改变，请稍后再试。");
-      this.notify();
+      this.notifyChrome();
       return false;
     }
-    this.notify();
+    this.notifyChrome();
     return saved;
   }
   async captureExternalConflict(error) {
@@ -2573,14 +2741,21 @@ class WorkbenchStore {
     }
   }
   /**
-   * Switch to another project folder.
+   * Open a project directory.
    *
    * Durable lease invariants: the previous lease is released only after the
    * target is readable and saved; a provisional target lease is rolled back on
    * any failure, and a rejected `project_open` never releases a lease we do
    * not own.
+   *
+   * `reopen` is the "the user just picked this folder" intent.  Without it, a
+   * request for the directory that already holds the active lease is a no-op:
+   * that is what the launcher needs when it restores a session.  With it, the
+   * picker must always do something visible — re-picking the folder that is
+   * already open used to return in silence, so 打开项目文件夹 looked like a
+   * dead button.
    */
-  async openProject(projectDir = "") {
+  async openProject(projectDir = "", { reopen = false } = {}) {
     if (!this.bridge.isNative()) {
       await this.openProjectFromPicker();
       return;
@@ -2589,7 +2764,15 @@ class WorkbenchStore {
     const previousProjectDir = this.bridge.projectDir;
     const previousProjectDirFromUrl = this.bridge.projectDirFromUrl;
     const previousLeaseActive = this.hasNativeLease(previousProjectDir);
-    if (previousLeaseActive && previousProjectDir === projectDir) return;
+    if (previousLeaseActive && previousProjectDir === projectDir) {
+      if (!reopen) return;
+      // Re-entry into the folder that is already leased: re-read it from disk
+      // (the user is asking for it on purpose) and show the same feedback a
+      // fresh open shows.  `reopenLeasedProject` reports its own failure, so
+      // the generic open path below must not run a second time.
+      await this.reopenLeasedProject(projectDir);
+      return;
+    }
     const restoreProjectDir = previousLeaseActive ? previousProjectDir : null;
     const restoreProjectDirFromUrl = previousLeaseActive ? previousProjectDirFromUrl : false;
     let restoreSession = null;
@@ -2651,12 +2834,51 @@ class WorkbenchStore {
       this.nativeSwitching = false;
     }
   }
+  /**
+   * Re-enter the folder this instance already holds a lease on.
+   *
+   * The canonical file is re-read (a deliberate open should show what is on
+   * disk now), the reader position is kept, and the screen switches to the
+   * project.  Never discards unsaved work: the flush comes first.
+   */
+  async reopenLeasedProject(projectDir) {
+    const restoreProjectDirFromUrl = this.bridge.projectDirFromUrl;
+    try {
+      if (!await this.flush()) throw new Error("当前项目保存失败，请重试后再打开");
+      this.bridge.setProjectDir(projectDir);
+      const opened = await this.bridge.openProject();
+      if (opened == null || !this.isProjectData(opened)) {
+        throw new Error("这个文件夹不是可用的课程项目，请选择正确的项目后再试。");
+      }
+      const targetData = migrateUiProject(opened);
+      const targetSession = this.targetSession(targetData, projectDir, "project");
+      await this.persistSession(targetSession);
+      this.commitNativeProject(
+        targetData,
+        this.normalizeReaderState(targetData, targetSession, "project"),
+      );
+      this.ui.toast = `已打开《${this.data.project.title}》`;
+      this.notify();
+      return true;
+    } catch (error) {
+      this.bridge.restoreProjectDir(projectDir, restoreProjectDirFromUrl);
+      this.ui.toast = userFacingError(error, "无法打开项目。当前项目没有改变，请重试。");
+      this.notify();
+      return false;
+    }
+  }
   async openProjectFromPicker() {
     if (this.bridge.isNative()) {
       try {
         const dir = await this.bridge.selectFolder();
-        if (!dir) return;
-        await this.openProject(dir);
+        if (!dir) {
+          // A cancelled pick is fine, an unavailable picker is not: say which
+          // one happened instead of leaving the button looking dead.
+          this.ui.toast = "没有选择文件夹。你可以再点一次「打开项目文件夹」，或点「新建课程」。";
+          this.notifyChrome();
+          return;
+        }
+        await this.openProject(dir, { reopen: true });
       } catch (error) {
         this.ui.toast = userFacingError(error, "无法打开项目。当前项目没有改变，请重试。");
         this.notify();
@@ -2689,6 +2911,65 @@ class WorkbenchStore {
     }
     // A failed open keeps the current project, so its AI panel must survive.
     if (!adopted) this.refreshAiSideFiles();
+    this.notify();
+  }
+  /**
+   * "你现在有什么？" — turn what the user already has into a course map draft.
+   *
+   * The Domain owns both halves: `course.seed.create` records the input as one
+   * of the nine `course_seeds.source_type` values the schema defines, and
+   * `blueprint.build` derives the stage/content nodes from it.  Neither step
+   * creates official stages or lessons — that happens only when the user
+   * confirms the draft — so this entrance can never silently restructure a
+   * course, and it needs no enum of its own.
+   */
+  pickSeed(sourceType) {
+    if (!SEED_TEXT_SOURCES.includes(sourceType)) return;
+    this.ui.seedType = this.ui.seedType === sourceType ? null : sourceType;
+    this.ui.seedText = "";
+    // The paste box is the whole point of this card: put the caret in it.
+    if (this.ui.seedType) this.ui.focusField = "seed-text";
+    this.notify();
+  }
+  cancelSeed() {
+    if (!this.ui.seedType) return;
+    this.ui.seedType = null;
+    this.ui.seedText = "";
+    this.notify();
+  }
+  async startSeed() {
+    const type = this.ui.seedType;
+    if (!SEED_TEXT_SOURCES.includes(type)) return;
+    const rawText = String(this.ui.seedText || "").trim();
+    if (!rawText) {
+      this.ui.toast = "先粘贴或写下你现有的内容，再生成课程地图草稿。";
+      this.notify();
+      return;
+    }
+    this.ui.seedBusy = true;
+    this.notify();
+    try {
+      const seed = await this.bridge.command("course.seed.create", {
+        source_type: type,
+        raw_text: rawText,
+      });
+      const seedId = seed && typeof seed.id === "string" ? seed.id : null;
+      if (!seedId) throw new Error("课程输入没有保存成功");
+      await this.bridge.command("blueprint.build", { course_seed_id: seedId });
+      // The service saved both rows; adopt the saved project rather than
+      // guessing the draft's shape in the renderer.
+      const refreshed = await this.bridge.readProject();
+      if (!this.isProjectData(refreshed)) throw new Error("课程地图草稿没有读回来");
+      this.data = migrateUiProject(refreshed);
+      this.resetAiState();
+      this.ui.seedType = null;
+      this.ui.seedText = "";
+      this.ui.route = "map";
+      this.ui.toast = "已生成课程地图草稿；确认后才会创建正式阶段与内容。";
+    } catch (error) {
+      this.ui.toast = userFacingError(error, "生成课程地图草稿失败。课程内容没有改变，请重试。");
+    }
+    this.ui.seedBusy = false;
     this.notify();
   }
   confirmBlueprint(draftId) {
@@ -3025,6 +3306,11 @@ class WorkbenchStore {
   setLayoutModeOnLayout(mode) {
     const item = this.currentItem();
     if (!item) return;
+    // Choosing Flow / Grid is also a request to look at that view: the
+    // structure page links here to change order, and landing on the editor
+    // with the layout hidden would be a dead end.
+    this.ui.mode = "layout";
+    this.scheduleSessionSave();
     if (!this.layout(item)) {
       this.createLayout(mode);
       return;
@@ -3052,21 +3338,25 @@ class WorkbenchStore {
       this.addPlaceholder("text", content);
       return;
     }
-    const defaults = { paragraph: "开始写点什么…", heading: "新的小节", quote: "引用内容", callout: "提示内容", code: "// 代码" };
+    // A new block starts EMPTY.  Hint text such as "开始写点什么…" belongs in
+    // the control's placeholder attribute, never in canonical content: writing
+    // it here would put Chinese hints into the course and into every export.
     const blocks = blocksFor(this.data, item.id);
     const index = atIndex >= 0 ? Math.min(atIndex, blocks.length) : blocks.length;
-    let createdId = null;
+    // The new block is selected and 属性 opens, but focus stays in the editor:
+    // the user keeps typing where they were.  The selection and the panel are
+    // part of the same change as the block itself, because `commit` renders
+    // once: setting them afterwards leaves the previous panel on screen.
     this.commit(`新增${blockLabel(type)}`, (data) => {
       const document = data.documents.find((candidate) => candidate.content_item_id === item.id) ||
         data.documents.find((candidate) => candidate.id === item.document_id);
       if (!document) return;
       const id = uid();
-      createdId = id;
-      data.blocks.push({ id, document_id: document.id, parent_block_id: null, type, order_index: index, content: content || defaults[type] || "", settings: type === "heading" ? { level: 2 } : {}, created_at: now(), updated_at: now() });
+      data.blocks.push({ id, document_id: document.id, parent_block_id: null, type, order_index: index, content: String(content ?? ""), settings: type === "heading" ? { level: 2 } : {}, created_at: now(), updated_at: now() });
       renumberBlocks(data, document.id);
+      this.ui.selectedBlockId = id;
+      this.ui.rightPanel = "properties";
     });
-    if (createdId) this.ui.selectedBlockId = createdId;
-    this.ui.rightPanel = type === "placeholder" ? "requirements" : this.ui.rightPanel;
   }
   insertBlockBelow(blockId) {
     const item = this.currentItem();
@@ -3081,12 +3371,14 @@ class WorkbenchStore {
     const anchor = this.selectedBlock();
     const defaults = { text: "补充这段文字", image: "补一张图片", gif: "补一个 GIF", video: "补一段视频" };
     const text = note || defaults[type] || "补充内容";
-    let requirementId = null;
+    // Like `addBlock`, the panel and the selection belong to the same commit:
+    // a placeholder is created together with the requirement that tracks it,
+    // and the 待补 panel must open showing it.
     this.commit("插入占位符", (data) => {
       const document = data.documents.find((candidate) => candidate.content_item_id === item.id);
       if (!document) return;
       const placeholderId = uid();
-      requirementId = uid();
+      const requirementId = uid();
       const siblings = data.blocks.filter((block) => block.document_id === document.id);
       const anchorIndex = anchor ? siblings.findIndex((block) => block.id === anchor.id) : -1;
       const index = anchorIndex >= 0 ? anchorIndex + 1 : siblings.length;
@@ -3096,12 +3388,10 @@ class WorkbenchStore {
       // requirement pointed at some earlier block would leave it stranded as
       // soon as that block is deleted.
       data.requirements.push({ id: requirementId, content_item_id: item.id, anchor_block_id: placeholderId, type, scope: "content", layout_instance_id: null, note: text, status: "open", priority: "normal", resolved_asset_id: null, resolved_block_id: null, created_at: now(), resolved_at: null });
-    });
-    if (requirementId) {
       this.ui.selectedBlockId = null;
       this.ui.rightPanel = "requirements";
       this.ui.editingRequirementId = requirementId;
-    }
+    });
   }
   deleteBlock(blockId) {
     const item = this.currentItem();
@@ -3543,12 +3833,14 @@ class WorkbenchStore {
       if (!requirement) return;
       if (typeof patch.note === "string") requirement.note = patch.note;
       if (["low", "normal", "high"].includes(patch.priority)) requirement.priority = patch.priority;
-      if (patch.type) requirement.type = patch.type;
+      if (REQUIREMENT_TYPES.includes(patch.type)) requirement.type = patch.type;
       if (["open", "resolved", "ignored"].includes(patch.status)) requirement.status = patch.status;
       const anchor = data.blocks.find((candidate) => candidate.id === requirement.anchor_block_id);
-      if (anchor && anchor.type === "placeholder" && typeof patch.note === "string") {
-        anchor.content = patch.note;
-        anchor.settings.requirement_type = requirement.type;
+      if (anchor && anchor.type === "placeholder") {
+        // The placeholder mirrors its requirement; a type-only change must be
+        // reflected too, not just a note change.
+        if (typeof patch.note === "string") anchor.content = patch.note;
+        anchor.settings = { ...(anchor.settings || {}), requirement_type: requirement.type, scope: requirement.scope };
         anchor.updated_at = now();
       }
     });
@@ -3671,23 +3963,99 @@ class WorkbenchStore {
       if (item) item.status = "archived";
     });
   }
+  /* ------------------------------------------------------- inline names */
+
+  editProjectTitle() {
+    this.ui.editingProjectTitle = true;
+    this.ui.focusField = "project-title";
+    this.notify();
+  }
+  cancelProjectTitle() {
+    if (!this.ui.editingProjectTitle) return;
+    this.ui.editingProjectTitle = false;
+    this.notify();
+  }
+  commitProjectTitle(value) {
+    if (!this.ui.editingProjectTitle) return;
+    this.ui.editingProjectTitle = false;
+    const title = String(value ?? "").trim();
+    const current = String(this.data.project.title || "");
+    if (!title || title === current) {
+      this.notify();
+      return;
+    }
+    this.commit("修改课程标题", (data) => {
+      data.project.title = title;
+      data.project.updated_at = now();
+    });
+    this.ui.toast = `课程标题已改为「${title}」`;
+    this.notify();
+  }
   addSection() {
     const layout = this.layout();
     if (!layout) return;
     this.commit("新增排版分区", (data) => {
       const sections = data.layout_sections.filter((section) => section.layout_instance_id === layout.id);
-      data.layout_sections.push({ id: uid(), layout_instance_id: layout.id, name: `第 ${sections.length + 1} 段`, page_index: sections.length, order_index: sections.length, grid_definition: layout.grid_definition, settings: {}, created_at: now(), updated_at: now() });
+      data.layout_sections.push({ id: uid(), layout_instance_id: layout.id, name: `分区 ${sections.length + 1}`, page_index: sections.length, order_index: sections.length, grid_definition: layout.grid_definition, settings: {}, created_at: now(), updated_at: now() });
     });
+    this.ui.editingSectionId = this.data.layout_sections.at(-1)?.id || null;
+  }
+  /** Inline rename (no `window.prompt`: a webview does not always have one). */
+  startSectionRename(sectionId) {
+    if (!this.data.layout_sections.some((section) => section.id === sectionId)) return;
+    this.ui.editingSectionId = sectionId;
+    this.ui.focusField = "section-name";
+    this.notify();
+  }
+  cancelSectionRename() {
+    if (!this.ui.editingSectionId) return;
+    this.ui.editingSectionId = null;
+    this.notify();
   }
   renameSection(sectionId, name) {
     const next = String(name ?? "").trim();
-    if (!next) return;
+    this.ui.editingSectionId = null;
+    if (!next) {
+      this.notify();
+      return;
+    }
     this.commit("重命名排版分区", (data) => {
       const section = data.layout_sections.find((candidate) => candidate.id === sectionId);
       if (!section) return;
       section.name = next;
       section.updated_at = now();
     });
+  }
+  /**
+   * Remove one output section.
+   *
+   * A section groups placements for multi-page output, so deleting it must not
+   * delete content: the placements go back to "未分区" and the remaining
+   * sections are renumbered.  Leaving `section_id` dangling would fail
+   * canonical validation (and the app invariant that reports it).
+   */
+  deleteSection(sectionId) {
+    const section = this.data.layout_sections.find((candidate) => candidate.id === sectionId);
+    if (!section) return;
+    const affected = this.data.placements.filter((placement) => placement.section_id === sectionId).length;
+    const message = affected
+      ? `删除分区「${section.name}」？里面的 ${affected} 块内容会回到「未分区」，内容不会被删除。`
+      : `删除分区「${section.name}」？`;
+    if (globalThis.confirm?.(message) === false) return;
+    this.commit("删除排版分区", (data) => {
+      data.placements = data.placements.map((placement) =>
+        placement.section_id === sectionId ? { ...placement, section_id: null, updated_at: now() } : placement
+      );
+      data.layout_sections = data.layout_sections.filter((candidate) => candidate.id !== sectionId);
+      const rest = data.layout_sections
+        .filter((candidate) => candidate.layout_instance_id === section.layout_instance_id)
+        .sort((a, b) => a.order_index - b.order_index);
+      rest.forEach((candidate, index) => {
+        candidate.order_index = index;
+        candidate.page_index = index;
+      });
+    });
+    this.ui.editingSectionId = null;
   }
   createLayout(mode = "grid") {
     const item = this.currentItem();
@@ -3809,6 +4177,60 @@ class WorkbenchStore {
       placement.column_start = Math.max(0, Math.min(columns - colSpan, Math.round(placement.column_start + dc)));
       placement.column_end = placement.column_start + colSpan;
     });
+  }
+  /**
+   * P2-4: select a grid block for moving.  The cells it can go to are derived
+   * from the same helper the write uses, so the highlight can never promise a
+   * cell the store would refuse.
+   */
+  startMovePlacement(id) {
+    const layout = this.layout();
+    const placement = (this.data.placements || []).find((candidate) => candidate.id === id);
+    if (!layout || !placement) return;
+    this.ui.movingPlacementId = id;
+    this.ui.selectedBlockId = placement.block_id;
+    this.ui.toast = "";
+    this.scheduleSessionSave();
+    this.notify();
+  }
+  cancelMovePlacement() {
+    if (!this.ui.movingPlacementId) return;
+    this.ui.movingPlacementId = null;
+    this.notify();
+  }
+  /** Move the selected placement to a cell the UI highlighted. */
+  movePlacementTo(id, row, column) {
+    const layout = this.layout();
+    if (!layout) return false;
+    const placement = (this.data.placements || []).find((candidate) => candidate.id === id);
+    if (!placement) return false;
+    const rows = Math.max(1, layout.grid_definition.rows.length);
+    const columns = Math.max(1, layout.grid_definition.columns.length);
+    const rowSpan = Math.max(1, placement.row_end - placement.row_start);
+    const columnSpan = Math.max(1, placement.column_end - placement.column_start);
+    const rowStart = Math.max(0, Math.min(rows - rowSpan, Math.round(row)));
+    const columnStart = Math.max(0, Math.min(columns - columnSpan, Math.round(column)));
+    const allowed = freeCellsFor(layout.grid_definition, placementsFor(this.data, layout.id), {
+      rowSpan,
+      columnSpan,
+      exceptId: id,
+    });
+    if (!allowed.some((cell) => cell.row === rowStart && cell.column === columnStart)) {
+      this.ui.toast = "这个位置放不下：目标格子已被占用，或超出网格。";
+      this.notify();
+      return false;
+    }
+    this.commit("移动排版元素", (data) => {
+      const target = data.placements.find((candidate) => candidate.id === id);
+      if (!target) return;
+      target.row_start = rowStart;
+      target.row_end = rowStart + rowSpan;
+      target.column_start = columnStart;
+      target.column_end = columnStart + columnSpan;
+    });
+    this.ui.movingPlacementId = null;
+    this.ui.toast = "已移动这块内容";
+    return true;
   }
   resizePlacement(id, dw = 0, dh = 0) {
     const layout = this.layout();
@@ -4395,17 +4817,257 @@ const views = createViews(store);
 let lastToast = "";
 let toastTimer = 0;
 
+/* ------------------------------------------------------------------ *
+ * 渲染不打断输入。
+ *
+ * `render()` 用最新状态重建整个外壳，所以它必须对正在打字的人"不可见"：
+ * 替换 DOM 之前记住焦点控件、光标位置和滚动位置，替换之后原样放回去。
+ * 正在组字（IME）的控件绝不重建——渲染会排队到 compositionend。
+ * 只影响外壳的变化（保存状态、状态栏、提示条）走 patchChrome()，根本
+ * 不碰编辑器 DOM。
+ * ------------------------------------------------------------------ */
+
+/** The scroll containers that must keep their position across a render. */
+const SCROLL_KEEP_SELECTORS = [
+  ".center",
+  ".right-content",
+  ".left-lessons",
+  ".grid-wrap",
+  ".palette-results",
+  ".asset-picker",
+  ".issue-list",
+];
+
+let rendering = false;
+let renderQueued = false;
+let composingField = null;
+
+/** A stable selector for the control that currently has focus. */
+function focusSelector(element) {
+  if (!element || element.nodeType !== 1) return "";
+  const dataset = element.dataset || {};
+  if (dataset.focusKey) return `[data-focus-key="${dataset.focusKey}"]`;
+  if (dataset.blockId) return `textarea[data-block-id="${dataset.blockId}"], input[data-block-id="${dataset.blockId}"]`;
+  if (dataset.requirementNote) return `[data-requirement-note][data-id="${dataset.id || ""}"]`;
+  if (dataset.assetSearch !== undefined) return "[data-asset-search]";
+  if (dataset.aiInstruction !== undefined) return "[data-ai-instruction]";
+  if (dataset.lessonTitle !== undefined) return "[data-lesson-title]";
+  if (element.id) return `#${element.id}`;
+  return "";
+}
+
+function captureTypingState() {
+  let active = null;
+  try {
+    active = globalThis.document?.activeElement ?? null;
+  } catch {
+    active = null;
+  }
+  if (!active) return null;
+  try {
+    if (typeof root.contains === "function" && !root.contains(active)) return null;
+  } catch {
+    return null;
+  }
+  const selector = focusSelector(active);
+  if (!selector) return null;
+  const state = { selector, value: null, start: null, end: null, direction: "none", baseline: null };
+  if (typeof active.value === "string") state.value = active.value;
+  if (typeof active.selectionStart === "number") {
+    state.start = active.selectionStart;
+    state.end = typeof active.selectionEnd === "number" ? active.selectionEnd : active.selectionStart;
+    state.direction = active.selectionDirection || "none";
+  }
+  if (active.dataset && typeof active.dataset.editBaseline === "string") {
+    state.baseline = active.dataset.editBaseline;
+  }
+  return state;
+}
+
+function restoreTypingState(state) {
+  if (!state) return;
+  const target = root.querySelector(state.selector);
+  if (!target) return;
+  // An unbound field (the AI provider form, the palette, a dialog input) keeps
+  // its text only in the DOM node, so the typed value travels with the focus.
+  if (state.value !== null && typeof target.value === "string" && target.value !== state.value) {
+    target.value = state.value;
+    if (state.baseline !== null && target.dataset) target.dataset.editBaseline = state.baseline;
+  }
+  rendering = true;
+  try {
+    target.focus?.({ preventScroll: true });
+  } catch {
+    try {
+      target.focus?.();
+    } catch { /* focus is best effort: never break a render over it */ }
+  } finally {
+    rendering = false;
+  }
+  if (state.start !== null && typeof target.setSelectionRange === "function") {
+    try {
+      target.setSelectionRange(state.start, state.end, state.direction);
+    } catch { /* non-text inputs reject a range: keep the value */ }
+  }
+}
+
+function captureScrollState() {
+  const captured = [];
+  for (const selector of SCROLL_KEEP_SELECTORS) {
+    let nodes = [];
+    try {
+      nodes = [...root.querySelectorAll(selector)];
+    } catch {
+      nodes = [];
+    }
+    nodes.forEach((node, index) => {
+      if (node.scrollTop || node.scrollLeft) {
+        captured.push({ selector, index, top: node.scrollTop, left: node.scrollLeft });
+      }
+    });
+  }
+  return captured;
+}
+
+function restoreScrollState(captured) {
+  for (const item of captured) {
+    let node = null;
+    try {
+      node = root.querySelectorAll(item.selector)[item.index] ?? null;
+    } catch {
+      node = null;
+    }
+    if (!node) continue;
+    node.scrollTop = item.top;
+    node.scrollLeft = item.left;
+  }
+}
+
+/** Where the last render put the viewport, so an unrelated render leaves it be. */
+const lastScrolledTo = { requirement: null, block: null };
+
+/**
+ * Update only the chrome around the editor: save state, status bar, toast.
+ * Autosave, typing and toast timers use this, so nothing they do can pull the
+ * caret out of a text field.
+ */
+function patchChrome() {
+  if (!root || rendering) return;
+  try {
+    const save = root.querySelector("[data-chrome-save]");
+    if (save) save.outerHTML = views.saveStateView();
+    const statusbar = root.querySelector("[data-chrome-statusbar]");
+    if (statusbar) statusbar.outerHTML = views.statusbarView();
+    const toast = root.querySelector("[data-chrome-toast]");
+    if (toast) toast.innerHTML = views.toastView();
+  } catch { /* chrome is advisory: never break an edit over it */ }
+  scheduleToastDismissal();
+}
+
 function render() {
   if (!root) return;
-  root.innerHTML = store.ui.screen === "launcher" ? views.launcherView() : views.shellView();
-  bindEvents();
-  scheduleToastDismissal();
-  const focused = store.ui.focusRequirementId;
-  if (focused) queueMicrotask(() => root.querySelector(`[data-requirement-id="${focused}"]`)?.scrollIntoView({ block: "center" }));
-  const selected = store.ui.selectedBlockId;
-  if (selected && store.ui.mode === "writing") {
-    queueMicrotask(() => root.querySelector(`[data-block-id="${selected}"]`)?.scrollIntoView({ block: "nearest" }));
+  if (rendering) {
+    renderQueued = true;
+    return;
   }
+  if (composingField) {
+    let stillComposing = false;
+    try {
+      stillComposing = typeof root.contains !== "function" || root.contains(composingField);
+    } catch {
+      stillComposing = false;
+    }
+    if (stillComposing) {
+      // Never rebuild the DOM under an in-flight IME composition: the
+      // candidate window would be dropped mid-word.
+      renderQueued = true;
+      patchChrome();
+      return;
+    }
+    composingField = null;
+  }
+  rendering = true;
+  let typing = null;
+  let scroll = [];
+  try {
+    typing = captureTypingState();
+    scroll = captureScrollState();
+    root.innerHTML = store.ui.screen === "launcher" ? views.launcherView() : views.shellView();
+  } finally {
+    rendering = false;
+  }
+  bindEvents();
+  autosizeBlockFields();
+  scheduleToastDismissal();
+  restoreScrollState(scroll);
+  restoreTypingState(typing);
+  const fieldRequest = String(store.ui.focusField || "");
+  if (fieldRequest) {
+    store.ui.focusField = "";
+    queueMicrotask(() => {
+      const target = root.querySelector(`[data-focus-key="${fieldRequest}"]`);
+      if (!target) return;
+      try {
+        target.focus?.();
+        target.select?.();
+      } catch { /* focus is best effort */ }
+    });
+  }
+  // Only follow the pinned selection when it actually moved: re-centring the
+  // page on every autosave is what made the editor jump while typing.
+  const focused = store.ui.focusRequirementId || null;
+  if (focused && focused !== lastScrolledTo.requirement) {
+    lastScrolledTo.requirement = focused;
+    queueMicrotask(() => root.querySelector(`[data-requirement-id="${focused}"]`)?.scrollIntoView({ block: "center" }));
+  } else if (!focused) {
+    lastScrolledTo.requirement = null;
+  }
+  const selected = store.ui.selectedBlockId || null;
+  if (selected && store.ui.mode === "writing" && selected !== lastScrolledTo.block) {
+    lastScrolledTo.block = selected;
+    queueMicrotask(() => root.querySelector(`[data-block-id="${selected}"]`)?.scrollIntoView({ block: "nearest" }));
+  } else if (!selected || store.ui.mode !== "writing") {
+    lastScrolledTo.block = null;
+  }
+  if (renderQueued) {
+    renderQueued = false;
+    render();
+  }
+}
+
+/**
+ * An IME composition owns the field until it ends; a render that lands in the
+ * middle of one is held back and replayed afterwards.
+ */
+function installEditorGuards() {
+  const target = globalThis.document;
+  if (!target || typeof target.addEventListener !== "function") return;
+  const owns = (node) => {
+    try {
+      return Boolean(node) && (typeof root?.contains !== "function" || root.contains(node));
+    } catch {
+      return false;
+    }
+  };
+  target.addEventListener("compositionstart", (event) => {
+    if (owns(event.target)) composingField = event.target;
+  }, true);
+  target.addEventListener("compositionend", (event) => {
+    if (event.target === composingField) composingField = null;
+    if (renderQueued) {
+      renderQueued = false;
+      render();
+    }
+  }, true);
+  // Leaving the field ends the deferred render as well (a modal may have closed
+  // or the field may have been removed while composing).
+  target.addEventListener("focusout", (event) => {
+    if (event.target === composingField) composingField = null;
+    if (renderQueued) {
+      renderQueued = false;
+      render();
+    }
+  }, true);
 }
 
 /* ------------------------------------------------------------------ *
@@ -4415,8 +5077,44 @@ function render() {
 
 const TEXT_FIELD_SELECTOR = "textarea[data-block-id], input[data-block-id]";
 
+/**
+ * P2-2: a block frame is the only size container, so the textarea inside it
+ * must grow to its content and let the frame scroll.  Without this the frame
+ * would clip the text at its tier ceiling with no way to reach the rest.
+ */
+function autosizeBlockFields(scope = root) {
+  for (const field of scope.querySelectorAll("textarea[data-block-id]")) {
+    try {
+      field.style.height = "auto";
+      const measured = Math.max(41, field.scrollHeight);
+      field.style.height = `${measured}px`;
+      // The tier is what gives the frame its ceiling, and text edits do not
+      // re-render (the caret must survive), so the class is refreshed here from
+      // the laid-out field: growth steps up, shrinking steps back down, and the
+      // frame itself stays the only scroll container.
+      const frame = field.closest?.("article.block[data-block-id]");
+      if (!frame) continue;
+      const style = typeof getComputedStyle === "function"
+        ? getComputedStyle(field)
+        : null;
+      const lineHeight = Number.parseFloat(style?.lineHeight || "") || 24;
+      const lines = Math.max(1, Math.round(measured / lineHeight));
+      const kind = frame.classList?.contains("block-kind-short") ? "short" : "long";
+      const tier = blockSizeTierForLines(kind, lines);
+      for (const name of ["small", "medium", "large"]) {
+        frame.classList?.toggle(`block-size-${name}`, name === tier);
+      }
+      if (frame.dataset) frame.dataset.blockSize = tier;
+    } catch { /* measuring is best effort; the frame still scrolls */ }
+  }
+}
+
 function flushPendingEdit(element) {
   if (!element) return;
+  // A render detaches the field and browsers may report that as a blur.  The
+  // pending value is already in canonical data; the history entry is recorded
+  // when the user really leaves the field.
+  if (rendering) return;
   const block = store.data.blocks.find((candidate) => candidate.id === element.dataset.blockId);
   if (!block) return;
   const scope = element.dataset.editProperty;
@@ -4445,6 +5143,9 @@ function handleAction(action, element, event) {
     case "enter-project": store.enterProject(); return;
     case "return-launcher": store.returnToLauncher(); return;
     case "new-project": void (store.bridge.isNative() ? store.newProjectFromPicker() : store.newProject()); return;
+    case "pick-seed": store.pickSeed(element.dataset.type); return;
+    case "cancel-seed": store.cancelSeed(); return;
+    case "build-blueprint": void store.startSeed(); return;
     case "confirm-blueprint": store.confirmBlueprint(element.dataset.id); return;
     case "discard-blueprint":
       store.commit("放弃课程草稿", (data) => {
@@ -4494,7 +5195,12 @@ function handleAction(action, element, event) {
     case "external-keep-local": void store.resolveExternalConflict("keep-local"); return;
     case "recovery-restore": void store.resolvePendingRecovery("restore"); return;
     case "recovery-discard": void store.resolvePendingRecovery("discard"); return;
-    case "save-version": store.ui.snapshot = true; store.ui.palette = false; store.notify(); return;
+    case "save-version":
+      store.ui.snapshot = true;
+      store.ui.palette = false;
+      store.ui.focusField = "snapshot-name";
+      store.notify();
+      return;
     case "submit-snapshot": store.saveVersion(root.querySelector("[data-snapshot-name]")?.value, root.querySelector("[data-snapshot-note]")?.value); return;
     case "restore-version": void store.restoreVersion(element.dataset.id); return;
     case "right-panel": store.ui.rightPanel = element.dataset.panel; store.ui.rightCollapsed = false; store.scheduleSessionSave(); store.notify(); return;
@@ -4559,20 +5265,33 @@ function handleAction(action, element, event) {
     case "grid-add-row": store.changeGrid("row", 1); return;
     case "grid-remove-col": store.changeGrid("column", -1); return;
     case "grid-remove-row": store.changeGrid("row", -1); return;
+    case "edit-project-title": store.editProjectTitle(); return;
     case "grid-new-section": store.addSection(); return;
-    case "rename-section": {
-      const section = store.data.layout_sections.find((candidate) => candidate.id === element.dataset.id);
-      if (!section) return;
-      const next = globalThis.prompt?.("重命名分区", section.name);
-      if (typeof next === "string") store.renameSection(section.id, next);
-      return;
-    }
+    case "rename-section": store.startSectionRename(element.dataset.id); return;
+    case "delete-section": store.deleteSection(element.dataset.id); return;
     case "place-block": store.placeBlock(element.dataset.id); return;
     case "unplace-block": store.unplaceBlock(element.dataset.id); return;
     case "grid-autofill": store.autofillGrid(); return;
     case "move-placement": store.movePlacement(element.dataset.id, Number(element.dataset.dr) || 0, Number(element.dataset.dc) || 0); return;
+    case "grid-start-move": store.startMovePlacement(element.dataset.id); return;
+    case "grid-cancel-move": store.cancelMovePlacement(); return;
+    case "grid-move-to":
+      store.movePlacementTo(
+        element.dataset.id,
+        Number(element.dataset.row) || 0,
+        Number(element.dataset.col) || 0,
+      );
+      return;
     case "resize-placement": store.resizePlacement(element.dataset.id, Number(element.dataset.dw) || 0, Number(element.dataset.dh) || 0); return;
-    case "capture": store.ui.capture = true; store.ui.palette = false; store.notify(); return;
+    // A dialog that opens without the caret swallows the first thing the user
+    // types.  Every overlay names its field through `data-focus-key`, so the
+    // opener has to ask for it.
+    case "capture":
+      store.ui.capture = true;
+      store.ui.palette = false;
+      store.ui.focusField = "capture";
+      store.notify();
+      return;
     case "submit-capture": {
       const value = root.querySelector("[data-capture-input]")?.value.trim();
       if (value) store.captureToInbox(value, value.slice(0, 32));
@@ -4581,14 +5300,23 @@ function handleAction(action, element, event) {
       store.notify();
       return;
     }
-    case "palette": store.ui.palette = true; store.ui.paletteIndex = 0; store.ui.capture = false; store.notify(); return;
+    case "palette":
+      store.ui.palette = true;
+      store.ui.paletteIndex = 0;
+      store.ui.capture = false;
+      store.ui.focusField = "palette";
+      store.notify();
+      return;
     case "palette-run": {
       const sub = element.dataset.paletteAction;
       store.ui.palette = false;
       if (sub === "route") store.ui.route = element.dataset.route;
       else if (sub === "open-item") store.openItem(element.dataset.id);
       else if (sub === "focus-requirement") store.focusRequirement(element.dataset.id);
-      else if (sub === "save-version") store.ui.snapshot = true;
+      else if (sub === "save-version") {
+        store.ui.snapshot = true;
+        store.ui.focusField = "snapshot-name";
+      }
       else if (sub === "capture") store.ui.capture = true;
       else if (sub === "missing-media") {
         const target = store.map().lessons.find((lesson) => lesson.progress.missing_media > 0);
@@ -4628,15 +5356,28 @@ function handleAction(action, element, event) {
     case "ai-edit-provider": store.aiEditProvider(element.dataset.id); return;
     case "ai-save-provider": {
       const read = (selector) => root.querySelector(selector)?.value ?? "";
+      // The model actually used is the manual Model ID when filled, otherwise
+      // the one chosen from the discovered list.  Both are real user input;
+      // neither comes from a hardcoded table in the app.
+      const manual = read("[data-ai-model-manual]").trim();
+      const chosen = manual || String(store.ui.aiChosenModel || "").trim();
+      const discovered = Array.isArray(store.ui.aiModelOptions)
+        ? store.ui.aiModelOptions
+        : [];
+      const models = discovered.includes(chosen) || !chosen
+        ? discovered
+        : [...discovered, chosen];
       void store.aiSaveProvider({
         id: store.ui.aiProviderId,
         label: read("[data-ai-provider-label]"),
         base_url: read("[data-ai-base-url]"),
-        default_model: read("[data-ai-default-model]"),
-        models: read("[data-ai-models]").split(/[,，\s]+/).filter(Boolean),
+        default_model: chosen,
+        models,
       });
       return;
     }
+    case "ai-discover-models": void store.aiDiscoverModels(); return;
+    case "ai-pick-model": store.aiPickModel(element.dataset.id); return;
     case "ai-cancel-provider": store.ui.aiProviderForm = null; store.notify(); return;
     case "ai-save-secret": {
       const input = root.querySelector("[data-ai-secret]");
@@ -4708,27 +5449,102 @@ function scheduleToastDismissal() {
   toastTimer = setTimeout(() => {
     store.ui.toast = "";
     lastToast = "";
-    store.notify();
+    store.notifyChrome();
   }, 6000);
 }
 
 function bindEvents() {
   root.querySelectorAll("[data-action]").forEach((element) => element.addEventListener("click", (event) => {
     if (element.dataset.stopClick === "true") event.stopPropagation();
+    // A dialog carries `data-stop-click="true"` so that a click inside it is
+    // not a click on the backdrop.  The guard used to sit on the `[data-action]`
+    // listener alone, and no dialog has a `data-action` of its own — so every
+    // click inside a dialog bubbled to the overlay's `close-overlay` and threw
+    // the dialog, and whatever had been typed into it, away.  Resolve the
+    // dialog the click actually happened in and only dispatch actions from
+    // that same scope.
+    const dialog = typeof event.target?.closest === "function"
+      ? event.target.closest("[data-stop-click='true']")
+      : null;
+    if (
+      dialog &&
+      !(typeof element.closest === "function" && element.closest("[data-stop-click='true']") === dialog)
+    ) return;
     handleAction(element.dataset.action, element, event);
   }));
+
+  // P2-1: the manual Model ID is a first-class choice.  Typing in it updates the
+  // "将要使用的模型" line in place — no re-render, so the caret and IME survive —
+  // and 保存配置 reads the same value.
+  const manualModel = root.querySelector("[data-ai-model-manual]");
+  if (manualModel) {
+    const syncModelPreview = () => {
+      const typed = String(manualModel.value || "").trim();
+      store.ui.aiManualModel = typed;
+      const target = root.querySelector("[data-ai-model-preview]");
+      if (target) {
+        target.textContent = typed || store.ui.aiChosenModel || "（还没有选择）";
+      }
+      const note = root.querySelector("[data-ai-model-preview-note]");
+      if (note) {
+        note.textContent = typed
+          ? "（手动填写）"
+          : store.ui.aiModelSource === "remote"
+          ? "（来自读取结果）"
+          : "";
+      }
+      store.scheduleSessionSave();
+    };
+    manualModel.addEventListener("input", syncModelPreview);
+    manualModel.addEventListener("change", syncModelPreview);
+  }
+
+  // P2-4: a grid block is operated with the mouse — left click selects it for
+  // moving, right click takes it off the canvas.  The action buttons inside the
+  // card keep their own behaviour, so clicks on them are ignored here.
+  root.querySelectorAll("[data-placement]").forEach((element) => {
+    const placementId = element.dataset.placement;
+    const blockId = element.dataset.structureBlock;
+    element.addEventListener("click", (event) => {
+      if (event.target.closest?.(".placement-actions")) return;
+      if (store.ui.movingPlacementId === placementId) {
+        store.cancelMovePlacement();
+        return;
+      }
+      store.startMovePlacement(placementId);
+    });
+    element.addEventListener("contextmenu", (event) => {
+      event.preventDefault();
+      const block = store.data.blocks.find((candidate) => candidate.id === blockId);
+      store.unplaceBlock(blockId);
+      store.ui.movingPlacementId = null;
+      store.ui.selectedBlockId = null;
+      store.ui.toast = `已把「${block ? blockLabel(block.type) : "这块内容"}」移出网格，回到「还没有放进网格的正文」`;
+      store.notify();
+    });
+  });
 
   // Block text: update in place, then record one history entry on blur.
   root.querySelectorAll(TEXT_FIELD_SELECTOR).forEach((element) => {
     element.dataset.editProperty = "text";
-    const sync = () => {
+    const sync = (event) => {
+      // Never persist a half-formed IME composition; `compositionend` and the
+      // following input event deliver the committed text.
+      if (event && event.isComposing) return;
       const block = store.data.blocks.find((candidate) => candidate.id === element.dataset.blockId);
       if (!block) return;
       block.content = element.value;
       store.markPendingEdit();
     };
-    element.addEventListener("input", sync);
+    element.addEventListener("input", (event) => {
+      sync(event);
+      if (element.tagName === "TEXTAREA") autosizeBlockFields(element.parentElement || root);
+    });
     element.addEventListener("change", sync);
+    element.addEventListener("compositionend", (event) => {
+      sync(event);
+      if (element.tagName === "TEXTAREA") autosizeBlockFields(element.parentElement || root);
+    });
     element.addEventListener("focus", () => {
       store.ui.selectedBlockId = element.dataset.blockId;
       // Remember where typing started so undo can revert the edit itself.
@@ -4753,6 +5569,43 @@ function bindEvents() {
     });
   });
 
+  // The course title in the topbar: click to edit, Enter/blur commits, Esc
+  // cancels.  The 状态 panel keeps its own 课程标题 field for the lesson title.
+  const seedText = root.querySelector("[data-seed-text]");
+  if (seedText) {
+    // Unbound on purpose: the text lives only in the DOM until "生成课程地图
+    // 草稿" reads it, so typing here can never dirty canonical data.
+    seedText.addEventListener("input", () => {
+      store.ui.seedText = seedText.value;
+    });
+  }
+  const projectTitle = root.querySelector("[data-project-title]");
+  if (projectTitle) {
+    projectTitle.addEventListener("blur", () => store.commitProjectTitle(projectTitle.value));
+    projectTitle.addEventListener("keydown", (event) => {
+      if (event.key === "Enter") {
+        event.preventDefault();
+        store.commitProjectTitle(projectTitle.value);
+      } else if (event.key === "Escape") {
+        event.preventDefault();
+        store.cancelProjectTitle();
+      }
+    });
+  }
+  const sectionName = root.querySelector("[data-section-name]");
+  if (sectionName) {
+    sectionName.addEventListener("blur", () => store.renameSection(sectionName.dataset.id, sectionName.value));
+    sectionName.addEventListener("keydown", (event) => {
+      if (event.key === "Enter") {
+        event.preventDefault();
+        store.renameSection(sectionName.dataset.id, sectionName.value);
+      } else if (event.key === "Escape") {
+        event.preventDefault();
+        store.cancelSectionRename();
+      }
+    });
+  }
+
   const titleField = root.querySelector("[data-lesson-title]");
   if (titleField) {
     titleField.dataset.editProperty = "title";
@@ -4773,6 +5626,25 @@ function bindEvents() {
 
   root.querySelectorAll("select[data-status-dim]").forEach((element) => element.addEventListener("change", () => store.updateStatus(element.dataset.statusDim, element.value)));
   root.querySelector("select[data-board-dimension]")?.addEventListener("change", (event) => store.setBoardDimension(event.target.value));
+  // The 属性 panel edits the same Requirement rows as the 待补 panel, through
+  // the same store call, so a type chosen here shows up everywhere at once.
+  const blockRequirementType = root.querySelector("select[data-block-requirement-type]");
+  if (blockRequirementType) {
+    blockRequirementType.addEventListener("change", () =>
+      store.updateRequirement(blockRequirementType.dataset.id, { type: blockRequirementType.value })
+    );
+  }
+  const blockRequirementNote = root.querySelector(".properties-requirement [data-requirement-note]");
+  if (blockRequirementNote) {
+    const commit = () => store.updateRequirement(blockRequirementNote.dataset.id, { note: blockRequirementNote.value });
+    blockRequirementNote.addEventListener("blur", commit);
+    blockRequirementNote.addEventListener("keydown", (event) => {
+      if (event.key === "Enter") {
+        event.preventDefault();
+        commit();
+      }
+    });
+  }
   // Import every selected file: the picker allows multi-select and users
   // routinely add a batch of material at once.
   for (const input of root.querySelectorAll("[data-project-file]")) {
@@ -4888,7 +5760,14 @@ function bindAssetDropTargets() {
   }
 }
 
-/** Reorder正文 by dragging the block rail. */
+/**
+ * Reorder正文 by dragging the block rail.
+ *
+ * The `dragstart` listener lives on the descendant `.block-handle`, so the
+ * handle — not the whole article — is the draggable element: an article that
+ * is `draggable="true"` swallows text selection inside its own textarea.
+ * The drag image is still the whole block, so the gesture reads correctly.
+ */
 function bindBlockDrag() {
   let draggingId = null;
   for (const element of root.querySelectorAll("article.block[data-block-id]")) {
@@ -4899,6 +5778,9 @@ function bindBlockDrag() {
       draggingId = blockId;
       event.dataTransfer.effectAllowed = "move";
       event.dataTransfer.setData("application/x-block-id", blockId);
+      try {
+        event.dataTransfer.setDragImage(element, 24, 20);
+      } catch { /* the platform drag image is optional */ }
     });
     handle.addEventListener("dragend", () => { draggingId = null; });
     element.addEventListener("dragover", (event) => {
@@ -4926,7 +5808,14 @@ document.addEventListener("keydown", (event) => {
   const capture = (event.metaKey || event.ctrlKey) && event.shiftKey && event.code === "Space";
   const undo = (event.metaKey || event.ctrlKey) && !event.shiftKey && event.key.toLowerCase() === "z";
   const redo = (event.metaKey || event.ctrlKey) && event.shiftKey && event.key.toLowerCase() === "z";
-  if (command) { event.preventDefault(); store.ui.palette = true; store.ui.paletteIndex = 0; store.ui.capture = false; store.notify(); }
+  if (command) {
+    event.preventDefault();
+    store.ui.palette = true;
+    store.ui.paletteIndex = 0;
+    store.ui.capture = false;
+    store.ui.focusField = "palette";
+    store.notify();
+  }
   if (save) { event.preventDefault(); void store.flush(); }
   if (undo && store.ui.screen === "project") { event.preventDefault(); store.undo(); }
   if (redo && store.ui.screen === "project") { event.preventDefault(); store.redo(); }
@@ -4939,7 +5828,17 @@ document.addEventListener("keydown", (event) => {
     store.ui.paletteIndex = (store.ui.paletteIndex + step + results.length) % results.length;
     results.forEach((result, index) => result.classList.toggle("selected", index === store.ui.paletteIndex));
   }
-  if (capture) { event.preventDefault(); store.ui.capture = true; store.ui.palette = false; store.notify(); }
+  if (capture) {
+    event.preventDefault();
+    store.ui.capture = true;
+    store.ui.palette = false;
+    store.ui.focusField = "capture";
+    store.notify();
+  }
+  if (event.key === "Escape" && store.ui.movingPlacementId) {
+    store.cancelMovePlacement();
+    return;
+  }
   if (event.key === "Escape" && (store.ui.palette || store.ui.capture || store.ui.preflight || store.ui.snapshot || store.ui.assetPicker)) {
     store.ui.palette = store.ui.capture = store.ui.preflight = store.ui.snapshot = false;
     store.ui.assetPicker = null;
@@ -4988,7 +5887,8 @@ if (typeof globalThis.addEventListener === "function") {
   });
 }
 
-store.subscribe(() => render());
+store.subscribe((kind) => (kind === "chrome" ? patchChrome() : render()));
+installEditorGuards();
 // The promise is exposed so the native shell (and the desktop boot tests) can
 // wait for a fully restored window instead of guessing at a delay.  It carries
 // no capability: the store itself is already reachable as `__workbench`.

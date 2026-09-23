@@ -70,8 +70,32 @@ Deno.test("Workbench shell keeps one collapse control per local sidebar", async 
   assert(!topbar.includes('data-action="toggle-right"'), "topbar must not duplicate the right collapse action");
   assert(main.includes('case "return-launcher": store.returnToLauncher(); return;'), "return button must have an explicit action handler");
   assert(launcher.includes('class="recent-card"') && launcher.includes('data-action="enter-project"'), "continue must re-enter through the project action");
-  const recentCard = between(launcher, 'class="recent-card"', 'class="seed-choices"');
+  const recentCard = between(launcher, 'class="recent-card"', "</section>");
   assert(!recentCard.includes('data-action="open-item"'), "continue must not bypass session restoration with a direct lesson open");
+  // V1-T02 P1-1: the launcher used to show nine differently named entries that
+  // all ran "新建课程".  The real course-input entrances live in 课程地图 now,
+  // and the launcher must point there instead of pretending.
+  assert(!launcher.includes('class="seed-choices"'), "the launcher must not fake nine different entrances");
+  assert(launcher.includes("课程地图"), "the launcher must say where existing material is turned into a course map");
+  assert(source.includes("function seedCard()"), "课程地图 must own the course-input card");
+  const seedCard = between(source, "function seedCard()", "function mapView()");
+  assert(
+    seedCard.includes("SEED_TEXT_SOURCES.map") && seedCard.includes('data-action="pick-seed" data-type="${type}"'),
+    "the seed card must render one real entrance per supported course-input source",
+  );
+  const authoring = await Deno.readTextFile(
+    new URL("../app/authoring.js", import.meta.url),
+  );
+  for (const type of ["overview", "outline", "toc", "articles", "spreadsheet", "conversations"]) {
+    assert(authoring.includes(`"${type}"`), `the shared vocabulary must define ${type}`);
+    assert(authoring.includes(`  ${type}: {`), `every supported source needs its own hint, including ${type}`);
+  }
+  assert(authoring.includes("folder:"), "the unsupported folder source must exist so it can be disabled honestly");
+  assert(seedCard.includes("disabled"), "an unsupported source must be visible but disabled rather than fake");
+  assert(seedCard.includes('data-action="build-blueprint"'), "the seed card must build a blueprint draft");
+  assert(seedCard.includes("disabled"), "an unsupported source must be visible but disabled rather than fake");
+  assert(main.includes('case "build-blueprint": void store.startSeed(); return;'), "the seed card must run through the store");
+  assert(main.includes('"course.seed.create"') && main.includes('"blueprint.build"'), "the seed flow must use the Domain commands, not a local copy");
   assert(left.includes('class="panel-heading"'), "left collapse must stay in the left panel heading");
   assert(left.includes('data-action="toggle-left"'), "left panel must keep its local collapse action");
   assert(right.includes('class="right-tabs"'), "right collapse must stay in the right panel tabs");

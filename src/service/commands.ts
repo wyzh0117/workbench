@@ -60,6 +60,7 @@ export const HIGH_LEVEL_COMMANDS = [
   "ai.secret.set",
   "ai.secret.delete",
   "ai.complete",
+  "ai.models.list",
   "ai.cancel",
   "ai.execution.append",
   "ai.execution.list",

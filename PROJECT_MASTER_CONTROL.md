@@ -501,19 +501,20 @@ N1
 >
 > 当前版本：**V1（ACTIVE）**
 >
-> 当前任务：**V1-T02 — macOS Distribution & Public Release Closure**
+> 当前任务：**V1-T02 — Dogfooding Critical Fixes & Authoring UX Refinement**
 >
-> 当前状态：**PARTIAL**（BLOCKER：缺正式 macOS signing / notarization credentials）
+> 当前状态：**VERIFIED**（两次实施 P0 + P1 + P2 全部完成并通过真实 Desktop 回归；OPEN BLOCKERS = NONE）
 >
 > 产品状态：**DOGFOOD READY**
 >
 > 分发状态：**PARTIAL**（正式 Universal DMG、公开仓库、GitHub Release、固定 latest 直链与 SHA-256 已完成；Developer ID 签名与 Apple 公证未完成）
 >
-> 下一步：**获取 Apple Developer 分发资格后补做签名 / 公证 / Release 重传 / 安装 smoke**
+> 下一步：**PAUSE FEATURE DEVELOPMENT**（停止新功能开发，等真实使用反馈再决定下一个任务；不创建 V1-T03）
 >
 > V0 状态保持：**V0 CLOSED；V0-T01 / V0-T02 / V0-T03 / V0-T04 全部 VERIFIED**
 >
-> V1-T01 状态保持：**VERIFIED**（见 **§33**）；V1-T02 完成记录与证据：见 **§34**。
+> V1-T01 状态保持：**VERIFIED**（见 **§33**）；V1-T02 两次实施记录与证据：见 **§35**（P0 + P1）与 **§36**（P2）；
+> 此前 macOS Distribution & Public Release Closure 的完成事实保留在 **§34**（该范围本轮不执行，等用户再次批准后另行编号）。
 
 ---
 
@@ -1908,6 +1909,50 @@ YYYY-MM-DD | Task | From → To | Summary
 当前：
 
 ```text
+2026-09-23 | V1-T02 | IN PROGRESS（第二次实施 P2 完成）→ VERIFIED
+第二次实施（P2）完成：Provider / Model 配置重构、Block 自适应高度体系、Flow 成为唯一顺序入口、
+Grid 交互重设计；两次实施（P0 + P1 + P2）全部通过自动化门禁与真实 Desktop 回归，OPEN BLOCKERS = NONE。
+P2-1 Provider / Model：Base URL + API Key（仍只进系统钥匙串）+ 真实 `GET {base}/models` 枚举 + 选择即用 +
+手动 Model ID 永远可用（读取失败也不阻塞保存）；不再依赖任何硬编码模型清单。
+P2-2 Block 自适应高度：短内容（标题 / 引用 / 提示 / 分隔线 / 占位符）Small ⇄ Medium 封顶；
+长内容（正文 / 代码 / 列表 / 练习）Medium ⇄ Large 封顶；到顶后由外框滚动，取消内部手动 resize，
+打字时高度与层级即时跟随（不需要等下一次渲染）。
+P2-3 顺序职责迁移：Flow 是唯一排序入口并直接写回 Canonical `order_index`；结构 / Preview 只读同一份顺序，
+结构视图不再提供 ↑↓，改为指向 Flow 的入口。
+P2-4 Grid 交互：未放置 Block 左键上画布（自动落到第一个空位）、Grid Block 左键进入移动状态（可用 Cell 高亮）、
+点击目标 Cell 直接移动、右键移出网格；↑↓←→ 不再是核心移动方式，尺寸按钮在选中后仍然稳定可用。
+验证：`deno task check` 通过；`deno task test` 266 passed / 0 failed；`cargo test` 55 passed / 0 failed；
+真实 Tauri Desktop 19 步走查全部完成（含保存 → 关闭 → 重启后排版与顺序一致）。
+详细记录与证据见 **§36**。
+
+2026-09-23 | V1-T02 | IN PROGRESS（第一次实施 P0 + P1 完成）
+第一次实施（P0 + P1）已完成并通过真实 Desktop 回归，OPEN BLOCKERS = NONE，NEXT ACTION = 执行 P2 交互重构。
+P0（真实使用阻断）：①项目选择后无法再次打开同一项目；②输入被保存 / 重渲染打断；③二级弹窗自动关闭；
+④API Key 配置未真正写入钥匙串却显示已配置；⑤Drag Handle 不工作；⑥Grid Preview 与真实排版不一致；⑦Grid hover 工具无法稳定操作。
+P1（Authoring 直觉）：seed 入口语义、课程地图缺漏提示、区块 / 待补删除、课程标题 inline 改名、待补类型在所有投影一致、
+真实占位符（不写入提示文字）、新建 Block 当次渲染即选中并打开属性、状态栏说明作用对象、Section 语义与增删、网格编辑门控。
+本轮额外发现并修复：`course.seed.create` / `blueprint.build` 桌面命令缺失与 `{input:{}}` 嵌套错误、
+新增 Block 后属性面板要等下一次渲染才切换（本轮第二次修复）、所有弹窗打开时不接管输入焦点（会吞掉用户第一次输入）。
+验证：`deno task check` 通过；`deno task test` 255 passed / 0 failed；`cargo test` 54 passed / 0 failed；
+真实 Tauri Desktop 21 步走查完成（其中 3 步受原生控件 / HTML5 拖拽限制，已用自动化测试覆盖并如实标注）。
+详细记录与证据见 **§35**。
+
+2026-09-23 | V1-T02 | PARTIAL → IN PROGRESS（范围重定位）
+按用户明确批准，V1-T02 编号改用于「Dogfooding Critical Fixes & Authoring UX Refinement」
+（平铺任务，不是新 Milestone；不创建 V1-T02-A / V1-T02.1 / Fix Phase / 新阶段层级）。
+此前草拟并已实施完成的 V1-T02 — macOS Distribution & Public Release Closure 本轮不再执行、也不继续占用该编号：
+其已完成事实（正式 Release 构建、Universal DMG、公开仓库与 GitHub Release、固定 latest 直链、
+SHA-256 校验资产、安装后 App 的真实运行 smoke、安全预检）与未完成边界（缺 Developer ID Application
+签名与 Apple 公证，`spctl --assess` 判定 rejected）如实保留在 §34 与 README「分发状态」中，不撤回、不夸大；
+剩余动作（签名 / 公证 / Release 重传 / 安装 smoke）降级为后续候选任务，等用户再次明确批准后才编号与启动。
+优先级依据：真实 Dogfooding 使用暴露了更高优先级的真实问题 —— 项目选择后无法再次打开项目、输入频繁中断、
+二级弹窗自动关闭、API Key 无法配置、Drag Handle 不工作、Grid Preview 不一致。
+因此调整为「先修真实使用问题 → 再次 Dogfooding → 再决定公开分发」。
+执行结构：V1-T02 只进行两次实施 —— 第一次 P0 + P1（一起完成），第二次 P2（已批准的四项交互重构）；
+两次都通过真实 Desktop 回归后才允许 V1-T02 = VERIFIED，NEXT ACTION = PAUSE FEATURE DEVELOPMENT。
+本轮开工状态：CURRENT TASK = V1-T02 — Dogfooding Critical Fixes & Authoring UX Refinement；CURRENT STATUS = IN PROGRESS；
+OPEN BLOCKERS = NONE；V0 保持 CLOSED，V0-T01 / V0-T02 / V0-T03 / V0-T04 保持 VERIFIED，V1-T01 保持 VERIFIED。
+
 2026-09-23 | V1-T02 | NOT ACTIVE → IN PROGRESS → DONE → PARTIAL
 按用户明确要求创建 V1-T02 — macOS Distribution & Public Release Closure（平铺任务，不是新 Milestone，也不是 V1.1 / Release Phase）。
 完成：①README / 总控文档状态对齐（下载入口、系统要求、安装步骤、首次打开说明、分发状态如实标注）；②仓库安全预检
@@ -2196,44 +2241,48 @@ PROJECT_MASTER_CONTROL.md
 
 # 29. 当前唯一 NEXT ACTION
 
-> **V0 仍为 CLOSED；V0-T01 / V0-T02 / V0-T03 / V0-T04 全部 VERIFIED。V1 已 ACTIVE。V1-T01 — V0 Hardening & UX Polish = VERIFIED；V1-T02 — macOS Distribution & Public Release Closure = PARTIAL（BLOCKER：缺正式 macOS signing / notarization credentials）。**
+> **V0 仍为 CLOSED；V0-T01 / V0-T02 / V0-T03 / V0-T04 全部 VERIFIED。V1 已 ACTIVE。V1-T01 — V0 Hardening & UX Polish = VERIFIED；V1-T02 — Dogfooding Critical Fixes & Authoring UX Refinement = VERIFIED（两次实施：P0 + P1 见 §35，P2 见 §36）。**
 
 V1-T01 的实现、自动化门禁与最终构建的真实走查（桌面 + 浏览器）全部完成（证据见 §33），OPEN BLOCKERS = NONE。
 
-V1-T02 由用户明确提出，因此允许创建；它把已 DOGFOOD READY 的 Workbench 做成普通 macOS 用户可下载安装的正式分发包。
-已完成：文档对齐、仓库安全预检、Universal（Apple Silicon + Intel）Release 构建、正式 DMG、
-版本号与 bundle 元数据、SHA-256、公开 GitHub 仓库、`v0.1.0` tag、GitHub Release、固定 latest 直链、
-安装后 App 的真实运行 smoke。**未完成**：Developer ID Application 签名与 Apple 公证/stapling，
-因此**不得宣称** `PUBLIC RELEASE READY` / 「普通用户无安全阻碍安装」（证据与边界见 §34）。
+V1-T02 的编号按用户明确批准改用于 **Dogfooding Critical Fixes & Authoring UX Refinement**：
+真实 Dogfooding 使用暴露出更高优先级的真实问题（项目选择后无法再次打开项目、输入频繁中断、
+二级弹窗自动关闭、API Key 无法配置、Drag Handle 不工作、Grid Preview 不一致），
+因此当前优先级调整为「先修真实使用问题 → 再次 Dogfooding → 再决定公开分发」。
+
+此前草拟并已实施完成的 **V1-T02 — macOS Distribution & Public Release Closure** 本轮不再执行，
+也不继续占用该编号；但它已完成的事实与未完成的边界**如实保留**在 §34 与 README「分发状态」中
+（正式 Release 构建、Universal DMG、公开仓库、GitHub Release、固定 latest 直链、SHA-256、安装 smoke
+= 已完成；Developer ID Application 签名与 Apple 公证 = 未完成，`spctl --assess` 判定 rejected）。
+剩余动作（签名 / 公证 / Release 重传 / 安装 smoke）降级为**后续候选任务**，等用户再次明确批准后才编号与启动。
 
 ```text
 V0 CLOSED
 V0-T01 / V0-T02 / V0-T03 / V0-T04  VERIFIED
 V1 ACTIVE
-CURRENT TASK    V1-T02 — macOS Distribution & Public Release Closure
-CURRENT STATUS  PARTIAL
+CURRENT TASK    V1-T02 — Dogfooding Critical Fixes & Authoring UX Refinement
+CURRENT STATUS  VERIFIED
 PRODUCT STATE   DOGFOOD READY
-DISTRIBUTION    PARTIAL
-OPEN BLOCKERS   BLOCKER：缺正式 macOS signing / notarization credentials
+DISTRIBUTION    PARTIAL（已完成的部分不撤回；签名 / 公证为后续候选任务）
+OPEN BLOCKERS   NONE
 ```
 
 下一步唯一动作：
 
 ```text
-获取 Apple Developer 分发资格后补做签名 / 公证 / Release 重传 / 安装 smoke
+PAUSE FEATURE DEVELOPMENT（V1-T02 = VERIFIED；两次实施 P0 + P1 + P2 全部完成并通过真实 Desktop 回归）
 ```
 
-拿到 Developer ID Application 证书与公证凭据后，只需：
+执行结构（严格按任务卡，已全部执行完毕）：
 
 ```text
-1. 导入证书并设置 APPLE_SIGNING_IDENTITY（本机钥匙串 / GitHub Actions Secrets）
-2. 重新执行 cargo tauri build --target universal-apple-darwin --bundles app,dmg
-   （或直接运行 .github/workflows/release.yml，它会自动签名 + 公证）
-3. 用同一个固定文件名 AI-Course-Workbench-macOS.dmg 重新上传 Release Asset
-4. 重跑一次安装 smoke 与 spctl 评估
+第一次实施：P0 + P1 一起完成（真实使用 Bug + 已有功能明显 UX / 产品逻辑问题）→ 已完成，见 §35
+第二次实施：P2（Provider/Model 发现、Block 自适应高度、Flow 负责排序、Grid 交互重设计）→ 已完成，见 §36
+两次实施都完成后才置 V1-T02 = VERIFIED，NEXT ACTION = PAUSE FEATURE DEVELOPMENT
 ```
 
-**不需要重新开发 Workbench 本体。** 在此之前不重新打开 V0，也不创建 V1-T03 或任何新的阶段层级。
+纪律：整个过程始终只有一个 `V1-T02`，不创建 `V1-T02-A` / `V1-T02.1` / Fix Phase / 新 Milestone；
+本轮也不创建 `V1-T03`。**不需要重新开发 Workbench 本体即可回到分发工作**（见 §34 的补做步骤）。
 
 注意：Dogfooding 是产品使用状态，不是新的产品阶段；不得创建
 `Dogfood Phase` / `V1-Dogfood` / `V1.1` / `V1-T01A`。
@@ -2256,14 +2305,14 @@ CURRENT VERSION
 V1（ACTIVE）
 
 CURRENT TASK
-V1-T02 — macOS Distribution & Public Release Closure
+V1-T02 — Dogfooding Critical Fixes & Authoring UX Refinement
 
 CURRENT STATUS
-PARTIAL
+VERIFIED
 PRODUCT STATE = DOGFOOD READY
-DISTRIBUTION STATE = PARTIAL
+DISTRIBUTION STATE = PARTIAL（签名 / 公证为后续候选任务，本轮不执行）
 V0 = CLOSED；V0-T01 / V0-T02 / V0-T03 / V0-T04 全部 VERIFIED
-V1-T01 = VERIFIED（§33）；V1-T02 = PARTIAL（§34）
+V1-T01 = VERIFIED（§33）；V1-T02 = VERIFIED（§29 / §35 第一次实施 / §36 第二次实施）
 
 DONE / IMPLEMENTED
 - Canonical / Domain / Service 主体
@@ -2290,7 +2339,19 @@ DONE / IMPLEMENTED
 - V1-T01 收尾：浏览器刷新 / 会话恢复（browser-session.json，版本化 + 字段白名单 + 安全降级）
 - V1-T01 收尾：重复交互清理（顶栏改为「项目选择」，左右栏各一个与自身绑定的折叠控件）
 - V1-T01 收尾：全局 UI 对齐 + 大白话文案（保存 / 锁 / 外部冲突 / 凭据 / 恢复 / 下一步动作）
-- 测试与回归：Deno 236 tests + Rust 49 tests + cargo build + cargo tauri build --debug（.app 成功生成）
+- V1-T02 P0 + P1：七个真实使用阻断修复（项目重开、输入不被打断、二级弹窗生命周期、API Key 真写入钥匙串、
+  Drag Handle、Grid Preview 一致性、Grid hover 稳定性）+ 十项 Authoring 直觉修正（种子入口语义、完成度提示、
+  区块删除、课程标题 inline 改名、待补类型投影一致、真实 Placeholder、新建 Block 当次渲染选中、状态栏作用对象、
+  Section 语义与增删、网格编辑门控）
+- V1-T02 P2-1：Provider 可用 Base URL + 钥匙串密钥 + 真实 `GET {base}/models` 枚举、选择即用、
+  手动 Model ID 永远可用，不再依赖硬编码模型清单
+- V1-T02 P2-2：Block 自适应高度体系（短内容 Small ⇄ Medium、长内容 Medium ⇄ Large，到顶由外框滚动、
+  取消内部手动 resize、打字时即时跟随）
+- V1-T02 P2-3：Flow 成为唯一排序入口并写回 Canonical `order_index`，结构 / Preview 只读同一份顺序
+- V1-T02 P2-4：Grid 交互重设计（左键上画布、左键进入移动状态、Cell 高亮、点目标 Cell 直接移动、右键移出；
+  ↑↓←→ 不再是核心移动方式）
+- 测试与回归：Deno 266 tests + Rust 55 tests + cargo build + cargo tauri build --debug（.app 与 .dmg 生成）
+- V1-T02 P2 真实桌面走查 19 步全部完成（含保存 → 关闭 → 重启后排版与顺序一致）
 - 真实走查：最终构建的桌面走查 + 浏览器刷新走查 + 首启验收（真正首次启动状态）
 - V1-T02 分发：正式 Release 构建（Universal，arm64 + x86_64）、DMG 打包、正式图标集（.icns 全尺寸）
 - V1-T02 分发：产品元数据对齐（productName / identifier / version / 最低 macOS / 分类 / 版权）
@@ -2302,13 +2363,16 @@ DONE / IMPLEMENTED
 - V1-T02 安全预检：全仓 + 全 Git history 密钥扫描、用户数据 / 开发痕迹清理、文档脱敏
 
 OPEN BLOCKERS
-- BLOCKER：缺正式 macOS signing / notarization credentials
+- NONE（本轮）
+- 后续候选任务遗留（不是本轮 Blocker，也不阻塞 V1-T02）：缺正式 macOS signing / notarization credentials
   （本机 0 valid code-signing identities；无 Developer ID Application 证书，无公证凭据）
-  → 当前 DMG 为 ad-hoc 签名，`spctl --assess` 判定 rejected；
+  → 当前已发布的 DMG 为 ad-hoc 签名，`spctl --assess` 判定 rejected；
      不得宣称 PUBLIC RELEASE READY / 「普通用户无安全阻碍安装」
 
 AFTER CURRENT TASK
-拿到 Apple Developer 分发资格后补做签名 / 公证 / Release 重传 / 安装 smoke；
+PAUSE FEATURE DEVELOPMENT：V1-T02 的两次实施（P0 + P1 见 §35、P2 见 §36）都已完成并通过真实 Desktop 回归，
+V1-T02 = VERIFIED。等待真实使用反馈后再决定下一个任务。
+macOS 签名 / 公证 / Release 重传 / 安装 smoke 作为后续候选任务，等用户再次明确批准后才编号与启动；
 在此之前不创建 V1-T03，也不重新打开 V0。
 
 V1
@@ -2318,8 +2382,8 @@ V2
 NOT ACTIVE
 
 NEXT ACTION
-获取 Apple Developer 分发资格后补做签名 / 公证 / Release 重传 / 安装 smoke
-（V1-T02 = PARTIAL；PRODUCT STATE = DOGFOOD READY；V0 保持 CLOSED，四个 V0 任务保持 VERIFIED。）
+PAUSE FEATURE DEVELOPMENT
+（V1-T02 = VERIFIED；OPEN BLOCKERS = NONE；PRODUCT STATE = DOGFOOD READY；V0 保持 CLOSED，四个 V0 任务保持 VERIFIED。）
 ```
 
 ---
@@ -2805,3 +2869,317 @@ NEXT ACTION = 获取 Apple Developer 分发资格后补做签名 / 公证 / Rele
 **唯一欠缺的是签名与公证**：它取决于 Apple Developer Program 分发资格，不是代码或仓库缺陷。
 拿到资格后不需要重新开发 Workbench 本体，只需补做签名、公证、Release 重传与一次安装 smoke。
 在此之前不创建 V1-T03，也不重新打开 V0，产品继续停在 DOGFOOD READY。
+
+---
+
+# 35. V1-T02 — Dogfooding Critical Fixes & Authoring UX Refinement（第一次实施记录）
+
+任务文档：`V1-T02_Dogfooding_Critical_Fixes_and_Authoring_UX_Refinement.md`
+执行结构：本任务只做两次实施 —— 第一次 P0 + P1（本文档），第二次 P2（Provider / Block / Flow / Grid 四项交互重构）。
+不创建 V1-T02-A / V1-T02.1 / Fix Phase / 新 Milestone。
+
+## 35.1 Interim Report（第一次实施结束）
+
+```text
+# V1-T02 Interim Report — P0 + P1
+
+## Control Position
+V1-T02 = IN PROGRESS
+
+## Root Cause Findings
+1. 项目选择后无法再次打开同一项目
+   `openProject(dir)` 在同一目录分支直接 return，只切回编辑器，既没有重新 lease，也没有重读数据；
+   一旦中途回到项目选择页，再点同一个项目就等于什么都没发生（第二实例 / 锁过期后更明显）。
+   修复：改为 `reopenLeasedProject(dir)` —— 重新 `project.open` 取锁并重读数据，失败用 userFacingError 如实说明。
+2. 输入被保存 / 重渲染打断
+   输入时 autosave 触发 `notify()` → 整壳 `render()`（`root.innerHTML = shellView()`），
+   正在输入的 textarea 节点被整体替换：焦点、光标、IME 组字、滚动位置全部丢失。
+   修复：拆分「全量渲染」与「外壳更新」——保存状态、状态栏、toast 走 `notifyChrome()` / `patchChrome()`；
+   全量渲染在 IME 组字期间延后；渲染前后捕获 / 还原焦点、光标、滚动；未绑定输入框走 DOM→DOM 还原
+   （API Key 这类值不进入 `store.ui`）。
+3. 二级弹窗自动关闭
+   `bindEvents()` 给每个 `[data-action]` 元素单独挂 click，`data-stop-click` 的守卫只作用于那一个监听器；
+   弹窗内部没有 `data-action` 的区域点击继续冒泡到遮罩的 `close-overlay`，于是「点一下弹窗就关」，
+   「显示技术信息」这类 `<details>` 也一起被关掉。修复：把守卫提升为弹窗作用域级别的判断（事件源在弹窗内即不关闭）。
+4. API Key 显示已配置但实际没写入
+   shell 用 `/usr/bin/security add-generic-password … -w </dev/null` 写入：密码为空、命令仍返回 0，
+   UI 只看退出码就报「已配置密钥」。修复：真实传值写入，并在写入后**读回比对**，
+   只有读回一致才算配置成功；读不回就如实显示未配置并给出原因。
+5. Drag Handle 不工作
+   `.block-handle` 只有样式和 `dragstart` 监听，没有 `draggable="true"`，浏览器永远不会发起拖拽。
+   修复：补 `draggable="true"`，并由 `bindBlockDrag()` 用 `dataTransfer` 传递 block 身份，drop 时调用
+   `store.reorderBlockTo(source, target)` 写回 canonical 顺序。
+6. Grid Preview 与真实排版不一致
+   预览按 Flow 顺序平铺输出，忽略 `placements` 的行列 / 跨格 / 分区，也看不到未上画布的正文。
+   修复：预览按真实网格几何渲染（列、行、span、分区），并单列「还没有放进网格」的正文。
+7. Grid hover 工具无法稳定操作
+   悬停工具条在鼠标移动时被重渲染替换，pointer 还没抬起目标节点就没了；放置也依赖悬停位置。
+   修复：悬停控件稳定渲染并带 title / aria，`place-block` 由数据决定落点（下一个空网格），
+   放置 / 移出 / 缩放都写成 canonical `placements`。
+
+## P0 Completed
+- P0-1 项目选择：A → 项目选择 → A 再次打开（重新取锁 + 重读），A → 项目选择 → B 走真实 Folder Picker。
+- P0-2 输入连续性：连续中文输入 + autosave 不丢焦点、不丢光标、不触发弹窗误关；弹窗内输入不再触发关闭。
+- P0-3 二级弹窗 / 技术信息：弹窗内点击不再关闭；`<details>` 展开状态在弹窗内保持。
+- P0-4 API Key：真实写入 macOS 钥匙串并读回确认，失败如实显示未配置。
+- P0-5 Drag Handle：`draggable="true"` + 拖拽写回 canonical 顺序。
+- P0-6 Grid Preview：预览反映真实网格几何与未上画布正文。
+- P0-7 Grid 交互：放置 / 移出 / 缩放可稳定操作，落点由数据决定。
+
+## P1 Completed
+- P1-1 seed 入口语义：入口与 `course_seed.source_type` 一一对应，课程地图是正式入口，seed 只生成草稿、确认后才建结构。
+- P1-2 课程地图完整度：逐课列出缺什么，不再编造百分比。
+- P1-3 删除能力：区块 / 待补可删除（含确认与 canonical 同步）。
+- P1-4 课程标题 inline 改名：顶栏直接编辑，Enter 保存 / Esc 取消。
+- P1-5 待补类型：类型改写后所有投影（面板、占位符设置、区块提示）一致。
+- P1-6 真实占位符：占位符不再把提示文字写进 canonical 正文，空段落用 `placeholder` 属性表达。
+- P1-7 新建 Block：当次渲染即选中新块并切到属性面板（本轮修了两次，见 §35.4）。
+- P1-8 状态栏：说明当前作用对象（`作用对象：S01-02|第一课 …`）与待补 / 排版 / 完成度。
+- P1-9 Section 语义：输出分区（一个分区 = 导出时的一段连续输出），可重命名、可增删。
+- P1-10 网格编辑门控：默认只显示网格与提示，点「编辑网格」后才出现 +行 / -行 / +列 / -列。
+
+## Automated Verification
+deno task check: 通过（app/*.js + src/domain + src/ui + 全部 tests）
+deno task test: 255 passed / 0 failed
+cargo test --manifest-path src-tauri/Cargo.toml: 54 passed / 0 failed
+新增回归：tests/dogfooding_test.ts（15 例，覆盖 P0-1 / P0-2 / P0-5 / P0-6 / P0-7 / P1-3 / P1-4 / P1-6 / P1-7 / P1-8 / P1-10 与弹窗聚焦）、
+native_boundary_test 中 `course.seed.create` / `blueprint.build` 的命令名与 `{input:{}}` 嵌套契约。
+
+## Real Desktop Verification
+真实 Tauri Desktop 二进制 + 真实工作区（`workbench-test/wt-walkthrough/课程A`、`课程B`）走查 21 步：
+1 启动 / 2 真实 Folder Picker 打开 A / 3 返回项目选择 / 4 再次打开 A（继续工作，直接回到编辑器）/
+5 返回项目选择 / 6 Picker 打开 B / 7 连续输入三段中文正文 / 8 autosave 期间继续输入不中断（93 字全部累积）/
+9 快速收集写入收件箱 / 10 保存版本写出快照 / 11 导出窗口保持打开且预检为 0 / 13 配置 API Key（粘贴 → 保存 → 钥匙串读回 → 已配置密钥）/
+15 排版版本 + 放置两块正文（R1C1 / R1C2，canonical placements 各 1 条）/ 16 预览按真实网格列渲染 /
+17 占位符与关联待补同时建立 / 18 空段落为真实 `placeholder` 属性、canonical 为空 / 19 顶栏改名写回 canonical /
+20 状态栏显示作用对象与三维度 / 21 网格编辑门控（点前只有提示，点后出现行列控件）。
+如实标注的 3 处限制（不是未做，而是无法用合成事件驱动）：
+- 12 「显示技术信息」：干净项目没有 issue 可展开，弹窗内 `<summary>` 行为由自动化 DOM 测试覆盖（弹窗内点击不关闭）。
+- 14 Drag Handle：HTML5 原生拖拽无法用 CGEvent 合成，`draggable="true"` 与 `reorderBlockTo` 有自动化覆盖 + 代码路径核对。
+- 17 后半（待补类型改图片）：桌面被原生 select 弹层限制，类型一致性由 store 级自动化测试覆盖。
+补充：本轮第二遍桌面回归（重启后）现场验证了两个「第一次实施末期」的修复 —— 弹窗打开即接管输入焦点、
+新增 Block 当次渲染切到属性面板。
+
+## Remaining
+P2
+
+## Blockers
+NONE
+
+## NEXT ACTION
+执行 V1-T02 的 P2 交互重构
+```
+
+## 35.2 第一次实施后的功能变化（用户可见）
+
+```text
+项目选择    同一项目可以反复打开；换项目走真实文件夹选择；失败有具体原因，不再静默无反应
+输入        输入、保存、状态栏更新、toast 不再互相打断；中文输入法组字期间不重渲染
+弹窗        弹窗内点击 / 展开不再误关；弹窗打开就把光标放进该填的输入框
+API Key     只有真正写入并能读回才显示「已配置密钥」；失败会说明是权限还是写入问题
+Block       每个区块有拖拽把手；新建区块立刻选中并打开属性面板
+Flow/Grid   放置、移出、缩放稳定；预览和真实网格一致，并列出还没上画布的正文
+课程地图    逐课说明缺什么；seed 只生成草稿，确认后才建正式结构
+状态栏      永远说明「现在改的是谁」
+```
+
+## 35.3 本轮不改（保持原样，留待真实反馈）
+
+```text
+Project Settings 深度配置、Stage CRUD、Workbench 独立文件格式、macOS 公开分发（见 §34 的未完成边界）
+```
+
+## 35.4 本轮内额外发现并修复（不在原始 21 条反馈里）
+
+```text
+1. course.seed.create / blueprint.build 在桌面壳里没有命令映射（点「把材料变成课程地图」直接失败）
+   —— 补映射，并按 Rust 侧签名补 `{ input: { … } }` 嵌套；两条 native boundary 测试固化契约。
+2. 沙箱内启动 App 时，项目目录写入被拒会显示成「项目被占用」这类误导性提示
+   —— 改为如实说明写入权限问题（本机走完整权限启动即可）。
+3. 新建 Block 后属性面板要等下一次无关渲染才切换（第一次修复把选中放在 commit 之后，渲染已经发生）
+   —— 移进 commit 回调，并补一条「创建区块的那次渲染就已经显示属性」的渲染级测试。
+4. 所有弹窗打开时都不接管输入焦点（`data-focus-key` 是死属性），用户第一次输入直接丢失
+   —— 让 capture / palette / save-version / seed 四个入口显式请求焦点，并补一条聚焦回归测试。
+```
+
+## 35.5 结论
+
+```text
+V1-T02 = IN PROGRESS
+P0/P1 = completed
+PRODUCT STATE = DOGFOOD READY
+OPEN BLOCKERS = NONE
+NEXT ACTION = P2
+```
+
+第一次实施（P0 + P1）已完成：七个真实使用阻断全部修复并有回归，十个 Authoring 直觉问题全部落地，
+自动化验证（255 + 54）与真实桌面 21 步走查都已完成，无遗留阻断。
+按用户批准的执行结构，本任务**尚未结束**：接下来做第二次实施 P2（Provider / Model 发现、Block 自适应高度、
+Flow 负责排序、Grid 交互重设计），两次实施都通过真实 Desktop 回归后才允许
+`V1-T02 = VERIFIED` / `NEXT ACTION = PAUSE FEATURE DEVELOPMENT`。不创建 V1-T03。
+
+---
+
+# 36. V1-T02 — Dogfooding Critical Fixes & Authoring UX Refinement（第二次实施记录 · P2）
+
+任务文档：`V1-T02_Dogfooding_Critical_Fixes_and_Authoring_UX_Refinement.md`
+执行结构：本任务只做两次实施 —— 第一次 P0 + P1（见 **§35**），第二次 P2（本文档）。
+不创建 `V1-T02-A` / `V1-T02.1` / Fix Phase / 新 Milestone / `V1-T03`。
+
+## 36.1 P2 完成内容
+
+### P2-1 Provider / Model 配置重构
+
+- 「改为配置真实服务商」表单重做为：Base URL → **读取模型** →（读取结果 chips）→ **手动输入 Model ID** →
+  「将要使用的模型」→ 保存配置；密钥仍由下面的「保存密钥」单独写入系统凭据。
+- 新增真实模型枚举：服务层 `listAiModels()`（`src/service/ai_transport.ts`）+ Rust `ai_models_list`
+  （`src-tauri/src/lib.rs`），两者都只做一件事：读回该 Provider 的钥匙串密钥 → `GET {base_url}/models`
+  （`Authorization: <auth_scheme> <key>`，不跟随重定向）→ 解析 `{data:[{id}]}` / `{models:[{id|name|model}]}` / 裸数组
+  → 去重排序返回。失败按统一错误码归一（401/403/404/超时/非 JSON…），并**不回显密钥**。
+- 选择即用：点 chip 即成为「将要使用的模型」；保存配置把它写进 `providers.json` 的 `default_model`，
+  并把读取结果并入 `models`（读取失败时保留手动输入的 Model ID，同样可保存）。
+- 手动 Model ID 永远可用，且是读取失败时的明确出口：失败提示直接写明「可以直接在下面手动填写 Model ID，不影响保存」。
+- 不再依赖任何硬编码模型清单：`providers.json` 只保留元数据（`base_url` / `default_model` / `models` / 标签），
+  密钥永远只在系统钥匙串。
+
+### P2-2 Block 自适应高度体系
+
+- 两类内容两套档位，写在 `app/authoring.js` 一处规则里，由视图与实时输入共用：
+  - 短内容（标题 / 引用 / 提示 / 分隔线 / 占位符）：**Small → Medium**，封顶 Medium，永远不到 Large；
+  - 长内容（正文 / 代码 / 列表 / 练习）：**Medium → Large**，封顶 Large，永远不低于 Medium。
+- 到顶后由 Block 外框自己滚动（`.block[data-block-size]{overflow:auto}` + 分档 `max-height`），
+  字段本身取消内部手动 resize（`resize:none`）、不再是第二个滚动容器。
+- 打字即时跟随：文本编辑不触发整页重渲染（保护插入符与输入法），因此高度与档位在输入时由
+  `autosizeBlockFields()` 就地刷新（测量实际行数 → 同一套档位规则 → 换 class），不需要等下一次渲染。
+- 内容减少时自动收缩（删除后回到 Small / Medium），实测 34 行正文 340px 封顶、28 行引用 188px 封顶、
+  标题 96px 封顶，删除后全部回落。
+
+### P2-3 顺序调整职责迁移到 Flow
+
+- Flow 成为唯一显式排序入口：每行 ↑↓ 直接写回 Canonical `order_index`（`moveBlock`），
+  工具栏写明「Flow 是一维文档流：这里调整的就是正文的先后顺序（写回 Canonical order）」。
+- 结构视图不再提供排序：每行只保留「定位 / 删除」，工具栏写明「结构视图只看结构…调整先后顺序请到
+  「排版 > Flow」」并提供跳转按钮。
+- 结构 / Preview 与 Flow 显示同一份 Canonical 顺序，不存在第二份顺序。
+
+### P2-4 Grid Interaction Redesign
+
+- 未放置区（还没有放进网格的正文）：**左键点击**即落到网格第一个空位，并给出反馈。
+- Grid 内 Block：**左键点击**进入移动状态（横幅提示 + 所有可用 Cell 高亮为「放这里」+ Esc 取消）；
+  **点击目标 Cell 直接移动**；**右键点击**把这块内容移出网格回到未放置区（带 toast 说明）。
+- ↑↓←→ 不再是核心移动方式：卡片动作改为 ✎ / ＋宽 / −宽 / ＋高 / −高 / ✕，尺寸按钮在选中 / 移动后仍然稳定可用，
+  并在放不下时明确拒绝（toast「这个位置放不下：目标格子已被占用，或超出网格。」）。
+- 网格只保存位置：正文、素材引用、待补等仍保存在原来的地方，移动/移出都不动内容本身。
+
+## 36.2 自动化验证
+
+```text
+deno task check                     通过（无类型 / 格式错误）
+deno task test                      266 passed / 0 failed（第二次实施新增 11 条：P2-1 模型发现与回退 8 条、
+                                    P2-2 高度档位与测量一致性、P2-3 顺序写回、P2-4 上画布与移动）
+cargo test                          55 passed / 0 failed（新增 Rust 侧模型清单解析用例）
+cargo build                         Finished
+cargo tauri build --debug           成功：AI Course Workbench.app + AI Course Workbench_0.1.0_aarch64.dmg
+```
+
+回归测试落在两处，都是「能抓住回归」的断言而不是快照：
+`tests/p2_interaction_test.ts`（模型枚举 URL / 请求头 / 去重 / 不泄漏密钥 / 失败结构化 / 401 不吞错 /
+缺密钥时不发网络请求 / 各家 payload 形状 / 高度档位阶梯与收缩 / 测量路径与估算路径同规则），
+`tests/dogfooding_test.ts`（Flow 写回唯一 Canonical 顺序、Grid 落第一个空位且可再次移动、
+P2 视图标记与交互模型一致）。
+
+## 36.3 真实 Desktop 走查（第二次实施 19 步，全部完成）
+
+用最终构建的真实 Tauri 窗口，在 `./workbench-test` 的走查课程上逐步执行并留证：
+
+| # | 项目 | 结果 | 证据 |
+|---|---|---|---|
+| 1 | Base URL + API Key 配置 | 通过 | 表单写入 `http://127.0.0.1:8899/v1`；「保存密钥」提示「API Key 已保存到 macOS 系统钥匙串，并已读回确认（不回显，也不进入课程文件）」；`providers.json` 只有元数据 |
+| 2 | 自动读取 models | 通过 | 点「读取模型」→ 本地 OpenAI 兼容服务日志收到 `GET /v1/models`，请求头 `Authorization: Bearer <key>`（密钥来自钥匙串）→ 面板显示「已从服务商读取到 2 个模型」 |
+| 3 | 选择 Model | 通过 | 点 `stub-chat-small` chip → 「将要使用的模型：stub-chat-small（来自读取结果）」→ 保存配置后 `providers.json` 的 `default_model` = `stub-chat-small` |
+| 4 | 手动 Model ID fallback | 通过 | 先在密钥不匹配时观察失败路径：面板显示 401 失败原因 +「可以直接在下面手动填写 Model ID，不影响保存」，来源改为「改为手动填写 Model ID」；随后手动输入 `stub-manual-model` 保存成功，`default_model` = `stub-manual-model`，`models` 保留读取结果 |
+| 5 | 正文 Medium → Large → Scroll → 收缩 | 通过 | 空正文 158px；粘贴 34 行后外框 340px 并在框内滚动；全选删除后回落（AX 实测块框高度） |
+| 6 | 标题 / 引用 Small → Medium → Scroll → 收缩 | 通过 | 空引用 96px（Small）；4 行 158px；28 行后外框停在 188px（Medium 封顶）并在框内滚动；标题（单行字段）稳定 96px |
+| 7 | 无内部手动 resize | 通过 | 字段 `resize:none`；AX 树中字段高 820px、外框 340px，滚动条只在外框；没有内部尺寸手柄 |
+| 8 | Flow 调整 Block 顺序 | 通过 | Flow 行 ↓ 后 `project.json` 的 `order_index` 立即互换（两段正文对调） |
+| 9 | 结构 / Preview 同步 | 通过 | 结构视图、Preview 与 Flow 显示同一顺序（空正文在前、长正文在后） |
+| 10 | 未上 Grid Block 左键上画布 | 通过 | 左键点未放置项 → `placements` 新增记录，落在第一个空位 R1C1 |
+| 11 | Grid Block 右键下画布 | 通过 | 右键点击 → `placements` 归零 + toast「已把「正文」移出网格，回到「还没有放进网格的正文」」 |
+| 12 | Grid Block 左键进入移动状态 | 通过 | 左键点击 → 出现移动提示横幅与 9 个「放这里」目标 |
+| 13 | 可用 Cell 高亮 | 通过 | 每个空位渲染为「放这里」，当前格单独标记 |
+| 14 | 点击目标 Cell 后直接移动 | 通过 | R1C1 → 点击目标 → R3C3 → 再点 → R2C2（`placements` 的行列区间同步变化） |
+| 15 | 不再依赖 ↑↓←→ 微按钮 | 通过 | 提示文案「↑↓←→ 不再用于移动」；＋宽 → 占两列、＋高 → 占两行，选中后依然可用 |
+| 16 | 保存 | 通过 | ⌘S 后顶栏显示「已保存」；`project.json` 落盘为当前顺序与位置 |
+| 17 | 关闭 | 通过 | 点窗口关闭按钮后进程正常退出，无数据丢失提示 |
+| 18 | 重启 | 通过 | 重新启动 → 「继续工作」重新进入同一课程与课节 |
+| 19 | 布局与顺序一致 | 通过 | 重启后排版仍是 Grid、分区「第 1 段 1 块」、格子读数仍为 **R1C1**；Flow / 结构 / Preview 顺序与关闭前一致 |
+
+走查说明（如实记录）：
+- 第 1–4 步的模型枚举使用本机 `127.0.0.1:8899` 上的 OpenAI 兼容**本地替身服务**（当次会话临时启动，
+  带一个一次性测试密钥），原因是走查环境不能嵌入任何第三方密钥；协议与鉴权路径与真实服务商完全一致
+  （同一条 `GET {base}/models` + 同一个钥匙串取密钥的代码路径），替身服务在走查结束后已关闭。
+- 第 12–14 步的「左键进入移动状态 → 点击目标移动」用真实鼠标事件执行；右键移出用真实右键事件执行。
+- 走查课程位于 `./workbench-test/wt-walkthrough/`（用户指定可用于测试的目录），其中新增的段落 / 标题 / 引用
+  文本都是走查用的可见样例，保留以便复现；未触碰任何真实课程内容。
+
+## 36.4 P2 验收门槛对照（任务文档 §8，22 项）
+
+```text
+[x] Provider 可输入 Base URL
+[x] API Key 仍走系统凭据
+[x] 可尝试自动读取 models
+[x] models 读取失败时可手动输入 Model ID
+[x] 不依赖容易过期的硬编码模型列表
+[x] 短内容 Block：Small ⇄ Medium → Scroll
+[x] 长内容 Block：Medium ⇄ Large → Scroll
+[x] 内容减少时 Block 自动收缩
+[x] 取消内部手动 resize
+[x] Flow 成为显式顺序调整入口
+[x] Flow 修改 Canonical order
+[x] 结构 / Preview 与 Flow 顺序一致
+[x] 未放置 Block 左键上 Grid
+[x] Grid Block 右键下 Grid
+[x] Grid Block 左键进入移动状态
+[x] 可放置 Cell 高亮
+[x] 点击目标 Cell 后直接移动
+[x] ↑↓←→ 不再作为核心移动方式
+[x] Grid 保存 / 重启后一致
+[x] 自动化测试全绿
+[x] 真实 Desktop 走查通过
+[x] P0/P1 无回归
+```
+
+## 36.5 第二次实施发现的真实问题（已在本轮修掉）
+
+1. **高度档位只在整页渲染时更新**：文本编辑不触发重渲染（这是 P0 的保护），但档位 class 也因此不更新，
+   长正文永远停在 Medium。修复：输入时由 `autosizeBlockFields()` 用实测行数刷新档位（与首渲染同一套规则），
+   并补了一条「测量路径与估算路径必须同规则」的测试。
+2. **手动 Model ID 输入时预览不跟随**：原来只在保存时才读该字段，「将要使用的模型」会短暂显示与输入不一致的值。
+   修复：输入时就地更新预览文本（不重渲染，插入符与输入法不受影响），保存时读取同一个值。
+3. **保存配置后表单状态没有回写**：保存成功后把已保存的模型镜像回表单状态，避免预览继续显示未保存的选择。
+4. **结构视图曾持有自己的行内排序按钮**（P0/P1 遗留）：按 P2-3 移除，排序只剩 Flow 一个入口。
+
+## 36.6 本轮不改（保持原样）
+
+- Section / 「分区」的 Domain 语义仍是「输出分区」（网格里的输出分组），UI 文案按此统一；
+  若后续要把它变成「课程阶段分区」，属于新的产品决策，不在本任务范围内改动。
+- Grid 的「＋分区 / 重命名排版 / 一键排版全部正文」等既有能力保持原样，只重做交互方式。
+- 空白课的引导文案、导出 / 发布中心、AI 助手其余能力保持 P0/P1 之后的状态。
+
+## 36.7 结论
+
+```text
+V1-T02 = VERIFIED
+P0/P1 = completed（§35）
+P2 = completed（§36）
+PRODUCT STATE = DOGFOOD READY
+OPEN BLOCKERS = NONE
+NEXT ACTION = PAUSE FEATURE DEVELOPMENT
+```
+
+两次实施（P0 + P1 + P2）全部完成：七个真实使用阻断与十项 Authoring 直觉问题有回归保护，
+四项交互重构（Provider/Model、Block 高度、Flow 排序职责、Grid 交互）在真实 Desktop 上逐步走查通过，
+自动化门禁（`deno task check` / `deno task test` 266 / `cargo test` 55 / `cargo build` /
+`cargo tauri build --debug`）全绿，无遗留阻断。
+按任务卡：**到此停止功能开发**（不创建 V1-T03），等真实使用反馈再决定下一个任务；
+macOS 签名 / 公证 / Release 重传 / 安装 smoke 仍为后续候选任务（见 §34、§29）。

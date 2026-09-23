@@ -920,6 +920,98 @@ export class AiTransport {
   // ------------------------------------------------------------------ transport
 
   /**
+   * P2-1: read the provider's own model list instead of shipping a table of
+   * model names that goes stale.  The stored credential is injected exactly
+   * like `ai.complete` does it — the renderer never sees the key — and a
+   * provider that does not implement model enumeration fails with a readable
+   * `ServiceError`, which the UI turns into manual Model ID entry.
+   */
+  async listAiModels(input: unknown): Promise<{
+    provider_id: string;
+    models: string[];
+    endpoint: string;
+  }> {
+    if (!isPlainRecord(input)) {
+      throw invalidRequest(
+        "读取模型的参数无效。",
+        "ai.models.list expects a JSON object",
+      );
+    }
+    const candidate = input as { provider_id?: unknown; base_url?: unknown; timeout_ms?: unknown };
+    const state = await this.readProviders();
+    const providerId = typeof candidate.provider_id === "string"
+      ? candidate.provider_id.trim()
+      : "";
+    const provider = providerId
+      ? state.providers.find((entry) => entry.id === providerId)
+      : undefined;
+    if (!providerId || !provider) {
+      throw notConfigured(
+        "还没有选择 AI 服务商，无法读取模型列表。",
+        "ai.models.list requires a saved provider",
+      );
+    }
+    const credential = await this.credentialStore.get(providerId);
+    if (!credential) {
+      throw error(
+        "missing_credential",
+        `AI 服务商「${providerId}」还没有配置 API Key。`,
+        `No credential stored for provider ${providerId}`,
+        {
+          recoverable: true,
+          recommended_action: "先在设置里保存 API Key，再读取模型列表；也可以直接手动填写 Model ID。",
+          details: { provider_id: providerId },
+        },
+      );
+    }
+    const baseUrl = typeof candidate.base_url === "string" && candidate.base_url.trim()
+      ? candidate.base_url.trim()
+      : String(provider.base_url || "").trim();
+    if (!baseUrl) {
+      throw invalidRequest(
+        "还没有填写 Base URL，无法读取模型列表。",
+        "ai.models.list has no base_url to query",
+      );
+    }
+    const url = assertTransportUrl(modelListUrl(baseUrl));
+    const header = typeof provider.auth_header === "string" && provider.auth_header.trim()
+      ? provider.auth_header.trim()
+      : "authorization";
+    const scheme = typeof provider.auth_scheme === "string" ? provider.auth_scheme : "Bearer";
+    const headers: Record<string, string> = {
+      accept: "application/json",
+      [header]: scheme ? `${scheme} ${credential}` : credential,
+    };
+    const schemeOnWire = typeof provider.auth_scheme === "string" ? provider.auth_scheme : "";
+    const result = await this.send({
+      requestId: id(),
+      providerId,
+      url,
+      headers,
+      body: "",
+      method: "GET",
+      timeoutMs: normalizeTimeout(candidate.timeout_ms),
+      signal: null,
+      secrets: credentialScrubList(credential, schemeOnWire),
+      dropProviderExcerpt: credential.trim().length < MIN_EXACT_SECRET_CHARS,
+    });
+    const models = modelIdsFromPayload(result.body);
+    if (!models.length) {
+      throw error(
+        "provider_error",
+        "服务商没有返回可识别的模型名。",
+        "ai.models.list response contained no model ids",
+        {
+          recoverable: true,
+          recommended_action: "可以在设置里手动填写 Model ID，不影响保存与运行。",
+          details: { provider_id: providerId, endpoint: url.toString() },
+        },
+      );
+    }
+    return { provider_id: providerId, models, endpoint: url.toString() };
+  }
+
+  /**
    * Design §3 `ai.complete`: one HTTPS POST with the stored credential injected
    * as the configured auth header.  Failures are structured `ServiceError`s so
    * the renderer can normalise them into `AiFailure`.
@@ -1134,6 +1226,8 @@ export class AiTransport {
     url: URL;
     headers: Record<string, string>;
     body: string;
+    /** P2-1 model discovery is a GET; chat completions stay a POST. */
+    method?: "POST" | "GET";
     timeoutMs: number;
     signal: AbortSignal | null;
     /** Exact credential forms that must never survive in a failure payload. */
@@ -1175,10 +1269,11 @@ export class AiTransport {
     try {
       let response: Response;
       try {
+        const method = request.method === "GET" ? "GET" : "POST";
         response = await this.fetchImpl(request.url, {
-          method: "POST",
+          method,
           headers: request.headers,
-          body: request.body,
+          body: method === "GET" ? undefined : request.body,
           signal: controller.signal,
           // One request only: a redirect could forward a custom auth header to
           // a host the user never configured, so redirects stop the call.
@@ -1698,6 +1793,32 @@ function assertProviderId(providerId: string): string {
     );
   }
   return key;
+}
+
+/** `{base}/models`, without doubling a trailing slash. */
+export function modelListUrl(baseUrl: string): string {
+  return `${baseUrl.replace(/\/+$/, "")}/models`;
+}
+
+/**
+ * Model ids out of the shapes OpenAI-compatible providers actually return:
+ * `{ data: [{ id }] }`, `{ models: [{ id | name }] }`, or a bare array.
+ */
+export function modelIdsFromPayload(payload: unknown): string[] {
+  const entries = (() => {
+    if (Array.isArray(payload)) return payload;
+    if (!isPlainRecord(payload)) return [];
+    if (Array.isArray(payload.data)) return payload.data;
+    if (Array.isArray(payload.models)) return payload.models;
+    return [];
+  })();
+  const ids = entries.map((entry) => {
+    if (typeof entry === "string") return entry.trim();
+    if (!isPlainRecord(entry)) return "";
+    const value = entry.id ?? entry.name ?? entry.model;
+    return typeof value === "string" ? value.trim() : "";
+  }).filter((value) => value.length > 0);
+  return [...new Set(ids)].sort((left, right) => left.localeCompare(right));
 }
 
 function assertTransportUrl(raw: string): URL {

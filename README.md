@@ -114,12 +114,13 @@ BLOCKER            = 缺正式 macOS signing / notarization credentials
 
 - 当前版本：**V1（ACTIVE）**
 - V1-T01 — V0 Hardening & UX Polish：**VERIFIED**
-- 当前任务：**V1-T02 — macOS Distribution & Public Release Closure**
-- 当前状态：**PARTIAL**（BLOCKER：缺正式 macOS signing / notarization credentials）
+- 当前任务：**V1-T02 — Dogfooding Critical Fixes & Authoring UX Refinement**
+- 当前状态：**VERIFIED**（两次实施 P0 + P1 + P2 全部完成并通过真实 Desktop 回归；OPEN BLOCKERS = NONE）
 - 产品状态：**DOGFOOD READY**
 - 分发状态：**PARTIAL**（DMG / Release / 固定直链已完成；签名与公证未完成）
 - V0 状态：**V0 CLOSED；V0-T01 / V0-T02 / V0-T03 / V0-T04 全部 VERIFIED**
-- NEXT ACTION：**获取 Apple Developer 分发资格后补做签名 / 公证 / Release 重传 / smoke**
+- NEXT ACTION：**PAUSE FEATURE DEVELOPMENT**（停止新功能开发，等真实使用反馈再决定下一个任务）
+- 分发剩余工作（后续候选任务，等用户批准后再启动）：签名 / 公证 / Release 重传 / 安装 smoke
 
 ---
 
