@@ -497,7 +497,7 @@ N1
 
 # 6. 当前项目位置
 
-> 最后更新时间：2026-09-23
+> 最后更新时间：2026-09-24
 >
 > 当前版本：**V1（ACTIVE）**
 >
@@ -507,7 +507,7 @@ N1
 >
 > 产品状态：**DOGFOOD READY**
 >
-> 分发状态：**PARTIAL**（正式 Universal DMG、公开仓库、GitHub Release、固定 latest 直链与 SHA-256 已完成；Developer ID 签名与 Apple 公证未完成）
+> 分发状态：**PARTIAL / 公开下载暂时下架**（正式 Universal DMG、GitHub Release、固定 latest 直链与 SHA-256 已完成；仓库已按要求重新设为 **private**，匿名访问 Release 返回 404；Developer ID 签名与 Apple 公证未完成。等初步开发确认完成后再重新公开）
 >
 > 下一步：**PAUSE FEATURE DEVELOPMENT**（停止新功能开发，等真实使用反馈再决定下一个任务；不创建 V1-T03）
 >
@@ -1909,6 +1909,17 @@ YYYY-MM-DD | Task | From → To | Summary
 当前：
 
 ```text
+2026-09-24 | V1-T02 | 提交并同步远端；仓库重新设为 PRIVATE（公开下载暂时下架）
+工作树已提交：`1181e4e feat(v1-t02): dogfooding critical fixes + authoring UX refinement (P0/P1 + P2)`
+（20 个文件，+6328 / −337），已推送到 `origin/main`；提交前对暂存内容做过密钥扫描（无凭据、无用户课程、无日志）。
+仓库可见性：`PUBLIC → PRIVATE`（`gh repo edit --visibility private`，已复核 `visibility=PRIVATE`）。
+公开下载下架：Release 页面与 `/releases/latest/download/AI-Course-Workbench-macOS.dmg` 对匿名访问者实测均为 **404**；
+Release `v0.1.0` 与资产保留在仓库内（GitHub 不要求仓库 public 才能有 Release，因此未删除，也就不需要「重新上传」），
+等初步开发确认完成后再重新公开即可恢复原固定直链。
+README 同步：Download 入口与「分发状态」如实标注「公开下载已暂时下架 / 仓库为 private」，不留死链。
+推送路径说明：本机 `git` 直连 `github.com:443` 不可达（`api.github.com` 正常），本次通过本机代理
+`http://127.0.0.1:7890` 推送成功；未改动全局 git 配置。
+
 2026-09-23 | V1-T02 | IN PROGRESS（第二次实施 P2 完成）→ VERIFIED
 第二次实施（P2）完成：Provider / Model 配置重构、Block 自适应高度体系、Flow 成为唯一顺序入口、
 Grid 交互重设计；两次实施（P0 + P1 + P2）全部通过自动化门禁与真实 Desktop 回归，OPEN BLOCKERS = NONE。
@@ -2577,6 +2588,11 @@ NEXT ACTION = PAUSE FEATURE DEVELOPMENT
 > 产品状态：**DOGFOOD READY**　｜　分发状态：**PARTIAL**
 > OPEN BLOCKERS：**BLOCKER — 缺正式 macOS signing / notarization credentials**
 > 任务卡：`V1-T02_macOS_Distribution_and_Public_Release_Closure.md`
+>
+> **2026-09-24 可见性补充（不改动以下历史事实）**：按用户要求，仓库已重新设为 **PRIVATE**，
+> 公开下载暂时下架 —— Release 页面与 `/releases/latest/download/...` 对匿名访问者均返回 404；
+> Release `v0.1.0` 与其资产**保留在仓库内**（GitHub 不要求仓库 public 才能有 Release，因此无需删除），
+> 等初步开发确认完成后再重新公开。本节以下内容描述的是公开时期的事实与证据，依然成立。
 
 由用户明确提出而创建。它是一个**平铺任务**，不是新的 Milestone，也不是 V1.1 / Release Phase / Distribution Phase。
 本轮不增加任何课程编辑、AI、发布格式或工作流能力，只把已 DOGFOOD READY 的 Workbench 做成可下载安装的正式分发包。

@@ -8,7 +8,11 @@
 
 ## Download
 
-**下载最新 macOS 安装包（DMG）：**
+> **当前状态：公开下载已暂时下架。** 仓库已设为 **private**，Release 与 DMG 只对拥有仓库权限的人可见，
+> 上面的公开链接对普通访问者会返回 404，`/releases/latest/download/...` 不再对外可用。
+> 待初步开发确认完成后，再重新公开发布。
+
+**（开发完成、仓库重新公开后）下载最新 macOS 安装包（DMG）：**
 
 | 入口 | 链接 |
 |---|---|
@@ -17,16 +21,17 @@
 
 把第二个链接粘贴到 Safari / Chrome 回车，浏览器就会开始下载最新的 `AI-Course-Workbench-macOS.dmg`，不需要先找 Assets，也不需要判断版本号。
 
-### 当前已发布版本
+### 当前已发布版本（暂时不对公开访问者可见）
 
 ```text
 Release Tag ：v0.1.0
 文件名      ：AI-Course-Workbench-macOS.dmg（固定不变，版本号只在 Tag 与 Release Notes 里）
 大小        ：10,357,233 字节
 SHA-256     ：59597a342109785e190d9dc8194d841744249dbbc46498ee594572d2d2412573
+仓库可见性  ：private（Release 保留在仓库内，等初步开发确认完成后再重新公开）
 ```
 
-因为文件名固定不变，上面那条「直接下载最新 DMG」链接在以后发布 `v0.1.1`、`v0.2.0` 时**依然有效**，
+因为文件名固定不变，以后重新公开并发布 `v0.1.1`、`v0.2.0` 时，上面那条「直接下载最新 DMG」链接**依然有效**，
 永远指向最新版本；只有 Release Notes 与 SHA-256 会随版本更新。
 
 ### 系统要求与架构
@@ -96,7 +101,9 @@ BLOCKER            = 缺正式 macOS signing / notarization credentials
 ```
 
 - **已完成**：正式 Release 构建（非 Debug）、Universal（Apple Silicon + Intel）DMG、
-  公开 GitHub 仓库与 Release、固定 latest 直链、SHA-256 校验。
+  GitHub Release、固定 latest 直链、SHA-256 校验。
+- **当前可见性**：仓库为 **private**，Release 资产暂时只对拥有仓库权限的人可见
+  （匿名访问 Release 页面与 latest 直链均返回 404）；等初步开发确认完成后再重新公开。
 - **未完成**：Developer ID Application 签名与 Apple 公证（notarization / stapling）。
   本机 `security find-identity -v -p codesigning` 返回 0 valid identities，没有可用的
   Apple Developer Program 分发凭据，因此**不能宣称「普通用户无安全阻碍安装」**，
@@ -126,7 +133,7 @@ BLOCKER            = 缺正式 macOS signing / notarization credentials
 
 ## 开发者运行
 
-以下内容面向参与开发的工程师。**普通用户请直接使用上面的 Download 入口。**
+以下内容面向参与开发的工程师。**普通用户请在上面的 Download 入口重新公开后再下载安装包。**
 
 需要 Deno 2：
 
