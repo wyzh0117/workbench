@@ -27,9 +27,10 @@ name: Release macOS DMG
 # 一个 tag 一旦发布，它和它的资产就冻结；发现问题要「修代码 → 新 commit → 新 tag → 新 Release」，
 # 不能用新代码重新构建同一个 tag。
 #
-# ⚠️ 风险点：下面「Release 已存在」分支里的 `gh release upload --clobber` 会替换已发布资产
-# 并改写 notes（SHA-256 随之变化）。因此**不要对已经发布的 tag 重跑本 workflow**。
-# 该分支的本意只是「同一 tag 的 Release 还没建成功时补齐资产」，不是用来发新版内容的。
+# 这条规则由下面的 "Publish release assets" 步骤强制执行：如果目标 tag 的 Release 已经发布
+# （isDraft=false），workflow 会直接失败并提示改发新 tag，不会覆盖任何已发布资产 ——
+# 覆盖会让已经下载过该版本的人拿到同名但 SHA-256 不同的文件。
+# 唯一允许补齐资产的情况是 Release 仍是 draft，即「建 Release」这一步没有走完。
 
 on:
   workflow_dispatch:
@@ -194,20 +195,45 @@ jobs:
           - Direct download: https://github.com/${GITHUB_REPOSITORY}/releases/latest/download/AI-Course-Workbench-macOS.dmg
           EOF
 
-          if gh release view "$TAG" >/dev/null 2>&1; then
-            # --clobber replaces the assets, so the notes MUST be rewritten in the same
-            # run: they record the SHA-256, and a stale digest would silently point at a
-            # file that no longer exists.
-            gh release upload "$TAG" \
-              dist/AI-Course-Workbench-macOS.dmg \
-              dist/AI-Course-Workbench-macOS.dmg.sha256 \
-              --clobber
-            gh release edit "$TAG" --notes-file dist/release-notes.md
-          else
+          if ! gh release view "$TAG" >/dev/null 2>&1; then
+            # Normal path: a brand-new tag, so the Release does not exist yet.
             gh release create "$TAG" \
               dist/AI-Course-Workbench-macOS.dmg \
               dist/AI-Course-Workbench-macOS.dmg.sha256 \
               --title "AI Course Workbench ${VERSION}" \
               --notes-file dist/release-notes.md \
               --verify-tag
+          else
+            # The Release already exists.  PROJECT_MASTER_CONTROL.md §0.4: a PUBLISHED tag
+            # is frozen — its assets must never change, because anyone who already
+            # downloaded it must be able to match that file's SHA-256 against this version
+            # number forever.  Only an unpublished (draft) Release — one whose creation
+            # never completed — may still be filled in.
+            IS_DRAFT="$(gh release view "$TAG" --json isDraft --jq '.isDraft')"
+            if [ "$IS_DRAFT" = "true" ]; then
+              echo "Release $TAG is still a draft; filling in its assets."
+              # --clobber is safe here: a draft is not publicly visible, so this cannot
+              # change bytes that anyone has already downloaded.
+              gh release upload "$TAG" \
+                dist/AI-Course-Workbench-macOS.dmg \
+                dist/AI-Course-Workbench-macOS.dmg.sha256 \
+                --clobber
+              gh release edit "$TAG" --notes-file dist/release-notes.md
+            else
+              # Refuse, loudly.  Overwriting here would hand anyone who already downloaded
+              # this tag a same-named file with a different SHA-256, which is exactly what
+              # the freeze rule exists to prevent.
+              echo "::error::Release $TAG is already published, so its assets are frozen (PROJECT_MASTER_CONTROL.md §0.4)."
+              echo "::error::Refusing to overwrite it. Cut a new version instead: fix -> new commit -> new tag -> new Release."
+              {
+                echo "## Refusing to overwrite the published release $TAG"
+                echo ""
+                echo "Release $TAG is already published (isDraft=false), so its assets are **frozen** by §0.4 of PROJECT_MASTER_CONTROL.md."
+                echo ""
+                echo "Overwriting it would give anyone who already downloaded $TAG a same-named file with a different SHA-256 — exactly what the rule prevents."
+                echo ""
+                echo "To ship this build, cut a NEW version: fix -> new commit -> new tag -> new Release (for example v0.1.1 -> v0.1.2)."
+              } >> "$GITHUB_STEP_SUMMARY"
+              exit 1
+            fi
           fi

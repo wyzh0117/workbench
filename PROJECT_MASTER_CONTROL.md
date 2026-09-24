@@ -1972,6 +1972,22 @@ SHA-256 `801fb7ea27610a8799cc5017e5c960462c76894f4ef7274af299ec0384071857`。
 Release 页面与 `/releases/latest/download/...` 恢复对匿名访问者可用。
 README 同步：Download 入口与「分发状态」改回公开口径，并写明 v0.1.0 不包含本轮修复。
 
+2026-09-25 | V1-T02 | 确立「已发布 tag 不可变」发版规则（§0.4），并让 release.yml 强制执行
+规则：tag 一旦发布即**冻结**；发现问题走「修代码 → 新 commit → 新 tag → 新 Release」
+（`v0.1.0` → 修复 → `v0.1.1`），**不得**用修复后的代码重新构建同一个 tag，
+也不得覆盖已发布 Release 的资产或改写其 notes 中的 SHA-256。
+写入三处：`PROJECT_MASTER_CONTROL.md` §0.4（与 0.1–0.3 并列的总控规则）、
+README 发版章节、`.github/workflows/release.yml` 头部注释。
+§0.4 内注明它与 §0.1 不冲突：§0.1 禁止的是把 `V0.1.1` 当作**产品阶段名**，
+本规则约束的是**发版 tag / Release**。
+代码加固：`Publish release assets` 步骤原本对「Release 已存在」一律 `gh release upload --clobber`，
+会静默替换已发布资产并改写 notes（SHA-256 随之变化），与本规则直接冲突。
+现改为先读 `isDraft`：draft → 仍允许补齐资产（「建 Release 没走完」的合法重试）；
+已发布 → 打印 `::error::` 与 step summary 后 `exit 1`，拒绝覆盖并提示改发新 tag。
+本机验证（不依赖真实发版）：从 workflow YAML 抽出该步骤脚本做 `bash -n` 语法检查通过；
+再用 stub `gh` 跑通三个分支 —— 新 tag → `release create`；draft → `release upload --clobber`
++ `release edit`；已发布 → exit 1，且**完全没有调用** `release upload`（资产未被触碰）。
+
 2026-09-24 | V1-T02 | 提交并同步远端；仓库重新设为 PRIVATE（公开下载暂时下架）
 工作树已提交：`1181e4e feat(v1-t02): dogfooding critical fixes + authoring UX refinement (P0/P1 + P2)`
 （20 个文件，+6328 / −337），已推送到 `origin/main`；提交前对暂存内容做过密钥扫描（无凭据、无用户课程、无日志）。
