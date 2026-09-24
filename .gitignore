@@ -25,6 +25,12 @@ dist/
 # your working course project versioned alongside the code.
 .workbench-project/
 
+# The app's runtime state directory for whichever folder is opened as a
+# workbench project — including the repo root itself. Holds the browser
+# session, AI execution records and index caches: rebuildable local state,
+# never product source, so it must not be committed (the repo is public).
+.workspace/
+
 # ---- OS / editor noise -----------------------------------------------------
 .DS_Store
 **/.DS_Store
