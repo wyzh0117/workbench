@@ -141,6 +141,24 @@ v0.1.1
 唯一例外：Release **尚未发布**（仍是 draft，或建 Release 这一步本身失败）时，
 重跑同一条 workflow 把资产补齐是允许的；但**不得覆盖任何已经对外可见的 Release**。
 
+**强制边界（如实说明）**：本规则目前只在**发版路径**上被强制 ——
+`.github/workflows/release.yml` 发现目标 tag 的 Release 已发布时会直接 `exit 1`，不做任何上传。
+它**不是**由 GitHub 平台强制的：本仓库的 *immutable releases* 开关为**关闭**状态，
+因此有写权限的人仍可绕过 workflow 直接改动已发布版本：
+
+```text
+gh release upload <tag> ... --clobber     覆盖已发布资产（SHA-256 随即改变）
+gh release delete <tag>                   删掉 Release 后再重跑 workflow，
+                                          会以「新 tag」分支重建同一 tag，字节不同
+git push -f origin <tag>                  把 tag 指向另一个 commit
+```
+
+这是本轮**知情的取舍**，不是遗漏：决定暂不开启平台级开关，只保留 workflow 层强制 + 本文档约定。
+若以后要彻底堵住上述绕过路径，在仓库 Settings 开启 immutable releases 即可
+（按 GitHub 官方说明：开启后**新**发布的 Release 资产不可增删改、tag 不可删除或移动，
+并自动附带签名 attestation 供下载者校验；**已存在**的 Release 不受影响，
+关闭该开关也不会让已冻结的 Release 重新可改）。
+
 > 与 §0.1 的区别：本节约束的是**发版用的 git tag / GitHub Release**；
 > §0.1 禁止的是把 `V0.1.1` 当成新的**产品阶段名**。两者不冲突 ——
 > 发版 tag 可以叫 `v0.1.1`，但产品阶段永远只有 V0 / V1 / V2。
