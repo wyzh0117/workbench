@@ -507,7 +507,7 @@ N1
 >
 > 产品状态：**DOGFOOD READY**
 >
-> 分发状态：**PARTIAL / 公开下载暂时下架**（正式 Universal DMG、GitHub Release、固定 latest 直链与 SHA-256 已完成；仓库已按要求重新设为 **private**，匿名访问 Release 返回 404；Developer ID 签名与 Apple 公证未完成。等初步开发确认完成后再重新公开）
+> 分发状态：**PARTIAL / 公开下载已恢复**（正式 Universal DMG、GitHub Release、固定 latest 直链与 SHA-256 已完成；**v0.1.1** 已按最新代码重建并发布，仓库重新设为 **public**，Release 页面与 `/releases/latest/download/...` 对匿名访问者可用；Developer ID 签名与 Apple 公证仍未完成）
 >
 > 下一步：**PAUSE FEATURE DEVELOPMENT**（停止新功能开发，等真实使用反馈再决定下一个任务；不创建 V1-T03）
 >
@@ -1909,6 +1909,26 @@ YYYY-MM-DD | Task | From → To | Summary
 当前：
 
 ```text
+2026-09-25 | V1-T02 | 仓库重新设为 PUBLIC；发布 v0.1.1（按最新代码重建）
+起因：`v0.1.0` 的 DMG 构建自 `90872bd`，落后 `main` 6 个提交（不含 P0/P1/P2 修复），
+因此「可下载的安装包」并不是最新代码；用户要求恢复公开并把下载版本更新到最新。
+为什么不覆盖 v0.1.0：同一 tag 下替换二进制会让已下载过的用户拿到 SHA 不同的同名文件，
+版本号与内容不再对应；按 README 已预告的方式新发 `v0.1.1`，`/releases/latest` 自动改指它，
+`v0.1.0` 保留为历史版本。
+版本提交：`f5fb1a3 chore(release): bump version to 0.1.1`
+（`tauri.conf.json` / `Cargo.toml` / `Cargo.lock` 三处 0.1.0 → 0.1.1，无行为改动）。
+构建：本机 `cargo tauri build --target universal-apple-darwin --bundles app,dmg`，
+`APPLE_SIGNING_IDENTITY="-"` 走 Tauri 官方 ad-hoc 签名路径（与 §34 记载的 v0.1.0 同一条路径）。
+**踩坑记录**：不设置该变量时 Tauri 会整个跳过签名，产物没有 `_CodeSignature/`，
+`codesign --verify --deep --strict` 报「code object is not signed at all」，`codesign -dv` 回落到
+链接器签名（`Identifier=ai_course_workbench-…`）；设置后恢复为
+`Identifier=io.github.wyzh0117.ai-course-workbench` + `Sealed Resources version=2` 并通过校验。
+资产（固定文件名）：`AI-Course-Workbench-macOS.dmg` 10,468,230 字节，
+SHA-256 `801fb7ea27610a8799cc5017e5c960462c76894f4ef7274af299ec0384071857`。
+仓库可见性：`PRIVATE → PUBLIC`（`gh repo edit --visibility public`，已复核 `visibility=PUBLIC`）；
+Release 页面与 `/releases/latest/download/...` 恢复对匿名访问者可用。
+README 同步：Download 入口与「分发状态」改回公开口径，并写明 v0.1.0 不包含本轮修复。
+
 2026-09-24 | V1-T02 | 提交并同步远端；仓库重新设为 PRIVATE（公开下载暂时下架）
 工作树已提交：`1181e4e feat(v1-t02): dogfooding critical fixes + authoring UX refinement (P0/P1 + P2)`
 （20 个文件，+6328 / −337），已推送到 `origin/main`；提交前对暂存内容做过密钥扫描（无凭据、无用户课程、无日志）。
@@ -2593,6 +2613,12 @@ NEXT ACTION = PAUSE FEATURE DEVELOPMENT
 > 公开下载暂时下架 —— Release 页面与 `/releases/latest/download/...` 对匿名访问者均返回 404；
 > Release `v0.1.0` 与其资产**保留在仓库内**（GitHub 不要求仓库 public 才能有 Release，因此无需删除），
 > 等初步开发确认完成后再重新公开。本节以下内容描述的是公开时期的事实与证据，依然成立。
+>
+> **2026-09-25 可见性补充（不改动以下历史事实）**：按用户要求，仓库已重新设为 **PUBLIC**，
+> 公开下载恢复 —— Release 页面与 `/releases/latest/download/...` 对匿名访问者重新可用。
+> 同时新发 **`v0.1.1`**（按当前 `main` 重新构建，含 §35 / §36 的 P0/P1/P2 修复），
+> `/releases/latest` 已指向它；`v0.1.0` 保留为历史版本。构建与签名路径、以及
+> 「未签名 / 未公证、`spctl --assess` 判定 rejected」的如实边界与 §34 记载完全一致。
 
 由用户明确提出而创建。它是一个**平铺任务**，不是新的 Milestone，也不是 V1.1 / Release Phase / Distribution Phase。
 本轮不增加任何课程编辑、AI、发布格式或工作流能力，只把已 DOGFOOD READY 的 Workbench 做成可下载安装的正式分发包。
@@ -2756,6 +2782,51 @@ Actions 按 commit SHA 固定。配置好 Secrets 后同一条 workflow 会自�
 通过安装 smoke 的 DMG；Release 建好后又重新启用（当前状态 active）。
 **因此后续推送 `v*` tag 会触发一次 CI 构建**：在 Secrets 配好之前它会产出一个未签名 DMG，
 配好之后才会产出已签名已公证的 DMG。
+
+### 34.6.1 v0.1.1 复发行（2026-09-25）
+
+`v0.1.0` 的 DMG 构建自 `90872bd`，落后 `main` 6 个提交，因此下载页上的安装包**不含** P0/P1/P2 修复。
+按用户要求恢复公开并把下载版本更新到最新，做法是**新发 `v0.1.1`**，不覆盖 `v0.1.0`
+（同一 tag 换二进制会让已下载过的用户拿到 SHA 不同的同名文件，版本号与内容不再对应）。
+
+```text
+仓库可见性：PRIVATE → PUBLIC（gh repo edit --visibility public，已复核 visibility=PUBLIC）
+版本提交：  f5fb1a3 chore(release): bump version to 0.1.1
+构建：      cargo tauri build --target universal-apple-darwin --bundles app,dmg
+             APPLE_SIGNING_IDENTITY="-"（Tauri 官方 ad-hoc 签名路径，与 34.5 同一条）
+Release Tag：v0.1.1
+Release 标题：AI Course Workbench v0.1.1 — macOS (Universal)
+Release 状态：已发布（isDraft=false, isPrerelease=false），/releases/latest 指向它
+Release Assets：
+  AI-Course-Workbench-macOS.dmg           10,468,230 bytes
+  AI-Course-Workbench-macOS.dmg.sha256    96 bytes
+固定直链：https://github.com/wyzh0117/workbench/releases/latest/download/AI-Course-Workbench-macOS.dmg
+```
+
+本次实际执行的验证（只写真实跑过的项）：
+
+```text
+deno task check                     通过
+deno task test                      266 passed / 0 failed
+cargo test                          55 passed / 0 failed
+lipo -archs                         x86_64 arm64
+codesign --verify --deep --strict   通过（ad-hoc）
+codesign -dv                        Identifier=io.github.wyzh0117.ai-course-workbench
+                                    Signature=adhoc, TeamIdentifier=not set
+                                    Info.plist entries=16, Sealed Resources version=2
+spctl --assess --type execute       rejected（未签名 / 未公证，与 34.5 一致）
+hdiutil verify                      VALID
+启动 smoke                          从 DMG 取出 App → 指定项目目录启动 → 存活 10s 无崩溃
+                                    → SIGTERM graceful 退出；--project-dir 指向不存在目录时
+                                    按文档在开窗前退出并打印原因
+```
+
+本版**未重做** §34.7 / §34.8 记录过的完整交互安装走查（拖入 Applications → 三栏工作台 →
+AI 助手 → 关闭 → 重启），因此 §34.7 表格中「安装 / 首启 / 三栏工作台 / 关闭重启」这些结论
+仍然只属于 v0.1.0 那一轮，不随本版自动继承。
+
+推送 `v0.1.1` tag 前同样按上面记载的做法临时停用了 `.github/workflows/release.yml`
+（避免 CI 用未签名的并行产物覆盖本机已验证的 DMG），Release 建好后重新启用（active）。
 
 ## 34.7 交付与验证证据
 

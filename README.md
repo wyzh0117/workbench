@@ -8,11 +8,9 @@
 
 ## Download
 
-> **当前状态：公开下载已暂时下架。** 仓库已设为 **private**，Release 与 DMG 只对拥有仓库权限的人可见，
-> 上面的公开链接对普通访问者会返回 404，`/releases/latest/download/...` 不再对外可用。
-> 待初步开发确认完成后，再重新公开发布。
+> **当前状态：公开下载已恢复。** 仓库已重新设为 **public**，下面的链接对匿名访问者可用。
 
-**（开发完成、仓库重新公开后）下载最新 macOS 安装包（DMG）：**
+**下载最新 macOS 安装包（DMG）：**
 
 | 入口 | 链接 |
 |---|---|
@@ -21,18 +19,21 @@
 
 把第二个链接粘贴到 Safari / Chrome 回车，浏览器就会开始下载最新的 `AI-Course-Workbench-macOS.dmg`，不需要先找 Assets，也不需要判断版本号。
 
-### 当前已发布版本（暂时不对公开访问者可见）
+### 当前已发布版本
 
 ```text
-Release Tag ：v0.1.0
+Release Tag ：v0.1.1
 文件名      ：AI-Course-Workbench-macOS.dmg（固定不变，版本号只在 Tag 与 Release Notes 里）
-大小        ：10,357,233 字节
-SHA-256     ：59597a342109785e190d9dc8194d841744249dbbc46498ee594572d2d2412573
-仓库可见性  ：private（Release 保留在仓库内，等初步开发确认完成后再重新公开）
+大小        ：10,468,230 字节
+SHA-256     ：801fb7ea27610a8799cc5017e5c960462c76894f4ef7274af299ec0384071857
+仓库可见性  ：public（Release 页面与 latest 直链对匿名访问者可用）
 ```
 
-因为文件名固定不变，以后重新公开并发布 `v0.1.1`、`v0.2.0` 时，上面那条「直接下载最新 DMG」链接**依然有效**，
+因为文件名固定不变，以后发布 `v0.2.0` 等后续版本时，上面那条「直接下载最新 DMG」链接**依然有效**，
 永远指向最新版本；只有 Release Notes 与 SHA-256 会随版本更新。
+
+`v0.1.1` 是按当前 `main` 重新构建的最新安装包：`v0.1.0` 构建自较早的提交，**不包含**本轮
+dogfooding 修复与交互重构（逐项见该 Release 的「本版变更」）。
 
 ### 系统要求与架构
 
@@ -102,8 +103,7 @@ BLOCKER            = 缺正式 macOS signing / notarization credentials
 
 - **已完成**：正式 Release 构建（非 Debug）、Universal（Apple Silicon + Intel）DMG、
   GitHub Release、固定 latest 直链、SHA-256 校验。
-- **当前可见性**：仓库为 **private**，Release 资产暂时只对拥有仓库权限的人可见
-  （匿名访问 Release 页面与 latest 直链均返回 404）；等初步开发确认完成后再重新公开。
+- **当前可见性**：仓库为 **public**，Release 页面与 latest 直链对匿名访问者可用。
 - **未完成**：Developer ID Application 签名与 Apple 公证（notarization / stapling）。
   本机 `security find-identity -v -p codesigning` 返回 0 valid identities，没有可用的
   Apple Developer Program 分发凭据，因此**不能宣称「普通用户无安全阻碍安装」**，
@@ -127,13 +127,13 @@ BLOCKER            = 缺正式 macOS signing / notarization credentials
 - 分发状态：**PARTIAL**（DMG / Release / 固定直链已完成；签名与公证未完成）
 - V0 状态：**V0 CLOSED；V0-T01 / V0-T02 / V0-T03 / V0-T04 全部 VERIFIED**
 - NEXT ACTION：**PAUSE FEATURE DEVELOPMENT**（停止新功能开发，等真实使用反馈再决定下一个任务）
-- 分发剩余工作（后续候选任务，等用户批准后再启动）：签名 / 公证 / Release 重传 / 安装 smoke
+- 分发剩余工作（后续候选任务，等用户批准后再启动）：签名 / 公证 / 安装 smoke
 
 ---
 
 ## 开发者运行
 
-以下内容面向参与开发的工程师。**普通用户请在上面的 Download 入口重新公开后再下载安装包。**
+以下内容面向参与开发的工程师。**普通用户请从上面的 Download 入口下载安装包。**
 
 需要 Deno 2：
 
