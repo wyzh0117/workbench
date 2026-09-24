@@ -2989,7 +2989,7 @@ AI 助手 → 关闭 → 重启），因此 §34.7 表格中「安装 / 首启 /
 | # | 复核发现 | 严重度 | 本轮处理 |
 |---|---|---|---|
 | 1 | Release Notes 的「首次打开说明」只给了「右键 → 打开」，并断言「此后双击即可正常打开」；**在 macOS 15 (Sequoia) 及更新版本上这条已失效**（Apple 官方公告：Control-click 不再能绕过 Gatekeeper，必须到「系统设置 → 隐私与安全性」） | 高 | **已修**：README 与 Release Notes 都改为按版本分两条路径（macOS 15/26+ 走「系统设置 → 隐私与安全性 → 仍要打开」；macOS 11–14 走右键打开），并去掉「此后双击即可正常打开」这种一刀切说法；线上 Release Notes 已用 `gh release edit` 更新（资产未动，SHA 不变）；`release.yml` 自动生成的 Notes 同步修正 |
-| 2 | `release.yml` 在已存在 Release 时走 `--clobber` 覆盖资产，却不重写 Notes，会让 Notes 里记录的 SHA-256 与新资产不一致 | 中 | **已修**：覆盖资产后追加 `gh release edit --notes-file dist/release-notes.md` |
+| 2 | `release.yml` 在已存在 Release 时走 `--clobber` 覆盖资产，却不重写 Notes，会让 Notes 里记录的 SHA-256 与新资产不一致 | 中 | **当时已修**：覆盖资产后追加 `gh release edit --notes-file dist/release-notes.md`。**（该做法现已被 §0.4 取代：已发布的 Release 不再允许覆盖，workflow 改为直接拒绝并 `exit 1`。此行保留为当时的历史记录。）** |
 | 3 | `APPLE_API_KEY_PATH` 被当成 repository secret，但它必须指向 runner 上真实存在的 `.p8`，照原样配是不可用的（「配好 Secrets 就不用改代码」只对 Apple ID 路线成立） | 中 | **已修**：新增「Materialize App Store Connect API key (optional)」步骤，把 `APPLE_API_KEY_P8` 写成 runner 临时目录的 `.p8` 并经 `GITHUB_ENV` 传入；Apple ID 路线保持原样，两条路线都在注释里写明 |
 | 4 | 公开文档里残留上一轮的临时验收路径与实例名（系统临时目录下的测试项目名、锁文件 owner 等） | 低 | **已修**：改为通用描述；保留了对真实 commit 主题的引用（那是对历史的如实引用） |
 | 5 | 二进制内嵌 514 个本机 Cargo registry 绝对路径（Rust panic 位置元数据）；无项目路径泄漏 | 低 | **未修**（记为 Backlog）：修它需要 `--remap-path-prefix` 重新构建，会改变 SHA 从而作废已发布的 Release 与已记录校验值，收益不足以抵消 |
