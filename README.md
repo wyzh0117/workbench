@@ -162,6 +162,17 @@ cargo tauri build --target universal-apple-darwin --bundles app,dmg
 
 DMG 内的对外资产名固定为 `AI-Course-Workbench-macOS.dmg`（版本号只出现在 Release Tag、Release Notes 与 App bundle metadata 中），这样 `/releases/latest/download/AI-Course-Workbench-macOS.dmg` 才能长期指向最新版本。
 
+**发版规则：已发布的 tag 不可变。** 一个 tag 一旦发布，它和它的 DMG 就冻结了：
+
+```text
+发现问题 → 修代码 → 新 commit → 新 tag → 新 Release
+（例如 v0.1.0 发现 Bug → 修复 → v0.1.1）
+```
+
+**不要**用修复后的代码重新构建同一个 tag，也不要覆盖已发布 Release 的资产。文件名固定不变，
+但**同一个版本号的字节永远不变** —— 只有这样，用户下载到的文件才能长期和 Release Notes 里的
+SHA-256 对得上。（完整规则见 `PROJECT_MASTER_CONTROL.md` §0.4。）
+
 `--project-dir`（可写 `-p <路径>`）必须是绝对路径，目录不存在或参数缺值会在开窗前退出并打印原因。不传参数时应用读取 `.workspace/session.json` 恢复上次的项目与阅读位置（当前课、模式、右栏、所在视图）。
 
 需要另一个隔离项目（例如验收用的临时课程）时可以指定根目录与端口：

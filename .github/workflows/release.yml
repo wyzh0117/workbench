@@ -22,6 +22,14 @@ name: Release macOS DMG
 # 因为 README 与用户手里的「固定直链」依赖它：
 #   https://github.com/<OWNER>/<REPO>/releases/latest/download/AI-Course-Workbench-macOS.dmg
 # 不要改成带版本号的文件名。
+#
+# 发版规则（PROJECT_MASTER_CONTROL.md §0.4）：已发布的 tag 不可变。
+# 一个 tag 一旦发布，它和它的资产就冻结；发现问题要「修代码 → 新 commit → 新 tag → 新 Release」，
+# 不能用新代码重新构建同一个 tag。
+#
+# ⚠️ 风险点：下面「Release 已存在」分支里的 `gh release upload --clobber` 会替换已发布资产
+# 并改写 notes（SHA-256 随之变化）。因此**不要对已经发布的 tag 重跑本 workflow**。
+# 该分支的本意只是「同一 tag 的 Release 还没建成功时补齐资产」，不是用来发新版内容的。
 
 on:
   workflow_dispatch:
