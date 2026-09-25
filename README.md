@@ -32,8 +32,9 @@ SHA-256     ：801fb7ea27610a8799cc5017e5c960462c76894f4ef7274af299ec0384071857
 因为文件名固定不变，以后发布 `v0.2.0` 等后续版本时，上面那条「直接下载最新 DMG」链接**依然有效**，
 永远指向最新版本；只有 Release Notes 与 SHA-256 会随版本更新。
 
-`v0.1.1` 是按当前 `main` 重新构建的最新安装包：`v0.1.0` 构建自较早的提交，**不包含**本轮
-dogfooding 修复与交互重构（逐项见该 Release 的「本版变更」）。
+`v0.1.1` 是已发布并**冻结**的公开安装包（tag / DMG / SHA-256 不变）。它**不是**从当前
+`main` 或开发分支 `v1-t03-t04` 的 tip 构建的：那些分支上还有**尚未发版**的 V1-T03 / V1-T04
+改动。`v0.1.0` 构建自更早的提交；若要把 T03/T04 发给用户，必须新 commit → 新 tag → 新 Release。
 
 ### 系统要求与架构
 
@@ -120,17 +121,18 @@ BLOCKER            = 缺正式 macOS signing / notarization credentials
 ## 当前开发位置
 
 - **Latest public release：`v0.1.1`**（上面 Download 区的 DMG / SHA-256 / 直链均指向该已发布 tag；**未改动**）
-- 当前开发分支：`v1-t03-t04` — 含**尚未发布**的 V1-T03（已 VERIFIED）与进行中的 V1-T04；**不等于**已发布的 `v0.1.1`
+- 当前开发分支：`v1-t03-t04` — 含**尚未发布**的 V1-T03 与 V1-T04（均已 VERIFIED）；**不等于**已发布的 `v0.1.1`
 - 当前版本：**V1（ACTIVE）**
 - V1-T01 — V0 Hardening & UX Polish：**VERIFIED**
 - V1-T02 — Dogfooding Critical Fixes & Authoring UX Refinement：**VERIFIED**
 - V1-T03 — Course Authoring & Project Structure Closure：**VERIFIED**
+- V1-T04 — Workspace Explorer & Existing-Folder Adoption：**VERIFIED**
 - 当前任务：**V1-T04 — Workspace Explorer & Existing-Folder Adoption**
-- 当前状态：**IN PROGRESS**
-- 产品状态：**DOGFOOD READY**
+- 当前状态：**VERIFIED**
+- 产品状态：**DOGFOOD READY — ROUND 3**
 - 分发状态：**PARTIAL**（DMG / Release / 固定直链已完成；签名与公证未完成）
 - V0 状态：**V0 CLOSED；V0-T01 / V0-T02 / V0-T03 / V0-T04 全部 VERIFIED**
-- NEXT ACTION：**执行 V1-T04**
+- NEXT ACTION：**PAUSE FEATURE DEVELOPMENT**（不创建 V1-T05；先真实使用）
 - 分发剩余工作（后续候选任务，等用户批准后再启动）：签名 / 公证 / 安装 smoke
 
 ---

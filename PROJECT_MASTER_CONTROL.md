@@ -564,19 +564,19 @@ N1
 >
 > 当前任务：**V1-T04 — Workspace Explorer & Existing-Folder Adoption**
 >
-> 当前状态：**IN PROGRESS**
+> 当前状态：**VERIFIED**
 >
-> 产品状态：**DOGFOOD READY**
+> 产品状态：**DOGFOOD READY — ROUND 3**
 >
-> 分发状态：**PARTIAL / 公开下载已恢复**（正式 Universal DMG、GitHub Release、固定 latest 直链与 SHA-256 已完成；**Latest public release = v0.1.1**，冻结；分支 `v1-t03-t04` 含未发布 T03（已 VERIFIED）与进行中的 T04；Developer ID 签名与 Apple 公证仍未完成）
+> 分发状态：**PARTIAL / 公开下载已恢复**（正式 Universal DMG、GitHub Release、固定 latest 直链与 SHA-256 已完成；**Latest public release = v0.1.1**，冻结；分支 `v1-t03-t04` 含未发布 T03+T04（均 VERIFIED），**不等于** v0.1.1 安装包字节；Developer ID 签名与 Apple 公证仍未完成）
 >
-> 下一步：**执行 V1-T04**
+> 下一步：**PAUSE FEATURE DEVELOPMENT**（不创建 V1-T05）
 >
 > V0 状态保持：**V0 CLOSED；V0-T01 / V0-T02 / V0-T03 / V0-T04 全部 VERIFIED**
 >
-> V1-T01 状态保持：**VERIFIED**（见 **§33**）；V1-T02 状态保持：**VERIFIED**（见 **§29** / **§35** / **§36**）；V1-T03 状态保持：**VERIFIED**（ego-browser §21：26 PASS / 1 N-A / 0 FAIL；§9.3 真鼠 Drag Handle PASS；Tauri WebView 拖拽与原生非法文件夹 picker toast 记 BACKLOG，非 BLOCKER）；
+> V1-T01 状态保持：**VERIFIED**（见 **§33**）；V1-T02 状态保持：**VERIFIED**（见 **§29** / **§35** / **§36**）；V1-T03 状态保持：**VERIFIED**（ego-browser §21：26 PASS / 1 N-A / 0 FAIL；§9.3 真鼠 Drag Handle PASS；Tauri WebView 拖拽与原生非法文件夹 picker toast 记 BACKLOG，非 BLOCKER）；V1-T04 状态保持：**VERIFIED**（见 **§37**；ego-browser CourseFolder §41 走查；原生 folder picker N-A；Strategy A 原地接管；自动化 gate 全绿）；
 > 此前 macOS Distribution & Public Release Closure 的完成事实保留在 **§34**（该范围本轮不执行，等用户再次批准后另行编号）。
-> 不发明 `V1-T03+04` 编号。
+> 不发明 `V1-T03+04` / `V1-T05` 编号。
 
 ---
 
@@ -1971,6 +1971,16 @@ YYYY-MM-DD | Task | From → To | Summary
 当前：
 
 ```text
+2026-09-25 | V1-T04 | IN PROGRESS → VERIFIED；NEXT ACTION = PAUSE FEATURE DEVELOPMENT
+按 Combined Package §2.3：V1-T03 / V1-T04 = VERIFIED；CURRENT STATUS = VERIFIED；
+PRODUCT STATE = DOGFOOD READY — ROUND 3；OPEN BLOCKERS = NONE；不创建 V1-T05。
+正式 gate：deno task check OK；deno task test 326 passed；cargo test 68 passed；cargo build OK。
+§41 ego-browser CourseFolder 走查（TaskSpace 33）：scan → Explorer 预览 → Mapping 取消/改映射 →
+Confirm → Strategy A 原地接管；原文件 SHA-256 不变；reload 后结构一致。原生 folder picker 在
+浏览器 N-A（toast 已验证）→ BACKLOG，非 BLOCKER（同 T03 接受浏览器证据的裁定方式）。
+Latest public release 仍为 **v0.1.1**（未改 tag / Release）。证据：`t04-desktop-acceptance.md` +
+`combined-completion-report.md`（§37）。
+
 2026-09-25 | V1-T03 → V1-T04 | IN PROGRESS → VERIFIED → T04 IN PROGRESS
 Controller 裁定：ego-browser Real Desktop Acceptance（§21）26 PASS / 1 N-A / 0 FAIL；
 §9.3 Drag Handle 以真实 `page.mouse` 在 `.block-handle` 上 PASS；Step 1（原生非法文件夹）
@@ -2373,11 +2383,12 @@ PROJECT_MASTER_CONTROL.md
 
 # 29. 当前唯一 NEXT ACTION
 
-> **V0 仍为 CLOSED；V0-T01 / V0-T02 / V0-T03 / V0-T04 全部 VERIFIED。V1 已 ACTIVE。V1-T01 — V0 Hardening & UX Polish = VERIFIED；V1-T02 — Dogfooding Critical Fixes & Authoring UX Refinement = VERIFIED（两次实施：P0 + P1 见 §35，P2 见 §36）；V1-T03 — Course Authoring & Project Structure Closure = VERIFIED。当前唯一任务为 V1-T04 — Workspace Explorer & Existing-Folder Adoption。**
+> **V0 仍为 CLOSED；V0-T01 / V0-T02 / V0-T03 / V0-T04 全部 VERIFIED。V1 已 ACTIVE。V1-T01 / V1-T02 / V1-T03 / V1-T04 全部 VERIFIED。不创建 V1-T05。下一步唯一动作是暂停功能开发，交给真实使用。**
 
-V1-T01 / V1-T02 / V1-T03 的实现、自动化门禁与真实走查证据见 §33 / §35 / §36 与 `t03-verification.md` / `t03-desktop-acceptance.md`。
-按 Combined Development Package §2.2，T03 DoD 已达成并 VERIFIED，总控已切换到 **V1-T04**
-（不发明 `V1-T03+04`）。
+V1-T01 / V1-T02 / V1-T03 / V1-T04 的实现、自动化门禁与真实走查证据见 §33 / §35 / §36 / §37 与
+`t03-desktop-acceptance.md` / `t04-desktop-acceptance.md` / `combined-completion-report.md`。
+按 Combined Development Package §2.3，T04 DoD 已达成并 VERIFIED；总控收口为
+**PAUSE FEATURE DEVELOPMENT**（不发明 `V1-T03+04` / `V1-T05`）。
 
 此前草拟并已实施完成的 **V1-T02 — macOS Distribution & Public Release Closure** 本轮不再执行，
 也不继续占用该编号；但它已完成的事实与未完成的边界**如实保留**在 §34 与 README「分发状态」中
@@ -2389,22 +2400,23 @@ V1-T01 / V1-T02 / V1-T03 的实现、自动化门禁与真实走查证据见 §3
 V0 CLOSED
 V0-T01 / V0-T02 / V0-T03 / V0-T04  VERIFIED
 V1 ACTIVE
-V1-T01 / V1-T02 / V1-T03  VERIFIED
+V1-T01 / V1-T02 / V1-T03 / V1-T04  VERIFIED
 CURRENT TASK    V1-T04 — Workspace Explorer & Existing-Folder Adoption
-CURRENT STATUS  IN PROGRESS
-PRODUCT STATE   DOGFOOD READY
+CURRENT STATUS  VERIFIED
+PRODUCT STATE   DOGFOOD READY — ROUND 3
 DISTRIBUTION    PARTIAL（Latest public release = v0.1.1 冻结；签名 / 公证为后续候选任务）
-OPEN BLOCKERS   NONE（T03 关闭条件已满足）
-BACKLOG         Tauri WebView pointer-reorder 确认；原生 invalid-folder picker toast（Tauri）
+OPEN BLOCKERS   NONE
+BACKLOG         Tauri WebView pointer-reorder；原生 folder picker / invalid-folder toast（Tauri）；
+                Tauri WebView Explorer/Adopt smoke
 ```
 
 下一步唯一动作：
 
 ```text
-执行 V1-T04
+PAUSE FEATURE DEVELOPMENT
 ```
 
-纪律：整个过程始终只有一个当前任务 `V1-T04`，不创建 `V1-T03+04` / `V1-T04-A` / Fix Phase / 新 Milestone。
+纪律：不自动进入分页 / PPT / 搜索 / 模板；不创建 `V1-T05` / `V1-T03+04` / Fix Phase / 新 Milestone。
 **不需要重新开发 Workbench 本体即可回到分发工作**（见 §34 的补做步骤）。
 
 注意：Dogfooding 是产品使用状态，不是新的产品阶段；不得创建
@@ -2431,12 +2443,13 @@ CURRENT TASK
 V1-T04 — Workspace Explorer & Existing-Folder Adoption
 
 CURRENT STATUS
-IN PROGRESS
-PRODUCT STATE = DOGFOOD READY
+VERIFIED
+PRODUCT STATE = DOGFOOD READY — ROUND 3
 DISTRIBUTION STATE = PARTIAL（签名 / 公证为后续候选任务，本轮不执行）
 V0 = CLOSED；V0-T01 / V0-T02 / V0-T03 / V0-T04 全部 VERIFIED
 V1-T01 = VERIFIED（§33）；V1-T02 = VERIFIED（§29 / §35 第一次实施 / §36 第二次实施）；
-V1-T03 = VERIFIED（ego-browser §21 26/27 PASS + 1 N-A；§9.3 page.mouse Drag Handle PASS）
+V1-T03 = VERIFIED（ego-browser §21 26/27 PASS + 1 N-A；§9.3 page.mouse Drag Handle PASS）；
+V1-T04 = VERIFIED（§37；Explorer + Strategy A 原地接管；ego-browser CourseFolder 走查）
 
 DONE / IMPLEMENTED
 - Canonical / Domain / Service 主体
@@ -2489,10 +2502,14 @@ DONE / IMPLEMENTED
   Drag Handle（自动化 + ego-browser 真鼠）、媒体插入锚点、Media display name / preview、
   Placeholder→状态、工作台入口、Requirement 响应式与真实 anchor、destructive 样式统一；
   自动化 gate 全绿；ego-browser §21 验收 26 PASS / 1 N-A / 0 FAIL
+- V1-T04：导入已有文件夹入口、只读 folder.scan、Workspace Explorer 预览、Mapping Preview（建议≠事实）、
+  Confirm 后 Strategy A 原地接管（project.json + .workspace + assets/{id}-*；原文件不移动）、
+  Source/Asset/Canonical 语义、checksum 复用与同名不同内容不静默覆盖、symlink 边界；
+  自动化 gate 全绿（Deno 326 / Rust 68）；ego-browser CourseFolder §41 走查通过（原生 picker N-A）
 
 OPEN BLOCKERS
-- NONE（V1-T03 关闭条件已满足；按 §2.2 已切换 CURRENT TASK 到 V1-T04）
-- 后续候选任务遗留（不是 T04 关闭条件，也不阻塞已 VERIFIED 的 V1-T01 / V1-T02 / V1-T03）：缺正式 macOS signing / notarization credentials
+- NONE（V1-T03 / V1-T04 关闭条件已满足；按 §2.3 收口为 PAUSE FEATURE DEVELOPMENT）
+- 后续候选任务遗留（不是 T04 关闭条件，也不阻塞已 VERIFIED 的 V1-T01…T04）：缺正式 macOS signing / notarization credentials
   （本机 0 valid code-signing identities；无 Developer ID Application 证书，无公证凭据）
   → 当前已发布的 DMG 为 ad-hoc 签名，`spctl --assess` 判定 rejected；
      不得宣称 PUBLIC RELEASE READY / 「普通用户无安全阻碍安装」
@@ -2501,9 +2518,12 @@ BACKLOG
 - Tauri WebView pointer-reorder confirmation（ego-browser Chromium 已 PASS；尚未在 WKWebView 内复测）
 - 原生 invalid-folder picker toast（Tauri 目录选择器选空/非法文件夹时的用户可见 toast；浏览器 Step 1 N-A，
   自动化 `dogfooding_test.ts` / Task 1 已覆盖契约文案）
+- 原生 folder picker 交互式 §41（浏览器 N-A；toast + 绝对路径 importExistingFolder 已验证）
+- Tauri WebView Explorer / Mapping / Adopt smoke（本轮未在 WKWebView 内复测）
 
 AFTER CURRENT TASK
-完成本轮 V1-T04 后按 Combined Development Package §2.3 收口（不发明 `V1-T03+04`）。
+T03+T04 已按 Combined Development Package §2.3 收口；**不创建 V1-T05**。
+下一步先真实使用（DOGFOOD READY — ROUND 3）。
 macOS 签名 / 公证 / Release 重传 / 安装 smoke 仍为后续候选任务，等用户再次明确批准后才编号与启动；
 不重新打开 V0。
 
@@ -2514,9 +2534,9 @@ V2
 NOT ACTIVE
 
 NEXT ACTION
-执行 V1-T04
-（V1-T01 / V1-T02 / V1-T03 = VERIFIED；CURRENT TASK = V1-T04 IN PROGRESS；
- PRODUCT STATE = DOGFOOD READY；Latest public release = v0.1.1；V0 保持 CLOSED，四个 V0 任务保持 VERIFIED。）
+PAUSE FEATURE DEVELOPMENT
+（V1-T01 / V1-T02 / V1-T03 / V1-T04 = VERIFIED；CURRENT STATUS = VERIFIED；
+ PRODUCT STATE = DOGFOOD READY — ROUND 3；Latest public release = v0.1.1；V0 保持 CLOSED，四个 V0 任务保持 VERIFIED；不创建 V1-T05。）
 ```
 
 ---
@@ -3372,3 +3392,68 @@ NEXT ACTION = PAUSE FEATURE DEVELOPMENT
 `cargo tauri build --debug`）全绿，无遗留阻断。
 按任务卡：**到此停止功能开发**（不创建 V1-T03），等真实使用反馈再决定下一个任务；
 macOS 签名 / 公证 / Release 重传 / 安装 smoke 仍为后续候选任务（见 §34、§29）。
+
+---
+
+# 37. V1-T03 + V1-T04 Combined Closure（VERIFIED）
+
+> 完整模板见 `.superpowers/sdd/2026-09-25-v1-t03-t04-authoring-and-explorer/combined-completion-report.md`。
+> 本节目的是把 Combined Package §2.3 / §44 收口结论写进总控。
+
+## 37.1 Control Position
+
+```text
+CURRENT VERSION V1（ACTIVE）
+V1-T03          VERIFIED
+V1-T04          VERIFIED
+CURRENT TASK    V1-T04 — Workspace Explorer & Existing-Folder Adoption
+CURRENT STATUS  VERIFIED
+PRODUCT STATE   DOGFOOD READY — ROUND 3
+OPEN BLOCKERS   NONE
+NEXT ACTION     PAUSE FEATURE DEVELOPMENT
+```
+
+不创建 V1-T05。Latest public release 仍为 **v0.1.1**（未改 tag / Release / DMG）。
+
+## 37.2 Strategy A
+
+原地接管：在用户所选文件夹写入 `project.json` + `.workspace`，确认后的媒体复制到 `assets/{id}-{filename}`；
+**不**移动 / 重命名 / 删除原文件。拒绝在已有 `project.json` 的目录上重复接管。
+未选 Strategy B（旁路 managed project / Source Root），以避免第二根目录与双向同步幻觉，并保持 Canonical First。
+
+## 37.3 Stage Operation Guide（摘要）
+
+入口仅在 **课程地图** Stage 标题区：＋ 新阶段 / ✎ 重命名 / ↑↓ 调序 / ⋯→删除。
+空阶段二次确认后删除；非空阶段提示先移课，不级联删除。`code` 与显示标题分离。
+
+## 37.4 Project Folder Contract（摘要）
+
+- 合法项目 = 可读且通过校验的 `project.json`（Canonical Truth）
+- `.workspace` = 可重建本地状态
+- `project.bak` = 备份 / 恢复产物，**不是**合法性必要条件
+
+## 37.5 Verification
+
+```text
+deno task check     OK
+deno task test      326 passed
+cargo test          68 passed
+cargo build         OK
+```
+
+§41 Real Folder Import：ego-browser TaskSpace 33 + `tests/fixtures/CourseFolder` 副本；
+原生 folder picker 浏览器 N-A（toast 已验证）→ BACKLOG，非 BLOCKER。
+证据：`t04-desktop-acceptance.md`。
+
+§43 回归：Stage/Block/Media/Requirement/Flow/Grid/Preview/Autosave/Recovery/Lock/External/AI/Export/Session
+均有既有自动化覆盖；本轮 UI 复走 T04 导入链路与 session restore，其余未再人工走 UI。
+
+## 37.6 Conclusion
+
+```text
+V1-T03 = VERIFIED
+V1-T04 = VERIFIED
+PRODUCT STATE = DOGFOOD READY — ROUND 3
+OPEN BLOCKERS = NONE
+NEXT ACTION = PAUSE FEATURE DEVELOPMENT
+```

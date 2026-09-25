@@ -166,6 +166,64 @@ Deno.test("scanFolder isolates unreadable entries without failing the tree", asy
   }
 });
 
+Deno.test("scanFolder degrades an unreadable single file without failing siblings (§40)", async () => {
+  const root = await Deno.makeTempDir({ prefix: "acw-t04-unreadable-file-" });
+  const lockedFile = join(root, "locked.md");
+  try {
+    await Deno.writeTextFile(join(root, "ok.md"), "# ok\n");
+    await Deno.writeTextFile(lockedFile, "secret");
+    await Deno.chmod(lockedFile, 0o000);
+
+    const report = await scanFolder(root);
+    const map = byRelative(report.entries);
+    assert(map.has("ok.md"), "readable sibling must still be scanned");
+    assert(map.get("ok.md")?.suggested_role === "lesson", "readable file keeps role");
+    const lockedEntry = map.get("locked.md");
+    assert(lockedEntry, "unreadable file must still appear as a degraded entry");
+    assert(
+      Boolean(lockedEntry.error) && lockedEntry.suggested_role === "unsupported",
+      "unreadable file must be degraded, not throw",
+    );
+    assert(
+      !(await Deno.stat(join(root, "project.json")).then(() => true).catch(() => false)),
+      "unreadable-file scan must not create project.json",
+    );
+  } finally {
+    try {
+      await Deno.chmod(lockedFile, 0o600);
+    } catch { /* best-effort restore for cleanup */ }
+    await Deno.remove(root, { recursive: true });
+  }
+});
+
+Deno.test("CourseFolder fixture (§41) scans as nested stages with md/png/mp4/docx/pdf roles", async () => {
+  const fixture = new URL("./fixtures/CourseFolder", import.meta.url);
+  const root = Deno.build.os === "windows"
+    ? decodeURIComponent(fixture.pathname.replace(/^\//, ""))
+    : decodeURIComponent(fixture.pathname);
+  const before = await fingerprintTree(root);
+  const report = await scanFolder(root);
+  const after = await fingerprintTree(root);
+  assert(
+    JSON.stringify([...before.entries()].sort()) ===
+      JSON.stringify([...after.entries()].sort()),
+    "fixture scan must be read-only",
+  );
+  const map = byRelative(report.entries);
+  assert(map.get("01-基础")?.suggested_role === "stage", "01-基础 → stage");
+  assert(map.get("02-进阶")?.suggested_role === "stage", "02-进阶 → stage");
+  assert(map.get("01-基础/导论.md")?.suggested_role === "lesson", "导论.md → lesson");
+  assert(map.get("01-基础/intro.png")?.suggested_role === "asset", "intro.png → asset");
+  assert(map.get("02-进阶/demo.mp4")?.suggested_role === "asset", "demo.mp4 → asset");
+  assert(map.get("01-基础/大纲.docx")?.suggested_role === "reference", "大纲.docx → reference");
+  assert(map.get("总体说明.pdf")?.suggested_role === "reference", "总体说明.pdf → reference");
+  assert(map.get("02-进阶/第二课.md")?.suggested_role === "lesson", "第二课.md → lesson");
+  assert(
+    !(await Deno.stat(join(root, "project.json")).then(() => true).catch(() => false)),
+    "fixture must remain without project.json after scan",
+  );
+});
+
 Deno.test("folder.scan command is read-only and does not require an open project", async () => {
   const root = await Deno.makeTempDir({ prefix: "acw-t04-cmd-" });
   const serviceRoot = await Deno.makeTempDir({ prefix: "acw-t04-svc-" });
