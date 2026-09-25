@@ -63,7 +63,27 @@ const SESSION_READER_KEYS = [
   "left_collapsed",
   "right_collapsed",
   "tabs",
+  // V1-T04 Explorer chrome (§39) — workspace/session only, never Canonical.
+  "explorer_filter",
+  "explorer_expanded",
+  "explorer_recent",
 ];
+
+/** Cap persisted explorer path lists so session sidecars stay small. */
+function normalizeExplorerPathList(value, limit = 64) {
+  if (!Array.isArray(value)) return [];
+  const out = [];
+  const seen = new Set();
+  for (const item of value) {
+    if (typeof item !== "string") continue;
+    const path = item.trim();
+    if (!path || path.length > 1024 || seen.has(path)) continue;
+    seen.add(path);
+    out.push(path);
+    if (out.length >= limit) break;
+  }
+  return out;
+}
 /** High-level commands that must carry the selected project directory. */
 const NATIVE_PROJECT_COMMANDS = new Set([
   "project.open",
@@ -1143,6 +1163,9 @@ class WorkbenchStore {
       left_collapsed: this.ui.leftCollapsed,
       right_collapsed: this.ui.rightCollapsed,
       tabs: clone(this.tabs),
+      explorer_filter: String(this.ui.explorerFilter || ""),
+      explorer_expanded: normalizeExplorerPathList(this.ui.explorerExpanded),
+      explorer_recent: normalizeExplorerPathList(this.ui.explorerRecent, 8),
     };
   }
   defaultReaderState(project, route = "overview") {
@@ -1161,6 +1184,9 @@ class WorkbenchStore {
       tabs: activeId
         ? [{ content_item_id: activeId, mode: "writing", pinned: false, scroll_top: 0 }]
         : [],
+      explorer_filter: "",
+      explorer_expanded: [],
+      explorer_recent: [],
     };
   }
   normalizeReaderState(project, candidate = {}, route = "overview") {
@@ -1210,6 +1236,11 @@ class WorkbenchStore {
       left_collapsed: Boolean(value.left_collapsed),
       right_collapsed: Boolean(value.right_collapsed),
       tabs,
+      explorer_filter: typeof value.explorer_filter === "string"
+        ? value.explorer_filter.slice(0, 256)
+        : defaults.explorer_filter,
+      explorer_expanded: normalizeExplorerPathList(value.explorer_expanded),
+      explorer_recent: normalizeExplorerPathList(value.explorer_recent, 8),
     };
   }
   applyReaderState(reader) {
@@ -1225,6 +1256,9 @@ class WorkbenchStore {
     this.ui.leftCollapsed = Boolean(value.left_collapsed);
     this.ui.rightCollapsed = Boolean(value.right_collapsed);
     this.tabs = clone(value.tabs || []);
+    this.ui.explorerFilter = typeof value.explorer_filter === "string" ? value.explorer_filter : "";
+    this.ui.explorerExpanded = normalizeExplorerPathList(value.explorer_expanded);
+    this.ui.explorerRecent = normalizeExplorerPathList(value.explorer_recent, 8);
   }
   cacheSessionRecord(session) {
     if (!session || typeof session !== "object") return;

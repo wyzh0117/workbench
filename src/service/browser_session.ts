@@ -18,7 +18,19 @@ const READER_KEYS = [
   "left_collapsed",
   "right_collapsed",
   "tabs",
+  // V1-T04 Explorer chrome (§39) — .workspace session only.
+  "explorer_filter",
+  "explorer_expanded",
+  "explorer_recent",
 ] as const;
+const EXPLORER_PATH_LIST_KEYS = new Set([
+  "explorer_expanded",
+  "explorer_recent",
+]);
+const EXPLORER_PATH_LIST_LIMIT: Record<string, number> = {
+  explorer_expanded: 64,
+  explorer_recent: 8,
+};
 const SESSION_KEYS = new Set<string>(["project_id", ...READER_KEYS]);
 
 export type BrowserReaderSession = Record<string, unknown> & {
@@ -220,6 +232,23 @@ function normalizeSession(value: unknown, projectId: string): BrowserReaderSessi
         });
       }
       output.tabs = tabs;
+      continue;
+    }
+    if (EXPLORER_PATH_LIST_KEYS.has(key)) {
+      if (!Array.isArray(child)) return null;
+      const limit = EXPLORER_PATH_LIST_LIMIT[key] ?? 64;
+      if (child.length > limit) return null;
+      const paths: string[] = [];
+      for (const item of child) {
+        if (typeof item !== "string" || !item.trim() || item.length > 1024) return null;
+        paths.push(item.trim());
+      }
+      output[key] = paths;
+      continue;
+    }
+    if (key === "explorer_filter") {
+      if (typeof child !== "string" || child.length > 256) return null;
+      output[key] = child;
       continue;
     }
     if (["left_collapsed", "right_collapsed"].includes(key)) {

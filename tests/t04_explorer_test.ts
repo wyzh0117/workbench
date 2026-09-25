@@ -220,6 +220,9 @@ async function bootStore() {
     toggleExplorerExpanded: (relativePath: string) => void;
     notify: () => void;
     scheduleSessionSave: () => void;
+    session: () => Record<string, unknown>;
+    persistSession: (session: unknown) => Promise<void>;
+    restoreSession: (session?: unknown) => Promise<void>;
   })(bridge);
   store.data = structuredClone(state.project);
   return {
@@ -432,6 +435,54 @@ Deno.test("explorer filter and expand stay in UI workspace state, not Canonical"
         true,
       "mapping confirm apply is out of scope",
     );
+  } finally {
+    restore();
+  }
+});
+
+Deno.test("explorer expand filter recent restore from session without Canonical write (§39)", async () => {
+  const { store, state, restore } = await bootStore();
+  try {
+    await store.importExistingFolder("/tmp/course");
+    store.setExplorerFilter("导论");
+    store.toggleExplorerExpanded("02-进阶/nested-only-ui");
+    const session = store.session();
+    assert(session.explorer_filter === "导论", "session must carry explorer_filter");
+    assert(
+      Array.isArray(session.explorer_expanded) &&
+        (session.explorer_expanded as string[]).includes("02-进阶/nested-only-ui"),
+      "session must carry explorer_expanded",
+    );
+    assert(
+      Array.isArray(session.explorer_recent) &&
+        (session.explorer_recent as string[]).includes("/tmp/course"),
+      "session must carry explorer_recent roots",
+    );
+    const serialized = JSON.stringify(session);
+    assert(!serialized.includes("folderScan"), "ScanResult payload must not bloat session");
+    assert(!serialized.includes("project.json"), "session must not invent project.json writes");
+
+    await store.persistSession(session);
+    // Simulate reload chrome reset, then restore from session.
+    store.ui.explorerFilter = "";
+    store.ui.explorerExpanded = [];
+    store.ui.explorerRecent = [];
+    await store.restoreSession(session);
+    assert(store.ui.explorerFilter === "导论", "reload must restore explorer filter");
+    assert(
+      Array.isArray(store.ui.explorerExpanded) &&
+        (store.ui.explorerExpanded as string[]).includes("02-进阶/nested-only-ui"),
+      "reload must restore explorer expand",
+    );
+    assert(
+      Array.isArray(store.ui.explorerRecent) &&
+        (store.ui.explorerRecent as string[]).includes("/tmp/course"),
+      "reload must restore explorer recent",
+    );
+    assert(state.writes === 0, "session restore must not write Canonical");
+    const projectJson = JSON.stringify(store.data);
+    assert(!projectJson.includes("explorer_filter"), "explorer chrome must stay out of Canonical");
+    assert(!projectJson.includes("explorer_expanded"), "explorer expand must stay out of Canonical");
   } finally {
     restore();
   }

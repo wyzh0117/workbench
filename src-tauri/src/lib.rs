@@ -9495,6 +9495,111 @@ mod tests {
         let _ = fs::remove_dir_all(root);
         let _ = fs::remove_dir_all(outside);
     }
+
+    /* ------------------------------------------------------------------ *
+     * V1-T04 folder_read_preview — native mirror of Deno readFolderPreview
+     * ------------------------------------------------------------------ */
+
+    #[test]
+    fn folder_read_preview_returns_markdown_text_without_mutating_files() {
+        let root = test_directory("folder-preview-md");
+        fs::create_dir_all(root.join("01-基础")).expect("stage dir");
+        fs::write(root.join("01-基础/导论.md"), "# 导论\n正文预览\n").expect("md");
+        let before = folder_scan_fingerprint(&root);
+
+        let preview = folder_read_preview(
+            Some(root.to_string_lossy().into_owned()),
+            None,
+            Some("01-基础/导论.md".into()),
+        )
+        .expect("markdown preview should succeed");
+
+        assert_eq!(preview["preview_kind"], json!("text"));
+        assert_eq!(preview["mime"], json!("text/markdown"));
+        let text = preview["text"].as_str().unwrap_or("");
+        assert!(text.contains("导论"), "got text: {text}");
+        assert!(preview["bytes_base64"].is_null());
+        assert_eq!(folder_scan_fingerprint(&root), before, "preview must not mutate files");
+        assert!(!root.join("project.json").exists(), "preview must not create project.json");
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn folder_read_preview_returns_image_kind_with_bytes() {
+        let root = test_directory("folder-preview-png");
+        fs::write(root.join("intro.png"), [1_u8, 2, 3, 4]).expect("png");
+        let before = folder_scan_fingerprint(&root);
+
+        let preview = folder_read_preview(
+            Some(root.to_string_lossy().into_owned()),
+            None,
+            Some("intro.png".into()),
+        )
+        .expect("image preview should succeed");
+
+        assert_eq!(preview["preview_kind"], json!("image"));
+        assert_eq!(preview["mime"], json!("image/png"));
+        assert!(preview["text"].is_null());
+        let encoded = preview["bytes_base64"].as_str().unwrap_or("");
+        assert!(!encoded.is_empty(), "image preview must carry bytes_base64");
+        assert_eq!(
+            BASE64.decode(encoded).expect("valid base64"),
+            vec![1_u8, 2, 3, 4]
+        );
+        assert_eq!(folder_scan_fingerprint(&root), before);
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn folder_read_preview_marks_pdf_and_docx_as_reference_without_reading_as_body() {
+        let root = test_directory("folder-preview-ref");
+        fs::write(root.join("总体说明.pdf"), [9_u8, 9]).expect("pdf");
+        fs::write(root.join("大纲.docx"), b"docx-bytes").expect("docx");
+        let before = folder_scan_fingerprint(&root);
+
+        let pdf = folder_read_preview(
+            Some(root.to_string_lossy().into_owned()),
+            None,
+            Some("总体说明.pdf".into()),
+        )
+        .expect("pdf preview");
+        assert_eq!(pdf["preview_kind"], json!("reference"));
+        assert_eq!(pdf["note"], json!("作为参考文件导入"));
+        assert!(pdf["text"].is_null());
+        assert!(pdf["bytes_base64"].is_null());
+
+        let docx = folder_read_preview(
+            Some(root.to_string_lossy().into_owned()),
+            None,
+            Some("大纲.docx".into()),
+        )
+        .expect("docx preview");
+        assert_eq!(docx["preview_kind"], json!("reference"));
+        assert_eq!(docx["note"], json!("作为参考文件导入"));
+        assert!(docx["text"].is_null());
+        assert!(docx["bytes_base64"].is_null());
+
+        assert_eq!(folder_scan_fingerprint(&root), before, "reference preview is metadata-only");
+        assert!(!root.join("project.json").exists());
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn folder_read_preview_rejects_path_escape() {
+        let root = test_directory("folder-preview-escape");
+        fs::write(root.join("safe.md"), "safe").expect("safe");
+        let err = folder_read_preview(
+            Some(root.to_string_lossy().into_owned()),
+            None,
+            Some("../outside.md".into()),
+        )
+        .expect_err("parent traversal must be rejected");
+        assert!(
+            err.contains("预览路径无效") || err.contains("边界"),
+            "got: {err}"
+        );
+        let _ = fs::remove_dir_all(root);
+    }
 }
 
 pub fn run() {
