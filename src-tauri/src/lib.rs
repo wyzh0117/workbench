@@ -9091,6 +9091,228 @@ mod tests {
         server.join().expect("服务端线程应当结束");
         let _ = fs::remove_dir_all(directory);
     }
+
+    /* ------------------------------------------------------------------ *
+     * V1-T04 folder_scan — native mirror of Deno scanFolder (§§29, 38)
+     * ------------------------------------------------------------------ */
+
+    fn folder_scan_entry<'a>(report: &'a Value, relative: &str) -> Option<&'a Value> {
+        report
+            .get("entries")
+            .and_then(Value::as_array)
+            .and_then(|entries| {
+                entries.iter().find(|entry| {
+                    entry
+                        .get("relative_path")
+                        .and_then(Value::as_str)
+                        .map(|value| value.replace('\\', "/") == relative)
+                        .unwrap_or(false)
+                })
+            })
+    }
+
+    fn folder_scan_fingerprint(root: &Path) -> Vec<(String, String)> {
+        fn walk(root: &Path, dir: &Path, out: &mut Vec<(String, String)>) {
+            let Ok(reader) = fs::read_dir(dir) else {
+                return;
+            };
+            let mut children: Vec<_> = reader.filter_map(Result::ok).collect();
+            children.sort_by_key(|entry| entry.file_name());
+            for child in children {
+                let path = child.path();
+                let rel = path
+                    .strip_prefix(root)
+                    .map(|value| value.to_string_lossy().replace('\\', "/"))
+                    .unwrap_or_default();
+                let meta = match fs::symlink_metadata(&path) {
+                    Ok(meta) => meta,
+                    Err(_) => continue,
+                };
+                if meta.file_type().is_symlink() {
+                    let target = fs::read_link(&path)
+                        .map(|value| value.to_string_lossy().into_owned())
+                        .unwrap_or_default();
+                    out.push((rel, format!("symlink:{target}")));
+                    continue;
+                }
+                if meta.is_dir() {
+                    out.push((rel.clone(), "dir".into()));
+                    walk(root, &path, out);
+                    continue;
+                }
+                if meta.is_file() {
+                    let bytes = fs::read(&path).unwrap_or_default();
+                    out.push((rel, format!("file:{}:{:?}", meta.len(), bytes)));
+                }
+            }
+        }
+        let mut out = Vec::new();
+        walk(root, root, &mut out);
+        out.sort();
+        out
+    }
+
+    #[test]
+    fn folder_scan_walks_nested_folders_and_tags_roles_without_writing_project_json() {
+        let root = test_directory("folder-scan-nested");
+        fs::create_dir_all(root.join("01-基础")).expect("stage dir");
+        fs::create_dir_all(root.join("02-进阶")).expect("stage dir");
+        fs::write(root.join("01-基础/导论.md"), "# 导论\n").expect("md");
+        fs::write(root.join("01-基础/大纲.docx"), b"docx").expect("docx");
+        fs::write(root.join("01-基础/intro.png"), [1_u8, 2, 3]).expect("png");
+        fs::write(root.join("02-进阶/第二课.md"), "## 二\n").expect("md");
+        fs::write(root.join("02-进阶/demo.mp4"), [4_u8, 5]).expect("mp4");
+        fs::write(root.join("总体说明.pdf"), [6_u8]).expect("pdf");
+        fs::write(root.join("notes.txt"), "txt").expect("txt");
+        fs::write(root.join("weird.bin"), "bin").expect("bin");
+
+        let before = folder_scan_fingerprint(&root);
+        let report = folder_scan(Some(root.to_string_lossy().into_owned()), None, None)
+            .expect("scan should succeed");
+        let after = folder_scan_fingerprint(&root);
+
+        assert_eq!(before, after, "scan must not mutate user files");
+        assert!(
+            !root.join("project.json").exists(),
+            "scan must not create project.json"
+        );
+        assert_eq!(
+            report["root"].as_str().map(Path::new),
+            fs::canonicalize(&root).ok().as_deref(),
+            "report root should be the canonical scanned folder"
+        );
+
+        let stage = folder_scan_entry(&report, "01-基础").expect("top-level folder");
+        assert_eq!(stage["kind"], json!("directory"));
+        assert_eq!(stage["suggested_role"], json!("stage"));
+
+        let lesson = folder_scan_entry(&report, "01-基础/导论.md").expect("markdown");
+        assert_eq!(lesson["suggested_role"], json!("lesson"));
+        assert_eq!(lesson["mime"], json!("text/markdown"));
+        assert!(lesson["size"].as_u64().unwrap_or(0) > 0);
+
+        assert_eq!(
+            folder_scan_entry(&report, "notes.txt").unwrap()["suggested_role"],
+            json!("lesson")
+        );
+        assert_eq!(
+            folder_scan_entry(&report, "01-基础/intro.png").unwrap()["suggested_role"],
+            json!("asset")
+        );
+        assert_eq!(
+            folder_scan_entry(&report, "02-进阶/demo.mp4").unwrap()["suggested_role"],
+            json!("asset")
+        );
+        assert_eq!(
+            folder_scan_entry(&report, "01-基础/大纲.docx").unwrap()["suggested_role"],
+            json!("reference")
+        );
+        assert_eq!(
+            folder_scan_entry(&report, "总体说明.pdf").unwrap()["suggested_role"],
+            json!("reference")
+        );
+        assert_eq!(
+            folder_scan_entry(&report, "weird.bin").unwrap()["suggested_role"],
+            json!("unsupported"),
+            "unknown type must be tagged, not crash"
+        );
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn folder_scan_isolates_unreadable_entries_without_failing_the_tree() {
+        let root = test_directory("folder-scan-unreadable");
+        let locked = root.join("locked");
+        fs::write(root.join("ok.md"), "# ok\n").expect("readable sibling");
+        fs::create_dir_all(&locked).expect("locked dir");
+        fs::write(locked.join("secret.md"), "secret").expect("secret");
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(&locked, fs::Permissions::from_mode(0o000))
+                .expect("lock directory");
+        }
+
+        let report = folder_scan(Some(root.to_string_lossy().into_owned()), None, None)
+            .expect("tree scan must not abort on one bad child");
+
+        let ok = folder_scan_entry(&report, "ok.md").expect("readable sibling must remain");
+        assert_eq!(ok["suggested_role"], json!("lesson"));
+
+        let locked_entry = folder_scan_entry(&report, "locked").expect("degraded directory row");
+        assert!(
+            locked_entry.get("error").and_then(Value::as_str).is_some()
+                || locked_entry["suggested_role"] == json!("unsupported"),
+            "unreadable entry must be degraded: {locked_entry}"
+        );
+        assert!(
+            folder_scan_entry(&report, "locked/secret.md").is_none(),
+            "contents under an unreadable directory must not be required"
+        );
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let _ = fs::set_permissions(&locked, fs::Permissions::from_mode(0o700));
+        }
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn folder_scan_rejects_symlink_escape_and_skips_symlink_children() {
+        let root = test_directory("folder-scan-symlink-root");
+        let outside = test_directory("folder-scan-symlink-out");
+        fs::write(outside.join("escape.md"), "escaped").expect("outside file");
+        fs::write(root.join("safe.md"), "safe").expect("safe file");
+
+        #[cfg(unix)]
+        {
+            std::os::unix::fs::symlink(&outside, root.join("link-out")).expect("escape link");
+            std::os::unix::fs::symlink(&root, root.join("loop")).expect("loop link");
+        }
+        #[cfg(not(unix))]
+        {
+            let _ = fs::remove_dir_all(root);
+            let _ = fs::remove_dir_all(outside);
+            return;
+        }
+
+        let report = folder_scan(Some(root.to_string_lossy().into_owned()), None, None)
+            .expect("scan with symlink children should still succeed");
+        let rels: Vec<String> = report["entries"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|entry| {
+                entry
+                    .get("relative_path")
+                    .and_then(Value::as_str)
+                    .map(|value| value.replace('\\', "/"))
+            })
+            .collect();
+        assert!(rels.iter().any(|rel| rel == "safe.md"), "got: {rels:?}");
+        assert!(
+            !rels.iter().any(|rel| rel.contains("escape.md")),
+            "symlink escape must not pull outside files: {rels:?}"
+        );
+        assert!(!rels.iter().any(|rel| rel == "link-out"), "got: {rels:?}");
+        assert!(!rels.iter().any(|rel| rel == "loop"), "got: {rels:?}");
+
+        let rejected = folder_scan(
+            Some(root.join("link-out").to_string_lossy().into_owned()),
+            None,
+            None,
+        );
+        assert!(
+            rejected.is_err(),
+            "scanning a symlink root must be rejected: {rejected:?}"
+        );
+
+        let _ = fs::remove_dir_all(root);
+        let _ = fs::remove_dir_all(outside);
+    }
 }
 
 pub fn run() {
