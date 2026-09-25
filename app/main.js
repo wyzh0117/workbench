@@ -30,9 +30,13 @@ import {
 } from "./authoring.js";
 import {
   AssetPreviewCache,
+  buildImportMappingPlan,
+  confirmImportMappingPlan,
   esc,
   explorerPreviewKind,
   explorerUrlForBytes,
+  setImportMappingRole as applyImportMappingRole,
+  setImportMappingSelected as applyImportMappingSelected,
 } from "./canvas.js";
 import { createViews } from "./views.js";
 import {
@@ -1079,6 +1083,8 @@ class WorkbenchStore {
       explorerSelected: null,
       explorerRecent: [],
       explorerPreview: null,
+      /** V1-T04 mapping preview plan (§§30–31). UI-only until Task 12 apply. */
+      importMappingPlan: null,
     };
     this.tabs = [];
     this.history = [];
@@ -2986,6 +2992,8 @@ class WorkbenchStore {
       this.ui.explorerFilter = "";
       this.ui.explorerSelected = null;
       this.ui.explorerPreview = null;
+      // Fresh scan → fresh unconfirmed mapping suggestions (preview ≠ confirm).
+      this.ui.importMappingPlan = buildImportMappingPlan(resolvedRoot, report.entries);
       // Expand top-level directories so the first glance shows nested files.
       this.ui.explorerExpanded = report.entries
         .filter((entry) =>
@@ -3011,6 +3019,64 @@ class WorkbenchStore {
       this.ui.toast = userFacingError(error, "无法扫描文件夹。当前项目没有改变，请重试。");
       this.notify();
     }
+  }
+  /**
+   * Open mapping preview (§30). Builds/refreshes suggestions from ScanResult.
+   * Does not confirm and does not write Canonical.
+   */
+  openImportMappingPreview() {
+    const report = this.ui.folderScan;
+    const root = this.ui.importFolderRoot || report?.root || "";
+    if (!report || !Array.isArray(report.entries)) {
+      this.ui.toast = "还没有扫描结果。请先使用「导入已有文件夹」。";
+      this.notifyChrome();
+      return;
+    }
+    const existing = this.ui.importMappingPlan;
+    // Keep in-progress edits for this root; rebuild only when missing or stale.
+    if (!existing || existing.root !== root) {
+      this.ui.importMappingPlan = buildImportMappingPlan(root, report.entries);
+    }
+    this.ui.route = "mapping";
+    this.ui.screen = "project";
+    this.ui.toast = "这是映射建议，不是最终事实。可勾选、修改后，再单独确认导入计划。";
+    this.scheduleSessionSave();
+    this.notify();
+  }
+  setImportMappingSelected(relativePath, selected) {
+    if (!this.ui.importMappingPlan) return;
+    this.ui.importMappingPlan = applyImportMappingSelected(
+      this.ui.importMappingPlan,
+      relativePath,
+      selected,
+    );
+    this.notify();
+  }
+  setImportMappingRole(relativePath, role) {
+    if (!this.ui.importMappingPlan) return;
+    this.ui.importMappingPlan = applyImportMappingRole(
+      this.ui.importMappingPlan,
+      relativePath,
+      role,
+    );
+    this.notify();
+  }
+  /**
+   * Confirm collects the editable plan into UI state (§31).
+   * Does not write project.json / Canonical — adoption apply is Task 12.
+   */
+  confirmImportMapping() {
+    if (!this.ui.importMappingPlan) {
+      this.ui.toast = "没有可确认的映射计划。请先打开映射预览。";
+      this.notifyChrome();
+      return;
+    }
+    this.ui.importMappingPlan = confirmImportMappingPlan(this.ui.importMappingPlan);
+    const selected = this.ui.importMappingPlan.items.filter((item) => item.selected).length;
+    this.ui.toast =
+      `已确认导入计划（${selected} 项）。尚未写入课程项目；正式接管在后续步骤完成。`;
+    this.scheduleSessionSave();
+    this.notify();
   }
   setExplorerFilter(query) {
     this.ui.explorerFilter = String(query ?? "");
@@ -5031,7 +5097,7 @@ class WorkbenchStore {
 
 // 「工作台」is a left-nav entry (openWorkbench); authoring still uses route "editor".
 // "workbench" is accepted as a session alias and normalized to "editor".
-const ROUTES = ["overview", "map", "workbench", "explorer", "inbox", "board", "media", "backlog", "updates", "publish", "versions", "settings", "editor"];
+const ROUTES = ["overview", "map", "workbench", "explorer", "mapping", "inbox", "board", "media", "backlog", "updates", "publish", "versions", "settings", "editor"];
 /**
  * Directory failures from the shell's `explicit_project_dir`, i.e. the cases
  * where the stored path genuinely is not a usable project directory.
@@ -5788,6 +5854,8 @@ function handleAction(action, element, event) {
       store.toggleExplorerExpanded(element.dataset.path || "");
       return;
     case "import-folder-again": void store.importExistingFolderFromPicker(); return;
+    case "open-import-mapping": store.openImportMappingPreview(); return;
+    case "confirm-import-mapping": store.confirmImportMapping(); return;
     case "toggle-left": store.ui.leftCollapsed = !store.ui.leftCollapsed; store.scheduleSessionSave(); store.notify(); return;
     case "toggle-right": store.ui.rightCollapsed = !store.ui.rightCollapsed; store.scheduleSessionSave(); store.notify(); return;
     case "route": store.ui.route = element.dataset.route; store.scheduleSessionSave(); store.notify(); return;
@@ -6350,6 +6418,17 @@ function bindEvents() {
       store.assetSearchTimer = setTimeout(() => store.notify(), 200);
     });
   }
+  root.querySelectorAll("input[data-mapping-select]").forEach((element) => {
+    element.addEventListener("change", () => {
+      store.setImportMappingSelected(element.dataset.path || "", Boolean(element.checked));
+    });
+  });
+  root.querySelectorAll("select[data-mapping-role]").forEach((element) => {
+    element.addEventListener("change", () => {
+      store.setImportMappingRole(element.dataset.path || "", element.value || "ignore");
+    });
+  });
+
   const explorerFilter = root.querySelector("[data-explorer-filter]");
   if (explorerFilter) {
     store.ui.explorerFilter = explorerFilter.value;

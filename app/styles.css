@@ -624,3 +624,16 @@ kbd { background: #f2f3f7; border: 1px solid #e0e2eb; border-radius: 4px; color:
 @media (max-width: 1150px) {
   .explorer-layout { grid-template-columns: 1fr; }
 }
+
+.page-head-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.mapping-table-wrap { background: #fff; border: 1px solid var(--line); border-radius: 9px; overflow: auto; }
+.mapping-table { border-collapse: collapse; width: 100%; }
+.mapping-table th, .mapping-table td { border-bottom: 1px solid var(--line); font-size: 12px; padding: 10px 12px; text-align: left; vertical-align: top; }
+.mapping-table th { background: #f7f7fb; color: var(--muted); font-size: 10px; font-weight: 650; letter-spacing: .04em; text-transform: uppercase; }
+.mapping-row.deselected { opacity: .62; }
+.mapping-row.degraded { opacity: .5; }
+.mapping-name { display: flex; flex-direction: column; gap: 2px; font-weight: 600; }
+.mapping-name small { font-weight: 400; word-break: break-all; }
+.mapping-suggestion { background: var(--primary-soft); border-radius: 999px; color: var(--primary-dark); display: inline-block; font-size: 11px; font-weight: 650; padding: 2px 8px; }
+.mapping-role { min-width: 120px; }
+.mapping-confirmed { background: #eef9f1; border: 1px solid #b7e0c2; border-radius: 8px; color: #1f6b3a; margin: 0 0 12px; padding: 10px 12px; }

@@ -374,3 +374,135 @@ export function buildExplorerTree(entries) {
 export function explorerUrlForBytes(bytes, mime) {
   return urlForBytes(bytes, { mime_type: mime || "application/octet-stream", filename: "" });
 }
+
+/** Editable mapping roles for import preview (§§30–31, 34). */
+export const IMPORT_MAPPING_ROLES = [
+  "stage",
+  "lesson",
+  "source",
+  "asset",
+  "reference",
+  "ignore",
+];
+
+const IMPORT_MAPPING_ROLE_LABELS = {
+  stage: "阶段",
+  lesson: "课文",
+  source: "源资料",
+  asset: "素材",
+  reference: "参考",
+  ignore: "忽略",
+};
+
+/** Map ScanResult.suggested_role → editable mapping role. */
+export function mappingRoleFromSuggested(role) {
+  switch (role) {
+    case "stage":
+      return "stage";
+    case "lesson":
+      return "lesson";
+    case "asset":
+      return "asset";
+    case "reference":
+      return "reference";
+    case "folder":
+    case "unsupported":
+    default:
+      return "ignore";
+  }
+}
+
+/**
+ * Chinese label for a mapping role.
+ * Pass `{ suggestion: true }` to prefix 建议 (advice, not fact).
+ */
+export function mappingRoleLabel(role, options = {}) {
+  const base = IMPORT_MAPPING_ROLE_LABELS[role] || String(role || "");
+  return options.suggestion ? `建议${base}` : base;
+}
+
+/**
+ * Build an editable mapping preview from ScanResult rows.
+ * Does not confirm and does not write Canonical.
+ */
+export function buildImportMappingPlan(root, entries) {
+  const items = (Array.isArray(entries) ? entries : [])
+    .map((entry) => {
+      const suggested = mappingRoleFromSuggested(entry.suggested_role);
+      const hasError = Boolean(entry.error);
+      const selected = !hasError && suggested !== "ignore";
+      return {
+        relative_path: String(entry.relative_path || "").replaceAll("\\", "/"),
+        kind: entry.kind === "directory" ? "directory" : "file",
+        mime: entry.mime ?? null,
+        size: entry.size ?? null,
+        suggested,
+        mapping: suggested,
+        selected,
+        is_suggestion: true,
+        error: entry.error ?? null,
+      };
+    })
+    .filter((item) => item.relative_path.length > 0);
+  return {
+    root: String(root || ""),
+    items,
+    confirmed: false,
+    confirmed_at: null,
+  };
+}
+
+function cloneImportMappingPlan(plan) {
+  return {
+    root: plan?.root || "",
+    confirmed: Boolean(plan?.confirmed),
+    confirmed_at: plan?.confirmed_at ?? null,
+    items: Array.isArray(plan?.items)
+      ? plan.items.map((item) => ({ ...item }))
+      : [],
+  };
+}
+
+/** Toggle whether an entry is included. Does not confirm. */
+export function setImportMappingSelected(plan, relativePath, selected) {
+  const path = String(relativePath || "").replaceAll("\\", "/");
+  const next = cloneImportMappingPlan(plan);
+  next.confirmed = false;
+  next.confirmed_at = null;
+  for (const item of next.items) {
+    if (item.relative_path === path) {
+      item.selected = Boolean(selected);
+      break;
+    }
+  }
+  return next;
+}
+
+/** Change the mapping role for one entry. Does not confirm. */
+export function setImportMappingRole(plan, relativePath, role) {
+  const path = String(relativePath || "").replaceAll("\\", "/");
+  const mapping = IMPORT_MAPPING_ROLES.includes(role) ? role : "ignore";
+  const next = cloneImportMappingPlan(plan);
+  next.confirmed = false;
+  next.confirmed_at = null;
+  for (const item of next.items) {
+    if (item.relative_path === path) {
+      item.mapping = mapping;
+      if (mapping === "ignore") item.selected = false;
+      else if (!item.selected) item.selected = true;
+      break;
+    }
+  }
+  return next;
+}
+
+/**
+ * Collect the current plan as user-confirmed.
+ * Does not write project.json / Canonical (Task 12).
+ */
+export function confirmImportMappingPlan(plan) {
+  const next = cloneImportMappingPlan(plan);
+  next.confirmed = true;
+  next.confirmed_at = new Date().toISOString();
+  return next;
+}

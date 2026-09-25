@@ -39,6 +39,8 @@ import {
   explorerStatusLabel,
   explorerTypeLabel,
   filterExplorerEntries,
+  IMPORT_MAPPING_ROLES,
+  mappingRoleLabel,
   markdownToHtml,
 } from "./canvas.js";
 
@@ -357,6 +359,7 @@ export function createViews(store) {
     if (store.ui.route === "editor") return editorView();
     if (store.ui.route === "map") return mapView();
     if (store.ui.route === "explorer") return explorerView();
+    if (store.ui.route === "mapping") return mappingView();
     if (store.ui.route === "inbox") return inboxView();
     if (store.ui.route === "board") return boardView();
     if (store.ui.route === "media") return mediaView();
@@ -1579,13 +1582,55 @@ export function createViews(store) {
 
     return `<section class="page explorer-page"><div class="page-head"><div><span class="eyebrow">外部源资料</span><h1>资源浏览器</h1><p class="muted">只读浏览 · ${
       esc(rootLabel || "已扫描文件夹")
-    } · 不会改写原文件，也不会写入课程项目。</p></div><button class="secondary" data-action="import-folder-again">重新选择文件夹</button></div><div class="explorer-layout"><div class="explorer-tree-pane"><label class="field-label">按文件名过滤<input class="select" data-explorer-filter data-focus-key="explorer-filter" placeholder="输入文件名" value="${
+    } · 不会改写原文件，也不会写入课程项目。</p></div><div class="page-head-actions"><button class="secondary" data-action="import-folder-again">重新选择文件夹</button><button class="primary" data-action="open-import-mapping">打开映射预览</button></div></div><div class="explorer-layout"><div class="explorer-tree-pane"><label class="field-label">按文件名过滤<input class="select" data-explorer-filter data-focus-key="explorer-filter" placeholder="输入文件名" value="${
       esc(filter)
     }" /></label><div class="explorer-columns"><span></span><span>文件</span><span>类型</span><span>大小</span><span>可识别状态</span></div><div class="explorer-tree">${
       tree.length
         ? tree.map((node) => renderNode(node, 0)).join("")
         : `<div class="side-empty">没有匹配「${esc(filter)}」的文件名</div>`
     }</div></div><div class="explorer-preview-pane">${previewPane()}</div></div></section>`;
+  }
+
+  function mappingView() {
+    const plan = store.ui.importMappingPlan;
+    const report = store.ui.folderScan;
+    const rootLabel = store.ui.importFolderRoot || plan?.root || report?.root || "";
+    if (!report && !plan) {
+      return `<section class="page mapping-page"><div class="page-head"><div><span class="eyebrow">导入映射</span><h1>映射预览</h1><p class="muted">根据扫描结果给出候选映射；标记为「建议」，不是事实。</p></div><button class="primary" data-action="import-folder-again">导入已有文件夹</button></div><div class="empty-state"><div class="empty-icon">🗂</div><h2>还没有映射建议</h2><p class="muted">请先扫描文件夹，再打开映射预览。</p></div></section>`;
+    }
+    const items = Array.isArray(plan?.items) ? plan.items : [];
+    const selectedCount = items.filter((item) => item.selected).length;
+    const roleOptions = (current) =>
+      IMPORT_MAPPING_ROLES.map((role) =>
+        `<option value="${role}" ${role === current ? "selected" : ""}>${
+          esc(mappingRoleLabel(role))
+        }</option>`
+      ).join("");
+    const rows = items.map((item) => {
+      const name = explorerEntryName(item.relative_path) || item.relative_path;
+      const suggestion = mappingRoleLabel(item.suggested, { suggestion: true });
+      return `<tr class="mapping-row ${item.selected ? "" : "deselected"} ${
+        item.error ? "degraded" : ""
+      }"><td><input type="checkbox" data-mapping-select data-path="${
+        esc(item.relative_path)
+      }" ${item.selected ? "checked" : ""} ${item.error ? "disabled" : ""} /></td><td class="mapping-name" title="${
+        esc(item.relative_path)
+      }">${item.kind === "directory" ? "📁" : "📄"} ${esc(name)}<small class="muted">${
+        esc(item.relative_path)
+      }</small></td><td><span class="mapping-suggestion" title="建议，不是事实">${
+        esc(suggestion)
+      }</span></td><td><select class="select mapping-role" data-mapping-role data-path="${
+        esc(item.relative_path)
+      }" ${item.error ? "disabled" : ""}>${roleOptions(item.mapping)}</select></td></tr>`;
+    }).join("");
+    const status = plan?.confirmed
+      ? `<p class="mapping-confirmed">已确认导入计划（${selectedCount} 项）。尚未写入课程项目；正式接管在后续步骤。</p>`
+      : `<p class="muted">已选 ${selectedCount} / ${items.length} 项 · 以下均为<strong>建议</strong>，可取消勾选或修改映射后，再点「确认导入计划」。</p>`;
+    return `<section class="page mapping-page"><div class="page-head"><div><span class="eyebrow">导入映射</span><h1>映射预览</h1><p class="muted">候选映射 · ${
+      esc(rootLabel || "已扫描文件夹")
+    } · 建议 ≠ 事实 · 确认前不会写入课程项目。</p></div><div class="page-head-actions"><button class="secondary" data-action="route" data-route="explorer">返回资源浏览器</button><button class="primary" data-action="confirm-import-mapping">确认导入计划</button></div></div>${status}<div class="mapping-table-wrap"><table class="mapping-table"><thead><tr><th>导入</th><th>文件 / 文件夹</th><th>建议</th><th>映射为</th></tr></thead><tbody>${
+      rows || `<tr><td colspan="4" class="side-empty">没有可映射的条目</td></tr>`
+    }</tbody></table></div></section>`;
   }
 
   function mediaView() {
@@ -2797,6 +2842,7 @@ export function createViews(store) {
         ["打开工作台", "workbench"],
         ["打开课程地图", "map"],
         ["打开资源浏览器", "explorer"],
+        ["打开映射预览", "mapping"],
         ["打开收件箱", "inbox"],
         ["打开制作看板", "board"],
         ["打开待补总览", "backlog"],
@@ -2817,6 +2863,8 @@ export function createViews(store) {
             ? "missing-media"
             : route === "workbench"
             ? "open-workbench"
+            : route === "mapping"
+            ? "open-import-mapping"
             : "route",
           route: route,
         });
