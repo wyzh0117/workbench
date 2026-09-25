@@ -544,14 +544,8 @@ Deno.test("T03 selected block keeps a left accent; handle uses pointer reorder n
     !card.includes('draggable="true"'),
     "draggable=true must not be the reorder DoD; pointer capture owns the gesture",
   );
-
-  const main = await Deno.readTextFile(new URL("../app/main.js", import.meta.url));
-  assert(
-    main.includes("setPointerCapture") &&
-      main.includes("createPointerReorderSession") &&
-      main.includes("pointerdown"),
-    "bindBlockDrag must use the pointer reorder path",
-  );
+  // Live pointerdown/move/up → reorderBlockTo is covered in authoring_ui_test
+  // (`bindBlockDrag commits reorder from handle pointerdown/move/up`).
 });
 
 /* ------------------------------------------------------------------ *

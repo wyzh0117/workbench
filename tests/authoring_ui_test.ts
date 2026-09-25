@@ -346,6 +346,38 @@ Deno.test("soft block selection does not call full notify()", async () => {
   }
 });
 
+Deno.test("soft selecting a placeholder already on 状态 skips notify()", async () => {
+  const { store, restore } = await bootStore();
+  try {
+    store.addMapItem("软占位");
+    store.addPlaceholder("text", "补一段");
+    const placeholder = store.blocks(store.currentItem()!).find((block) =>
+      block.type === "placeholder"
+    )!;
+    store.ui.rightPanel = "status";
+    store.ui.rightCollapsed = false;
+    store.ui.selectedBlockId = null;
+    const mutable = store as typeof store & {
+      notify: (...args: unknown[]) => void;
+    };
+    let fullNotifies = 0;
+    const previous = mutable.notify.bind(mutable);
+    mutable.notify = (...args: unknown[]) => {
+      fullNotifies += 1;
+      previous(...args);
+    };
+    mutable.selectBlock(placeholder.id, { force: true, soft: true });
+    assert(mutable.ui.selectedBlockId === placeholder.id, "placeholder stays selected");
+    assert(mutable.ui.rightPanel === "status", "状态 remains the open panel");
+    assert(
+      fullNotifies === 0,
+      "soft placeholder select must not notify when 状态 is already open",
+    );
+  } finally {
+    restore();
+  }
+});
+
 Deno.test("pointer reorder session commits canonical order_index via reorderBlockTo", async () => {
   const { store, restore } = await bootStore();
   try {
@@ -400,6 +432,318 @@ Deno.test("pointer reorder session commits canonical order_index via reorderBloc
     );
   } finally {
     restore();
+  }
+});
+
+/**
+ * Thin DOM stand-in that lets `bindBlockDrag` attach real listeners, so a test
+ * can fire pointerdown/move/up on a handle instead of only driving the session
+ * helper.
+ */
+async function bootPointerDom() {
+  type DocListener = (event: Record<string, unknown>) => void;
+  const documentListeners = new Map<string, DocListener[]>();
+  const blockNodes: Array<{
+    dataset: { blockId: string };
+    classList: {
+      add: (name: string) => void;
+      remove: (name: string) => void;
+      toggle: (name: string, force?: boolean) => boolean;
+      contains: (name: string) => boolean;
+    };
+    getBoundingClientRect: () => {
+      top: number;
+      height: number;
+      bottom: number;
+      left: number;
+      right: number;
+      width: number;
+    };
+    addEventListener: (type: string, handler: DocListener) => void;
+    removeEventListener: (type: string, handler: DocListener) => void;
+    querySelector: (selector: string) => unknown;
+    handle: {
+      captured: boolean;
+      addEventListener: (type: string, handler: DocListener) => void;
+      removeEventListener: (type: string, handler: DocListener) => void;
+      setPointerCapture: (id: number) => void;
+      releasePointerCapture: (id: number) => void;
+      fire: (type: string, event?: Record<string, unknown>) => void;
+    };
+  }> = [];
+
+  const classListFor = (bucket: Set<string>) => ({
+    add: (name: string) => {
+      bucket.add(name);
+    },
+    remove: (name: string) => {
+      bucket.delete(name);
+    },
+    toggle: (name: string, force?: boolean) => {
+      const next = force ?? !bucket.has(name);
+      if (next) bucket.add(name);
+      else bucket.delete(name);
+      return next;
+    },
+    contains: (name: string) => bucket.has(name),
+  });
+
+  const makeHandle = () => {
+    const listeners = new Map<string, DocListener[]>();
+    const handle = {
+      captured: false,
+      addEventListener(type: string, handler: DocListener) {
+        const list = listeners.get(type) ?? [];
+        list.push(handler);
+        listeners.set(type, list);
+      },
+      removeEventListener(type: string, handler: DocListener) {
+        listeners.set(
+          type,
+          (listeners.get(type) ?? []).filter((candidate) => candidate !== handler),
+        );
+      },
+      setPointerCapture(_id: number) {
+        handle.captured = true;
+      },
+      releasePointerCapture(_id: number) {
+        handle.captured = false;
+      },
+      fire(type: string, event: Record<string, unknown> = {}) {
+        for (const handler of listeners.get(type) ?? []) {
+          handler({ target: handle, currentTarget: handle, ...event });
+        }
+      },
+    };
+    return handle;
+  };
+
+  const root: {
+    innerHTML: string;
+    dataset: Record<string, string>;
+    classList: ReturnType<typeof classListFor>;
+    addEventListener: () => void;
+    contains: () => boolean;
+    querySelector: (selector: string) => unknown;
+    querySelectorAll: (selector: string) => unknown[];
+  } = {
+    innerHTML: "",
+    dataset: {},
+    classList: classListFor(new Set()),
+    addEventListener: () => {},
+    contains: () => true,
+    querySelector(selector: string) {
+      const match = /^article\.block\[data-block-id="([^"]+)"\]$/.exec(selector);
+      if (match) {
+        return blockNodes.find((node) => node.dataset.blockId === match[1]) ?? null;
+      }
+      return null;
+    },
+    querySelectorAll(selector: string) {
+      if (selector === "article.block[data-block-id]") return blockNodes;
+      if (selector === "article.block.drop-before") {
+        return blockNodes.filter((node) => node.classList.contains("drop-before"));
+      }
+      return [];
+    },
+  };
+
+  const document: {
+    activeElement: null;
+    querySelector: (selector?: string) => unknown;
+    querySelectorAll: () => unknown[];
+    addEventListener: (
+      type: string,
+      handler: DocListener,
+      capture?: boolean,
+    ) => void;
+    removeEventListener: (
+      type: string,
+      handler: DocListener,
+      capture?: boolean,
+    ) => void;
+  } = {
+    activeElement: null,
+    querySelector: () => root,
+    querySelectorAll: () => [],
+    addEventListener(type, handler, capture) {
+      if (!capture) return;
+      const list = documentListeners.get(type) ?? [];
+      list.push(handler);
+      documentListeners.set(type, list);
+    },
+    removeEventListener(type, handler, _capture) {
+      documentListeners.set(
+        type,
+        (documentListeners.get(type) ?? []).filter((candidate) =>
+          candidate !== handler
+        ),
+      );
+    },
+  };
+
+  const runtime = globalThis as typeof globalThis & {
+    document?: unknown;
+    __TAURI__?: unknown;
+    __workbench?: unknown;
+    __workbenchReady?: Promise<unknown>;
+  };
+  const previous = {
+    document: runtime.document,
+    tauri: runtime.__TAURI__,
+    workbench: runtime.__workbench,
+    ready: runtime.__workbenchReady,
+    fetch: globalThis.fetch,
+  };
+  runtime.document = document;
+  runtime.__TAURI__ = undefined;
+  globalThis.fetch = async () => {
+    throw new Error("test fetch disabled");
+  };
+  importCounter += 1;
+  await import(`../app/main.js?pointer-dom-${importCounter}`);
+  const store = runtime.__workbench as {
+    data: ProjectData;
+    ui: Record<string, unknown>;
+    saveTimer: number;
+    sessionTimer?: number;
+    notify: () => void;
+    addMapItem: (title?: string) => void;
+    addBlock: (type?: string, content?: string) => void;
+    currentItem: () => ProjectData["content_items"][number] | null;
+    blocks: (item?: unknown) => ProjectData["blocks"];
+    reorderBlockTo: (source: string, target: string) => void;
+  };
+  assert(store, "pointer harness must reach the live __workbench store");
+  try {
+    await runtime.__workbenchReady;
+  } catch { /* launcher is fine */ }
+
+  const mountBlocks = (
+    ids: string[],
+    geometry: Array<{ top: number; height: number }>,
+  ) => {
+    blockNodes.length = 0;
+    ids.forEach((id, index) => {
+      const box = geometry[index] ?? { top: index * 100, height: 100 };
+      const handle = makeHandle();
+      const classes = new Set<string>();
+      const listeners = new Map<string, DocListener[]>();
+      blockNodes.push({
+        dataset: { blockId: id },
+        classList: classListFor(classes),
+        getBoundingClientRect: () => ({
+          top: box.top,
+          height: box.height,
+          bottom: box.top + box.height,
+          left: 0,
+          right: 120,
+          width: 120,
+        }),
+        addEventListener(type: string, handler: DocListener) {
+          const list = listeners.get(type) ?? [];
+          list.push(handler);
+          listeners.set(type, list);
+        },
+        removeEventListener(type: string, handler: DocListener) {
+          listeners.set(
+            type,
+            (listeners.get(type) ?? []).filter((candidate) => candidate !== handler),
+          );
+        },
+        querySelector: (selector: string) =>
+          selector === ".block-handle" ? handle : null,
+        handle,
+      });
+    });
+  };
+
+  const fireDocument = (type: string, event: Record<string, unknown>) => {
+    for (const handler of documentListeners.get(type) ?? []) handler(event);
+  };
+
+  return {
+    store,
+    blockNodes,
+    mountBlocks,
+    fireDocument,
+    restore: () => {
+      runtime.document = previous.document;
+      runtime.__TAURI__ = previous.tauri;
+      runtime.__workbench = previous.workbench;
+      runtime.__workbenchReady = previous.ready;
+      globalThis.fetch = previous.fetch;
+      clearTimeout(store.saveTimer);
+      if (store.sessionTimer) clearTimeout(store.sessionTimer);
+    },
+  };
+}
+
+Deno.test("bindBlockDrag commits reorder from handle pointerdown/move/up", async () => {
+  const dom = await bootPointerDom();
+  try {
+    dom.store.ui.screen = "project";
+    dom.store.ui.route = "editor";
+    dom.store.ui.mode = "writing";
+    dom.store.addMapItem("DOM指针排序");
+    dom.store.addBlock("paragraph", "A");
+    dom.store.addBlock("paragraph", "B");
+    dom.store.addBlock("paragraph", "C");
+    const item = dom.store.currentItem()!;
+    const before = dom.store.blocks(item).map((block) => block.id);
+    dom.mountBlocks(before, [
+      { top: 0, height: 100 },
+      { top: 100, height: 100 },
+      { top: 200, height: 100 },
+    ]);
+    // Re-bind so bindBlockDrag attaches to the staged handles.
+    dom.store.notify();
+
+    const source = dom.blockNodes[2]!;
+    assert(!source.handle.captured, "capture starts unset");
+    source.handle.fire("pointerdown", {
+      pointerId: 7,
+      button: 0,
+      clientX: 12,
+      clientY: 250,
+    });
+    dom.fireDocument("pointermove", {
+      pointerId: 7,
+      clientX: 12,
+      clientY: 248,
+      preventDefault() {},
+    });
+    assert(
+      !source.handle.captured,
+      "movement under the threshold must not capture yet",
+    );
+    dom.fireDocument("pointermove", {
+      pointerId: 7,
+      clientX: 12,
+      clientY: 40,
+      preventDefault() {},
+    });
+    assert(
+      source.handle.captured,
+      "crossing the threshold must setPointerCapture on the handle",
+    );
+    assert(
+      dom.blockNodes[0]!.classList.contains("drop-before"),
+      "the drop indicator must land on the target block",
+    );
+    dom.fireDocument("pointerup", { pointerId: 7 });
+    const after = dom.store.blocks(item).map((block) => block.id);
+    assert(after[0] === before[2], "pointerup must commit C before A");
+    assert(
+      after.every((id, index) => dom.store.blocks(item)[index]!.order_index === index),
+      "order_index must stay contiguous after the DOM pointer gesture",
+    );
+    assert(
+      !source.handle.captured,
+      "pointerup must release pointer capture",
+    );
+  } finally {
+    dom.restore();
   }
 });
 

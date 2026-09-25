@@ -1320,24 +1320,27 @@ class WorkbenchStore {
     if (!known) return;
     this.ui.selectedBlockId = this.ui.selectedBlockId === id && !options.force ? null : id;
     if (options.mode && this.ui.mode !== options.mode) this.setMode(options.mode, { silent: true });
-    // Placeholder click / select must surface 状态 so the gap is editable
-    // without a second trip to the right rail.
-    if (this.ui.selectedBlockId) {
+    // Placeholder selection surfaces 状态 unless the caller opts out (e.g. a
+    // control click inside the card). Soft callers skip a rebuild when the
+    // panel is already open so caret / IME stay put.
+    let panelChanged = false;
+    if (this.ui.selectedBlockId && options.openStatus !== false) {
       const selected = blocksFor(this.data, item.id).find((block) =>
         block.id === this.ui.selectedBlockId
       );
       if (selected?.type === "placeholder") {
+        panelChanged = this.ui.rightPanel !== "status" || this.ui.rightCollapsed;
         this.ui.rightPanel = "status";
         this.ui.rightCollapsed = false;
-        this.scheduleSessionSave();
-        this.notify();
-        return;
       }
     }
     this.scheduleSessionSave();
-    // Soft selection (textarea focus / in-place accent) must not rebuild the
-    // editor: a full notify() would replace the DOM and drop caret / IME.
-    if (options.soft) return;
+    // Soft selection updates the accent in place; a full notify() would
+    // replace the DOM and drop caret / IME. Opening 状态 still needs a render.
+    if (options.soft && !panelChanged) {
+      syncBlockSelectionClasses();
+      return;
+    }
     this.notify();
   }
   commit(label, mutation) {
@@ -5628,13 +5631,10 @@ function bindEvents() {
       if (element.tagName === "TEXTAREA") autosizeBlockFields(element.parentElement || root);
     });
     element.addEventListener("focus", () => {
-      store.ui.selectedBlockId = element.dataset.blockId;
       // Remember where typing started so undo can revert the edit itself.
       element.dataset.editBaseline = element.value;
-      // Accent only — never notify(): replacing the DOM would drop the caret
-      // and break an in-flight IME composition.
-      syncBlockSelectionClasses();
-      store.scheduleSessionSave();
+      // One selection API: soft select keeps caret / IME (no full notify).
+      store.selectBlock(element.dataset.blockId, { force: true, soft: true });
     });
     element.addEventListener("blur", () => flushPendingEdit(element));
   });
@@ -5649,30 +5649,16 @@ function bindEvents() {
         event.target.closest("details.block-more");
       const onControl = typeof event.target?.closest === "function" &&
         event.target.closest("button, a, summary, input, textarea, select, label");
-      const block = store.data.blocks.find((candidate) => candidate.id === blockId);
-      const openStatus = block?.type === "placeholder" && !onControl && !inMore;
-      if (store.ui.selectedBlockId === blockId && !openStatus) {
-        syncBlockSelectionClasses();
-        return;
-      }
-      store.ui.selectedBlockId = blockId;
-      if (openStatus) {
-        store.ui.rightPanel = "status";
-        store.ui.rightCollapsed = false;
-      }
-      store.scheduleSessionSave();
-      if (inMore) {
-        syncBlockSelectionClasses();
-        return;
-      }
-      // A focused text field owns the caret: update the accent in place and
-      // only rebuild when the right panel must switch (placeholder → 状态).
-      if (document.activeElement && document.activeElement.closest?.("article.block")) {
-        syncBlockSelectionClasses();
-        if (openStatus) store.notify();
-        return;
-      }
-      store.notify();
+      const focusedInBlock = Boolean(
+        document.activeElement && document.activeElement.closest?.("article.block"),
+      );
+      // Soft when a field owns the caret or a control/menu must stay mounted;
+      // openStatus is skipped for control clicks so buttons keep their own panel.
+      store.selectBlock(blockId, {
+        force: true,
+        soft: Boolean(inMore || onControl || focusedInBlock),
+        openStatus: !onControl && !inMore,
+      });
     });
   });
 
