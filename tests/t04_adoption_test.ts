@@ -113,6 +113,37 @@ Deno.test("unconfirmed plan must not be applied (§31/§32)", async () => {
   }
 });
 
+Deno.test("Deno adopt refuses when project.json already exists (matches native)", async () => {
+  const root = await Deno.makeTempDir({ prefix: "acw-t04-adopt-exists-" });
+  try {
+    await seedCourseFolder(root);
+    const first = await confirmedPlanFor(root, (p) =>
+      setImportMappingSelected(p, "weird.bin", false));
+    await confirmFolderAdoption(first);
+    assert(
+      await Deno.stat(join(root, "project.json")).then((s) => s.isFile),
+      "first adopt writes project.json",
+    );
+    const again = await confirmedPlanFor(root, (p) =>
+      setImportMappingSelected(p, "weird.bin", false));
+    let threw = false;
+    let message = "";
+    try {
+      await confirmFolderAdoption(again);
+    } catch (caught) {
+      threw = true;
+      message = caught instanceof Error ? caught.message : String(caught);
+    }
+    assert(threw, "second adopt into existing project.json must fail");
+    assert(
+      /已有 project\.json|不能重复|打开现有项目/.test(message),
+      `must mention existing project.json (got: ${message})`,
+    );
+  } finally {
+    await Deno.remove(root, { recursive: true });
+  }
+});
+
 Deno.test("Strategy A in-place adoption writes project.json + .workspace; originals unchanged", async () => {
   const root = await Deno.makeTempDir({ prefix: "acw-t04-adopt-inplace-" });
   try {

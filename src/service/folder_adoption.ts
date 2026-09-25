@@ -195,18 +195,30 @@ function parentStageId(
   return null;
 }
 
+async function projectJsonExists(root: string): Promise<boolean> {
+  try {
+    const stat = await Deno.lstat(join(root, "project.json"));
+    return stat.isFile && !stat.isSymlink;
+  } catch (caught) {
+    if (caught instanceof Deno.errors.NotFound) return false;
+    throw caught;
+  }
+}
+
 async function ensureWorkspace(root: string): Promise<void> {
   await Deno.mkdir(join(root, ".workspace"), { recursive: true });
-  await Deno.mkdir(join(root, "assets"), { recursive: true });
+  await Deno.mkdir(join(root, ".workspace", "adopt-staging"), {
+    recursive: true,
+  });
 }
 
 async function copyManagedAsset(
   root: string,
   sourceAbs: string,
-  storagePath: string,
+  relativePath: string,
   bytes: Uint8Array,
 ): Promise<void> {
-  const target = join(root, ...storagePath.split("/"));
+  const target = join(root, ...relativePath.split("/"));
   await Deno.mkdir(dirname(target), { recursive: true });
   // Prefer copyFile so we never truncate the original; fall back to write of
   // already-read bytes when source and destination differ.
@@ -214,6 +226,55 @@ async function copyManagedAsset(
     await Deno.copyFile(sourceAbs, target);
   } catch {
     await Deno.writeFile(target, bytes);
+  }
+}
+
+async function cleanupStaging(
+  root: string,
+  staged: Array<{ staging: string; final: string }>,
+): Promise<void> {
+  for (const pair of staged) {
+    try {
+      await Deno.remove(join(root, ...pair.staging.split("/")));
+    } catch {
+      // best-effort; never touch user originals
+    }
+  }
+  try {
+    await Deno.remove(join(root, ".workspace", "adopt-staging"), {
+      recursive: true,
+    });
+  } catch {
+    // ignore
+  }
+}
+
+async function promoteStaging(
+  root: string,
+  staged: Array<{ staging: string; final: string }>,
+): Promise<void> {
+  await Deno.mkdir(join(root, "assets"), { recursive: true });
+  for (const pair of staged) {
+    const from = join(root, ...pair.staging.split("/"));
+    const to = join(root, ...pair.final.split("/"));
+    await Deno.mkdir(dirname(to), { recursive: true });
+    try {
+      await Deno.rename(from, to);
+    } catch {
+      await Deno.copyFile(from, to);
+      try {
+        await Deno.remove(from);
+      } catch {
+        // ignore
+      }
+    }
+  }
+  try {
+    await Deno.remove(join(root, ".workspace", "adopt-staging"), {
+      recursive: true,
+    });
+  } catch {
+    // ignore
   }
 }
 
@@ -295,6 +356,13 @@ export async function confirmFolderAdoption(
   const root = normalize(String(options.project_root || plan.root || "").trim());
   if (!root) throw new Error("接管需要有效的文件夹路径");
 
+  // Match native: never silently overwrite an existing Canonical project.
+  if (!options.skip_project_write && await projectJsonExists(root)) {
+    throw new Error(
+      "该文件夹已有 project.json，不能重复原地接管。请先打开现有项目。",
+    );
+  }
+
   const title = options.project_title ||
     cleanName(basename(root), "未命名课程");
   const data = options.data
@@ -316,6 +384,7 @@ export async function confirmFolderAdoption(
     copied_files: [],
     copied_original_paths: [],
   };
+  const staged: Array<{ staging: string; final: string }> = [];
 
   const included = plan.items.filter(isIncluded);
   const stageByRel = new Map<string, string>();
@@ -399,6 +468,7 @@ export async function confirmFolderAdoption(
           sourceAbs,
           duplicateChoice,
           result,
+          staged,
         });
         if (assetId) {
           const sourceId = recordSource(
@@ -424,6 +494,7 @@ export async function confirmFolderAdoption(
         duplicateChoice,
         result,
         forceType: "document",
+        staged,
       });
       if (assetId) {
         const sourceId = recordSource(
@@ -447,6 +518,7 @@ export async function confirmFolderAdoption(
         sourceAbs,
         duplicateChoice,
         result,
+        staged,
       });
       continue;
     }
@@ -460,13 +532,21 @@ export async function confirmFolderAdoption(
     const store = new ProjectDirectoryStore(root);
     await store.open();
     try {
-      await store.writeProject(data, { allow_external_overwrite: true });
+      await store.writeProject(data);
+      await promoteStaging(root, staged);
+    } catch (caught) {
+      await cleanupStaging(root, staged);
+      throw caught;
     } finally {
       await store.close().catch(() => {});
     }
-  } else {
-    // Still ensure assets/ exists when only copying managed media.
-    await Deno.mkdir(join(root, "assets"), { recursive: true });
+  } else if (staged.length) {
+    try {
+      await promoteStaging(root, staged);
+    } catch (caught) {
+      await cleanupStaging(root, staged);
+      throw caught;
+    }
   }
 
   return result;
@@ -484,6 +564,7 @@ async function importBytesAsAsset(
     duplicateChoice: "existing" | "copy" | "cancel";
     result: FolderAdoptionResult;
     forceType?: AssetType;
+    staged: Array<{ staging: string; final: string }>;
   },
 ): Promise<string | null> {
   const existing = data.assets.find((asset) =>
@@ -508,7 +589,9 @@ async function importBytesAsAsset(
 
   const assetId = id();
   const storagePath = `assets/${assetId}-${input.filename}`;
-  await copyManagedAsset(root, input.sourceAbs, storagePath, input.bytes);
+  const stagingPath = `.workspace/adopt-staging/${assetId}-${input.filename}`;
+  await copyManagedAsset(root, input.sourceAbs, stagingPath, input.bytes);
+  input.staged.push({ staging: stagingPath, final: storagePath });
   input.result.copied_files.push(storagePath);
 
   const added = addAsset(data, data.project.id, {

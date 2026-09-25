@@ -3138,7 +3138,12 @@ class WorkbenchStore {
         this.notifyChrome();
       });
     } catch (error) {
-      this.ui.toast = userFacingError(error, "无法写入课程项目。原文件夹未改动，请重试。");
+      // Adoption may have staged or partially promoted managed copies under
+      // .workspace/adopt-staging or assets/; originals are never moved/deleted.
+      this.ui.toast = userFacingError(
+        error,
+        "无法完成课程项目写入。原文件未被移动或删除；若已产生 assets/ 或暂存文件，请检查后重试。",
+      );
       this.notify();
     }
   }

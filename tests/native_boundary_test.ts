@@ -441,3 +441,50 @@ Deno.test("every single-struct shell command is nested by the app payload builde
     "the seed commands take one input struct",
   );
 });
+
+Deno.test("folder.adopt native IPC uses flat { plan } like folder.scan (no input nest)", () => {
+  // Critical Task 12 fix: folder_adopt must not be `fn folder_adopt(input: Value)`,
+  // or the UI invoke({ plan }) fails while Deno unit tests still pass.
+  const mapping = app.slice(
+    app.indexOf("  nativeCommand(command) {"),
+    app.indexOf("  async selectFolder()"),
+  );
+  assert(
+    mapping.includes('"folder.adopt": "folder_adopt"'),
+    "UI must map folder.adopt → folder_adopt",
+  );
+  assert(
+    !app.slice(
+      app.indexOf("const NATIVE_PROJECT_COMMANDS"),
+      app.indexOf("const clone = (value)"),
+    ).includes('"folder.adopt"'),
+    "folder.adopt must stay outside NATIVE_PROJECT_COMMANDS (no open projectDir yet)",
+  );
+  const signature = lib.match(/fn folder_adopt\(([^)]*)\)/);
+  assert(signature, "folder_adopt must exist in the native shell");
+  const parameters = signature[1]!.split(",").map((part) => part.trim()).filter(
+    Boolean,
+  );
+  assert(
+    parameters.some((part) => /^plan:\s*Value$/.test(part)),
+    `folder_adopt must take a flat plan: Value arg (got: ${signature[1]})`,
+  );
+  assert(
+    !(parameters.length === 1 && /^input:\s*Value$/.test(parameters[0]!)),
+    "folder_adopt must not be a single input: Value command requiring { input: … } nesting",
+  );
+  // applyFolderAdoption / bridge.command send { plan } directly.
+  assert(
+    app.includes('command("folder.adopt"') &&
+      app.includes("{ plan }"),
+    "UI apply must invoke folder.adopt with a flat { plan } payload",
+  );
+  const nestedBlock = app.slice(
+    app.indexOf("    // These commands take one `input: Value` struct"),
+    app.indexOf("    return { ...input, project_dir: projectDir };"),
+  );
+  assert(
+    !nestedBlock.includes('"folder.adopt"'),
+    "folder.adopt must not be forced through the { input: … } nest list",
+  );
+});

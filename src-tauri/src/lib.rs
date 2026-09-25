@@ -2546,15 +2546,19 @@ fn folder_read_preview(
 /// Strategy A in-place adoption after confirm (§§32–35).
 /// Writes project.json + .workspace into the chosen folder; copies media into
 /// assets/. Never moves/renames/deletes original user files.
+///
+/// Flat `{ plan, duplicate_choice?, project_title? }` payload — same pattern as
+/// `folder_scan` / `folder_read_preview`. Do **not** require `{ input: ... }`
+/// nesting; adoption runs before an open projectDir exists.
 #[tauri::command]
-fn folder_adopt(input: Value) -> Result<Value, String> {
-    let object = require_object(&input, "folder_adopt")?;
-    let plan = object
-        .get("plan")
-        .ok_or_else(|| "folder.adopt requires a mapping plan".to_string())?;
+fn folder_adopt(
+    plan: Value,
+    duplicate_choice: Option<String>,
+    project_title: Option<String>,
+) -> Result<Value, String> {
     let plan_obj = plan
         .as_object()
-        .ok_or_else(|| "folder.adopt plan must be an object".to_string())?;
+        .ok_or_else(|| "folder.adopt requires a mapping plan object".to_string())?;
     let confirmed = plan_obj
         .get("confirmed")
         .and_then(Value::as_bool)
@@ -2589,11 +2593,13 @@ fn folder_adopt(input: Value) -> Result<Value, String> {
         return Err("该文件夹已有 project.json，不能重复原地接管。请先打开现有项目。".into());
     }
 
-    let duplicate_choice = field(object, &["duplicate_choice", "duplicateChoice"])
-        .and_then(Value::as_str)
+    let duplicate_choice = duplicate_choice
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
         .unwrap_or("existing");
-    let title = field(object, &["project_title", "projectTitle"])
-        .and_then(Value::as_str)
+    let title = project_title
+        .as_deref()
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .map(str::to_string)
@@ -2626,6 +2632,7 @@ fn folder_adopt(input: Value) -> Result<Value, String> {
     let mut reused_asset_ids = Vec::new();
     let mut warnings = Vec::new();
     let mut copied_files = Vec::new();
+    let mut staged_pairs: Vec<(String, String)> = Vec::new();
     let mut stage_by_rel: std::collections::HashMap<String, String> =
         std::collections::HashMap::new();
 
@@ -2680,8 +2687,8 @@ fn folder_adopt(input: Value) -> Result<Value, String> {
 
     fs::create_dir_all(resolved_root.join(".workspace"))
         .map_err(|error| format!("无法创建 .workspace：{error}"))?;
-    fs::create_dir_all(resolved_root.join("assets"))
-        .map_err(|error| format!("无法创建 assets：{error}"))?;
+    fs::create_dir_all(resolved_root.join(".workspace/adopt-staging"))
+        .map_err(|error| format!("无法创建素材暂存目录：{error}"))?;
 
     // Pass 2: files
     for item in &items {
@@ -2768,6 +2775,7 @@ fn folder_adopt(input: Value) -> Result<Value, String> {
                     &mut warnings,
                     &mut reused_asset_ids,
                     &mut copied_files,
+                    &mut staged_pairs,
                 )? {
                     asset_ids.push(asset_id);
                 }
@@ -2799,6 +2807,7 @@ fn folder_adopt(input: Value) -> Result<Value, String> {
                         &mut warnings,
                         &mut reused_asset_ids,
                         &mut copied_files,
+                        &mut staged_pairs,
                     )? {
                         asset_ids.push(id.clone());
                         asset_id = Value::String(id);
@@ -2839,9 +2848,34 @@ fn folder_adopt(input: Value) -> Result<Value, String> {
         }
     }
 
-    // Create + write Canonical project in-place (Strategy A).
+    // Create + write Canonical project in-place (Strategy A), then promote
+    // staged media into assets/. On failure, drop staging only — never originals.
     let root_str = resolved_root.to_string_lossy().into_owned();
-    project_create(root_str.clone(), project.clone())?;
+    if let Err(error) = project_create(root_str.clone(), project.clone()) {
+        for (staging, _) in &staged_pairs {
+            let _ = fs::remove_file(resolved_root.join(staging));
+        }
+        let _ = fs::remove_dir_all(resolved_root.join(".workspace/adopt-staging"));
+        return Err(error);
+    }
+    fs::create_dir_all(resolved_root.join("assets"))
+        .map_err(|error| format!("无法创建 assets：{error}"))?;
+    for (staging, final_path) in &staged_pairs {
+        let from = resolved_root.join(staging);
+        let to = resolved_root.join(final_path);
+        if let Some(parent) = to.parent() {
+            fs::create_dir_all(parent).map_err(|error| format!("无法创建素材目录：{error}"))?;
+        }
+        if fs::rename(&from, &to).is_err() {
+            fs::copy(&from, &to).map_err(|error| {
+                format!(
+                    "课程项目已写入，但素材提升失败（{error}）。原文件未改动；请检查 assets/ 与 .workspace/adopt-staging/"
+                )
+            })?;
+            let _ = fs::remove_file(&from);
+        }
+    }
+    let _ = fs::remove_dir_all(resolved_root.join(".workspace/adopt-staging"));
 
     Ok(json!({
         "data": project,
@@ -3106,6 +3140,7 @@ fn adopt_import_asset(
     warnings: &mut Vec<String>,
     reused_asset_ids: &mut Vec<String>,
     copied_files: &mut Vec<String>,
+    staged_pairs: &mut Vec<(String, String)>,
 ) -> Result<Option<String>, String> {
     if let Some(existing) = project
         .get("assets")
@@ -3137,14 +3172,17 @@ fn adopt_import_asset(
 
     let asset_id = uuid_v4()?;
     let storage_path = format!("assets/{asset_id}-{filename}");
-    let dest = root.join(&storage_path);
+    let staging_path = format!(".workspace/adopt-staging/{asset_id}-{filename}");
+    let dest = root.join(&staging_path);
     if let Some(parent) = dest.parent() {
-        fs::create_dir_all(parent).map_err(|error| format!("无法创建素材目录：{error}"))?;
+        fs::create_dir_all(parent).map_err(|error| format!("无法创建素材暂存目录：{error}"))?;
     }
-    // Copy from the original path when possible so we never truncate originals.
+    // Stage under .workspace so a failed Canonical write does not leave a
+    // half-adopted assets/ tree. Originals are only read, never truncated.
     if fs::copy(source_abs, &dest).is_err() {
-        fs::write(&dest, bytes).map_err(|error| format!("无法写入素材：{error}"))?;
+        fs::write(&dest, bytes).map_err(|error| format!("无法写入素材暂存：{error}"))?;
     }
+    staged_pairs.push((staging_path, storage_path.clone()));
     copied_files.push(storage_path.clone());
     let mime = mime_for_filename(filename);
     let asset_type = force_type
@@ -10358,7 +10396,7 @@ mod tests {
                 }
             ]
         });
-        let result = folder_adopt(json!({ "plan": plan })).expect("adopt");
+        let result = folder_adopt(plan, None, None).expect("adopt");
         assert!(root.join("project.json").exists());
         assert!(root.join(".workspace").exists());
         assert_eq!(
@@ -10400,17 +10438,251 @@ mod tests {
     fn folder_adopt_rejects_unconfirmed_plan() {
         let root = test_directory("folder-adopt-unconfirmed");
         fs::write(root.join("a.md"), "# a\n").expect("md");
-        let err = folder_adopt(json!({
-            "plan": {
+        let err = folder_adopt(
+            json!({
                 "root": root.to_string_lossy(),
                 "confirmed": false,
                 "confirmed_at": null,
                 "items": []
-            }
-        }))
+            }),
+            None,
+            None,
+        )
         .expect_err("unconfirmed must fail");
         assert!(err.contains("已确认") || err.contains("确认"), "got: {err}");
         assert!(!root.join("project.json").exists());
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn folder_adopt_reuses_identical_checksum_and_keeps_original_bytes() {
+        let root = test_directory("folder-adopt-checksum");
+        fs::create_dir_all(root.join("media")).expect("media");
+        let bytes_a = vec![10_u8, 20, 30, 40];
+        fs::write(root.join("media/shot.png"), &bytes_a).expect("png");
+        fs::write(root.join("readme.md"), "# hi\n").expect("md");
+        let plan = json!({
+            "root": root.to_string_lossy(),
+            "confirmed": true,
+            "confirmed_at": "2026-01-01T00:00:00.000Z",
+            "items": [
+                {
+                    "relative_path": "media/shot.png",
+                    "kind": "file",
+                    "mime": "image/png",
+                    "size": 4,
+                    "suggested": "asset",
+                    "mapping": "asset",
+                    "selected": true,
+                    "is_suggestion": true
+                },
+                {
+                    "relative_path": "readme.md",
+                    "kind": "file",
+                    "mime": "text/markdown",
+                    "size": 4,
+                    "suggested": "lesson",
+                    "mapping": "lesson",
+                    "selected": true,
+                    "is_suggestion": true
+                }
+            ]
+        });
+        let first = folder_adopt(plan, None, None).expect("first adopt");
+        let first_asset = first["data"]["assets"].as_array().unwrap()[0].clone();
+        let first_id = first_asset["id"].as_str().unwrap().to_string();
+        let storage = first_asset["storage_path"].as_str().unwrap().to_string();
+        let _ = project_close(root.to_string_lossy().into_owned());
+
+        // Second adopt into a sibling folder copy is heavy; instead call the
+        // helper against an in-memory project by writing a duplicate file into
+        // a fresh folder that also includes the already-managed checksum via
+        // a second confirmed plan on a new root that imports two identical files.
+        let root2 = test_directory("folder-adopt-checksum-reuse");
+        fs::create_dir_all(root2.join("media")).expect("media");
+        fs::write(root2.join("media/shot.png"), &bytes_a).expect("png");
+        fs::write(root2.join("media/shot-copy.png"), &bytes_a).expect("copy");
+        let plan2 = json!({
+            "root": root2.to_string_lossy(),
+            "confirmed": true,
+            "confirmed_at": "2026-01-01T00:00:00.000Z",
+            "items": [
+                {
+                    "relative_path": "media/shot.png",
+                    "kind": "file",
+                    "mime": "image/png",
+                    "size": 4,
+                    "suggested": "asset",
+                    "mapping": "asset",
+                    "selected": true,
+                    "is_suggestion": true
+                },
+                {
+                    "relative_path": "media/shot-copy.png",
+                    "kind": "file",
+                    "mime": "image/png",
+                    "size": 4,
+                    "suggested": "asset",
+                    "mapping": "asset",
+                    "selected": true,
+                    "is_suggestion": true
+                }
+            ]
+        });
+        let second = folder_adopt(plan2, None, None).expect("second adopt");
+        let reused = second["reused_asset_ids"].as_array().cloned().unwrap_or_default();
+        assert!(
+            !reused.is_empty() || second["asset_ids"].as_array().map(|v| v.len()).unwrap_or(0) == 1,
+            "identical checksum within one adopt must reuse one Asset id"
+        );
+        let warnings = second["warnings"].as_array().cloned().unwrap_or_default();
+        assert!(
+            warnings.iter().any(|w| {
+                let s = w.as_str().unwrap_or("");
+                s.contains("复用") || s.contains("checksum") || s.contains("已存在")
+            }),
+            "reuse must surface a Chinese warning"
+        );
+        assert_eq!(
+            fs::read(root2.join("media/shot.png")).unwrap(),
+            bytes_a,
+            "originals unchanged"
+        );
+        assert_eq!(
+            fs::read(root2.join("media/shot-copy.png")).unwrap(),
+            bytes_a,
+            "duplicate original unchanged"
+        );
+        let _ = first_id;
+        let _ = storage;
+        let _ = root;
+        let _ = project_close(root2.to_string_lossy().into_owned());
+        let _ = fs::remove_dir_all(root);
+        let _ = fs::remove_dir_all(root2);
+    }
+
+    #[test]
+    fn folder_adopt_same_name_different_bytes_gets_distinct_asset_paths() {
+        let root = test_directory("folder-adopt-collision");
+        fs::create_dir_all(root.join("a")).expect("a");
+        fs::create_dir_all(root.join("b")).expect("b");
+        let bytes_a = vec![1_u8, 2, 3, 4];
+        let bytes_b = vec![1_u8, 2, 3, 99];
+        fs::write(root.join("a/shot.png"), &bytes_a).expect("a");
+        fs::write(root.join("b/shot.png"), &bytes_b).expect("b");
+        let plan = json!({
+            "root": root.to_string_lossy(),
+            "confirmed": true,
+            "confirmed_at": "2026-01-01T00:00:00.000Z",
+            "items": [
+                {
+                    "relative_path": "a/shot.png",
+                    "kind": "file",
+                    "mime": "image/png",
+                    "size": 4,
+                    "suggested": "asset",
+                    "mapping": "asset",
+                    "selected": true,
+                    "is_suggestion": true
+                },
+                {
+                    "relative_path": "b/shot.png",
+                    "kind": "file",
+                    "mime": "image/png",
+                    "size": 4,
+                    "suggested": "asset",
+                    "mapping": "asset",
+                    "selected": true,
+                    "is_suggestion": true
+                }
+            ]
+        });
+        let result = folder_adopt(plan, None, None).expect("adopt");
+        let assets = result["data"]["assets"].as_array().cloned().unwrap_or_default();
+        assert_eq!(assets.len(), 2, "different bytes → two Asset records");
+        let paths: Vec<String> = assets
+            .iter()
+            .filter_map(|asset| asset["storage_path"].as_str().map(str::to_string))
+            .collect();
+        assert_ne!(paths[0], paths[1], "storage paths must differ");
+        assert!(
+            paths.iter().all(|p| p.starts_with("assets/") && p.contains("-shot.png")),
+            "id-prefixed assets/ paths"
+        );
+        assert_eq!(fs::read(root.join("a/shot.png")).unwrap(), bytes_a);
+        assert_eq!(fs::read(root.join("b/shot.png")).unwrap(), bytes_b);
+        // Managed copies must keep both byte identities.
+        let managed_a = fs::read(root.join(&paths[0])).unwrap();
+        let managed_b = fs::read(root.join(&paths[1])).unwrap();
+        assert!(managed_a == bytes_a || managed_a == bytes_b);
+        assert!(managed_b == bytes_a || managed_b == bytes_b);
+        assert_ne!(managed_a, managed_b, "no silent overwrite of managed bytes");
+        let _ = project_close(root.to_string_lossy().into_owned());
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn folder_adopt_skips_ignore_and_unselected_entries() {
+        let root = test_directory("folder-adopt-ignore");
+        fs::write(root.join("keep.md"), "# keep\n").expect("keep");
+        fs::write(root.join("skip.png"), [7_u8, 7, 7]).expect("skip");
+        fs::write(root.join("notes.txt"), "notes").expect("notes");
+        let plan = json!({
+            "root": root.to_string_lossy(),
+            "confirmed": true,
+            "confirmed_at": "2026-01-01T00:00:00.000Z",
+            "items": [
+                {
+                    "relative_path": "keep.md",
+                    "kind": "file",
+                    "mime": "text/markdown",
+                    "size": 6,
+                    "suggested": "lesson",
+                    "mapping": "lesson",
+                    "selected": true,
+                    "is_suggestion": true
+                },
+                {
+                    "relative_path": "skip.png",
+                    "kind": "file",
+                    "mime": "image/png",
+                    "size": 3,
+                    "suggested": "asset",
+                    "mapping": "asset",
+                    "selected": false,
+                    "is_suggestion": true
+                },
+                {
+                    "relative_path": "notes.txt",
+                    "kind": "file",
+                    "mime": "text/plain",
+                    "size": 5,
+                    "suggested": "lesson",
+                    "mapping": "ignore",
+                    "selected": true,
+                    "is_suggestion": true
+                }
+            ]
+        });
+        let result = folder_adopt(plan, None, None).expect("adopt");
+        assert_eq!(
+            result["content_item_ids"].as_array().map(|v| v.len()).unwrap_or(0),
+            1,
+            "only keep.md lesson"
+        );
+        assert!(
+            result["asset_ids"].as_array().map(|v| v.len()).unwrap_or(0) == 0,
+            "deselected asset not imported"
+        );
+        let titles: Vec<String> = result["data"]["content_items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|item| item["title"].as_str().map(str::to_string))
+            .collect();
+        assert!(titles.iter().all(|t| !t.contains("notes")), "ignore mapping skipped");
+        assert_eq!(fs::read(root.join("skip.png")).unwrap(), vec![7, 7, 7]);
+        let _ = project_close(root.to_string_lossy().into_owned());
         let _ = fs::remove_dir_all(root);
     }
 

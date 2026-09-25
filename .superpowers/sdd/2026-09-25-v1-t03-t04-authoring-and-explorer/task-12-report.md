@@ -52,3 +52,52 @@ Native (`cargo test`): `folder_adopt_*`, `project_create_allows_strategy_a_in_no
 ## Path
 
 `/Users/youngi/Documents/MiniWork/workbench/.superpowers/sdd/2026-09-25-v1-t03-t04-authoring-and-explorer/task-12-report.md`
+
+
+---
+
+## Fix round (review Critical + Important)
+
+### Fixes
+1. **Critical — Native IPC:** flattened `folder_adopt(plan, duplicate_choice?, project_title?)` like `folder_scan` so UI `invoke({ plan })` works; no `{ input: … }` nest required.
+2. **Important — Deno existing project.json:** `confirmFolderAdoption` refuses when `project.json` already exists (same message as native).
+3. **Important — Native §35:** added checksum reuse, same-name different bytes, ignore/unselected tests.
+4. **Important — Partial apply:** stage media under `.workspace/adopt-staging/`, promote only after Canonical write; cleanup staging on failure (never delete originals). UI failure toast no longer claims「原文件夹未改动」.
+
+### Covering tests + commands + output
+
+```bash
+deno test --allow-read --allow-write tests/t04_adoption_test.ts tests/native_boundary_test.ts
+```
+
+```
+running 8 tests from ./tests/t04_adoption_test.ts
+… Deno adopt refuses when project.json already exists (matches native) ... ok
+… (7 other adoption tests) ... ok
+running 5 tests from ./tests/native_boundary_test.ts
+… folder.adopt native IPC uses flat { plan } like folder.scan (no input nest) ... ok
+ok | 13 passed | 0 failed
+```
+
+```bash
+cargo test --manifest-path src-tauri/Cargo.toml folder_adopt
+```
+
+```
+running 5 tests
+folder_adopt_rejects_unconfirmed_plan ... ok
+folder_adopt_skips_ignore_and_unselected_entries ... ok
+folder_adopt_writes_canonical_copies_assets_and_leaves_originals ... ok
+folder_adopt_same_name_different_bytes_gets_distinct_asset_paths ... ok
+folder_adopt_reuses_identical_checksum_and_keeps_original_bytes ... ok
+ok | 5 passed
+```
+
+```bash
+deno task check && deno task test
+```
+
+```
+deno task check OK
+ok | 324 passed | 0 failed
+```
