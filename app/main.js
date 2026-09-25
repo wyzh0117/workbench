@@ -969,9 +969,10 @@ class WorkbenchStore {
        * for example).  Consumed once, never persisted.
        */
       focusField: "",
-      /** Inline editors: the course title in the topbar, one layout section. */
+      /** Inline editors: the course title in the topbar, one layout section, asset title. */
       editingProjectTitle: false,
       editingSectionId: null,
+      editingAssetId: null,
       /** "你现在有什么？": which course-input source is being pasted. */
       seedType: null,
       seedText: "",
@@ -3899,6 +3900,45 @@ class WorkbenchStore {
     this.ui.assetUsageId = null;
     this.ui.toast = "已从项目中删除这个素材（磁盘文件保留在 assets/ 目录）";
   }
+  /** Start inline edit of Asset.title (display name). Never renames disk files. */
+  startAssetRename(assetId) {
+    if (!this.data.assets.some((candidate) => candidate.id === assetId && !candidate.archived)) {
+      return;
+    }
+    this.ui.editingAssetId = assetId;
+    this.ui.focusField = "asset-title";
+    this.ui.route = "media";
+    this.notify();
+  }
+  cancelAssetRename() {
+    if (!this.ui.editingAssetId) return;
+    this.ui.editingAssetId = null;
+    this.notify();
+  }
+  /**
+   * Update Asset.title metadata only. filename / storage_path stay untouched.
+   * @param {string} assetId
+   * @param {string} title
+   */
+  renameAsset(assetId, title) {
+    const next = String(title ?? "").trim();
+    this.ui.editingAssetId = null;
+    if (!next) {
+      this.notify();
+      return;
+    }
+    const asset = this.data.assets.find((candidate) => candidate.id === assetId);
+    if (!asset || asset.title === next) {
+      this.notify();
+      return;
+    }
+    this.commit("修改素材显示名称", (data) => {
+      const target = data.assets.find((candidate) => candidate.id === assetId);
+      if (!target) return;
+      target.title = next;
+    });
+    this.ui.toast = `已更新显示名称：${next}`;
+  }
   resolveRequirement(id, assetId = null) {
     const requirement = this.data.requirements.find((candidate) => candidate.id === id);
     if (!requirement) return;
@@ -5369,6 +5409,8 @@ function handleAction(action, element, event) {
     case "insert-asset": void store.insertAsset(element.dataset.id); return;
     case "detach-asset": store.detachAsset(element.dataset.id, element.dataset.asset); return;
     case "delete-asset": store.deleteAsset(element.dataset.id); return;
+    case "rename-asset": store.startAssetRename(element.dataset.id); return;
+    case "cancel-rename-asset": store.cancelAssetRename(); return;
     case "show-asset-usage": store.ui.assetUsageId = element.dataset.id; store.ui.rightPanel = "media"; store.notify(); return;
     case "hide-asset-usage": store.ui.assetUsageId = null; store.notify(); return;
     case "focus-usage": {
@@ -5740,6 +5782,19 @@ function bindEvents() {
       } else if (event.key === "Escape") {
         event.preventDefault();
         store.cancelSectionRename();
+      }
+    });
+  }
+  const assetTitle = root.querySelector("[data-asset-title]");
+  if (assetTitle) {
+    assetTitle.addEventListener("blur", () => store.renameAsset(assetTitle.dataset.id, assetTitle.value));
+    assetTitle.addEventListener("keydown", (event) => {
+      if (event.key === "Enter") {
+        event.preventDefault();
+        store.renameAsset(assetTitle.dataset.id, assetTitle.value);
+      } else if (event.key === "Escape") {
+        event.preventDefault();
+        store.cancelAssetRename();
       }
     });
   }

@@ -11,6 +11,7 @@
 
 import { PROJECT_FILE_PICKER } from "./constants.js";
 import {
+  MEDIA_REQUIREMENT_TYPES,
   REQUIREMENT_TYPES,
   SEED_SOURCE_HINTS,
   SEED_TEXT_SOURCES,
@@ -23,6 +24,7 @@ import {
   lessonView,
   placementGrid,
   nextStepLabel,
+  requirementAnchorLabel,
   requirementBacklog,
   usagesForAsset,
 } from "./authoring.js";
@@ -79,6 +81,17 @@ export function createViews(store) {
   };
   const isImageLike = (asset) =>
     asset && (asset.type === "image" || asset.type === "gif");
+  const isAttachmentAsset = (asset) => {
+    if (!asset) return false;
+    const name = String(asset.filename || "");
+    const mime = String(asset.mime_type || "");
+    return /\.(pdf|docx?|xlsx?|pptx?|zip)$/i.test(name) ||
+      /application\/(pdf|.*word|.*document|.*sheet|.*presentation|zip)/i.test(
+        mime,
+      ) ||
+      (asset.type === "document" && !previewText(asset) &&
+        !/\.(md|markdown|txt|csv|json)$/i.test(name));
+  };
   /**
    * A real trash glyph.  The emoji (U+1F5D1) depends on an emoji font being
    * installed and inherited `color`, which is how a delete control could end
@@ -107,8 +120,8 @@ export function createViews(store) {
   };
 
   /**
-   * A thumbnail only uses an <img> for real images.  Text bundles are previewed
-   * as text, never as a data URL inside an <img>.
+   * Thumbnails: images/GIF as <img>, video as a muted poster card, Markdown as
+   * text, PDF/DOCX as attachment cards — never a blank board.
    */
   const assetThumb = (asset) => {
     const preview = assetPreview(asset);
@@ -122,11 +135,28 @@ export function createViews(store) {
         esc(label)
       }" loading="lazy" />`;
     }
+    if (url && asset.type === "video") {
+      return `<video class="asset-image asset-video" src="${
+        esc(url)
+      }" preload="metadata" muted playsinline aria-label="${
+        esc(label)
+      }"></video>`;
+    }
     const text = previewText(asset);
     if (text) {
       return `<span class="asset-doc" title="打开媒体库查看完整内容">${
         esc(text.replace(/\s+/g, " ").trim().slice(0, 60) || "空文档")
       }</span>`;
+    }
+    if (isAttachmentAsset(asset) || asset.type === "document" ||
+      asset.type === "other" || asset.type === "audio") {
+      const ext = String(asset.filename || "").split(".").pop() ||
+        assetLabel(asset.type);
+      return `<span class="asset-attachment" title="${
+        esc(label)
+      }"><span class="asset-attachment-icon">📎</span><small>${
+        esc(String(ext).toUpperCase())
+      }</small><span>${esc(label)}</span></span>`;
     }
     return `<span class="asset-thumb" title="正在读取素材预览">${assetLabel(asset.type).slice(0, 1)}</span>`;
   };
@@ -1407,12 +1437,18 @@ export function createViews(store) {
           ))].map((id) =>
             store.data.content_items.find((item) => item.id === id)
           ).filter(Boolean);
+          const displayName = asset.title || asset.filename;
+          const renaming = store.ui.editingAssetId === asset.id;
           return `<article class="asset-card" data-asset-id="${
             asset.id
-          }"><div class="asset-thumb-wrap">${assetThumb(asset)}</div><div class="asset-info"><b>${
+          }"><div class="asset-thumb-wrap">${assetThumb(asset)}</div><div class="asset-info">${
+            renaming
+              ? `<label class="field-label">显示名称<input class="select" data-asset-title data-focus-key="asset-title" data-id="${asset.id}" value="${
+                esc(displayName)
+              }" /></label>`
+              : `<b>${esc(displayName)}</b>`
+          }<small>${esc(assetLabel(asset.type))} · ${
             esc(asset.filename)
-          }</b><small>${esc(assetLabel(asset.type))} · ${
-            esc(asset.source_type)
           } · ${formatBytes(asset.file_size)}</small><small>${
             usages.length
               ? `使用位置：${
@@ -1423,6 +1459,10 @@ export function createViews(store) {
             store.ui.activeId
               ? `<button class="secondary" data-action="insert-asset" data-id="${asset.id}">插入到当前位置</button>`
               : ""
+          }${
+            renaming
+              ? `<button class="secondary" data-action="cancel-rename-asset">取消</button>`
+              : `<button class="text-button" data-action="rename-asset" data-id="${asset.id}">重命名</button>`
           }<button class="text-button danger" data-action="delete-asset" data-id="${
             asset.id
           }">删除</button></div></article>`;
@@ -1551,15 +1591,18 @@ export function createViews(store) {
       visibleAssets.length
         ? visibleAssets.map((asset) => {
           const usages = usagesForAsset(store.data, asset.id);
+          const displayName = asset.title || asset.filename;
           return `<div class="side-item asset-row" data-asset-id="${
             asset.id
           }"><span class="side-thumb-wrap">${assetThumb(asset)}</span><span class="side-item-body"><b>${
-            esc(asset.filename)
+            esc(displayName)
           }</b><small>${esc(assetLabel(asset.type))} · ${
             usages.length ? `已使用 ${usages.length} 处` : "还没有被引用"
           }</small></span><span class="side-item-tools"><button class="icon-button" data-action="insert-asset" data-id="${
             asset.id
-          }" title="插入到当前位置">＋</button><button class="icon-button" data-action="show-asset-usage" data-id="${
+          }" title="插入到当前位置">＋</button><button class="icon-button" data-action="rename-asset" data-id="${
+            asset.id
+          }" title="修改显示名称">✎</button><button class="icon-button" data-action="show-asset-usage" data-id="${
             asset.id
           }" title="查看这个素材的使用位置">?</button></span></div>`;
         }).join("")
@@ -1645,6 +1688,8 @@ export function createViews(store) {
         candidate.id === requirement.resolved_asset_id
       )
       : null;
+    const anchor = requirementAnchorLabel(store.data, requirement);
+    const mediaRequirement = MEDIA_REQUIREMENT_TYPES.includes(requirement.type);
     if (editing) {
       return `<div class="requirement-item editing" data-requirement-id="${
         requirement.id
@@ -1672,6 +1717,17 @@ export function createViews(store) {
         requirement.id
       }">保存</button></div></div>`;
     }
+    const openActions = mediaRequirement
+      ? `<button class="secondary" data-action="pick-asset-for-requirement" data-id="${requirement.id}">选择素材</button><button class="secondary" data-action="pick-asset-for-requirement" data-id="${requirement.id}">用素材完成</button>${
+        block
+          ? `<button class="text-button" data-action="focus-requirement" data-id="${requirement.id}">定位</button>`
+          : ""
+      }`
+      : `${
+        block
+          ? `<button class="text-button" data-action="focus-requirement" data-id="${requirement.id}">定位</button>`
+          : ""
+      }<button class="text-button" data-action="edit-requirement" data-id="${requirement.id}">改备注</button><button class="secondary" data-action="resolve-requirement" data-id="${requirement.id}">完成</button>`;
     return `<div class="requirement-item ${
       requirement.status === "open" ? "open" : "resolved"
     }" data-requirement-id="${requirement.id}"><span class="req-dot ${
@@ -1680,26 +1736,24 @@ export function createViews(store) {
       esc(requirementTypeLabel(requirement.type))
     }${requirement.priority === "high" ? " · 重要" : ""}${
       requirement.scope === "layout" ? " · 排版" : ""
-    }</b><span>${esc(requirement.note || "没有备注")}</span><small class="muted">${
-      block ? `位置：${esc(blockLabel(block.type))}` : "位置：整课"
+    }</b><span>${esc(requirement.note || "没有备注")}</span><small class="muted">位置：${
+      esc(anchor)
     }${
-      asset ? ` · 已关联素材：${esc(asset.filename)}` : ""
+      asset
+        ? ` · 已关联素材：${esc(asset.title || asset.filename)}`
+        : ""
     }</small><div class="requirement-actions">${
       requirement.status === "open"
-        ? `<button class="secondary" data-action="pick-asset-for-requirement" data-id="${
-          requirement.id
-        }">用素材完成</button><button class="secondary" data-action="resolve-requirement" data-id="${
-          requirement.id
-        }">标记完成</button>`
+        ? openActions
         : `<button class="secondary" data-action="reopen-requirement" data-id="${
           requirement.id
-        }">重新打开</button>`
-    }<button class="text-button" data-action="edit-requirement" data-id="${
-      requirement.id
-    }">改备注</button>${
-      block
-        ? `<button class="text-button" data-action="focus-requirement" data-id="${requirement.id}">定位</button>`
-        : ""
+        }">重新打开</button><button class="text-button" data-action="edit-requirement" data-id="${
+          requirement.id
+        }">改备注</button>${
+          block
+            ? `<button class="text-button" data-action="focus-requirement" data-id="${requirement.id}">定位</button>`
+            : ""
+        }`
     }<button class="text-button danger" data-action="delete-requirement" data-id="${
       requirement.id
     }">删除</button></div></div></div>`;

@@ -346,6 +346,94 @@ export function blockLabel(type) {
   }[type] || type;
 }
 
+/** Requirement types that open the media picker instead of a plain 完成. */
+export const MEDIA_REQUIREMENT_TYPES = ["image", "gif", "video", "audio"];
+
+/**
+ * Kind label used inside a requirement location line.  Never returns 待补 —
+ * placeholders are named by their requirement type (正文 / 图片 / …).
+ *
+ * @param {Block | null | undefined} block
+ * @param {Requirement | null | undefined} [requirement]
+ * @returns {string}
+ */
+export function locationKindLabel(block, requirement = null) {
+  if (!block) return "内容";
+  if (block.type === "placeholder") {
+    const settings = block.settings && typeof block.settings === "object"
+      ? /** @type {Record<string, unknown>} */ (block.settings)
+      : null;
+    const fromSettings = settings && typeof settings.requirement_type === "string"
+      ? settings.requirement_type
+      : "";
+    const reqType = String(requirement?.type || fromSettings || "");
+    /** @type {Record<string, string>} */
+    const labels = {
+      text: "正文",
+      image: "图片",
+      gif: "GIF",
+      video: "视频",
+      audio: "音频",
+      table: "表格",
+      chart: "图表",
+      quote: "引用",
+      case: "案例",
+      link: "链接",
+      data: "数据",
+      other: "内容",
+    };
+    return labels[reqType] || "内容";
+  }
+  const label = blockLabel(String(block.type || ""));
+  return label === "待补" ? "内容" : label;
+}
+
+/**
+ * Human location for a requirement card: `S01-02 · 正文 01`,
+ * `Grid · Section 1 · R2C1`, or `未定位`.  Never `待补`.
+ *
+ * @param {ProjectData} data
+ * @param {Requirement} requirement
+ * @returns {string}
+ */
+export function requirementAnchorLabel(data, requirement) {
+  if (!requirement || !requirement.anchor_block_id) return "未定位";
+  const block = arrayOf(data, "blocks").find((candidate) =>
+    candidate.id === requirement.anchor_block_id
+  );
+  if (!block) return "未定位";
+
+  const layout = layoutFor(data, requirement.content_item_id);
+  if (layout && layout.mode === "grid") {
+    const placement = placementsFor(data, layout.id).find((candidate) =>
+      candidate.block_id === block.id
+    );
+    if (placement) {
+      const sections = sectionsFor(data, layout.id);
+      const section = placement.section_id
+        ? sections.find((candidate) => candidate.id === placement.section_id)
+        : null;
+      const sectionName = section
+        ? (section.name || `Section ${sections.indexOf(section) + 1}`)
+        : (sections[0]?.name || "Section 1");
+      return `Grid · ${sectionName} · R${placement.row_start + 1}C${
+        placement.column_start + 1
+      }`;
+    }
+  }
+
+  const item = arrayOf(data, "content_items").find((candidate) =>
+    candidate.id === requirement.content_item_id
+  );
+  const code = item && item.code ? String(item.code).trim() : "";
+  const siblings = blocksFor(data, requirement.content_item_id);
+  const index = siblings.findIndex((candidate) => candidate.id === block.id);
+  if (index < 0) return "未定位";
+  const ordinal = String(index + 1).padStart(2, "0");
+  const kind = locationKindLabel(block, requirement);
+  return code ? `${code} · ${kind} ${ordinal}` : `${kind} ${ordinal}`;
+}
+
 /**
  * @param {string} type
  * @returns {string}

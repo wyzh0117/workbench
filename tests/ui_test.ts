@@ -92,3 +92,26 @@ Deno.test("Desktop shell restores persisted state and supports palette keyboard 
     "旧的占位实现（未配置也照样说生成了建议）必须已经删除",
   );
 });
+
+Deno.test("requirement panel CSS forbids horizontal scroll", async () => {
+  const css = await Deno.readTextFile(
+    new URL("../app/styles.css", import.meta.url),
+  );
+  assert(
+    /\.right-content\s*\{[^}]*overflow-x:\s*hidden/s.test(css) ||
+      /\.right-panel\s*\{[^}]*overflow-x:\s*hidden/s.test(css),
+    "right panel / right-content must set overflow-x: hidden",
+  );
+  assert(
+    css.includes(".requirement-actions") &&
+      /requirement-actions[^}]*flex-wrap:\s*wrap/s.test(css),
+    "requirement actions must wrap instead of forcing horizontal scroll",
+  );
+  assert(
+    /requirement-body[^}]*(overflow-wrap|word-break)/s.test(css) ||
+      /requirement-item[^}]*(overflow-wrap|word-break|overflow-x:\s*hidden)/s.test(
+        css,
+      ),
+    "requirement text must wrap",
+  );
+});

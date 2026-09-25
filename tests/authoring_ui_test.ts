@@ -121,6 +121,7 @@ async function bootStore() {
     insertAsset: (assetId: string, options?: Record<string, unknown>) => Promise<void>;
     detachAsset: (blockId: string, assetId: string) => void;
     deleteAsset: (assetId: string) => void;
+    renameAsset: (assetId: string, title: string) => void;
     createLayout: (mode?: string) => void;
     setLayoutMode: (mode: string) => void;
     changeGrid: (kind: string, amount?: number) => void;
@@ -159,6 +160,7 @@ async function bootStore() {
     flush: () => Promise<boolean>;
     saveTimer: number;
     initialize: () => Promise<void>;
+    notify: () => void;
     externalConflict: unknown;
     resolveExternalConflict: (action: string) => Promise<void>;
   })(bridge);
@@ -1991,4 +1993,156 @@ Deno.test("Media Library insert-asset action shares insertAsset position semanti
   } finally {
     restore();
   }
+});
+
+Deno.test("requirement panel shows real anchors and type-specific actions", async () => {
+  const viewsSource = await Deno.readTextFile(
+    new URL("../app/views.js", import.meta.url),
+  );
+  const requirementRow = viewsSource.match(
+    /function requirementRow\(requirement\) \{([\s\S]*?)\n  function /,
+  )?.[1] ?? "";
+  assert(
+    requirementRow.includes("requirementAnchorLabel") ||
+      requirementRow.includes("未定位"),
+    "requirementRow must render a real anchor helper, not blockLabel alone",
+  );
+  assert(
+    !/位置：\$\{esc\(blockLabel\(block\.type\)\)\}/.test(requirementRow),
+    "requirementRow must not use 位置：${blockLabel(...)} (待补 for placeholders)",
+  );
+
+  const { store, restore } = await bootStore();
+  try {
+    store.addMapItem("待补锚点");
+    const item = store.currentItem()!;
+    // Force a stable lesson code so the rendered anchor is assertable.
+    store.commit("固定课号", (data) => {
+      const lesson = data.content_items.find((candidate) => candidate.id === item.id);
+      if (lesson) lesson.code = "S01-02";
+    });
+    store.addBlock("paragraph", "已有正文");
+    store.addPlaceholder("text", "补充这段文字");
+    store.addPlaceholder("image", "补一张图片");
+    // addPlaceholder leaves the new row in edit mode; show the action cards.
+    store.ui.editingRequirementId = null;
+    store.ui.rightPanel = "requirements";
+    store.ui.route = "editor";
+    store.ui.screen = "project";
+    store.notify();
+
+    const { createViews } = await import(
+      `../app/views.js?req-panel-${importCounter}`
+    );
+    const html = createViews(store).shellView() as string;
+    assert(!html.includes("位置：待补"), "rendered panel must never show 位置：待补");
+    assert(
+      html.includes("位置：S01-02 · 正文 ") || html.includes("位置：S01-02 · 图片 "),
+      "open requirements must show lesson-code anchors",
+    );
+
+    const items = html.split('class="requirement-item').slice(1).map((chunk) =>
+      chunk.slice(0, chunk.indexOf('class="requirement-item') > 0
+        ? chunk.indexOf('class="requirement-item')
+        : chunk.length)
+    );
+    const textItem = items.find((chunk) =>
+      chunk.includes("<b>文字") || chunk.includes(">文字 ·") ||
+      /<b>文字</.test(chunk)
+    ) ?? "";
+    const imageItem = items.find((chunk) =>
+      chunk.includes("<b>图片") || /<b>图片</.test(chunk)
+    ) ?? "";
+    assert(textItem.length > 0, "text requirement card must render");
+    assert(imageItem.length > 0, "image requirement card must render");
+    assert(textItem.includes(">定位<") || textItem.includes("定位</"), "text req shows 定位");
+    assert(textItem.includes("改备注"), "text req shows 改备注");
+    assert(
+      textItem.includes(">完成<") || textItem.includes("完成</"),
+      "text req shows 完成",
+    );
+    assert(
+      !textItem.includes("选择素材") && !textItem.includes("用素材完成"),
+      "text req must not show media-only actions",
+    );
+    assert(imageItem.includes("选择素材"), "media req shows 选择素材");
+    assert(imageItem.includes("用素材完成"), "media req shows 用素材完成");
+    assert(
+      imageItem.includes(">定位<") || imageItem.includes("定位</"),
+      "media req shows 定位",
+    );
+  } finally {
+    restore();
+  }
+});
+
+Deno.test("renaming an asset updates display title metadata, not the filename", async () => {
+  const viewsSource = await Deno.readTextFile(
+    new URL("../app/views.js", import.meta.url),
+  );
+  assert(
+    viewsSource.includes('data-action="rename-asset"') ||
+      viewsSource.includes("data-asset-title"),
+    "media library must expose a rename-asset / title edit surface",
+  );
+
+  const { store, restore } = await bootStore();
+  try {
+    store.addMapItem("素材改名");
+    seedImageAsset(store, "asset-rename");
+    const before = store.data.assets.find((asset) => asset.id === "asset-rename")!;
+    assert(before.filename === "插图.png", "fixture keeps the disk filename");
+    assert(before.storage_path === "assets/插图.png", "fixture keeps storage_path");
+
+    store.renameAsset("asset-rename", "课程封面");
+    const after = store.data.assets.find((asset) => asset.id === "asset-rename")!;
+    assert(after.title === "课程封面", "Asset.title is the editable display name");
+    assert(after.filename === "插图.png", "filename must not change");
+    assert(after.storage_path === "assets/插图.png", "disk path must not change");
+
+    store.ui.route = "media";
+    store.ui.screen = "project";
+    store.notify();
+    const { createViews } = await import(
+      `../app/views.js?media-rename-${importCounter}`
+    );
+    const html = createViews(store).shellView() as string;
+    assert(
+      html.includes("课程封面"),
+      "media library must show the display title",
+    );
+  } finally {
+    restore();
+  }
+});
+
+Deno.test("assetThumb gives non-blank previews for image video markdown and attachments", async () => {
+  const viewsSource = await Deno.readTextFile(
+    new URL("../app/views.js", import.meta.url),
+  );
+  const thumb = viewsSource.match(
+    /const assetThumb = \(asset\) => \{([\s\S]*?)\n  \};/,
+  )?.[1] ?? viewsSource.match(
+    /const assetThumb = \(asset\) => \{([\s\S]*?)\n  \/\* ---/,
+  )?.[1] ?? "";
+  assert(thumb.includes("isImageLike") || thumb.includes('type === "image"'), "images use thumbnail path");
+  assert(
+    thumb.includes('type === "video"') || thumb.includes("asset-video") ||
+      thumb.includes("<video"),
+    "MP4/video must have a poster/card path, not only the letter fallback",
+  );
+  assert(
+    thumb.includes("asset-doc") || thumb.includes("previewText"),
+    "Markdown must use a content preview path",
+  );
+  assert(
+    thumb.includes("asset-attachment") || thumb.includes("attachment"),
+    "PDF/DOCX must render as attachment cards",
+  );
+  assert(
+    /pdf|docx|application\/pdf|isAttachment/i.test(thumb) ||
+      viewsSource.includes("isAttachmentAsset") ||
+      viewsSource.includes("asset-attachment"),
+    "attachment detection must cover PDF/DOCX",
+  );
 });

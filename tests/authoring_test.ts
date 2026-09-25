@@ -2,6 +2,7 @@ import {
   courseMap,
   gapCounts,
   lessonView,
+  requirementAnchorLabel,
   requirementBacklog,
   resumeLessonId,
   statusOptionId,
@@ -463,5 +464,72 @@ Deno.test("the course-input hints teach the structure the Domain really builds",
   assert(
     draft.title === "第一阶段 入门",
     `the draft is named after the first meaningful line, got ${draft.title}`,
+  );
+});
+
+Deno.test("requirement anchors name lesson + block, never 位置：待补", () => {
+  const data = authoringFixture();
+  // lesson-2 is S01-02 and currently has one paragraph.
+  const textReq = insertPlaceholder(data, "lesson-2", {
+    type: "text",
+    note: "补充这段文字",
+  });
+  const textLabel = requirementAnchorLabel(data, textReq);
+  assert(
+    textLabel === "S01-02 · 正文 02" || textLabel.startsWith("S01-02 · 正文 "),
+    `text placeholder must use a real lesson+kind anchor, got ${textLabel}`,
+  );
+  assert(!textLabel.includes("待补"), "anchor text must never say 待补");
+  assert(!textLabel.startsWith("位置："), "helper returns the bare anchor, views add 位置：");
+
+  const imageReq = insertPlaceholder(data, "lesson-2", {
+    type: "image",
+    note: "补一张图",
+  });
+  const imageLabel = requirementAnchorLabel(data, imageReq);
+  assert(
+    imageLabel.startsWith("S01-02 · 图片 "),
+    `image placeholder must name 图片, got ${imageLabel}`,
+  );
+  assert(!imageLabel.includes("待补"), "media placeholder must not fall back to 待补");
+
+  const floating = {
+    ...textReq,
+    id: "req-unanchored",
+    anchor_block_id: null,
+  };
+  assert(
+    requirementAnchorLabel(data, floating) === "未定位",
+    "requirements without an anchor block are 未定位",
+  );
+
+  const missing = {
+    ...textReq,
+    id: "req-missing-block",
+    anchor_block_id: "block-does-not-exist",
+  };
+  assert(
+    requirementAnchorLabel(data, missing) === "未定位",
+    "a missing anchor block is 未定位",
+  );
+
+  const layout = createLayoutInstance(data, "lesson-2", {
+    name: "网格",
+    mode: "grid",
+    grid_definition: { columns: [1, 1], rows: [1, 1, 1] },
+  });
+  const section = addLayoutSection(data, layout.id, { name: "Section 1" });
+  const anchorId = textReq.anchor_block_id!;
+  addPlacement(data, layout.id, anchorId, {
+    row_start: 1,
+    row_end: 2,
+    column_start: 0,
+    column_end: 1,
+    section_id: section.id,
+  });
+  const gridLabel = requirementAnchorLabel(data, textReq);
+  assert(
+    gridLabel === "Grid · Section 1 · R2C1",
+    `placed blocks use Grid · Section · RnCm, got ${gridLabel}`,
   );
 });
