@@ -564,13 +564,13 @@ N1
 >
 > 当前任务：**V1-T03 — Course Authoring & Project Structure Closure**
 >
-> 当前状态：**IN PROGRESS**
+> 当前状态：**IN PROGRESS**（Tasks 1–7 已合入；自动化 gate 全绿；**Real Desktop Acceptance 未完成 → 非 VERIFIED**）
 >
 > 产品状态：**DOGFOOD READY**
 >
-> 分发状态：**PARTIAL / 公开下载已恢复**（正式 Universal DMG、GitHub Release、固定 latest 直链与 SHA-256 已完成；**v0.1.1** 已按最新代码重建并发布，仓库重新设为 **public**，Release 页面与 `/releases/latest/download/...` 对匿名访问者可用；Developer ID 签名与 Apple 公证仍未完成）
+> 分发状态：**PARTIAL / 公开下载已恢复**（正式 Universal DMG、GitHub Release、固定 latest 直链与 SHA-256 已完成；**Latest public release = v0.1.1**，冻结；分支 `v1-t03-t04` 含未发布 T03；Developer ID 签名与 Apple 公证仍未完成）
 >
-> 下一步：**执行 V1-T03**
+> 下一步：**完成 T03 Real Desktop Acceptance（§21 / §9.3 真实鼠标 Drag Handle），再关闭 T03**
 >
 > V0 状态保持：**V0 CLOSED；V0-T01 / V0-T02 / V0-T03 / V0-T04 全部 VERIFIED**
 >
@@ -1970,6 +1970,13 @@ YYYY-MM-DD | Task | From → To | Summary
 当前：
 
 ```text
+2026-09-25 | V1-T03 | verification gate attempted — still IN PROGRESS
+Tasks 1–7 已合入；§20 自动化项齐备；正式 gate：`deno task check` / `deno task test`（298）/
+`cargo test`（55）/ `cargo build` 全绿。Real Desktop Acceptance（§21）与 §9.3 真鼠 Drag Handle
+未能在本环境诚实完成 → OPEN BLOCKERS 非空 → **不写 V1-T03 = VERIFIED**，不切换 T04。
+证据：`.superpowers/sdd/2026-09-25-v1-t03-t04-authoring-and-explorer/t03-verification.md`。
+Latest public release 仍为 **v0.1.1**（未改 tag / Release）。NEXT ACTION = 完成桌面验收后再关 T03。
+
 2026-09-25 | V1-T03 | PAUSE FEATURE DEVELOPMENT → IN PROGRESS
 按 Combined Development Package 开工 V1-T03 — Course Authoring & Project Structure Closure。
 CURRENT VERSION = V1（ACTIVE）；CURRENT TASK = V1-T03；CURRENT STATUS = IN PROGRESS；
@@ -2375,14 +2382,14 @@ V1-T01 / V1-T02  VERIFIED
 CURRENT TASK    V1-T03 — Course Authoring & Project Structure Closure
 CURRENT STATUS  IN PROGRESS
 PRODUCT STATE   DOGFOOD READY
-DISTRIBUTION    PARTIAL（已完成的部分不撤回；签名 / 公证为后续候选任务）
-OPEN BLOCKERS   NONE
+DISTRIBUTION    PARTIAL（Latest public release = v0.1.1 冻结；签名 / 公证为后续候选任务）
+OPEN BLOCKERS   Real Desktop Acceptance（§21）未跑通；§9.3 真实鼠标 Drag Handle 无证据
 ```
 
 下一步唯一动作：
 
 ```text
-执行 V1-T03
+完成 T03 Real Desktop Acceptance，再将 V1-T03 置为 VERIFIED
 ```
 
 纪律：整个过程始终只有一个 `V1-T03`，不创建 `V1-T03+04` / `V1-T03-A` / Fix Phase / 新 Milestone。
@@ -2467,8 +2474,11 @@ DONE / IMPLEMENTED
 - V1-T02 安全预检：全仓 + 全 Git history 密钥扫描、用户数据 / 开发痕迹清理、文档脱敏
 
 OPEN BLOCKERS
-- NONE（本轮）
-- 后续候选任务遗留（不是本轮 Blocker，也不阻塞 V1-T02）：缺正式 macOS signing / notarization credentials
+- BLOCKER（V1-T03）：Real Desktop Acceptance（Combined Package §21，27 步）未在可控真实 UI 会话中完成；
+  尤其 §9.3 Drag Handle 真实鼠标拖动尚无证据（pointer 单元 / DOM harness ≠ 真鼠 DoD）。
+  证据见 `.superpowers/sdd/2026-09-25-v1-t03-t04-authoring-and-explorer/t03-verification.md`。
+- 自动化门禁本轮已绿（deno check / deno test 298 / cargo test 55 / cargo build），不抵消上述 BLOCKER。
+- 后续候选任务遗留（不是 T03 关闭条件，也不阻塞已 VERIFIED 的 V1-T02）：缺正式 macOS signing / notarization credentials
   （本机 0 valid code-signing identities；无 Developer ID Application 证书，无公证凭据）
   → 当前已发布的 DMG 为 ad-hoc 签名，`spctl --assess` 判定 rejected；
      不得宣称 PUBLIC RELEASE READY / 「普通用户无安全阻碍安装」
@@ -2485,8 +2495,9 @@ V2
 NOT ACTIVE
 
 NEXT ACTION
-执行 V1-T03
-（V1-T01 / V1-T02 = VERIFIED；OPEN BLOCKERS = NONE；PRODUCT STATE = DOGFOOD READY；V0 保持 CLOSED，四个 V0 任务保持 VERIFIED。）
+完成 T03 Real Desktop Acceptance（§21），清除 BLOCKER 后再置 V1-T03 = VERIFIED 并切换 T04。
+（V1-T01 / V1-T02 = VERIFIED；V1-T03 仍 IN PROGRESS；PRODUCT STATE = DOGFOOD READY；
+ Latest public release = v0.1.1；V0 保持 CLOSED，四个 V0 任务保持 VERIFIED。）
 ```
 
 ---

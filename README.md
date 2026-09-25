@@ -119,15 +119,17 @@ BLOCKER            = 缺正式 macOS signing / notarization credentials
 
 ## 当前开发位置
 
+- **Latest public release：`v0.1.1`**（上面 Download 区的 DMG / SHA-256 / 直链均指向该已发布 tag；**未改动**）
+- 当前开发分支：`v1-t03-t04` — 含**尚未发布**的 V1-T03 实现；**不等于**已发布的 `v0.1.1`
 - 当前版本：**V1（ACTIVE）**
 - V1-T01 — V0 Hardening & UX Polish：**VERIFIED**
 - V1-T02 — Dogfooding Critical Fixes & Authoring UX Refinement：**VERIFIED**
 - 当前任务：**V1-T03 — Course Authoring & Project Structure Closure**
-- 当前状态：**IN PROGRESS**
+- 当前状态：**IN PROGRESS**（自动化 gate 已绿；Real Desktop Acceptance 仍有 BLOCKER，故尚未 VERIFIED）
 - 产品状态：**DOGFOOD READY**
 - 分发状态：**PARTIAL**（DMG / Release / 固定直链已完成；签名与公证未完成）
 - V0 状态：**V0 CLOSED；V0-T01 / V0-T02 / V0-T03 / V0-T04 全部 VERIFIED**
-- NEXT ACTION：**执行 V1-T03**
+- NEXT ACTION：**完成 T03 Real Desktop Acceptance（§21），再关闭 T03**
 - 分发剩余工作（后续候选任务，等用户批准后再启动）：签名 / 公证 / 安装 smoke
 
 ---
