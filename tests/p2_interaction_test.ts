@@ -24,15 +24,102 @@ import {
 } from "../src/service/ai_transport.ts";
 import { MemorySecretStore } from "../src/service/security.ts";
 import {
+  appendBlock,
+  createDocument,
+  createEmptyProjectData,
+  initializeContentStatuses,
+  now,
+} from "../src/domain/index.ts";
+import {
   BLOCK_SIZE_CEILING,
   blockSizeTier,
   blockSizeTierForLines,
   blockSizeView,
   estimateBlockLines,
 } from "../app/authoring.js";
+import { createViews } from "../app/views.js";
 
 function assert(condition: unknown, message: string): asserts condition {
   if (!condition) throw new Error(message);
+}
+
+/** Render writing-mode shell HTML for a short heading block (T03 toolbar). */
+function renderShortBlockCardHtml(): string {
+  const data = createEmptyProjectData("工具条");
+  const stage = data.stages[0];
+  const contentId = crypto.randomUUID();
+  const document = createDocument(data, contentId);
+  data.content_items.push({
+    id: contentId,
+    project_id: data.project.id,
+    stage_id: stage?.id ?? null,
+    code: "S01-01",
+    title: "第一课",
+    type: "lesson",
+    description: "",
+    order_index: 0,
+    document_id: document.id,
+    archived: false,
+    created_at: now(),
+    updated_at: now(),
+  });
+  initializeContentStatuses(data, contentId);
+  appendBlock(data, contentId, "heading", "短标题");
+  const item = data.content_items[0]!;
+  const store = {
+    data,
+    ui: {
+      screen: "project",
+      route: "editor",
+      mode: "writing",
+      activeId: item.id,
+      selectedBlockId: null,
+      focusRequirementId: null,
+      leftCollapsed: false,
+      rightCollapsed: false,
+      editingProjectTitle: false,
+      seedType: null,
+      seedText: "",
+      seedBusy: false,
+      rightPanel: "properties",
+      toast: "",
+      showPreviewNotes: true,
+      gridEditing: false,
+      palette: false,
+      capture: false,
+      preflight: false,
+      snapshot: false,
+      assetPicker: null,
+    },
+    tabs: [{ content_item_id: item.id, pinned: false }],
+    saveStatus: "已保存",
+    assetPreview: new Map(),
+    bridge: { isNative: () => false },
+    currentItem() {
+      return data.content_items.find((candidate) => candidate.id === this.ui.activeId) ??
+        null;
+    },
+    resumeLessonId() {
+      return item.id;
+    },
+  };
+  return createViews(store).shellView();
+}
+
+/** First `<article class="block…">…</article>` from rendered shell HTML. */
+function firstBlockCard(html: string): string {
+  const match = html.match(/<article\s+class="block\b[^"]*"[^>]*>[\s\S]*?<\/article>/);
+  assert(match, "rendered shell must include a blockCard article");
+  return match[0]!;
+}
+
+/** Slice of `card` from `startMarker` through `endMarker` (exclusive). */
+function between(card: string, startMarker: string, endMarker: string): string {
+  const start = card.indexOf(startMarker);
+  assert(start >= 0, `missing ${startMarker}`);
+  const end = card.indexOf(endMarker, start + startMarker.length);
+  assert(end > start, `missing ${endMarker} after ${startMarker}`);
+  return card.slice(start, end);
 }
 
 const CREDENTIAL = "sk-v0t02-discovery-do-not-leak-4a1b2c3d";
@@ -283,35 +370,40 @@ Deno.test("P2-2 shrinking the text steps the frame back down", () => {
  * V1-T03 — Block header toolbar, outer ceilings, neutral danger
  * ------------------------------------------------------------------ */
 
-Deno.test("T03 blockCard puts handle, type and primary actions in a header, not a trailing bar", async () => {
-  const source = await Deno.readTextFile(
-    new URL("../app/views.js", import.meta.url),
-  );
-  const start = source.indexOf("function blockCard(block, index)");
-  assert(start >= 0, "blockCard must exist");
-  const end = source.indexOf("\n  function blockBody(", start);
-  assert(end > start, "blockCard must be followed by blockBody");
-  const card = source.slice(start, end);
+Deno.test("T03 rendered blockCard puts handle, type and primary actions in a header, not a trailing bar", () => {
+  const card = firstBlockCard(renderShortBlockCardHtml());
   assert(
-    card.includes("block-head") && card.includes("block-handle") &&
-      (card.includes("block-type-label") || card.includes("blockLabel(block.type)")),
-    "the block header must carry the handle and type label",
+    card.includes('class="block-head"') && card.includes("block-handle") &&
+      card.includes("block-type-label") && card.includes(">标题<"),
+    "rendered header must carry handle and type label",
+  );
+  const head = between(card, 'class="block-head"', 'class="block-main"');
+  assert(
+    head.includes('data-action="insert-block-below"'),
+    "insert-below must be a frequent visible header action",
   );
   assert(
-    card.includes("insert-block-below"),
-    "insert-below stays a frequent, visible header action",
-  );
-  assert(
-    card.includes("block-more") && (card.includes("⋯") || card.includes("...")),
+    head.includes('class="block-more"') && head.includes(">⋯<"),
     "low-frequency actions must live behind an overflow control",
   );
+  const more = between(head, 'class="block-more"', "</details>");
   assert(
-    card.includes("delete-block") && card.includes("block-more"),
-    "delete must sit in the overflow, not a trailing column",
+    more.includes('data-action="select-block"') &&
+      more.includes('data-action="move-block"') &&
+      more.includes('data-action="delete-block"'),
+    "select / move / delete must sit inside the overflow menu",
   );
   assert(
-    !card.includes('class="block-bar"') && !card.includes("block-bar"),
+    !head.slice(0, head.indexOf('class="block-more"')).includes("delete-block"),
+    "delete must not be a frequent always-visible header control",
+  );
+  assert(
+    !card.includes("block-bar"),
     "the trailing .block-bar column that clipped short blocks must be gone",
+  );
+  assert(
+    card.indexOf("block-head") < card.indexOf("block-main"),
+    "header must precede the content body",
   );
 });
 
@@ -332,6 +424,11 @@ Deno.test("T03 danger styles stay neutral so trash icons stay visible", async ()
       styles.includes("color: #b3403f"),
     "danger may show on hover via color, not a default red fill",
   );
+  assert(
+    /\.primary\.danger\s*\{[^}]*background:\s*var\(--primary\)/m.test(styles) &&
+      /\.primary\.danger\s*\{[^}]*color:\s*#fff/m.test(styles),
+    "labeled .primary.danger CTAs must keep a readable fill (not white-on-transparent)",
+  );
 });
 
 Deno.test("T03 block outer ceilings: Small 100px, Medium/Large scaled, textarea unresized", async () => {
@@ -341,23 +438,15 @@ Deno.test("T03 block outer ceilings: Small 100px, Medium/Large scaled, textarea 
   // Old outers (border-box max-height): Small 96, Medium 188, Large 340.
   // scale = 100/96 → Medium 196, Large 354 (integer px).
   assert(
-    /--block-outer-small:\s*100px/.test(styles) ||
-      /\.block-kind-short\.block-size-small\s*\{\s*max-height:\s*100px\s*;\s*\}/.test(
-        styles,
-      ),
+    /--block-outer-small:\s*100px/.test(styles),
     "Small complete outer box must be 100px",
   );
   assert(
-    /--block-outer-medium:\s*196px/.test(styles) ||
-      /\.block-kind-(?:short|long)\.block-size-medium\s*\{\s*max-height:\s*196px\s*;\s*\}/
-        .test(styles),
+    /--block-outer-medium:\s*196px/.test(styles),
     "Medium outer must scale from Old Medium 188 by 100/96 → 196px",
   );
   assert(
-    /--block-outer-large:\s*354px/.test(styles) ||
-      /\.block-kind-long\.block-size-large\s*\{\s*max-height:\s*354px\s*;\s*\}/.test(
-        styles,
-      ),
+    /--block-outer-large:\s*354px/.test(styles),
     "Large outer must scale from Old Large 340 by 100/96 → 354px",
   );
   assert(
@@ -366,9 +455,8 @@ Deno.test("T03 block outer ceilings: Small 100px, Medium/Large scaled, textarea 
     "the old 96px Small token must be replaced",
   );
   assert(
-    /\.block-text,\s*\.block-heading\s*\{[^}]*resize:\s*none/m.test(styles) ||
-      /resize:\s*none/.test(styles),
-    "textarea { resize: none } must remain",
+    /\.block-text,\s*\.block-heading\s*\{[^}]*resize:\s*none/m.test(styles),
+    ".block-text / .block-heading must keep resize: none",
   );
 });
 
