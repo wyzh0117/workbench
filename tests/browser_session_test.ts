@@ -212,6 +212,38 @@ Deno.test("browser page reload restores reader position, then saves canonical ed
   }
 });
 
+Deno.test("openWorkbench after reload restores the session authoring subview for the current lesson", async () => {
+  const previousDocument = (globalThis as typeof globalThis & { document?: unknown }).document;
+  const previousTauri = (globalThis as typeof globalThis & { __TAURI__?: unknown }).__TAURI__;
+  const previousFetch = globalThis.fetch;
+  const { desktop, project } = await createDesktopProject();
+  try {
+    const first = await bootBrowserPage(desktop);
+    first.enterProject();
+    const lesson = project.content_items[0];
+    assert(lesson, "fixture must contain a lesson");
+    first.openItem(lesson.id);
+    first.setMode("structure");
+    first.ui.route = "media";
+    await first.persistSession(first.session());
+
+    const second = await bootBrowserPage(desktop);
+    assert(second.ui.activeId === lesson.id, "reload keeps the lesson");
+    assert(second.ui.mode === "structure", "reload keeps the authoring subview");
+    assert(second.ui.route === "media", "reload keeps the media route until 工作台 is opened");
+
+    second.openWorkbench();
+    assert(second.ui.route === "editor", "工作台 opens the authoring editor");
+    assert(second.ui.activeId === lesson.id, "工作台 stays on the session lesson");
+    assert(second.ui.mode === "structure", "工作台 restores 结构 from the valid session");
+  } finally {
+    await desktop.close();
+    (globalThis as typeof globalThis & { document?: unknown }).document = previousDocument;
+    (globalThis as typeof globalThis & { __TAURI__?: unknown }).__TAURI__ = previousTauri;
+    globalThis.fetch = previousFetch;
+  }
+});
+
 Deno.test("browser session records reject stale, corrupt, credential-shaped, missing, and inaccessible inputs", async () => {
   const directory = await Deno.makeTempDir({ prefix: "acw-browser-session-record-" });
   const projectId = "project-current";

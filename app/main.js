@@ -232,9 +232,11 @@ const STATUS = {
 const NAV = [
   ["overview", "项目概览", "⌂"],
   ["map", "课程地图", "▦"],
+  ["workbench", "工作台", "✎"],
   ["inbox", "收件箱", "↓"],
   ["board", "制作看板", "▤"],
   ["media", "媒体库", "◈"],
+  ["backlog", "待补总览", "!="],
   ["updates", "更新中心", "✦"],
   ["publish", "发布中心", "↗"],
   ["versions", "版本历史", "◷"],
@@ -1093,7 +1095,8 @@ class WorkbenchStore {
     const rightPanel = RIGHT_PANEL_KEYS.includes(value.right_panel)
       ? value.right_panel
       : defaults.right_panel;
-    const nextRoute = ROUTES.includes(value.route) ? value.route : defaults.route;
+    const rawRoute = ROUTES.includes(value.route) ? value.route : defaults.route;
+    const nextRoute = rawRoute === "workbench" ? "editor" : rawRoute;
     const selectedBlockId = typeof value.selected_block_id === "string" && activeId &&
         blocksFor(project, activeId).some((block) => block.id === value.selected_block_id)
       ? value.selected_block_id
@@ -3360,6 +3363,51 @@ class WorkbenchStore {
     this.scheduleSessionSave();
     this.notify();
   }
+  /**
+   * Left-nav「工作台」: return to the current lesson's authoring surface.
+   * Defaults to 正文; restores 正文/结构/排版/预览 when a valid session
+   * (or in-memory tab) already carries a mode for that lesson.
+   */
+  openWorkbench() {
+    const items = this.data.content_items.filter((item) => !item.archived);
+    if (items.length === 0) {
+      this.ui.route = "map";
+      this.ui.activeId = null;
+      this.scheduleSessionSave();
+      this.notify();
+      return;
+    }
+    const id = this.ui.activeId && items.some((item) => item.id === this.ui.activeId)
+      ? this.ui.activeId
+      : this.resumeLessonId();
+    if (!id) {
+      this.ui.route = "map";
+      this.ui.activeId = null;
+      this.scheduleSessionSave();
+      this.notify();
+      return;
+    }
+    const modes = ["writing", "structure", "layout", "preview"];
+    const tab = this.tabs.find((candidate) => candidate.content_item_id === id);
+    let mode = "writing";
+    if (tab && modes.includes(tab.mode)) mode = tab.mode;
+    else if (this.ui.activeId === id && modes.includes(this.ui.mode)) mode = this.ui.mode;
+    const lessonChanged = this.ui.activeId !== id;
+    this.ui.screen = "project";
+    this.ui.activeId = id;
+    this.ui.route = "editor";
+    this.ui.mode = mode;
+    this.ui.focusRequirementId = null;
+    this.ui.selectedBlockId = null;
+    this.ui.gridEditing = false;
+    this.ui.assetPicker = null;
+    this.ui.editingRequirementId = null;
+    this.ui.assetUsageId = null;
+    if (lessonChanged) this.aiSyncScope();
+    this.openTab(id, mode);
+    this.scheduleSessionSave();
+    this.notify();
+  }
   focusRequirement(id) {
     const requirement = this.data.requirements.find((candidate) => candidate.id === id);
     if (!requirement) return;
@@ -4575,7 +4623,9 @@ class WorkbenchStore {
  * view state; every canonical mutation goes through WorkbenchStore.
  * ------------------------------------------------------------------ */
 
-const ROUTES = ["overview", "map", "inbox", "board", "media", "backlog", "updates", "publish", "versions", "settings", "editor"];
+// 「工作台」is a left-nav entry (openWorkbench); authoring still uses route "editor".
+// "workbench" is accepted as a session alias and normalized to "editor".
+const ROUTES = ["overview", "map", "workbench", "inbox", "board", "media", "backlog", "updates", "publish", "versions", "settings", "editor"];
 /**
  * Directory failures from the shell's `explicit_project_dir`, i.e. the cases
  * where the stored path genuinely is not a usable project directory.
@@ -5327,6 +5377,7 @@ function handleAction(action, element, event) {
     case "toggle-left": store.ui.leftCollapsed = !store.ui.leftCollapsed; store.scheduleSessionSave(); store.notify(); return;
     case "toggle-right": store.ui.rightCollapsed = !store.ui.rightCollapsed; store.scheduleSessionSave(); store.notify(); return;
     case "route": store.ui.route = element.dataset.route; store.scheduleSessionSave(); store.notify(); return;
+    case "open-workbench": store.openWorkbench(); return;
     case "open-item": store.openItem(element.dataset.id); return;
     case "prev-lesson": store.navigateLesson("previous"); return;
     case "next-lesson": store.navigateLesson("next"); return;
@@ -5483,6 +5534,10 @@ function handleAction(action, element, event) {
       const sub = element.dataset.paletteAction;
       store.ui.palette = false;
       if (sub === "route") store.ui.route = element.dataset.route;
+      else if (sub === "open-workbench") {
+        store.openWorkbench();
+        return;
+      }
       else if (sub === "open-item") store.openItem(element.dataset.id);
       else if (sub === "focus-requirement") store.focusRequirement(element.dataset.id);
       else if (sub === "save-version") {

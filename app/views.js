@@ -284,6 +284,7 @@ export function createViews(store) {
     const nav = [
       ["overview", "项目概览", "⌂"],
       ["map", "课程地图", "▦"],
+      ["workbench", "工作台", "✎"],
       ["inbox", "收件箱", "↓"],
       ["board", "制作看板", "▤"],
       ["media", "媒体库", "◈"],
@@ -294,17 +295,24 @@ export function createViews(store) {
       ["settings", "项目设置", "⚙"],
     ];
     return `<aside class="left-panel panel"><div class="panel-heading"><span>工作台</span><button class="icon-button" data-action="toggle-left" title="${store.ui.leftCollapsed ? "展开左栏" : "收起左栏"}">${store.ui.leftCollapsed ? "☰" : "‹"}</button></div><nav>${
-      nav.map(([route, label, icon]) =>
-        `<button class="nav-item ${
-          store.ui.route === route ? "active" : ""
-        }" data-action="route" data-route="${route}"><span class="nav-icon">${icon}</span><span>${label}</span>${
+      nav.map(([route, label, icon]) => {
+        const isWorkbench = route === "workbench";
+        const active = isWorkbench
+          ? store.ui.route === "editor"
+          : store.ui.route === route;
+        const action = isWorkbench
+          ? 'data-action="open-workbench"'
+          : `data-action="route" data-route="${route}"`;
+        return `<button class="nav-item ${
+          active ? "active" : ""
+        }" ${action}><span class="nav-icon">${icon}</span><span>${label}</span>${
           route === "inbox" && openInbox ? `<b class="count">${openInbox}</b>` : ""
         }${
           route === "backlog" && map.open_requirements
             ? `<b class="count">${map.open_requirements}</b>`
             : ""
-        }</button>`
-      ).join("")
+        }</button>`;
+      }).join("")
     }</nav><div class="panel-footer">${
       map.lessons.length
         ? `<div class="side-head compact"><span class="eyebrow">本课程</span><span class="muted small">${
@@ -2629,6 +2637,7 @@ export function createViews(store) {
     }
     for (
       const [label, route] of [
+        ["打开工作台", "workbench"],
         ["打开课程地图", "map"],
         ["打开收件箱", "inbox"],
         ["打开制作看板", "board"],
@@ -2648,6 +2657,8 @@ export function createViews(store) {
             ? route
             : route === "missing-media"
             ? "missing-media"
+            : route === "workbench"
+            ? "open-workbench"
             : "route",
           route: route,
         });

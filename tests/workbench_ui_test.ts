@@ -110,6 +110,49 @@ Deno.test("Workbench shell keeps one collapse control per local sidebar", async 
   assert(30 + 420 + 30 <= 960, "both narrow collapsed rails must not cover the main work area");
 });
 
+Deno.test("left nav lists 工作台 between 课程地图 and 收件箱 as a real open-workbench entry", async () => {
+  const source = await Deno.readTextFile(
+    new URL("../app/views.js", import.meta.url),
+  );
+  const main = await Deno.readTextFile(
+    new URL("../app/main.js", import.meta.url),
+  );
+  const left = between(source, "function leftPanelView", "function centerView");
+  // Order is defined by the nav array; the panel-heading also says「工作台」
+  // and must not be mistaken for the clickable item.
+  const nav = between(left, "const nav = [", "];");
+  const labels = [
+    "项目概览",
+    "课程地图",
+    "工作台",
+    "收件箱",
+    "制作看板",
+    "媒体库",
+    "待补总览",
+    "更新中心",
+    "发布中心",
+    "版本历史",
+    "项目设置",
+  ];
+  let cursor = -1;
+  for (const label of labels) {
+    const next = nav.indexOf(`"${label}"`);
+    assert(next > cursor, `left nav must list ${label} in order after the previous item`);
+    cursor = next;
+  }
+  assert(
+    left.includes('data-action="open-workbench"'),
+    "工作台 must be a clickable open-workbench nav item",
+  );
+  assert(
+    main.includes('case "open-workbench"') && main.includes("openWorkbench("),
+    "open-workbench must dispatch to WorkbenchStore.openWorkbench",
+  );
+  assert(
+    left.includes('route === "editor"') || left.includes("route === 'editor'"),
+    "工作台 must highlight while the editor route is active",
+  );
+});
 Deno.test("shared controls align core workbench surfaces without losing compact exceptions", async () => {
   const styles = await Deno.readTextFile(
     new URL("../app/styles.css", import.meta.url),

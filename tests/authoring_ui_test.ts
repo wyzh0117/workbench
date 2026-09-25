@@ -155,6 +155,9 @@ async function bootStore() {
       total: number;
     };
     resolveLessonId: () => string | null;
+    resumeLessonId: () => string | null;
+    openWorkbench: () => void;
+    setMode: (mode: string, options?: Record<string, unknown>) => void;
     session: () => Record<string, unknown>;
     openProject: (dir?: string) => Promise<void>;
     flush: () => Promise<boolean>;
@@ -2111,6 +2114,73 @@ Deno.test("renaming an asset updates display title metadata, not the filename", 
       html.includes("课程封面"),
       "media library must show the display title",
     );
+  } finally {
+    restore();
+  }
+});
+
+Deno.test("openWorkbench returns to the current lesson editor, defaulting to 正文", async () => {
+  const { store, restore } = await bootStore();
+  try {
+    store.addMapItem("工作台第一课");
+    const lessonId = String(store.ui.activeId || "");
+    assert(lessonId, "fixture lesson must be open");
+    store.ui.route = "media";
+    store.ui.mode = "writing";
+    store.notify();
+
+    store.openWorkbench();
+    assert(String(store.ui.route) === "editor", "工作台 must open the authoring editor route");
+    assert(String(store.ui.activeId) === lessonId, "工作台 must keep the current lesson");
+    assert(String(store.ui.mode) === "writing", "without a prior subview session, default to 正文");
+  } finally {
+    restore();
+  }
+});
+
+Deno.test("openWorkbench restores 正文/结构/排版/预览 from a valid lesson session", async () => {
+  const { store, restore } = await bootStore();
+  try {
+    store.addMapItem("会话恢复课");
+    const lessonId = String(store.ui.activeId || "");
+    store.setMode("layout");
+    store.ui.route = "inbox";
+    store.notify();
+
+    store.openWorkbench();
+    assert(String(store.ui.route) === "editor", "工作台 returns to authoring");
+    assert(String(store.ui.activeId) === lessonId, "same lesson stays active");
+    assert(String(store.ui.mode) === "layout", "合法 session 恢复排版子视图");
+
+    store.setMode("preview");
+    store.ui.route = "board";
+    store.openWorkbench();
+    assert(String(store.ui.mode) === "preview", "合法 session 恢复预览子视图");
+
+    store.setMode("structure");
+    store.ui.route = "map";
+    store.openWorkbench();
+    assert(String(store.ui.mode) === "structure", "合法 session 恢复结构子视图");
+  } finally {
+    restore();
+  }
+});
+
+Deno.test("openWorkbench resumes the current course lesson when none is active", async () => {
+  const { store, restore } = await bootStore();
+  try {
+    store.addMapItem("恢复课");
+    const lessonId = String(store.ui.activeId || "");
+    store.ui.activeId = null;
+    store.ui.route = "overview";
+    store.ui.mode = "writing";
+    store.tabs = [];
+    store.notify();
+
+    store.openWorkbench();
+    assert(String(store.ui.route) === "editor", "工作台 opens authoring even from overview");
+    assert(String(store.ui.activeId) === lessonId, "resumes the course lesson");
+    assert(String(store.ui.mode) === "writing", "defaults to 正文 when no session tab exists");
   } finally {
     restore();
   }
