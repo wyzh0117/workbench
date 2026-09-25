@@ -1624,11 +1624,14 @@ export function createViews(store) {
       }" ${item.error ? "disabled" : ""}>${roleOptions(item.mapping)}</select></td></tr>`;
     }).join("");
     const status = plan?.confirmed
-      ? `<p class="mapping-confirmed">已确认导入计划（${selectedCount} 项）。尚未写入课程项目；正式接管在后续步骤。</p>`
+      ? `<p class="mapping-confirmed">已确认导入计划（${selectedCount} 项）。下一步：写入课程项目（原地接管，不移动原文件）。</p>`
       : `<p class="muted">已选 ${selectedCount} / ${items.length} 项 · 以下均为<strong>建议</strong>，可取消勾选或修改映射后，再点「确认导入计划」。</p>`;
+    const actions = plan?.confirmed
+      ? `<button class="secondary" data-action="route" data-route="explorer">返回资源浏览器</button><button class="secondary" data-action="confirm-import-mapping">重新确认</button><button class="primary" data-action="apply-folder-adoption">写入课程项目</button>`
+      : `<button class="secondary" data-action="route" data-route="explorer">返回资源浏览器</button><button class="primary" data-action="confirm-import-mapping">确认导入计划</button>`;
     return `<section class="page mapping-page"><div class="page-head"><div><span class="eyebrow">导入映射</span><h1>映射预览</h1><p class="muted">候选映射 · ${
       esc(rootLabel || "已扫描文件夹")
-    } · 建议 ≠ 事实 · 确认前不会写入课程项目。</p></div><div class="page-head-actions"><button class="secondary" data-action="route" data-route="explorer">返回资源浏览器</button><button class="primary" data-action="confirm-import-mapping">确认导入计划</button></div></div>${status}<div class="mapping-table-wrap"><table class="mapping-table"><thead><tr><th>导入</th><th>文件 / 文件夹</th><th>建议</th><th>映射为</th></tr></thead><tbody>${
+    } · 建议 ≠ 事实 · 确认后可原地写入课程项目。</p></div><div class="page-head-actions">${actions}</div></div>${status}<div class="mapping-table-wrap"><table class="mapping-table"><thead><tr><th>导入</th><th>文件 / 文件夹</th><th>建议</th><th>映射为</th></tr></thead><tbody>${
       rows || `<tr><td colspan="4" class="side-empty">没有可映射的条目</td></tr>`
     }</tbody></table></div></section>`;
   }

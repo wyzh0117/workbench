@@ -3,7 +3,7 @@
  *
  * Suggestions derived from ScanResult.suggested_role. Marked as 建议, not 事实.
  * Preview builds an editable plan; Confirm collects it. Neither writes Canonical
- * / project.json — adoption apply is Task 12.
+ * / project.json — call confirmFolderAdoption (folder.adopt) after confirm.
  */
 import type { ScanKind, ScanResult, SuggestedRole } from "./folder_scan.ts";
 
@@ -175,7 +175,7 @@ export function setImportMappingRole(
 
 /**
  * Collect the current plan as user-confirmed.
- * Does not write project.json / Canonical (Task 12).
+ * Does not write project.json / Canonical — apply via confirmFolderAdoption.
  */
 export function confirmImportMappingPlan(
   plan: ImportMappingPlan,

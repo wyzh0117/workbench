@@ -2542,6 +2542,643 @@ fn folder_read_preview(
     }))
 }
 
+
+/// Strategy A in-place adoption after confirm (§§32–35).
+/// Writes project.json + .workspace into the chosen folder; copies media into
+/// assets/. Never moves/renames/deletes original user files.
+#[tauri::command]
+fn folder_adopt(input: Value) -> Result<Value, String> {
+    let object = require_object(&input, "folder_adopt")?;
+    let plan = object
+        .get("plan")
+        .ok_or_else(|| "folder.adopt requires a mapping plan".to_string())?;
+    let plan_obj = plan
+        .as_object()
+        .ok_or_else(|| "folder.adopt plan must be an object".to_string())?;
+    let confirmed = plan_obj
+        .get("confirmed")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    if !confirmed {
+        return Err("只能对已确认的导入计划执行文件夹接管".into());
+    }
+    let root_raw = plan_obj
+        .get("root")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .trim()
+        .to_string();
+    if root_raw.is_empty() {
+        return Err("接管需要有效的文件夹路径".into());
+    }
+    let root_path = PathBuf::from(&root_raw);
+    if !root_path.is_absolute() {
+        return Err("导入文件夹必须是用户明确选择的绝对路径".into());
+    }
+    reject_symlink(&root_path, "导入文件夹")?;
+    let root_meta = fs::symlink_metadata(&root_path)
+        .map_err(|error| format!("无法打开所选文件夹：{error}"))?;
+    if root_meta.file_type().is_symlink() || !root_meta.is_dir() {
+        return Err("导入已有文件夹需要选择一个文件夹，而不是单个文件".into());
+    }
+    let resolved_root = fs::canonicalize(&root_path).unwrap_or(root_path.clone());
+    reject_symlink(&resolved_root, "导入文件夹")?;
+
+    // Refuse to clobber an existing Canonical project silently.
+    if resolved_root.join("project.json").exists() {
+        return Err("该文件夹已有 project.json，不能重复原地接管。请先打开现有项目。".into());
+    }
+
+    let duplicate_choice = field(object, &["duplicate_choice", "duplicateChoice"])
+        .and_then(Value::as_str)
+        .unwrap_or("existing");
+    let title = field(object, &["project_title", "projectTitle"])
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
+        .unwrap_or_else(|| {
+            resolved_root
+                .file_name()
+                .and_then(|value| value.to_str())
+                .unwrap_or("未命名课程")
+                .to_string()
+        });
+
+    let mut project = blank_adopt_project(&title)?;
+    let project_id = project
+        .get("project")
+        .and_then(|value| value.get("id"))
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .to_string();
+
+    let items = plan_obj
+        .get("items")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+
+    let mut stage_ids = Vec::new();
+    let mut content_item_ids = Vec::new();
+    let mut asset_ids = Vec::new();
+    let mut source_ids = Vec::new();
+    let mut reused_asset_ids = Vec::new();
+    let mut warnings = Vec::new();
+    let mut copied_files = Vec::new();
+    let mut stage_by_rel: std::collections::HashMap<String, String> =
+        std::collections::HashMap::new();
+
+    // Pass 1: stages
+    for item in &items {
+        if !adopt_item_included(item) {
+            continue;
+        }
+        let mapping = item
+            .get("mapping")
+            .and_then(Value::as_str)
+            .unwrap_or("ignore");
+        let kind = item.get("kind").and_then(Value::as_str).unwrap_or("file");
+        let rel = item
+            .get("relative_path")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .replace('\\', "/");
+        if mapping != "stage" || kind != "directory" || rel.is_empty() {
+            continue;
+        }
+        let stage_id = uuid_v4()?;
+        let title = Path::new(&rel)
+            .file_name()
+            .and_then(|value| value.to_str())
+            .unwrap_or(&rel)
+            .to_string();
+        let order = stage_ids.len();
+        let stage = json!({
+            "id": stage_id,
+            "project_id": project_id,
+            "parent_stage_id": Value::Null,
+            "code": format!("S{:02}", order + 1),
+            "title": title,
+            "description": "",
+            "learning_action": "",
+            "order_index": order,
+            "archived": false,
+            "created_at": rfc3339_now(),
+            "updated_at": rfc3339_now(),
+        });
+        project
+            .as_object_mut()
+            .unwrap()
+            .get_mut("stages")
+            .and_then(Value::as_array_mut)
+            .unwrap()
+            .push(stage);
+        stage_by_rel.insert(rel.clone(), stage_id.clone());
+        stage_ids.push(stage_id);
+    }
+
+    fs::create_dir_all(resolved_root.join(".workspace"))
+        .map_err(|error| format!("无法创建 .workspace：{error}"))?;
+    fs::create_dir_all(resolved_root.join("assets"))
+        .map_err(|error| format!("无法创建 assets：{error}"))?;
+
+    // Pass 2: files
+    for item in &items {
+        if !adopt_item_included(item) {
+            continue;
+        }
+        let mapping = item
+            .get("mapping")
+            .and_then(Value::as_str)
+            .unwrap_or("ignore");
+        let kind = item.get("kind").and_then(Value::as_str).unwrap_or("file");
+        let rel = item
+            .get("relative_path")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .replace('\\', "/");
+        if kind != "file" || rel.is_empty() {
+            continue;
+        }
+        if rel.contains("..") {
+            warnings.push(format!("{rel}: 非法路径已跳过"));
+            continue;
+        }
+        let mut absolute = resolved_root.clone();
+        for part in rel.split('/').filter(|part| !part.is_empty()) {
+            absolute.push(part);
+        }
+        let meta = match fs::symlink_metadata(&absolute) {
+            Ok(value) => value,
+            Err(error) => {
+                warnings.push(format!("{rel}: 无法读取（{error}）"));
+                continue;
+            }
+        };
+        if meta.file_type().is_symlink() {
+            warnings.push(format!("{rel}: 已跳过符号链接"));
+            continue;
+        }
+        let bytes = match fs::read(&absolute) {
+            Ok(value) => value,
+            Err(error) => {
+                warnings.push(format!("{rel}: 无法读取（{error}）"));
+                continue;
+            }
+        };
+        let checksum = sha256_hex(&bytes);
+        let filename = safe_asset_filename(
+            Path::new(&rel)
+                .file_name()
+                .and_then(|value| value.to_str())
+                .unwrap_or("unnamed"),
+        );
+        let file_title = Path::new(&filename)
+            .file_stem()
+            .and_then(|value| value.to_str())
+            .unwrap_or(&filename)
+            .to_string();
+        let stage_id = adopt_parent_stage(&rel, &stage_by_rel);
+
+        match mapping {
+            "lesson" => {
+                let text = String::from_utf8_lossy(&bytes).into_owned();
+                let content_id = adopt_add_lesson(
+                    &mut project,
+                    &project_id,
+                    stage_id.as_deref(),
+                    &file_title,
+                    &text,
+                    filename.ends_with(".md") || filename.ends_with(".markdown"),
+                )?;
+                content_item_ids.push(content_id);
+            }
+            "asset" => {
+                if let Some(asset_id) = adopt_import_asset(
+                    &mut project,
+                    &resolved_root,
+                    &project_id,
+                    &filename,
+                    &bytes,
+                    &checksum,
+                    &absolute,
+                    duplicate_choice,
+                    None,
+                    &mut warnings,
+                    &mut reused_asset_ids,
+                    &mut copied_files,
+                )? {
+                    asset_ids.push(asset_id);
+                }
+            }
+            "reference" | "source" => {
+                let source_type = if mapping == "reference" {
+                    "reference"
+                } else {
+                    "source"
+                };
+                let ext = Path::new(&filename)
+                    .extension()
+                    .and_then(|value| value.to_str())
+                    .unwrap_or("")
+                    .to_ascii_lowercase();
+                let is_text = matches!(ext.as_str(), "md" | "markdown" | "txt");
+                let mut asset_id = Value::Null;
+                if !is_text || mapping == "reference" {
+                    if let Some(id) = adopt_import_asset(
+                        &mut project,
+                        &resolved_root,
+                        &project_id,
+                        &filename,
+                        &bytes,
+                        &checksum,
+                        &absolute,
+                        duplicate_choice,
+                        Some("document"),
+                        &mut warnings,
+                        &mut reused_asset_ids,
+                        &mut copied_files,
+                    )? {
+                        asset_ids.push(id.clone());
+                        asset_id = Value::String(id);
+                    }
+                }
+                let body = if is_text && mapping == "source" {
+                    format!(
+                        "源资料：{rel}\n\n{}",
+                        String::from_utf8_lossy(&bytes)
+                    )
+                } else if mapping == "reference" {
+                    format!("参考资料：{rel}")
+                } else {
+                    format!("源资料：{rel}")
+                };
+                let inbox_id = native_id("inbox");
+                project
+                    .as_object_mut()
+                    .unwrap()
+                    .get_mut("inbox_items")
+                    .and_then(Value::as_array_mut)
+                    .unwrap()
+                    .push(json!({
+                        "id": inbox_id,
+                        "project_id": project_id,
+                        "source_type": source_type,
+                        "title": file_title,
+                        "body": body,
+                        "asset_id": asset_id,
+                        "content_item_id": Value::Null,
+                        "status": "open",
+                        "created_at": rfc3339_now(),
+                        "updated_at": rfc3339_now(),
+                    }));
+                source_ids.push(inbox_id);
+            }
+            other => warnings.push(format!("{rel}: 映射「{other}」在文件上已跳过")),
+        }
+    }
+
+    // Create + write Canonical project in-place (Strategy A).
+    let root_str = resolved_root.to_string_lossy().into_owned();
+    project_create(root_str.clone(), project.clone())?;
+
+    Ok(json!({
+        "data": project,
+        "root": root_str,
+        "stage_ids": stage_ids,
+        "content_item_ids": content_item_ids,
+        "asset_ids": asset_ids,
+        "source_ids": source_ids,
+        "reused_asset_ids": reused_asset_ids,
+        "warnings": warnings,
+        "copied_files": copied_files,
+        "copied_original_paths": [],
+    }))
+}
+
+fn adopt_item_included(item: &Value) -> bool {
+    let mapping = item
+        .get("mapping")
+        .and_then(Value::as_str)
+        .unwrap_or("ignore");
+    if mapping == "ignore" {
+        return false;
+    }
+    if item.get("selected").and_then(Value::as_bool) != Some(true) {
+        return false;
+    }
+    if item
+        .get("error")
+        .and_then(|value| value.as_str())
+        .map(|value| !value.is_empty())
+        .unwrap_or(false)
+    {
+        return false;
+    }
+    true
+}
+
+fn adopt_parent_stage(
+    rel: &str,
+    stage_by_rel: &std::collections::HashMap<String, String>,
+) -> Option<String> {
+    let parts: Vec<&str> = rel.split('/').filter(|part| !part.is_empty()).collect();
+    if parts.len() < 2 {
+        return None;
+    }
+    for end in (1..parts.len()).rev() {
+        let prefix = parts[..end].join("/");
+        if let Some(id) = stage_by_rel.get(&prefix) {
+            return Some(id.clone());
+        }
+    }
+    None
+}
+
+fn blank_adopt_project(title: &str) -> Result<Value, String> {
+    let project_id = uuid_v4()?;
+    let now = rfc3339_now();
+    let mut status_dimensions = Vec::new();
+    let mut status_options = Vec::new();
+    let dims = [
+        ("content", "正文"),
+        ("media", "媒体"),
+        ("layout", "排版"),
+        ("review", "审核"),
+        ("publish", "发布"),
+        ("update", "更新"),
+    ];
+    for (index, (key, name)) in dims.iter().enumerate() {
+        let dim_id = uuid_v4()?;
+        status_dimensions.push(json!({
+            "id": dim_id,
+            "project_id": project_id,
+            "key": key,
+            "name": name,
+            "order_index": index,
+            "allow_custom": true,
+        }));
+        for (opt_index, label) in ["未开始", "进行中", "已完成"].iter().enumerate() {
+            status_options.push(json!({
+                "id": uuid_v4()?,
+                "dimension_id": dim_id,
+                "key": format!("{key}_{opt_index}"),
+                "name": label,
+                "order_index": opt_index,
+                "is_terminal": opt_index == 2,
+            }));
+        }
+    }
+    Ok(json!({
+        "schema_version": "1.0.0",
+        "project": {
+            "id": project_id,
+            "title": title,
+            "description": "",
+            "language": "zh-CN",
+            "schema_version": "1.0.0",
+            "created_at": now,
+            "updated_at": now,
+            "archived": false,
+            "settings": {},
+        },
+        "stages": [],
+        "content_items": [],
+        "documents": [],
+        "blocks": [],
+        "groups": [],
+        "requirements": [],
+        "assets": [],
+        "asset_usages": [],
+        "status_dimensions": status_dimensions,
+        "status_options": status_options,
+        "status_assignments": [],
+        "layout_templates": [],
+        "layout_instances": [],
+        "layout_sections": [],
+        "placements": [],
+        "inbox_items": [],
+        "export_presets": [],
+        "course_seeds": [],
+        "blueprint_drafts": [],
+        "blueprint_nodes": [],
+        "conversation_sources": [],
+        "conversations": [],
+        "messages": [],
+        "context_packs": [],
+        "context_pack_items": [],
+        "suggestions": [],
+        "change_drafts": [],
+        "snapshots": [],
+        "publications": [],
+    }))
+}
+
+fn adopt_add_lesson(
+    project: &mut Value,
+    project_id: &str,
+    stage_id: Option<&str>,
+    title: &str,
+    text: &str,
+    markdown: bool,
+) -> Result<String, String> {
+    let content_id = uuid_v4()?;
+    let document_id = uuid_v4()?;
+    let order = project
+        .get("content_items")
+        .and_then(Value::as_array)
+        .map(|items| {
+            items
+                .iter()
+                .filter(|item| {
+                    !item
+                        .get("archived")
+                        .and_then(Value::as_bool)
+                        .unwrap_or(false)
+                        && item.get("stage_id").and_then(Value::as_str) == stage_id
+                })
+                .count()
+        })
+        .unwrap_or(0);
+    let code = if let Some(stage_id) = stage_id {
+        let stage_code = project
+            .get("stages")
+            .and_then(Value::as_array)
+            .and_then(|stages| {
+                stages.iter().find_map(|stage| {
+                    if stage.get("id").and_then(Value::as_str) == Some(stage_id) {
+                        stage.get("code").and_then(Value::as_str).map(str::to_string)
+                    } else {
+                        None
+                    }
+                })
+            })
+            .unwrap_or_else(|| "S01".into());
+        format!("{stage_code}-{:02}", order + 1)
+    } else {
+        format!("C{:02}", order + 1)
+    };
+    let map = project.as_object_mut().ok_or("项目数据必须是 JSON 对象")?;
+    map.get_mut("documents")
+        .and_then(Value::as_array_mut)
+        .ok_or("documents 无效")?
+        .push(json!({
+            "id": document_id,
+            "content_item_id": content_id,
+            "created_at": rfc3339_now(),
+            "updated_at": rfc3339_now(),
+        }));
+    map.get_mut("content_items")
+        .and_then(Value::as_array_mut)
+        .ok_or("content_items 无效")?
+        .push(json!({
+            "id": content_id,
+            "project_id": project_id,
+            "stage_id": stage_id,
+            "code": code,
+            "title": title,
+            "type": "lesson",
+            "description": "",
+            "order_index": order,
+            "document_id": document_id,
+            "archived": false,
+            "created_at": rfc3339_now(),
+            "updated_at": rfc3339_now(),
+        }));
+    let blocks = map
+        .get_mut("blocks")
+        .and_then(Value::as_array_mut)
+        .ok_or("blocks 无效")?;
+    let mut order_index = 0;
+    for line in text.replace("\r\n", "\n").replace('\r', "\n").lines() {
+        let value = line.trim();
+        if value.is_empty() {
+            continue;
+        }
+        let (block_type, content, settings) = if markdown {
+            if let Some(rest) = value.strip_prefix("###### ") {
+                ("heading", rest.to_string(), json!({"level": 6}))
+            } else if let Some(rest) = value.strip_prefix("##### ") {
+                ("heading", rest.to_string(), json!({"level": 5}))
+            } else if let Some(rest) = value.strip_prefix("#### ") {
+                ("heading", rest.to_string(), json!({"level": 4}))
+            } else if let Some(rest) = value.strip_prefix("### ") {
+                ("heading", rest.to_string(), json!({"level": 3}))
+            } else if let Some(rest) = value.strip_prefix("## ") {
+                ("heading", rest.to_string(), json!({"level": 2}))
+            } else if let Some(rest) = value.strip_prefix("# ") {
+                ("heading", rest.to_string(), json!({"level": 1}))
+            } else if let Some(rest) = value.strip_prefix("> ") {
+                ("quote", rest.to_string(), json!({}))
+            } else {
+                ("paragraph", value.to_string(), json!({}))
+            }
+        } else {
+            ("paragraph", value.to_string(), json!({}))
+        };
+        blocks.push(json!({
+            "id": uuid_v4()?,
+            "document_id": document_id,
+            "parent_block_id": Value::Null,
+            "type": block_type,
+            "order_index": order_index,
+            "content": content,
+            "settings": settings,
+            "created_at": rfc3339_now(),
+            "updated_at": rfc3339_now(),
+        }));
+        order_index += 1;
+    }
+    Ok(content_id)
+}
+
+fn adopt_import_asset(
+    project: &mut Value,
+    root: &Path,
+    project_id: &str,
+    filename: &str,
+    bytes: &[u8],
+    checksum: &str,
+    source_abs: &Path,
+    duplicate_choice: &str,
+    force_type: Option<&str>,
+    warnings: &mut Vec<String>,
+    reused_asset_ids: &mut Vec<String>,
+    copied_files: &mut Vec<String>,
+) -> Result<Option<String>, String> {
+    if let Some(existing) = project
+        .get("assets")
+        .and_then(Value::as_array)
+        .and_then(|assets| {
+            assets.iter().find(|asset| {
+                asset.get("project_id").and_then(Value::as_str) == Some(project_id)
+                    && asset.get("checksum").and_then(Value::as_str) == Some(checksum)
+                    && asset.get("archived").and_then(Value::as_bool) != Some(true)
+            })
+        })
+    {
+        if duplicate_choice == "cancel" {
+            return Err("已取消重复素材导入".into());
+        }
+        if duplicate_choice == "existing" {
+            let id = existing
+                .get("id")
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .to_string();
+            reused_asset_ids.push(id.clone());
+            warnings.push(format!(
+                "素材「{filename}」checksum 已存在，已复用现有素材"
+            ));
+            return Ok(Some(id));
+        }
+    }
+
+    let asset_id = uuid_v4()?;
+    let storage_path = format!("assets/{asset_id}-{filename}");
+    let dest = root.join(&storage_path);
+    if let Some(parent) = dest.parent() {
+        fs::create_dir_all(parent).map_err(|error| format!("无法创建素材目录：{error}"))?;
+    }
+    // Copy from the original path when possible so we never truncate originals.
+    if fs::copy(source_abs, &dest).is_err() {
+        fs::write(&dest, bytes).map_err(|error| format!("无法写入素材：{error}"))?;
+    }
+    copied_files.push(storage_path.clone());
+    let mime = mime_for_filename(filename);
+    let asset_type = force_type
+        .map(str::to_string)
+        .unwrap_or_else(|| normalize_asset_type(None, filename, mime));
+    project
+        .as_object_mut()
+        .unwrap()
+        .get_mut("assets")
+        .and_then(Value::as_array_mut)
+        .unwrap()
+        .push(json!({
+            "id": asset_id,
+            "project_id": project_id,
+            "type": asset_type,
+            "filename": filename,
+            "storage_path": storage_path,
+            "mime_type": mime,
+            "width": Value::Null,
+            "height": Value::Null,
+            "duration_ms": Value::Null,
+            "file_size": bytes.len(),
+            "checksum": checksum,
+            "title": filename,
+            "description": "",
+            "source_type": "imported",
+            "source_url": Value::Null,
+            "copyright_note": Value::Null,
+            "created_at": rfc3339_now(),
+            "archived": false,
+        }));
+    Ok(Some(asset_id))
+}
+
 fn append_inbox_item(project: &mut Value, item: Value) -> Result<String, String> {
     let project_id = project
         .get("project")
@@ -9600,6 +10237,183 @@ mod tests {
         );
         let _ = fs::remove_dir_all(root);
     }
+
+    #[test]
+    fn project_create_allows_strategy_a_in_nonempty_folder_without_moving_files() {
+        let root = test_directory("project-create-inplace");
+        fs::create_dir_all(root.join("01-基础")).expect("stage");
+        fs::write(root.join("01-基础/导论.md"), "# 导论\n").expect("md");
+        fs::write(root.join("intro.png"), [1_u8, 2, 3]).expect("png");
+        let before = folder_scan_fingerprint(&root);
+        let project = json!({
+            "schema_version": "1.0.0",
+            "project": {
+                "id": "proj-inplace",
+                "title": "原地课程",
+                "description": "",
+                "language": "zh-CN",
+                "schema_version": "1.0.0",
+                "created_at": "2026-01-01T00:00:00.000Z",
+                "updated_at": "2026-01-01T00:00:00.000Z",
+                "archived": false,
+                "settings": {}
+            },
+            "stages": [],
+            "content_items": [],
+            "documents": [],
+            "blocks": [],
+            "groups": [],
+            "requirements": [],
+            "assets": [],
+            "asset_usages": [],
+            "status_dimensions": [],
+            "status_options": [],
+            "status_assignments": [],
+            "layout_templates": [],
+            "layout_instances": [],
+            "layout_sections": [],
+            "placements": [],
+            "inbox_items": [],
+            "export_presets": [],
+            "course_seeds": [],
+            "blueprint_drafts": [],
+            "blueprint_nodes": [],
+            "conversation_sources": [],
+            "conversations": [],
+            "messages": [],
+            "context_packs": [],
+            "context_pack_items": [],
+            "suggestions": [],
+            "change_drafts": [],
+            "snapshots": [],
+            "publications": []
+        });
+        project_create(root.to_string_lossy().into_owned(), project).expect("create in nonempty folder");
+        assert!(root.join("project.json").exists(), "Strategy A writes project.json in place");
+        let after = folder_scan_fingerprint(&root);
+        // Fingerprint helper may include project.json; originals must remain.
+        assert_eq!(
+            fs::read(root.join("01-基础/导论.md")).unwrap(),
+            b"# \xe5\xaf\xbc\xe8\xae\xba\n",
+        );
+        assert_eq!(fs::read(root.join("intro.png")).unwrap(), vec![1, 2, 3]);
+        let _ = project_close(root.to_string_lossy().into_owned());
+        let _ = fs::remove_dir_all(root);
+        let _ = before;
+        let _ = after;
+    }
+
+    #[test]
+    fn folder_adopt_writes_canonical_copies_assets_and_leaves_originals() {
+        let root = test_directory("folder-adopt-inplace");
+        fs::create_dir_all(root.join("01-基础")).expect("stage");
+        fs::write(root.join("01-基础/导论.md"), "# 导论\n正文\n").expect("md");
+        fs::write(root.join("01-基础/intro.png"), [1_u8, 2, 3, 4]).expect("png");
+        fs::write(root.join("总体说明.pdf"), [9_u8]).expect("pdf");
+        let original_png = fs::read(root.join("01-基础/intro.png")).unwrap();
+        let plan = json!({
+            "root": root.to_string_lossy(),
+            "confirmed": true,
+            "confirmed_at": "2026-01-01T00:00:00.000Z",
+            "items": [
+                {
+                    "relative_path": "01-基础",
+                    "kind": "directory",
+                    "mime": null,
+                    "size": null,
+                    "suggested": "stage",
+                    "mapping": "stage",
+                    "selected": true,
+                    "is_suggestion": true
+                },
+                {
+                    "relative_path": "01-基础/导论.md",
+                    "kind": "file",
+                    "mime": "text/markdown",
+                    "size": 10,
+                    "suggested": "lesson",
+                    "mapping": "lesson",
+                    "selected": true,
+                    "is_suggestion": true
+                },
+                {
+                    "relative_path": "01-基础/intro.png",
+                    "kind": "file",
+                    "mime": "image/png",
+                    "size": 4,
+                    "suggested": "asset",
+                    "mapping": "asset",
+                    "selected": true,
+                    "is_suggestion": true
+                },
+                {
+                    "relative_path": "总体说明.pdf",
+                    "kind": "file",
+                    "mime": "application/pdf",
+                    "size": 1,
+                    "suggested": "reference",
+                    "mapping": "reference",
+                    "selected": true,
+                    "is_suggestion": true
+                }
+            ]
+        });
+        let result = folder_adopt(json!({ "plan": plan })).expect("adopt");
+        assert!(root.join("project.json").exists());
+        assert!(root.join(".workspace").exists());
+        assert_eq!(
+            fs::read(root.join("01-基础/intro.png")).unwrap(),
+            original_png,
+            "original media must stay"
+        );
+        assert_eq!(
+            fs::read_to_string(root.join("01-基础/导论.md")).unwrap(),
+            "# 导论\n正文\n",
+            "original markdown must stay"
+        );
+        assert!(
+            result["stage_ids"].as_array().map(|v| v.len()).unwrap_or(0) >= 1,
+            "stages become Canonical"
+        );
+        assert!(
+            result["content_item_ids"].as_array().map(|v| v.len()).unwrap_or(0) >= 1,
+            "lessons become Canonical"
+        );
+        assert!(
+            result["asset_ids"].as_array().map(|v| v.len()).unwrap_or(0) >= 1,
+            "media become Assets"
+        );
+        assert!(
+            result["source_ids"].as_array().map(|v| v.len()).unwrap_or(0) >= 1,
+            "pdf becomes Source/Reference"
+        );
+        let copied = result["copied_files"].as_array().cloned().unwrap_or_default();
+        assert!(
+            copied.iter().any(|value| value.as_str().unwrap_or("").starts_with("assets/")),
+            "managed copies live under assets/"
+        );
+        let _ = project_close(root.to_string_lossy().into_owned());
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn folder_adopt_rejects_unconfirmed_plan() {
+        let root = test_directory("folder-adopt-unconfirmed");
+        fs::write(root.join("a.md"), "# a\n").expect("md");
+        let err = folder_adopt(json!({
+            "plan": {
+                "root": root.to_string_lossy(),
+                "confirmed": false,
+                "confirmed_at": null,
+                "items": []
+            }
+        }))
+        .expect_err("unconfirmed must fail");
+        assert!(err.contains("已确认") || err.contains("确认"), "got: {err}");
+        assert!(!root.join("project.json").exists());
+        let _ = fs::remove_dir_all(root);
+    }
+
 }
 
 pub fn run() {
@@ -9643,6 +10457,7 @@ pub fn run() {
             import_confirm,
             folder_scan,
             folder_read_preview,
+            folder_adopt,
             course_seed_create,
             blueprint_build,
             asset_import,

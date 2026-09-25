@@ -58,6 +58,8 @@ import {
   previewImport,
 } from "./import_export.ts";
 import { readFolderPreview, scanFolder } from "./folder_scan.ts";
+import { confirmFolderAdoption } from "./folder_adoption.ts";
+import type { ImportMappingPlan } from "./folder_mapping.ts";
 import type { ExportPreset } from "../domain/types.ts";
 
 function decodeBase64(value: string): Uint8Array {
@@ -836,6 +838,52 @@ export class DesktopService {
             root,
             relative_path: relativePath,
             preview_kind: preview.preview_kind,
+          },
+        },
+      };
+    });
+    // Strategy A in-place adoption. Requires a confirmed ImportMappingPlan.
+    // Writes project.json + .workspace into plan.root; copies media to assets/.
+    this.commands.register("folder.adopt", async (input) => {
+      const candidate = input && typeof input === "object"
+        ? input as {
+          plan?: ImportMappingPlan;
+          duplicate_choice?: "existing" | "copy" | "cancel";
+          project_title?: string;
+        }
+        : {};
+      if (!candidate.plan) throw new Error("folder.adopt requires a mapping plan");
+      if (candidate.plan.confirmed !== true) {
+        throw new Error("只能对已确认的导入计划执行文件夹接管");
+      }
+      const result = await confirmFolderAdoption(candidate.plan, {
+        duplicate_choice: candidate.duplicate_choice,
+        project_title: candidate.project_title,
+      });
+      // Adoption writes into plan.root (possibly ≠ this.store.directory).
+      // Hand the adopted project to the caller; do not rebuild this service's
+      // search index against the wrong workspace root.
+      this.context.project = result.data;
+      return {
+        value: result,
+        events: [EventBus.domainEvent({
+          type: "ProjectChanged",
+          project_id: result.data.project.id,
+          entity_type: "project",
+          entity_id: result.data.project.id,
+          source: "user",
+          metadata: { action: "folder_adopted" },
+        })],
+        audit: {
+          object_type: "import",
+          action: "folder_adopt",
+          metadata: {
+            root: result.root,
+            stages: result.stage_ids.length,
+            lessons: result.content_item_ids.length,
+            assets: result.asset_ids.length,
+            sources: result.source_ids.length,
+            reused: result.reused_asset_ids.length,
           },
         },
       };

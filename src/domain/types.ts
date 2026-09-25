@@ -78,6 +78,14 @@ export type AssetSourceType =
   | "external"
   | "unknown";
 
+/**
+ * V1-T04 §33 Source vs Asset vs Canonical.
+ * Source = external reference material not yet Canonical lesson body.
+ * Stored via InboxItem (+ optional linked Asset for binary references);
+ * this type documents the semantic without a new ProjectData collection.
+ */
+export type SourceMaterialKind = "source" | "reference";
+
 export type LayoutMode = "flow" | "grid";
 export type FitMode = "contain" | "cover" | "stretch" | "natural";
 

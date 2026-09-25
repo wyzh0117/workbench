@@ -433,6 +433,7 @@ class DesktopBridge {
       "import.confirm": "import_confirm",
       "folder.scan": "folder_scan",
       "folder.read_preview": "folder_read_preview",
+      "folder.adopt": "folder_adopt",
       "course.seed.create": "course_seed_create",
       "blueprint.build": "blueprint_build",
       "asset.import": "asset_import",
@@ -3063,7 +3064,7 @@ class WorkbenchStore {
   }
   /**
    * Confirm collects the editable plan into UI state (§31).
-   * Does not write project.json / Canonical — adoption apply is Task 12.
+   * Does not write project.json / Canonical — call applyFolderAdoption next.
    */
   confirmImportMapping() {
     if (!this.ui.importMappingPlan) {
@@ -3074,9 +3075,72 @@ class WorkbenchStore {
     this.ui.importMappingPlan = confirmImportMappingPlan(this.ui.importMappingPlan);
     const selected = this.ui.importMappingPlan.items.filter((item) => item.selected).length;
     this.ui.toast =
-      `已确认导入计划（${selected} 项）。尚未写入课程项目；正式接管在后续步骤完成。`;
+      `已确认导入计划（${selected} 项）。请再点「写入课程项目」完成原地接管。`;
     this.scheduleSessionSave();
     this.notify();
+  }
+  /**
+   * Strategy A apply (§§32–35): consume confirmed ui.importMappingPlan,
+   * write project.json + .workspace in the folder, copy media to assets/.
+   */
+  async applyFolderAdoption() {
+    const plan = this.ui.importMappingPlan;
+    if (!plan) {
+      this.ui.toast = "没有可接管的映射计划。请先打开映射预览并确认。";
+      this.notifyChrome();
+      return;
+    }
+    if (!plan.confirmed) {
+      this.ui.toast = "请先确认导入计划，再写入课程项目。";
+      this.notifyChrome();
+      return;
+    }
+    try {
+      const result = await this.bridge.command("folder.adopt", { plan });
+      const adopted = result?.data || result?.value?.data || result;
+      if (!adopted || !adopted.project) {
+        throw new Error("文件夹接管没有返回可用的课程项目。");
+      }
+      const root = String(result?.root || plan.root || this.ui.importFolderRoot || "").trim();
+      const targetData = migrateUiProject(adopted);
+      if (root && typeof this.bridge.setProjectDir === "function") {
+        this.bridge.setProjectDir(root);
+      }
+      if (this.bridge.isNative && this.bridge.isNative()) {
+        this.markNativeLease(root);
+        const targetSession = this.targetSession(targetData, root, "map");
+        this.commitNativeProject(
+          targetData,
+          this.normalizeReaderState(targetData, targetSession, "map"),
+        );
+      } else {
+        this.applyNewProject(targetData);
+      }
+      const stages = Array.isArray(result?.stage_ids) ? result.stage_ids.length : (this.data.stages || []).length;
+      const lessons = Array.isArray(result?.content_item_ids)
+        ? result.content_item_ids.length
+        : (this.data.content_items || []).length;
+      const assets = Array.isArray(result?.asset_ids) ? result.asset_ids.length : (this.data.assets || []).length;
+      const reused = Array.isArray(result?.reused_asset_ids) ? result.reused_asset_ids.length : 0;
+      const parts = [`已原地接管并写入课程项目`];
+      if (stages) parts.push(`${stages} 个阶段`);
+      if (lessons) parts.push(`${lessons} 篇课文`);
+      if (assets) parts.push(`${assets} 个素材`);
+      if (reused) parts.push(`${reused} 个素材已按 checksum 复用`);
+      const successToast = `${parts.join(" · ")}。原文件未移动或删除。`;
+      this.ui.route = "map";
+      this.scheduleSessionSave();
+      this.notify();
+      // applyNewProject refreshes AI side files asynchronously; keep the
+      // adoption success toast authoritative over soft AI read failures.
+      queueMicrotask(() => {
+        this.ui.toast = successToast;
+        this.notifyChrome();
+      });
+    } catch (error) {
+      this.ui.toast = userFacingError(error, "无法写入课程项目。原文件夹未改动，请重试。");
+      this.notify();
+    }
   }
   setExplorerFilter(query) {
     this.ui.explorerFilter = String(query ?? "");
@@ -5856,6 +5920,7 @@ function handleAction(action, element, event) {
     case "import-folder-again": void store.importExistingFolderFromPicker(); return;
     case "open-import-mapping": store.openImportMappingPreview(); return;
     case "confirm-import-mapping": store.confirmImportMapping(); return;
+    case "apply-folder-adoption": void store.applyFolderAdoption(); return;
     case "toggle-left": store.ui.leftCollapsed = !store.ui.leftCollapsed; store.scheduleSessionSave(); store.notify(); return;
     case "toggle-right": store.ui.rightCollapsed = !store.ui.rightCollapsed; store.scheduleSessionSave(); store.notify(); return;
     case "route": store.ui.route = element.dataset.route; store.scheduleSessionSave(); store.notify(); return;
