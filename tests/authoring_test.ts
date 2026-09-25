@@ -12,19 +12,24 @@ import {
   addAsset,
   addLayoutSection,
   addPlacement,
+  addStage,
   appendBlock,
   createEmptyProjectData,
   createLayoutInstance,
   deleteBlock,
+  deleteStage,
   detachAssetFromContent,
   insertBlockAt,
   insertPlaceholder,
+  moveStage,
   removeAsset,
+  renameStage,
   resolveRequirement,
   setRequirementStatus,
   updateBlockContent,
 } from "../src/domain/index.ts";
 import type { ProjectData } from "../src/domain/types.ts";
+import { validateProjectData } from "../src/domain/store.ts";
 
 function assert(condition: unknown, message: string): asserts condition {
   if (!condition) throw new Error(message);
@@ -532,4 +537,91 @@ Deno.test("requirement anchors name lesson + block, never 位置：待补", () =
     gridLabel === "Grid · Section 1 · R2C1",
     `placed blocks use Grid · Section · RnCm, got ${gridLabel}`,
   );
+});
+
+Deno.test("stage CRUD: add keeps code and display title separate", () => {
+  const data = createEmptyProjectData("阶段 CRUD");
+  const first = addStage(data);
+  assert(first.code === "S01", `first stage code must be S01, got ${first.code}`);
+  assert(first.title === "第一阶段", `first title must be 第一阶段, got ${first.title}`);
+  assert(first.order_index === 0, "first stage starts at order 0");
+
+  const second = addStage(data);
+  assert(second.code === "S02", `second stage code must be S02, got ${second.code}`);
+  assert(second.title === "第二阶段", `second title must be 第二阶段, got ${second.title}`);
+  assert(second.order_index === 1, "second stage follows in order");
+
+  const third = addStage(data, { title: "自定义标题" });
+  assert(third.code === "S03", "third stage still gets the next code");
+  assert(third.title === "自定义标题", "explicit title overrides the default display name");
+  assert(
+    String(third.code) !== String(third.title),
+    "code and display title stay distinct",
+  );
+  assert(validateProjectData(data).length === 0, "project stays valid after adds");
+});
+
+Deno.test("stage CRUD: rename changes title only; reorder swaps order_index", () => {
+  const data = authoringFixture();
+  const stageA = data.stages.find((stage) => stage.id === "stage-a")!;
+  const stageB = data.stages.find((stage) => stage.id === "stage-b")!;
+  assert(stageA.code === "S01" && stageB.code === "S02", "fixture codes");
+
+  renameStage(data, stageA.id, "入门");
+  assert(stageA.title === "入门", "rename updates the display title");
+  assert(stageA.code === "S01", "rename must not change the stage code");
+
+  moveStage(data, stageB.id, "up");
+  assert(stageB.order_index === 0, "moving up places the stage first");
+  assert(stageA.order_index === 1, "the previous first stage moves down");
+  assert(stageA.code === "S01" && stageB.code === "S02", "reorder keeps codes stable");
+
+  moveStage(data, stageB.id, "up");
+  assert(stageB.order_index === 0, "already-first stage stays put");
+  assert(validateProjectData(data).length === 0, "project stays valid after rename/reorder");
+});
+
+Deno.test("stage CRUD: empty delete removes the stage; non-empty refuses", () => {
+  const data = authoringFixture();
+  const empty = addStage(data);
+  assert(
+    !data.content_items.some((item) => item.stage_id === empty.id),
+    "new stage starts empty",
+  );
+
+  deleteStage(data, empty.id);
+  assert(
+    !data.stages.some((stage) => stage.id === empty.id),
+    "empty stage is removed",
+  );
+  assert(
+    data.stages.every((stage, index) => stage.order_index === index) ||
+      [...data.stages].sort((a, b) => a.order_index - b.order_index)
+        .every((stage, index) => stage.order_index === index),
+    "remaining stages keep contiguous order_index",
+  );
+
+  const occupied = data.stages.find((stage) => stage.id === "stage-a")!;
+  const lessonCount = data.content_items.filter((item) =>
+    item.stage_id === occupied.id && !item.archived
+  ).length;
+  assert(lessonCount > 0, "fixture stage-a has lessons");
+
+  let refused = false;
+  try {
+    deleteStage(data, occupied.id);
+  } catch (error) {
+    refused = true;
+    const message = error instanceof Error ? error.message : String(error);
+    assert(
+      message.includes(`${lessonCount}`) && message.includes("节课"),
+      `non-empty delete must name the lesson count, got: ${message}`,
+    );
+  }
+  assert(refused, "non-empty stage must not delete silently");
+  assert(
+    data.stages.some((stage) => stage.id === occupied.id),
+    "occupied stage remains after a refused delete",
+  );
+  assert(validateProjectData(data).length === 0, "project stays valid");
 });

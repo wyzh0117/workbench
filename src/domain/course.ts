@@ -6,6 +6,7 @@ import {
   type CourseSeedSourceType,
   CURRENT_SCHEMA_VERSION,
   type ProjectData,
+  type Stage,
 } from "./types.ts";
 import { assert, id, now } from "./util.ts";
 import { touchProject } from "./store.ts";
@@ -255,5 +256,133 @@ export function discardBlueprint(data: ProjectData, draftId: string): void {
   assert(draft, `找不到课程草稿: ${draftId}`);
   assert(draft.status === "draft", "只能放弃待确认的课程草稿");
   draft.status = "discarded";
+  touchProject(data);
+}
+
+/** Chinese ordinal for stage display titles: 一, 二, … 十, 十一, … */
+export function chineseStageOrdinal(n: number): string {
+  const digits = ["零", "一", "二", "三", "四", "五", "六", "七", "八", "九"];
+  if (n <= 0) return String(n);
+  if (n < 10) return digits[n]!;
+  if (n === 10) return "十";
+  if (n < 20) return `十${digits[n - 10]!}`;
+  if (n < 100) {
+    const tens = Math.floor(n / 10);
+    const ones = n % 10;
+    return `${digits[tens]!}十${ones ? digits[ones]! : ""}`;
+  }
+  return String(n);
+}
+
+/** Next unused `Snn` code among non-archived stages. */
+export function nextStageCode(data: ProjectData): string {
+  let highest = 0;
+  for (const stage of data.stages) {
+    if (stage.archived) continue;
+    const match = /^S(\d+)$/i.exec(String(stage.code || ""));
+    if (match) highest = Math.max(highest, Number(match[1]));
+  }
+  return `S${String(highest + 1).padStart(2, "0")}`;
+}
+
+/** Default display title for the Nth new stage (1-based sequence from code). */
+export function defaultStageTitleForCode(code: string): string {
+  const match = /^S(\d+)$/i.exec(code);
+  const n = match ? Number(match[1]) : 1;
+  return `第${chineseStageOrdinal(n)}阶段`;
+}
+
+export function stageLessonCount(data: ProjectData, stageId: string): number {
+  return data.content_items.filter((item) =>
+    item.stage_id === stageId && !item.archived
+  ).length;
+}
+
+function reindexStages(data: ProjectData): void {
+  const ordered = data.stages
+    .filter((stage) => !stage.archived)
+    .sort((left, right) => left.order_index - right.order_index);
+  ordered.forEach((stage, index) => {
+    stage.order_index = index;
+  });
+}
+
+export interface AddStageInput {
+  title?: string;
+  code?: string;
+}
+
+/** Append a stage. `code` and display `title` stay separate. */
+export function addStage(data: ProjectData, input: AddStageInput = {}): Stage {
+  const code = String(input.code ?? "").trim() || nextStageCode(data);
+  const title = String(input.title ?? "").trim() || defaultStageTitleForCode(code);
+  const active = data.stages.filter((stage) => !stage.archived);
+  const stage: Stage = {
+    id: id(),
+    project_id: data.project.id,
+    parent_stage_id: null,
+    code,
+    title,
+    description: "",
+    learning_action: "",
+    order_index: active.length,
+    archived: false,
+    created_at: now(),
+    updated_at: now(),
+  };
+  data.stages.push(stage);
+  touchProject(data);
+  return stage;
+}
+
+/** Rename only the display title; stage `code` is unchanged. */
+export function renameStage(
+  data: ProjectData,
+  stageId: string,
+  title: string,
+): void {
+  const next = String(title ?? "").trim();
+  assert(next, "阶段名称不能为空");
+  const stage = data.stages.find((candidate) => candidate.id === stageId);
+  assert(stage, `找不到阶段: ${stageId}`);
+  stage.title = next;
+  stage.updated_at = now();
+  touchProject(data);
+}
+
+/** Swap order_index with the neighboring active stage. Codes stay put. */
+export function moveStage(
+  data: ProjectData,
+  stageId: string,
+  direction: "up" | "down",
+): void {
+  const siblings = data.stages
+    .filter((stage) => !stage.archived)
+    .sort((left, right) => left.order_index - right.order_index);
+  const index = siblings.findIndex((stage) => stage.id === stageId);
+  assert(index >= 0, `找不到阶段: ${stageId}`);
+  const target = direction === "up" ? index - 1 : index + 1;
+  if (target < 0 || target >= siblings.length) return;
+  const left = siblings[index]!;
+  const right = siblings[target]!;
+  const order = left.order_index;
+  left.order_index = right.order_index;
+  right.order_index = order;
+  left.updated_at = now();
+  right.updated_at = now();
+  touchProject(data);
+}
+
+/**
+ * Delete an empty stage. Non-empty stages throw so callers can surface
+ * “还有 N 节课，请先移动课程” instead of cascading silently.
+ */
+export function deleteStage(data: ProjectData, stageId: string): void {
+  const stage = data.stages.find((candidate) => candidate.id === stageId);
+  assert(stage, `找不到阶段: ${stageId}`);
+  const count = stageLessonCount(data, stageId);
+  assert(count === 0, `这个阶段还有 ${count} 节课，请先移动课程。`);
+  data.stages = data.stages.filter((candidate) => candidate.id !== stageId);
+  reindexStages(data);
   touchProject(data);
 }

@@ -100,6 +100,10 @@ async function bootStore() {
     lesson: () => ReturnType<typeof lessonView>;
     map: () => ReturnType<typeof courseMap>;
     addMapItem: (title?: string) => void;
+    addStage: (title?: string) => void;
+    renameStage: (id: string, title: string) => void;
+    moveStage: (id: string, direction: string) => void;
+    deleteStage: (id: string) => void;
     renameLesson: (id: string, title: string) => void;
     moveLesson: (id: string, direction: string) => void;
     deleteLesson: (id: string) => void;
@@ -2181,6 +2185,127 @@ Deno.test("openWorkbench resumes the current course lesson when none is active",
     assert(String(store.ui.route) === "editor", "工作台 opens authoring even from overview");
     assert(String(store.ui.activeId) === lessonId, "resumes the course lesson");
     assert(String(store.ui.mode) === "writing", "defaults to 正文 when no session tab exists");
+  } finally {
+    restore();
+  }
+});
+
+Deno.test("stage CRUD store: add rename reorder empty delete and non-empty safety", async () => {
+  const { store, restore } = await bootStore();
+  try {
+    assert(typeof store.addStage === "function", "store must expose addStage");
+    assert(typeof store.renameStage === "function", "store must expose renameStage");
+    assert(typeof store.moveStage === "function", "store must expose moveStage");
+    assert(typeof store.deleteStage === "function", "store must expose deleteStage");
+
+    store.addStage();
+    store.addStage();
+    assert(store.data.stages.length === 2, "two stages created");
+    const ordered = () =>
+      [...store.data.stages].sort((a, b) => a.order_index - b.order_index);
+    let first = ordered()[0]!;
+    let second = ordered()[1]!;
+    assert(first.code === "S01", "first code is S01");
+    assert(first.title === "第一阶段", "first title is 第一阶段");
+    assert(second.code === "S02", "second code is S02");
+    assert(second.title === "第二阶段", "second title is 第二阶段");
+
+    const firstId = first.id;
+    const secondId = second.id;
+    store.renameStage(firstId, "入门阶段");
+    first = store.data.stages.find((stage) => stage.id === firstId)!;
+    assert(first.title === "入门阶段", "rename updates display title");
+    assert(first.code === "S01", "rename leaves code alone");
+
+    store.moveStage(secondId, "up");
+    first = store.data.stages.find((stage) => stage.id === firstId)!;
+    second = store.data.stages.find((stage) => stage.id === secondId)!;
+    assert(second.order_index === 0 && first.order_index === 1, "reorder swaps stages");
+
+    store.deleteStage(firstId);
+    assert(
+      store.ui.confirmDeleteStage === firstId ||
+        String(store.ui.toast || "").includes("确认"),
+      "empty stage delete asks for confirmation first",
+    );
+    assert(
+      store.data.stages.some((stage) => stage.id === firstId),
+      "stage remains until confirmed",
+    );
+    store.deleteStage(firstId);
+    assert(
+      !store.data.stages.some((stage) => stage.id === firstId),
+      "confirmed empty delete removes the stage",
+    );
+
+    store.addMapItem("占位课");
+    const occupied = store.data.stages.find((stage) =>
+      store.data.content_items.some((item) => item.stage_id === stage.id)
+    )!;
+    const lessonCount = store.data.content_items.filter((item) =>
+      item.stage_id === occupied.id
+    ).length;
+    store.deleteStage(occupied.id);
+    assert(
+      store.data.stages.some((stage) => stage.id === occupied.id),
+      "non-empty stage must not be deleted",
+    );
+    assert(
+      String(store.ui.toast || "").includes(`${lessonCount}`) &&
+        String(store.ui.toast || "").includes("节课"),
+      `toast must ask to move lessons first, got: ${store.ui.toast}`,
+    );
+    assert(
+      validateProjectData(store.data).length === 0,
+      "project stays valid after stage CRUD",
+    );
+  } finally {
+    restore();
+  }
+});
+
+Deno.test("course map stage header exposes add rename reorder delete actions", async () => {
+  const viewsSource = await Deno.readTextFile(
+    new URL("../app/views.js", import.meta.url),
+  );
+  assert(viewsSource.includes('data-action="add-stage"'), "map must expose + 新阶段");
+  assert(viewsSource.includes("新阶段"), "add-stage label is Chinese 新阶段");
+  assert(viewsSource.includes('data-action="rename-stage"'), "stage head has rename");
+  assert(viewsSource.includes('data-action="move-stage"'), "stage head has reorder");
+  assert(viewsSource.includes('data-action="delete-stage"'), "stage head has delete");
+  assert(
+    /function mapView[\s\S]*stage-head[\s\S]*add-stage|add-stage[\s\S]*stage-head/.test(
+      viewsSource,
+    ) || viewsSource.includes("stage-tools") || viewsSource.includes("stage-more"),
+    "stage actions live on the course map stage header, not buried elsewhere",
+  );
+
+  const mainSource = await Deno.readTextFile(
+    new URL("../app/main.js", import.meta.url),
+  );
+  assert(mainSource.includes('"add-stage"') || mainSource.includes("case \"add-stage\""), "main binds add-stage");
+  assert(mainSource.includes("rename-stage"), "main binds rename-stage");
+  assert(mainSource.includes("move-stage"), "main binds move-stage");
+  assert(mainSource.includes("delete-stage"), "main binds delete-stage");
+
+  const { store, restore } = await bootStore();
+  try {
+    store.addStage();
+    store.addStage();
+    store.ui.route = "map";
+    store.ui.screen = "project";
+    store.notify();
+    const { createViews } = await import(
+      `../app/views.js?stage-crud-${importCounter}`
+    );
+    const html = createViews(store).shellView() as string;
+    assert(html.includes("data-action=\"add-stage\""), "rendered map has add-stage");
+    assert(html.includes("新阶段"), "rendered map shows 新阶段");
+    assert(html.includes("data-action=\"rename-stage\""), "rendered stage head has rename");
+    assert(html.includes("data-action=\"move-stage\""), "rendered stage head has move");
+    assert(html.includes("data-action=\"delete-stage\""), "rendered stage head has delete");
+    assert(html.includes("S01") && html.includes("S02"), "stage codes render");
+    assert(html.includes("第一阶段") && html.includes("第二阶段"), "stage titles render");
   } finally {
     restore();
   }

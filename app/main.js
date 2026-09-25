@@ -863,6 +863,68 @@ function nextLessonCode(stageCode, siblings) {
 }
 
 /**
+ * Chinese ordinal used in default stage titles (第一阶段, 第十一阶段, …).
+ *
+ * @param {number} n
+ * @returns {string}
+ */
+function chineseStageOrdinal(n) {
+  const digits = ["零", "一", "二", "三", "四", "五", "六", "七", "八", "九"];
+  if (n <= 0) return String(n);
+  if (n < 10) return digits[n];
+  if (n === 10) return "十";
+  if (n < 20) return `十${digits[n - 10]}`;
+  if (n < 100) {
+    const tens = Math.floor(n / 10);
+    const ones = n % 10;
+    return `${digits[tens]}十${ones ? digits[ones] : ""}`;
+  }
+  return String(n);
+}
+
+/**
+ * Next unused stage code (`S01`, `S02`, …) among non-archived stages.
+ *
+ * @param {any} data
+ * @returns {string}
+ */
+function nextStageCode(data) {
+  let highest = 0;
+  for (const stage of data.stages || []) {
+    if (stage.archived) continue;
+    const match = /^S(\d+)$/i.exec(String(stage.code || ""));
+    if (match) highest = Math.max(highest, Number(match[1]));
+  }
+  return `S${String(highest + 1).padStart(2, "0")}`;
+}
+
+/**
+ * Default editable display title for a stage code. Code and title stay separate.
+ *
+ * @param {string} code
+ * @returns {string}
+ */
+function defaultStageTitleForCode(code) {
+  const match = /^S(\d+)$/i.exec(String(code || ""));
+  const n = match ? Number(match[1]) : 1;
+  return `第${chineseStageOrdinal(n)}阶段`;
+}
+
+/**
+ * Compact active stage order_index after a delete.
+ *
+ * @param {any} data
+ */
+function reindexStages(data) {
+  const ordered = data.stages
+    .filter((stage) => !stage.archived)
+    .sort((left, right) => left.order_index - right.order_index);
+  ordered.forEach((stage, index) => {
+    stage.order_index = index;
+  });
+}
+
+/**
  * Renumber a stage's lessons so `code`, `order_index` and reading order agree.
  * Codes are user-facing identifiers, so they must stay unique after a delete.
  *
@@ -939,6 +1001,7 @@ class WorkbenchStore {
       assetQuery: "",
       showPreviewNotes: true,
       confirmDeleteLesson: null,
+      confirmDeleteStage: null,
       confirmDeleteAssetId: null,
       toast: "",
       // AI workflow (V0-T03 §4).  Every field here is UI-only: canonical AI
@@ -3739,6 +3802,88 @@ class WorkbenchStore {
     }
     this.ui.toast = `已删除《${item.title}》；素材仍保留在媒体库`;
   }
+  addStage(title) {
+    let created = null;
+    this.commit("新增阶段", (data) => {
+      const code = nextStageCode(data);
+      const display = String(title ?? "").trim() || defaultStageTitleForCode(code);
+      const active = data.stages.filter((candidate) => !candidate.archived);
+      const stage = {
+        id: uid(),
+        project_id: data.project.id,
+        parent_stage_id: null,
+        code,
+        title: display,
+        description: "",
+        learning_action: "",
+        order_index: active.length,
+        archived: false,
+        created_at: now(),
+        updated_at: now(),
+      };
+      data.stages.push(stage);
+      created = stage;
+    });
+    if (!created) return;
+    this.ui.confirmDeleteStage = null;
+    this.ui.screen = "project";
+    this.ui.route = "map";
+    this.ui.toast = `已新增阶段 ${created.code} ${created.title}`;
+    this.notify();
+  }
+  renameStage(id, title) {
+    const next = String(title ?? "").trim();
+    if (!next) return;
+    this.commit("重命名阶段", (data) => {
+      const stage = data.stages.find((candidate) => candidate.id === id);
+      if (!stage) return;
+      stage.title = next;
+      stage.updated_at = now();
+    });
+  }
+  moveStage(id, direction) {
+    const siblings = this.data.stages.filter((candidate) => !candidate.archived).sort((a, b) => a.order_index - b.order_index);
+    const index = siblings.findIndex((candidate) => candidate.id === id);
+    const target = direction === "up" ? index - 1 : index + 1;
+    if (index < 0 || !siblings[target]) return;
+    this.commit("调整阶段顺序", (data) => {
+      const left = data.stages.find((candidate) => candidate.id === siblings[index].id);
+      const right = data.stages.find((candidate) => candidate.id === siblings[target].id);
+      if (!left || !right) return;
+      const order = left.order_index;
+      left.order_index = right.order_index;
+      right.order_index = order;
+      left.updated_at = now();
+      right.updated_at = now();
+    });
+  }
+  deleteStage(id) {
+    const stage = this.data.stages.find((candidate) => candidate.id === id);
+    if (!stage) return;
+    const lessonCount = this.data.content_items.filter((item) => item.stage_id === id && !item.archived).length;
+    if (lessonCount > 0) {
+      this.ui.confirmDeleteStage = null;
+      this.ui.toast = `这个阶段还有 ${lessonCount} 节课，请先移动课程。`;
+      this.notify();
+      return;
+    }
+    if (this.ui.confirmDeleteStage !== id) {
+      this.ui.confirmDeleteStage = id;
+      this.ui.toast = `再点一次确认删除空阶段「${stage.title}」`;
+      this.notify();
+      return;
+    }
+    this.commit("删除阶段", (data) => {
+      const still = data.content_items.some((item) => item.stage_id === id && !item.archived);
+      if (still) return;
+      data.stages = data.stages.filter((candidate) => candidate.id !== id);
+      reindexStages(data);
+    });
+    this.ui.confirmDeleteStage = null;
+    this.ui.toast = `已删除阶段「${stage.title}」`;
+    this.ui.route = "map";
+    this.notify();
+  }
   addMapItem(title = "新建课程内容") {
     const requested = String(title ?? "").trim() || "新建课程内容";
     let createdId = null;
@@ -5388,6 +5533,16 @@ function handleAction(action, element, event) {
       if (typeof next === "string") store.renameLesson(item.id, next);
       return;
     }
+    case "add-stage": store.addStage(); return;
+    case "rename-stage": {
+      const stage = store.data.stages.find((candidate) => candidate.id === element.dataset.id);
+      if (!stage) return;
+      const next = globalThis.prompt?.("重命名阶段", stage.title);
+      if (typeof next === "string") store.renameStage(stage.id, next);
+      return;
+    }
+    case "move-stage": store.moveStage(element.dataset.id, element.dataset.direction); return;
+    case "delete-stage": store.deleteStage(element.dataset.id); return;
     case "move-lesson": store.moveLesson(element.dataset.id, element.dataset.direction); return;
     case "delete-lesson": store.deleteLesson(element.dataset.id); return;
     case "close-tab": {

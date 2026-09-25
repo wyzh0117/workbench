@@ -425,40 +425,63 @@ export function createViews(store) {
       }">确认课程地图并创建内容</button></div></div>`
       : "";
     const map = courseMap(store.data, store.ui.activeId);
-    if (map.lesson_count === 0 && !draft) {
-      return `<section class="page"><div class="page-head"><div><span class="eyebrow">课程地图</span><h1>课程结构</h1><p class="muted">课程还没有内容。可以先建第一课，也可以把手上已有的材料变成课程地图。</p></div><button class="primary" data-action="add-map-item">＋ 新建课程内容</button></div>${
+    const realStages = map.stages.filter((stage) => stage.id);
+    if (map.lesson_count === 0 && realStages.length === 0 && !draft) {
+      return `<section class="page"><div class="page-head"><div><span class="eyebrow">课程地图</span><h1>课程结构</h1><p class="muted">课程还没有内容。可以先建第一课或新阶段，也可以把手上已有的材料变成课程地图。</p></div><div class="map-actions"><button class="secondary" data-action="add-stage">＋ 新阶段</button><button class="primary" data-action="add-map-item">＋ 新建课程内容</button></div></div>${
         seedCard()
-      }<div class="empty-state"><div class="empty-icon">▦</div><h2>还没有课程内容</h2><p class="muted">现在可以新建第一课；课程地图会保留你的后续编辑。</p><button class="primary" data-action="add-map-item">新建第一课</button></div></section>`;
+      }<div class="empty-state"><div class="empty-icon">▦</div><h2>还没有课程内容</h2><p class="muted">现在可以新建第一课，或先加一个阶段；课程地图会保留你的后续编辑。</p><div class="modal-actions"><button class="secondary" data-action="add-stage">＋ 新阶段</button><button class="primary" data-action="add-map-item">新建第一课</button></div></div></section>`;
     }
     return `<section class="page"><div class="page-head"><div><span class="eyebrow">课程地图</span><h1>${
       esc(map.project_title)
     }</h1><p class="muted">${
       map.lesson_count
         ? `共 ${map.lesson_count} 课 · 已完成 ${map.complete_count} 课 · 待补 ${map.open_requirements} 项 · 缺素材 ${map.missing_media} 处`
-        : "还没有内容，可以先新建第一课"
+        : "还没有内容，可以先新建第一课或新阶段"
     }</p>${
       map.lesson_count
         ? `<div class="progress-track wide"><span style="width:${map.progress}%"></span></div>`
         : ""
-    }</div><div class="map-actions"><button class="secondary" data-action="add-map-item">＋ 新建课程内容</button>${
+    }</div><div class="map-actions"><button class="secondary" data-action="add-stage">＋ 新阶段</button><button class="secondary" data-action="add-map-item">＋ 新建课程内容</button>${
       map.next_lesson_id
         ? `<button class="primary" data-action="open-item" data-id="${map.next_lesson_id}">继续下一处未完成 →</button>`
         : ""
     }</div></div>${draftCard}<div class="course-map">${
-      map.stages.map((stage) =>
-        `<div class="stage-card ${stage.current ? "current" : ""}"><div class="stage-head"><span class="stage-code">${
-          esc(stage.code)
-        }</span><h2>${esc(stage.title)}</h2><span class="stage-count">${
-          stage.lessons.length
-        } 课 · 完成 ${stage.complete_count}${
-          stage.open_requirements ? ` · 待补 ${stage.open_requirements}` : ""
-        }</span></div><div class="map-items">${
-          stage.lessons.length
-            ? stage.lessons.map(mapItem).join("")
-            : `<div class="side-empty">这个阶段还没有内容，可以先新建一课。</div>`
-        }</div></div>`
+      map.stages.map((stage, stageIndex) =>
+        stageCard(stage, stageIndex, realStages.length)
       ).join("")
     }</div></section>`;
+  }
+
+  function stageCard(stage, stageIndex, stageCount) {
+    const manageable = Boolean(stage.id);
+    const tools = manageable
+      ? `<div class="stage-tools"><button class="icon-button" data-action="rename-stage" data-id="${
+        stage.id
+      }" title="重命名阶段">✎</button><button class="icon-button" data-action="move-stage" data-id="${
+        stage.id
+      }" data-direction="up" title="上移阶段" ${
+        stageIndex === 0 ? "disabled" : ""
+      }>↑</button><button class="icon-button" data-action="move-stage" data-id="${
+        stage.id
+      }" data-direction="down" title="下移阶段" ${
+        stageIndex >= stageCount - 1 ? "disabled" : ""
+      }>↓</button><details class="stage-more"><summary class="icon-button" title="更多阶段操作">⋯</summary><div class="stage-more-menu"><button type="button" class="stage-more-item" data-action="add-stage" title="在课程地图新增阶段">＋ 新阶段</button><button type="button" class="stage-more-item" data-action="rename-stage" data-id="${
+        stage.id
+      }" title="重命名阶段">重命名</button><button type="button" class="stage-more-item danger" data-action="delete-stage" data-id="${
+        stage.id
+      }" title="删除阶段（空阶段需确认；有课时会先提示移动）">${TRASH_ICON} 删除阶段</button></div></details></div>`
+      : "";
+    return `<div class="stage-card ${stage.current ? "current" : ""}"><div class="stage-head"><span class="stage-code">${
+      esc(stage.code)
+    }</span><h2>${esc(stage.title)}</h2><span class="stage-count">${
+      stage.lessons.length
+    } 课 · 完成 ${stage.complete_count}${
+      stage.open_requirements ? ` · 待补 ${stage.open_requirements}` : ""
+    }</span>${tools}</div><div class="map-items">${
+      stage.lessons.length
+        ? stage.lessons.map(mapItem).join("")
+        : `<div class="side-empty">这个阶段还没有内容，可以先新建一课。</div>`
+    }</div></div>`;
   }
 
   /**
