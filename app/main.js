@@ -5623,10 +5623,17 @@ function bindEvents() {
   // re-rendering, so the click never steals focus from a text field.
   root.querySelectorAll("article.block[data-block-id]").forEach((element) => {
     const blockId = element.dataset.blockId;
-    element.addEventListener("click", () => {
+    element.addEventListener("click", (event) => {
+      // Opening the overflow menu must not re-render or the <details> closes.
+      const inMore = typeof event.target?.closest === "function" &&
+        event.target.closest("details.block-more");
       if (store.ui.selectedBlockId === blockId) return;
       store.ui.selectedBlockId = blockId;
       store.scheduleSessionSave();
+      if (inMore) {
+        element.classList.add("selected");
+        return;
+      }
       // A full render keeps the selection rings and the right-hand panels in
       // step; text fields are skipped below so this never steals focus.
       if (document.activeElement && document.activeElement.closest?.("article.block")) return;

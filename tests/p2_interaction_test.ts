@@ -280,6 +280,99 @@ Deno.test("P2-2 shrinking the text steps the frame back down", () => {
 });
 
 /* ------------------------------------------------------------------ *
+ * V1-T03 — Block header toolbar, outer ceilings, neutral danger
+ * ------------------------------------------------------------------ */
+
+Deno.test("T03 blockCard puts handle, type and primary actions in a header, not a trailing bar", async () => {
+  const source = await Deno.readTextFile(
+    new URL("../app/views.js", import.meta.url),
+  );
+  const start = source.indexOf("function blockCard(block, index)");
+  assert(start >= 0, "blockCard must exist");
+  const end = source.indexOf("\n  function blockBody(", start);
+  assert(end > start, "blockCard must be followed by blockBody");
+  const card = source.slice(start, end);
+  assert(
+    card.includes("block-head") && card.includes("block-handle") &&
+      (card.includes("block-type-label") || card.includes("blockLabel(block.type)")),
+    "the block header must carry the handle and type label",
+  );
+  assert(
+    card.includes("insert-block-below"),
+    "insert-below stays a frequent, visible header action",
+  );
+  assert(
+    card.includes("block-more") && (card.includes("⋯") || card.includes("...")),
+    "low-frequency actions must live behind an overflow control",
+  );
+  assert(
+    card.includes("delete-block") && card.includes("block-more"),
+    "delete must sit in the overflow, not a trailing column",
+  );
+  assert(
+    !card.includes('class="block-bar"') && !card.includes("block-bar"),
+    "the trailing .block-bar column that clipped short blocks must be gone",
+  );
+});
+
+Deno.test("T03 danger styles stay neutral so trash icons stay visible", async () => {
+  const styles = await Deno.readTextFile(
+    new URL("../app/styles.css", import.meta.url),
+  );
+  assert(
+    !/(?:^|[^\w-])\.danger\s*\{\s*background:\s*#b74949\s*;\s*\}/m.test(styles),
+    "global .danger must not paint a solid red fill that hides a trash glyph",
+  );
+  assert(
+    /\.icon-button\.danger\s*\{[^}]*background:\s*transparent/m.test(styles),
+    ".icon-button.danger must stay transparent by default",
+  );
+  assert(
+    styles.includes(".icon-button.danger:hover") &&
+      styles.includes("color: #b3403f"),
+    "danger may show on hover via color, not a default red fill",
+  );
+});
+
+Deno.test("T03 block outer ceilings: Small 100px, Medium/Large scaled, textarea unresized", async () => {
+  const styles = await Deno.readTextFile(
+    new URL("../app/styles.css", import.meta.url),
+  );
+  // Old outers (border-box max-height): Small 96, Medium 188, Large 340.
+  // scale = 100/96 → Medium 196, Large 354 (integer px).
+  assert(
+    /--block-outer-small:\s*100px/.test(styles) ||
+      /\.block-kind-short\.block-size-small\s*\{\s*max-height:\s*100px\s*;\s*\}/.test(
+        styles,
+      ),
+    "Small complete outer box must be 100px",
+  );
+  assert(
+    /--block-outer-medium:\s*196px/.test(styles) ||
+      /\.block-kind-(?:short|long)\.block-size-medium\s*\{\s*max-height:\s*196px\s*;\s*\}/
+        .test(styles),
+    "Medium outer must scale from Old Medium 188 by 100/96 → 196px",
+  );
+  assert(
+    /--block-outer-large:\s*354px/.test(styles) ||
+      /\.block-kind-long\.block-size-large\s*\{\s*max-height:\s*354px\s*;\s*\}/.test(
+        styles,
+      ),
+    "Large outer must scale from Old Large 340 by 100/96 → 354px",
+  );
+  assert(
+    !/\.block-kind-short\.block-size-small\s*\{\s*max-height:\s*96px\s*;\s*\}/
+      .test(styles),
+    "the old 96px Small token must be replaced",
+  );
+  assert(
+    /\.block-text,\s*\.block-heading\s*\{[^}]*resize:\s*none/m.test(styles) ||
+      /resize:\s*none/.test(styles),
+    "textarea { resize: none } must remain",
+  );
+});
+
+/* ------------------------------------------------------------------ *
  * P2-3 / P2-4 — Flow order and Grid interaction live in
  * `dogfooding_test.ts`, where the store/DOM harness already exists.
  * ------------------------------------------------------------------ */

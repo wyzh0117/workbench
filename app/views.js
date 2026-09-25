@@ -587,6 +587,7 @@ export function createViews(store) {
       )
       : null;
     const size = block.size || blockSizeView(block);
+    const typeLabel = esc(block.label || blockLabel(block.type));
     return `<article class="block block-${block.type} block-size-${
       size.tier
     } block-kind-${size.kind}${
@@ -595,23 +596,23 @@ export function createViews(store) {
       size.tier
     }" data-requirement-id="${
       block.requirement_id || ""
-    }"><div class="block-rail"><span class="block-handle" draggable="true" title="按住拖动以调整正文顺序">⠿</span><span class="block-order">${
+    }"><div class="block-head"><span class="block-handle" draggable="true" title="按住拖动以调整正文顺序">⠿</span><span class="block-type-label">${typeLabel}</span><span class="block-order">${
       String(index + 1).padStart(2, "0")
-    }</span></div><div class="block-main">${
-      blockBody(block, requirement)
-    }</div><div class="block-bar"><button class="icon-button" data-action="insert-block-below" data-id="${
+    }</span><div class="block-head-actions"><button class="icon-button" data-action="insert-block-below" data-id="${
       block.id
-    }" title="在这块正文下方插入">＋</button><button class="icon-button" data-action="select-block" data-id="${
+    }" title="在这块正文下方插入">＋</button><details class="block-more"><summary class="icon-button" title="更多操作">⋯</summary><div class="block-more-menu"><button type="button" class="block-more-item" data-action="select-block" data-id="${
       block.id
-    }" title="选中这块正文">◎</button><button class="icon-button" data-action="move-block" data-id="${
+    }" title="选中这块正文">◎ 选中</button><button type="button" class="block-more-item" data-action="move-block" data-id="${
       block.id
     }" data-direction="up" title="上移这块正文" ${
       index === 0 ? "disabled" : ""
-    }>↑</button><button class="icon-button" data-action="move-block" data-id="${
+    }>↑ 上移</button><button type="button" class="block-more-item" data-action="move-block" data-id="${
       block.id
-    }" data-direction="down" title="下移这块正文">↓</button><button class="icon-button danger" data-action="delete-block" data-id="${
+    }" data-direction="down" title="下移这块正文">↓ 下移</button><button type="button" class="block-more-item danger" data-action="delete-block" data-id="${
       block.id
-    }" title="删除这块正文（可以用撤销恢复）">${TRASH_ICON}</button></div></article>`;
+    }" title="删除这块正文（可以用撤销恢复）">${TRASH_ICON} 删除</button></div></details></div></div><div class="block-main">${
+      blockBody(block, requirement)
+    }</div></article>`;
   }
 
   function blockBody(block, requirement) {
