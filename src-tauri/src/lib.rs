@@ -2079,6 +2079,287 @@ fn import_preview(source: Value) -> Result<Value, String> {
     preview_source(&source)
 }
 
+fn scan_mime_for(name: &str) -> Option<&'static str> {
+    let mime = mime_for_filename(name);
+    if mime == "application/octet-stream" {
+        match Path::new(name)
+            .extension()
+            .and_then(|value| value.to_str())
+            .unwrap_or_default()
+            .to_ascii_lowercase()
+            .as_str()
+        {
+            "pdf" => Some("application/pdf"),
+            "docx" => Some(
+                "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            ),
+            "doc" => Some("application/msword"),
+            "text" => Some("text/plain"),
+            _ => None,
+        }
+    } else {
+        Some(mime)
+    }
+}
+
+fn scan_suggested_role(path: &Path, kind: &str, relative: &str) -> &'static str {
+    if kind == "directory" {
+        let normalized = relative.trim_matches(|c| c == '/' || c == '\\');
+        if normalized.is_empty() {
+            return "folder";
+        }
+        return if normalized.contains('/') || normalized.contains('\\') {
+            "folder"
+        } else {
+            "stage"
+        };
+    }
+    let ext = path
+        .extension()
+        .and_then(|value| value.to_str())
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+    match ext.as_str() {
+        "md" | "markdown" | "txt" | "text" => "lesson",
+        "png" | "jpg" | "jpeg" | "gif" | "webp" | "svg" | "avif" | "mp4" | "webm" | "mov"
+        | "m4v" | "mp3" | "wav" | "m4a" | "ogg" => "asset",
+        "pdf" | "doc" | "docx" | "odt" | "rtf" => "reference",
+        _ => "unsupported",
+    }
+}
+
+fn scan_relative(root: &Path, path: &Path) -> Result<String, String> {
+    let rel = path
+        .strip_prefix(root)
+        .map_err(|_| "扫描路径越过了所选文件夹边界".to_string())?;
+    Ok(rel.to_string_lossy().replace('\\', "/"))
+}
+
+fn push_scan_entry(
+    entries: &mut Vec<Value>,
+    path: &Path,
+    relative: &str,
+    kind: &str,
+    size: Option<u64>,
+    error: Option<String>,
+) {
+    let name = path
+        .file_name()
+        .and_then(|value| value.to_str())
+        .unwrap_or("");
+    let mime = if kind == "file" {
+        scan_mime_for(name)
+            .map(Value::from)
+            .unwrap_or(Value::Null)
+    } else {
+        Value::Null
+    };
+    let role = if error.is_some() {
+        "unsupported"
+    } else {
+        scan_suggested_role(path, kind, relative)
+    };
+    entries.push(json!({
+        "path": path.to_string_lossy(),
+        "relative_path": relative,
+        "kind": kind,
+        "mime": mime,
+        "size": size,
+        "suggested_role": role,
+        "error": error,
+    }));
+}
+
+fn walk_folder_scan(
+    root: &Path,
+    path: &Path,
+    entries: &mut Vec<Value>,
+    warnings: &mut Vec<String>,
+    errors: &mut Vec<String>,
+    visited: &mut std::collections::HashSet<PathBuf>,
+) {
+    let meta = match fs::symlink_metadata(path) {
+        Ok(meta) => meta,
+        Err(error) => {
+            let relative = scan_relative(root, path).unwrap_or_else(|_| path.to_string_lossy().into());
+            let message = format!("无法读取：{error}");
+            push_scan_entry(
+                entries,
+                path,
+                &relative,
+                "file",
+                None,
+                Some(message.clone()),
+            );
+            errors.push(format!("{relative}: {message}"));
+            return;
+        }
+    };
+    if meta.file_type().is_symlink() {
+        let relative = scan_relative(root, path).unwrap_or_else(|_| path.to_string_lossy().into());
+        warnings.push(format!("{relative}: 已跳过符号链接，避免越过所选文件夹"));
+        return;
+    }
+    if meta.is_dir() {
+        let identity = fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
+        if !visited.insert(identity) {
+            return;
+        }
+        let relative = match scan_relative(root, path) {
+            Ok(value) => value,
+            Err(message) => {
+                errors.push(message);
+                return;
+            }
+        };
+        if !relative.is_empty() {
+            push_scan_entry(entries, path, &relative, "directory", None, None);
+        }
+        let reader = match fs::read_dir(path) {
+            Ok(reader) => reader,
+            Err(error) => {
+                let message = format!("无法读取目录：{error}");
+                if relative.is_empty() {
+                    errors.push(message);
+                    return;
+                }
+                if let Some(last) = entries.last_mut() {
+                    if last.get("path").and_then(Value::as_str) == Some(&path.to_string_lossy()) {
+                        last.as_object_mut().map(|object| {
+                            object.insert("error".into(), json!(message));
+                            object.insert("suggested_role".into(), json!("unsupported"));
+                        });
+                    }
+                }
+                errors.push(format!("{relative}: {message}"));
+                return;
+            }
+        };
+        let mut children: Vec<std::fs::DirEntry> = reader.filter_map(Result::ok).collect();
+        children.sort_by_key(|entry| entry.file_name());
+        for child in children {
+            let name = child.file_name();
+            let name = name.to_string_lossy();
+            if name.starts_with('.') {
+                continue;
+            }
+            let child_path = child.path();
+            if let Ok(child_meta) = fs::symlink_metadata(&child_path) {
+                if child_meta.file_type().is_symlink() {
+                    let child_rel = if relative.is_empty() {
+                        name.to_string()
+                    } else {
+                        format!("{relative}/{name}")
+                    };
+                    warnings.push(format!("{child_rel}: 已跳过符号链接"));
+                    continue;
+                }
+            }
+            walk_folder_scan(root, &child_path, entries, warnings, errors, visited);
+        }
+        return;
+    }
+    if !meta.is_file() {
+        let relative = scan_relative(root, path).unwrap_or_else(|_| path.to_string_lossy().into());
+        warnings.push(format!("{relative}: 已跳过非普通文件"));
+        return;
+    }
+    let relative = match scan_relative(root, path) {
+        Ok(value) => value,
+        Err(message) => {
+            errors.push(message);
+            return;
+        }
+    };
+    // Probe readability without loading content into Canonical.
+    if let Err(error) = fs::File::open(path) {
+        let message = format!("无法读取文件：{error}");
+        push_scan_entry(
+            entries,
+            path,
+            &relative,
+            "file",
+            None,
+            Some(message.clone()),
+        );
+        errors.push(format!("{relative}: {message}"));
+        return;
+    }
+    if meta.len() > 100 * 1024 * 1024 {
+        warnings.push(format!(
+            "{relative}: 文件较大（{} 字节），扫描仅记录元数据，不会读取内容",
+            meta.len()
+        ));
+    }
+    push_scan_entry(
+        entries,
+        path,
+        &relative,
+        "file",
+        Some(meta.len()),
+        None,
+    );
+}
+
+/// Read-only folder scan for 导入已有文件夹 (V1-T04). Does not write project.json.
+/// Accepts the same flat `{ path }` payload the bridge sends for non-project commands.
+#[tauri::command]
+fn folder_scan(
+    path: Option<String>,
+    folder_path: Option<String>,
+    root: Option<String>,
+) -> Result<Value, String> {
+    let raw = path
+        .or(folder_path)
+        .or(root)
+        .unwrap_or_default();
+    let trimmed = raw.trim();
+    let path = PathBuf::from(trimmed);
+    if trimmed.is_empty() || !path.is_absolute() {
+        return Err("导入文件夹必须是用户明确选择的绝对路径".into());
+    }
+    reject_symlink(&path, "导入文件夹")?;
+    let metadata =
+        fs::symlink_metadata(&path).map_err(|error| format!("无法打开所选文件夹：{error}"))?;
+    if metadata.file_type().is_symlink() {
+        return Err("为避免越过目录边界，导入不支持以符号链接作为根目录".into());
+    }
+    if !metadata.is_dir() {
+        return Err("导入已有文件夹需要选择一个文件夹，而不是单个文件".into());
+    }
+    let root = fs::canonicalize(&path).unwrap_or(path.clone());
+    reject_symlink(&root, "导入文件夹")?;
+    let mut entries = Vec::new();
+    let mut warnings = Vec::new();
+    let mut errors = Vec::new();
+    let mut visited = std::collections::HashSet::new();
+    walk_folder_scan(
+        &root,
+        &root,
+        &mut entries,
+        &mut warnings,
+        &mut errors,
+        &mut visited,
+    );
+    entries.sort_by(|left, right| {
+        let left_rel = left
+            .get("relative_path")
+            .and_then(Value::as_str)
+            .unwrap_or("");
+        let right_rel = right
+            .get("relative_path")
+            .and_then(Value::as_str)
+            .unwrap_or("");
+        left_rel.cmp(right_rel)
+    });
+    Ok(json!({
+        "root": root.to_string_lossy(),
+        "entries": entries,
+        "warnings": warnings,
+        "errors": errors,
+    }))
+}
+
 fn append_inbox_item(project: &mut Value, item: Value) -> Result<String, String> {
     let project_id = project
         .get("project")
@@ -8851,6 +9132,7 @@ pub fn run() {
             restore_snapshot,
             import_preview,
             import_confirm,
+            folder_scan,
             course_seed_create,
             blueprint_build,
             asset_import,

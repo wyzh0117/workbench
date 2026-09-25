@@ -57,6 +57,7 @@ import {
   preflightExport,
   previewImport,
 } from "./import_export.ts";
+import { scanFolder } from "./folder_scan.ts";
 import type { ExportPreset } from "../domain/types.ts";
 
 function decodeBase64(value: string): Uint8Array {
@@ -781,6 +782,29 @@ export class DesktopService {
           object_type: "import",
           action: "preview",
           metadata: { count: preview.items.length, mode: preview.mode },
+        },
+      };
+    });
+    // Read-only folder scan for 导入已有文件夹. Does not require an open
+    // project and must not write project.json (V1-T04 Task 9).
+    this.commands.register("folder.scan", async (input) => {
+      const candidate = input && typeof input === "object"
+        ? input as { path?: string; folder_path?: string; root?: string }
+        : {};
+      const path = String(
+        candidate.path ?? candidate.folder_path ?? candidate.root ?? "",
+      ).trim();
+      if (!path) throw new Error("folder.scan requires an absolute folder path");
+      const report = await scanFolder(path);
+      return {
+        value: report,
+        audit: {
+          object_type: "import",
+          action: "folder_scan",
+          metadata: {
+            count: report.entries.length,
+            root: report.root,
+          },
         },
       };
     });

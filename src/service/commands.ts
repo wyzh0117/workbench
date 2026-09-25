@@ -31,6 +31,7 @@ export const HIGH_LEVEL_COMMANDS = [
   "blueprint.discard",
   "import.preview",
   "import.confirm",
+  "folder.scan",
   "asset.import",
   "inbox.create",
   "inbox.triage",

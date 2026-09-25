@@ -178,7 +178,7 @@ export function createViews(store) {
       <div class="launcher-orb">✦</div><p class="eyebrow">AI COURSE WORKBENCH</p>
       <h1>把一套课程，从想法做到发布</h1>
       <p class="muted launcher-copy">课程内容会保存在本机；正文、待补、素材、排版和版本都在同一个工作台里。</p>
-      <div class="launcher-actions"><button class="primary big" data-action="new-project">新建课程</button><button class="secondary big" data-action="${native ? "open-project-dir" : "open-file"}">${native ? "打开项目文件夹" : "打开现有项目"}</button>${native ? "" : PROJECT_FILE_PICKER}</div>
+      <div class="launcher-actions"><button class="primary big" data-action="new-project">新建课程</button><button class="secondary big" data-action="${native ? "open-project-dir" : "open-file"}">${native ? "打开项目文件夹" : "打开现有项目"}</button><button class="secondary big" data-action="import-folder">导入已有文件夹</button>${native ? "" : PROJECT_FILE_PICKER}</div>
       <div class="recent-card"><div><span class="eyebrow">继续工作</span><h2>${esc(project.title)}</h2><p class="muted">${
       resume
         ? `${esc(resume.code)}｜${esc(resume.title)} · ${
@@ -190,8 +190,8 @@ export function createViews(store) {
     }</p>${map.lesson_count ? `<div class="progress-track"><span style="width:${map.progress}%"></span></div><small class="muted">整门课程 ${map.complete_count}/${map.lesson_count} 课完成 · 待补 ${map.open_requirements} 项</small>` : ""}</div><button class="primary" data-action="enter-project">继续工作 <span>→</span></button></div>
       <p class="small muted">${
       native
-        ? "选择项目文件夹即可开始，不需要手输路径。"
-        : "可以打开现有课程，也可以先新建一门课程。"
+        ? "可以选择新建课程、打开已有 Workbench 项目，或导入已有文件夹（只读扫描，确认前不会改写原文件）。"
+        : "可以打开现有课程，也可以先新建一门课程。导入已有文件夹请使用桌面应用。"
     } 手上已经有课程概论、大纲、教材目录、文章、表格或 AI 对话时：进入课程后打开「课程地图」，粘贴进去先生成课程地图草稿，确认后才创建正式内容。</p>
     </section>${overlay()}<div class="toast-slot" data-chrome-toast>${toast()}</div>`;
   }

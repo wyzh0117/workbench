@@ -401,6 +401,7 @@ class DesktopBridge {
       "project.resolve": "project_resolve",
       "import.preview": "import_preview",
       "import.confirm": "import_confirm",
+      "folder.scan": "folder_scan",
       "course.seed.create": "course_seed_create",
       "blueprint.build": "blueprint_build",
       "asset.import": "asset_import",
@@ -1042,6 +1043,9 @@ class WorkbenchStore {
       seedType: null,
       seedText: "",
       seedBusy: false,
+      /** V1-T04 read-only folder scan result (Task 9). Not Canonical. */
+      folderScan: null,
+      importFolderRoot: null,
     };
     this.tabs = [];
     this.history = [];
@@ -2886,6 +2890,60 @@ class WorkbenchStore {
       await this.newProject(title, dir);
     } catch (error) {
       this.ui.toast = userFacingError(error, "无法新建课程。当前项目没有改变，请重试。");
+      this.notify();
+    }
+  }
+  /**
+   * Third launcher path: 导入已有文件夹 (§26).
+   * Picks a folder and runs a read-only scan. Must not call project.create or
+   * project.open, and must not write project.json (adoption is Task 12).
+   */
+  async importExistingFolderFromPicker() {
+    if (!this.bridge.isNative()) {
+      this.ui.toast =
+        "导入已有文件夹需要在桌面应用中选择文件夹。你也可以先「新建课程」或「打开现有项目」。";
+      this.notifyChrome();
+      return;
+    }
+    try {
+      const dir = await this.bridge.selectFolder();
+      if (!dir) {
+        this.ui.toast =
+          "没有选择文件夹。你可以再点一次「导入已有文件夹」，或点「新建课程」/「打开项目文件夹」。";
+        this.notifyChrome();
+        return;
+      }
+      await this.importExistingFolder(dir);
+    } catch (error) {
+      this.ui.toast = userFacingError(error, "无法扫描文件夹。当前项目没有改变，请重试。");
+      this.notify();
+    }
+  }
+  /** Read-only scan of an absolute folder. Stores ScanResult in UI state only. */
+  async importExistingFolder(dir) {
+    const root = String(dir || "").trim();
+    if (!root) {
+      this.ui.toast = "没有选择文件夹。请再试一次「导入已有文件夹」。";
+      this.notifyChrome();
+      return;
+    }
+    try {
+      const report = await this.bridge.command("folder.scan", { path: root });
+      if (!report || !Array.isArray(report.entries)) {
+        throw new Error("文件夹扫描没有返回可用结果。请重试，或选择其他文件夹。");
+      }
+      this.ui.folderScan = report;
+      this.ui.importFolderRoot = report.root || root;
+      const files = report.entries.filter((entry) => entry.kind === "file").length;
+      const folders = report.entries.filter((entry) => entry.kind === "directory").length;
+      const degraded = report.entries.filter((entry) => entry.error).length;
+      const parts = [`已扫描 ${files} 个文件`];
+      if (folders) parts.push(`${folders} 个文件夹`);
+      if (degraded) parts.push(`${degraded} 项无法读取（已跳过，不影响其余文件）`);
+      this.ui.toast = `${parts.join("，")}。只读扫描，尚未写入课程项目；完整浏览与确认导入将在后续步骤提供。`;
+      this.notify();
+    } catch (error) {
+      this.ui.toast = userFacingError(error, "无法扫描文件夹。当前项目没有改变，请重试。");
       this.notify();
     }
   }
@@ -5519,6 +5577,7 @@ function handleAction(action, element, event) {
       return;
     case "open-file": if (store.bridge.isNative()) void store.selectAndImportAsset(); else root.querySelector("[data-project-file]")?.click(); return;
     case "open-project-dir": void store.openProjectFromPicker(); return;
+    case "import-folder": void store.importExistingFolderFromPicker(); return;
     case "toggle-left": store.ui.leftCollapsed = !store.ui.leftCollapsed; store.scheduleSessionSave(); store.notify(); return;
     case "toggle-right": store.ui.rightCollapsed = !store.ui.rightCollapsed; store.scheduleSessionSave(); store.notify(); return;
     case "route": store.ui.route = element.dataset.route; store.scheduleSessionSave(); store.notify(); return;

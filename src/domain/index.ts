@@ -27,4 +27,5 @@ export * from "../service/storage.ts";
 export * from "../service/snapshots.ts";
 export * from "../service/desktop.ts";
 export * from "../service/import_export.ts";
+export * from "../service/folder_scan.ts";
 export * from "../service/publish.ts";
