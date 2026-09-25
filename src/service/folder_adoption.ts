@@ -531,11 +531,25 @@ export async function confirmFolderAdoption(
     await ensureWorkspace(root);
     const store = new ProjectDirectoryStore(root);
     await store.open();
+    let projectWritten = false;
     try {
       await store.writeProject(data);
-      await promoteStaging(root, staged);
+      projectWritten = true;
+      try {
+        await promoteStaging(root, staged);
+      } catch (promoteErr) {
+        // Match Rust folder_adopt: leave staging recoverable after Canonical write.
+        const detail = promoteErr instanceof Error
+          ? promoteErr.message
+          : String(promoteErr);
+        throw new Error(
+          `课程项目已写入，但素材提升失败（${detail}）。原文件未改动；请检查 assets/ 与 .workspace/adopt-staging/`,
+        );
+      }
     } catch (caught) {
-      await cleanupStaging(root, staged);
+      if (!projectWritten) {
+        await cleanupStaging(root, staged);
+      }
       throw caught;
     } finally {
       await store.close().catch(() => {});

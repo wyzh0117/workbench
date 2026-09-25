@@ -366,6 +366,49 @@ Deno.test("markdown lesson becomes Canonical blocks; docx/pdf stay Source/Refere
   }
 });
 
+Deno.test("promote failure after writeProject keeps staging (matches Rust)", async () => {
+  const root = await Deno.makeTempDir({ prefix: "acw-t04-adopt-promote-fail-" });
+  try {
+    await Deno.mkdir(join(root, "media"), { recursive: true });
+    await Deno.writeFile(join(root, "media", "shot.png"), new Uint8Array([1, 2, 3]));
+    await Deno.writeTextFile(join(root, "readme.md"), "# hi\n");
+    // Block assets/ so promoteStaging fails after Canonical write.
+    await Deno.writeTextFile(join(root, "assets"), "not-a-directory");
+
+    const plan = await confirmedPlanFor(root);
+    let threw = false;
+    let message = "";
+    try {
+      await confirmFolderAdoption(plan);
+    } catch (caught) {
+      threw = true;
+      message = caught instanceof Error ? caught.message : String(caught);
+    }
+    assert(threw, "promote failure must surface");
+    assert(
+      /课程项目已写入.*素材提升失败/.test(message) &&
+        /adopt-staging/.test(message),
+      `must match Rust-style recover messaging (got: ${message})`,
+    );
+    assert(
+      await Deno.stat(join(root, "project.json")).then((s) => s.isFile),
+      "project.json must remain after promote failure",
+    );
+    const stagingDir = join(root, ".workspace", "adopt-staging");
+    assert(
+      await Deno.stat(stagingDir).then((s) => s.isDirectory),
+      "staging dir must not be wiped after promote failure",
+    );
+    let stagedFiles = 0;
+    for await (const entry of Deno.readDir(stagingDir)) {
+      if (entry.isFile) stagedFiles += 1;
+    }
+    assert(stagedFiles > 0, "staged media must remain recoverable");
+  } finally {
+    await Deno.remove(root, { recursive: true });
+  }
+});
+
 Deno.test("folder.adopt command applies confirmed plan into the chosen folder", async () => {
   const root = await Deno.makeTempDir({ prefix: "acw-t04-adopt-cmd-" });
   const serviceRoot = await Deno.makeTempDir({ prefix: "acw-t04-adopt-svc-" });
