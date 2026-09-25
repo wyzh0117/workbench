@@ -562,20 +562,21 @@ N1
 >
 > 当前版本：**V1（ACTIVE）**
 >
-> 当前任务：**V1-T03 — Course Authoring & Project Structure Closure**
+> 当前任务：**V1-T04 — Workspace Explorer & Existing-Folder Adoption**
 >
-> 当前状态：**IN PROGRESS**（Tasks 1–7 已合入；自动化 gate 全绿；**Real Desktop Acceptance 未完成 → 非 VERIFIED**）
+> 当前状态：**IN PROGRESS**
 >
 > 产品状态：**DOGFOOD READY**
 >
-> 分发状态：**PARTIAL / 公开下载已恢复**（正式 Universal DMG、GitHub Release、固定 latest 直链与 SHA-256 已完成；**Latest public release = v0.1.1**，冻结；分支 `v1-t03-t04` 含未发布 T03；Developer ID 签名与 Apple 公证仍未完成）
+> 分发状态：**PARTIAL / 公开下载已恢复**（正式 Universal DMG、GitHub Release、固定 latest 直链与 SHA-256 已完成；**Latest public release = v0.1.1**，冻结；分支 `v1-t03-t04` 含未发布 T03（已 VERIFIED）与进行中的 T04；Developer ID 签名与 Apple 公证仍未完成）
 >
-> 下一步：**完成 T03 Real Desktop Acceptance（§21 / §9.3 真实鼠标 Drag Handle），再关闭 T03**
+> 下一步：**执行 V1-T04**
 >
 > V0 状态保持：**V0 CLOSED；V0-T01 / V0-T02 / V0-T03 / V0-T04 全部 VERIFIED**
 >
-> V1-T01 状态保持：**VERIFIED**（见 **§33**）；V1-T02 状态保持：**VERIFIED**（见 **§29** / **§35** / **§36**）；
+> V1-T01 状态保持：**VERIFIED**（见 **§33**）；V1-T02 状态保持：**VERIFIED**（见 **§29** / **§35** / **§36**）；V1-T03 状态保持：**VERIFIED**（ego-browser §21：26 PASS / 1 N-A / 0 FAIL；§9.3 真鼠 Drag Handle PASS；Tauri WebView 拖拽与原生非法文件夹 picker toast 记 BACKLOG，非 BLOCKER）；
 > 此前 macOS Distribution & Public Release Closure 的完成事实保留在 **§34**（该范围本轮不执行，等用户再次批准后另行编号）。
+> 不发明 `V1-T03+04` 编号。
 
 ---
 
@@ -1970,6 +1971,16 @@ YYYY-MM-DD | Task | From → To | Summary
 当前：
 
 ```text
+2026-09-25 | V1-T03 → V1-T04 | IN PROGRESS → VERIFIED → T04 IN PROGRESS
+Controller 裁定：ego-browser Real Desktop Acceptance（§21）26 PASS / 1 N-A / 0 FAIL；
+§9.3 Drag Handle 以真实 `page.mouse` 在 `.block-handle` 上 PASS；Step 1（原生非法文件夹）
+在浏览器 N-A，由 Task 1 / `dogfooding_test.ts` 覆盖。Tauri WebView pointer-reorder 确认与
+原生 invalid-folder picker toast 记 **BACKLOG**（非 BLOCKER）。按 Combined Package §2.2：
+**V1-T03 = VERIFIED**；CURRENT TASK = **V1-T04 — Workspace Explorer & Existing-Folder Adoption**；
+CURRENT STATUS = IN PROGRESS；NEXT ACTION = 执行 V1-T04。保留 V0 = CLOSED、V1-T01 / V1-T02 /
+V1-T03 = VERIFIED。不发明 `V1-T03+04`。Latest public release 仍为 **v0.1.1**（未改 tag / Release）。
+证据：`t03-desktop-acceptance.md` + 更新后的 `t03-verification.md`。
+
 2026-09-25 | V1-T03 | verification gate attempted — still IN PROGRESS
 Tasks 1–7 已合入；§20 自动化项齐备；正式 gate：`deno task check` / `deno task test`（298）/
 `cargo test`（55）/ `cargo build` 全绿。Real Desktop Acceptance（§21）与 §9.3 真鼠 Drag Handle
@@ -2362,11 +2373,11 @@ PROJECT_MASTER_CONTROL.md
 
 # 29. 当前唯一 NEXT ACTION
 
-> **V0 仍为 CLOSED；V0-T01 / V0-T02 / V0-T03 / V0-T04 全部 VERIFIED。V1 已 ACTIVE。V1-T01 — V0 Hardening & UX Polish = VERIFIED；V1-T02 — Dogfooding Critical Fixes & Authoring UX Refinement = VERIFIED（两次实施：P0 + P1 见 §35，P2 见 §36）。当前唯一任务为 V1-T03 — Course Authoring & Project Structure Closure。**
+> **V0 仍为 CLOSED；V0-T01 / V0-T02 / V0-T03 / V0-T04 全部 VERIFIED。V1 已 ACTIVE。V1-T01 — V0 Hardening & UX Polish = VERIFIED；V1-T02 — Dogfooding Critical Fixes & Authoring UX Refinement = VERIFIED（两次实施：P0 + P1 见 §35，P2 见 §36）；V1-T03 — Course Authoring & Project Structure Closure = VERIFIED。当前唯一任务为 V1-T04 — Workspace Explorer & Existing-Folder Adoption。**
 
-V1-T01 / V1-T02 的实现、自动化门禁与真实走查证据见 §33 / §35 / §36，OPEN BLOCKERS = NONE。
-按 Combined Development Package，现已开工 **V1-T03 — Course Authoring & Project Structure Closure**
-（不发明 `V1-T03+04`；T04 须等 T03 = VERIFIED 后再切换）。
+V1-T01 / V1-T02 / V1-T03 的实现、自动化门禁与真实走查证据见 §33 / §35 / §36 与 `t03-verification.md` / `t03-desktop-acceptance.md`。
+按 Combined Development Package §2.2，T03 DoD 已达成并 VERIFIED，总控已切换到 **V1-T04**
+（不发明 `V1-T03+04`）。
 
 此前草拟并已实施完成的 **V1-T02 — macOS Distribution & Public Release Closure** 本轮不再执行，
 也不继续占用该编号；但它已完成的事实与未完成的边界**如实保留**在 §34 与 README「分发状态」中
@@ -2378,21 +2389,22 @@ V1-T01 / V1-T02 的实现、自动化门禁与真实走查证据见 §33 / §35 
 V0 CLOSED
 V0-T01 / V0-T02 / V0-T03 / V0-T04  VERIFIED
 V1 ACTIVE
-V1-T01 / V1-T02  VERIFIED
-CURRENT TASK    V1-T03 — Course Authoring & Project Structure Closure
+V1-T01 / V1-T02 / V1-T03  VERIFIED
+CURRENT TASK    V1-T04 — Workspace Explorer & Existing-Folder Adoption
 CURRENT STATUS  IN PROGRESS
 PRODUCT STATE   DOGFOOD READY
 DISTRIBUTION    PARTIAL（Latest public release = v0.1.1 冻结；签名 / 公证为后续候选任务）
-OPEN BLOCKERS   Real Desktop Acceptance（§21）未跑通；§9.3 真实鼠标 Drag Handle 无证据
+OPEN BLOCKERS   NONE（T03 关闭条件已满足）
+BACKLOG         Tauri WebView pointer-reorder 确认；原生 invalid-folder picker toast（Tauri）
 ```
 
 下一步唯一动作：
 
 ```text
-完成 T03 Real Desktop Acceptance，再将 V1-T03 置为 VERIFIED
+执行 V1-T04
 ```
 
-纪律：整个过程始终只有一个 `V1-T03`，不创建 `V1-T03+04` / `V1-T03-A` / Fix Phase / 新 Milestone。
+纪律：整个过程始终只有一个当前任务 `V1-T04`，不创建 `V1-T03+04` / `V1-T04-A` / Fix Phase / 新 Milestone。
 **不需要重新开发 Workbench 本体即可回到分发工作**（见 §34 的补做步骤）。
 
 注意：Dogfooding 是产品使用状态，不是新的产品阶段；不得创建
@@ -2416,14 +2428,15 @@ CURRENT VERSION
 V1（ACTIVE）
 
 CURRENT TASK
-V1-T03 — Course Authoring & Project Structure Closure
+V1-T04 — Workspace Explorer & Existing-Folder Adoption
 
 CURRENT STATUS
 IN PROGRESS
 PRODUCT STATE = DOGFOOD READY
 DISTRIBUTION STATE = PARTIAL（签名 / 公证为后续候选任务，本轮不执行）
 V0 = CLOSED；V0-T01 / V0-T02 / V0-T03 / V0-T04 全部 VERIFIED
-V1-T01 = VERIFIED（§33）；V1-T02 = VERIFIED（§29 / §35 第一次实施 / §36 第二次实施）
+V1-T01 = VERIFIED（§33）；V1-T02 = VERIFIED（§29 / §35 第一次实施 / §36 第二次实施）；
+V1-T03 = VERIFIED（ego-browser §21 26/27 PASS + 1 N-A；§9.3 page.mouse Drag Handle PASS）
 
 DONE / IMPLEMENTED
 - Canonical / Domain / Service 主体
@@ -2472,19 +2485,25 @@ DONE / IMPLEMENTED
 - V1-T02 分发：安装后 App 的真实运行 smoke（从 /Applications 启动、干净默认主页、三栏工作台、
   AI 助手与钥匙串说明、关闭 → 重启）
 - V1-T02 安全预检：全仓 + 全 Git history 密钥扫描、用户数据 / 开发痕迹清理、文档脱敏
+- V1-T03：项目文件夹错误契约、Stage CRUD / 删除安全、Block 外框 100/196/354、Selection/Focus、
+  Drag Handle（自动化 + ego-browser 真鼠）、媒体插入锚点、Media display name / preview、
+  Placeholder→状态、工作台入口、Requirement 响应式与真实 anchor、destructive 样式统一；
+  自动化 gate 全绿；ego-browser §21 验收 26 PASS / 1 N-A / 0 FAIL
 
 OPEN BLOCKERS
-- BLOCKER（V1-T03）：Real Desktop Acceptance（Combined Package §21，27 步）未在可控真实 UI 会话中完成；
-  尤其 §9.3 Drag Handle 真实鼠标拖动尚无证据（pointer 单元 / DOM harness ≠ 真鼠 DoD）。
-  证据见 `.superpowers/sdd/2026-09-25-v1-t03-t04-authoring-and-explorer/t03-verification.md`。
-- 自动化门禁本轮已绿（deno check / deno test 298 / cargo test 55 / cargo build），不抵消上述 BLOCKER。
-- 后续候选任务遗留（不是 T03 关闭条件，也不阻塞已 VERIFIED 的 V1-T02）：缺正式 macOS signing / notarization credentials
+- NONE（V1-T03 关闭条件已满足；按 §2.2 已切换 CURRENT TASK 到 V1-T04）
+- 后续候选任务遗留（不是 T04 关闭条件，也不阻塞已 VERIFIED 的 V1-T01 / V1-T02 / V1-T03）：缺正式 macOS signing / notarization credentials
   （本机 0 valid code-signing identities；无 Developer ID Application 证书，无公证凭据）
   → 当前已发布的 DMG 为 ad-hoc 签名，`spctl --assess` 判定 rejected；
      不得宣称 PUBLIC RELEASE READY / 「普通用户无安全阻碍安装」
 
+BACKLOG
+- Tauri WebView pointer-reorder confirmation（ego-browser Chromium 已 PASS；尚未在 WKWebView 内复测）
+- 原生 invalid-folder picker toast（Tauri 目录选择器选空/非法文件夹时的用户可见 toast；浏览器 Step 1 N-A，
+  自动化 `dogfooding_test.ts` / Task 1 已覆盖契约文案）
+
 AFTER CURRENT TASK
-V1-T03 = VERIFIED 后才允许切换到 V1-T04（见 Combined Development Package §2.2）。
+完成本轮 V1-T04 后按 Combined Development Package §2.3 收口（不发明 `V1-T03+04`）。
 macOS 签名 / 公证 / Release 重传 / 安装 smoke 仍为后续候选任务，等用户再次明确批准后才编号与启动；
 不重新打开 V0。
 
@@ -2495,9 +2514,9 @@ V2
 NOT ACTIVE
 
 NEXT ACTION
-完成 T03 Real Desktop Acceptance（§21），清除 BLOCKER 后再置 V1-T03 = VERIFIED 并切换 T04。
-（V1-T01 / V1-T02 = VERIFIED；V1-T03 仍 IN PROGRESS；PRODUCT STATE = DOGFOOD READY；
- Latest public release = v0.1.1；V0 保持 CLOSED，四个 V0 任务保持 VERIFIED。）
+执行 V1-T04
+（V1-T01 / V1-T02 / V1-T03 = VERIFIED；CURRENT TASK = V1-T04 IN PROGRESS；
+ PRODUCT STATE = DOGFOOD READY；Latest public release = v0.1.1；V0 保持 CLOSED，四个 V0 任务保持 VERIFIED。）
 ```
 
 ---
