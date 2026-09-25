@@ -558,23 +558,23 @@ N1
 
 # 6. 当前项目位置
 
-> 最后更新时间：2026-09-24
+> 最后更新时间：2026-09-25
 >
 > 当前版本：**V1（ACTIVE）**
 >
-> 当前任务：**V1-T02 — Dogfooding Critical Fixes & Authoring UX Refinement**
+> 当前任务：**V1-T03 — Course Authoring & Project Structure Closure**
 >
-> 当前状态：**VERIFIED**（两次实施 P0 + P1 + P2 全部完成并通过真实 Desktop 回归；OPEN BLOCKERS = NONE）
+> 当前状态：**IN PROGRESS**
 >
 > 产品状态：**DOGFOOD READY**
 >
 > 分发状态：**PARTIAL / 公开下载已恢复**（正式 Universal DMG、GitHub Release、固定 latest 直链与 SHA-256 已完成；**v0.1.1** 已按最新代码重建并发布，仓库重新设为 **public**，Release 页面与 `/releases/latest/download/...` 对匿名访问者可用；Developer ID 签名与 Apple 公证仍未完成）
 >
-> 下一步：**PAUSE FEATURE DEVELOPMENT**（停止新功能开发，等真实使用反馈再决定下一个任务；不创建 V1-T03）
+> 下一步：**执行 V1-T03**
 >
 > V0 状态保持：**V0 CLOSED；V0-T01 / V0-T02 / V0-T03 / V0-T04 全部 VERIFIED**
 >
-> V1-T01 状态保持：**VERIFIED**（见 **§33**）；V1-T02 两次实施记录与证据：见 **§35**（P0 + P1）与 **§36**（P2）；
+> V1-T01 状态保持：**VERIFIED**（见 **§33**）；V1-T02 状态保持：**VERIFIED**（见 **§29** / **§35** / **§36**）；
 > 此前 macOS Distribution & Public Release Closure 的完成事实保留在 **§34**（该范围本轮不执行，等用户再次批准后另行编号）。
 
 ---
@@ -1970,6 +1970,12 @@ YYYY-MM-DD | Task | From → To | Summary
 当前：
 
 ```text
+2026-09-25 | V1-T03 | PAUSE FEATURE DEVELOPMENT → IN PROGRESS
+按 Combined Development Package 开工 V1-T03 — Course Authoring & Project Structure Closure。
+CURRENT VERSION = V1（ACTIVE）；CURRENT TASK = V1-T03；CURRENT STATUS = IN PROGRESS；
+NEXT ACTION = 执行 V1-T03。保留 V0 = CLOSED、V1-T01 = VERIFIED、V1-T02 = VERIFIED。
+不发明 V1-T03+04；T04 须等 T03 = VERIFIED 后再切换。
+
 2026-09-25 | V1-T02 | 仓库重新设为 PUBLIC；发布 v0.1.1（按最新代码重建）
 起因：`v0.1.0` 的 DMG 构建自 `90872bd`，落后 `main` 6 个提交（不含 P0/P1/P2 修复），
 因此「可下载的安装包」并不是最新代码；用户要求恢复公开并把下载版本更新到最新。
@@ -2349,14 +2355,11 @@ PROJECT_MASTER_CONTROL.md
 
 # 29. 当前唯一 NEXT ACTION
 
-> **V0 仍为 CLOSED；V0-T01 / V0-T02 / V0-T03 / V0-T04 全部 VERIFIED。V1 已 ACTIVE。V1-T01 — V0 Hardening & UX Polish = VERIFIED；V1-T02 — Dogfooding Critical Fixes & Authoring UX Refinement = VERIFIED（两次实施：P0 + P1 见 §35，P2 见 §36）。**
+> **V0 仍为 CLOSED；V0-T01 / V0-T02 / V0-T03 / V0-T04 全部 VERIFIED。V1 已 ACTIVE。V1-T01 — V0 Hardening & UX Polish = VERIFIED；V1-T02 — Dogfooding Critical Fixes & Authoring UX Refinement = VERIFIED（两次实施：P0 + P1 见 §35，P2 见 §36）。当前唯一任务为 V1-T03 — Course Authoring & Project Structure Closure。**
 
-V1-T01 的实现、自动化门禁与最终构建的真实走查（桌面 + 浏览器）全部完成（证据见 §33），OPEN BLOCKERS = NONE。
-
-V1-T02 的编号按用户明确批准改用于 **Dogfooding Critical Fixes & Authoring UX Refinement**：
-真实 Dogfooding 使用暴露出更高优先级的真实问题（项目选择后无法再次打开项目、输入频繁中断、
-二级弹窗自动关闭、API Key 无法配置、Drag Handle 不工作、Grid Preview 不一致），
-因此当前优先级调整为「先修真实使用问题 → 再次 Dogfooding → 再决定公开分发」。
+V1-T01 / V1-T02 的实现、自动化门禁与真实走查证据见 §33 / §35 / §36，OPEN BLOCKERS = NONE。
+按 Combined Development Package，现已开工 **V1-T03 — Course Authoring & Project Structure Closure**
+（不发明 `V1-T03+04`；T04 须等 T03 = VERIFIED 后再切换）。
 
 此前草拟并已实施完成的 **V1-T02 — macOS Distribution & Public Release Closure** 本轮不再执行，
 也不继续占用该编号；但它已完成的事实与未完成的边界**如实保留**在 §34 与 README「分发状态」中
@@ -2368,8 +2371,9 @@ V1-T02 的编号按用户明确批准改用于 **Dogfooding Critical Fixes & Aut
 V0 CLOSED
 V0-T01 / V0-T02 / V0-T03 / V0-T04  VERIFIED
 V1 ACTIVE
-CURRENT TASK    V1-T02 — Dogfooding Critical Fixes & Authoring UX Refinement
-CURRENT STATUS  VERIFIED
+V1-T01 / V1-T02  VERIFIED
+CURRENT TASK    V1-T03 — Course Authoring & Project Structure Closure
+CURRENT STATUS  IN PROGRESS
 PRODUCT STATE   DOGFOOD READY
 DISTRIBUTION    PARTIAL（已完成的部分不撤回；签名 / 公证为后续候选任务）
 OPEN BLOCKERS   NONE
@@ -2378,19 +2382,11 @@ OPEN BLOCKERS   NONE
 下一步唯一动作：
 
 ```text
-PAUSE FEATURE DEVELOPMENT（V1-T02 = VERIFIED；两次实施 P0 + P1 + P2 全部完成并通过真实 Desktop 回归）
+执行 V1-T03
 ```
 
-执行结构（严格按任务卡，已全部执行完毕）：
-
-```text
-第一次实施：P0 + P1 一起完成（真实使用 Bug + 已有功能明显 UX / 产品逻辑问题）→ 已完成，见 §35
-第二次实施：P2（Provider/Model 发现、Block 自适应高度、Flow 负责排序、Grid 交互重设计）→ 已完成，见 §36
-两次实施都完成后才置 V1-T02 = VERIFIED，NEXT ACTION = PAUSE FEATURE DEVELOPMENT
-```
-
-纪律：整个过程始终只有一个 `V1-T02`，不创建 `V1-T02-A` / `V1-T02.1` / Fix Phase / 新 Milestone；
-本轮也不创建 `V1-T03`。**不需要重新开发 Workbench 本体即可回到分发工作**（见 §34 的补做步骤）。
+纪律：整个过程始终只有一个 `V1-T03`，不创建 `V1-T03+04` / `V1-T03-A` / Fix Phase / 新 Milestone。
+**不需要重新开发 Workbench 本体即可回到分发工作**（见 §34 的补做步骤）。
 
 注意：Dogfooding 是产品使用状态，不是新的产品阶段；不得创建
 `Dogfood Phase` / `V1-Dogfood` / `V1.1` / `V1-T01A`。
@@ -2413,10 +2409,10 @@ CURRENT VERSION
 V1（ACTIVE）
 
 CURRENT TASK
-V1-T02 — Dogfooding Critical Fixes & Authoring UX Refinement
+V1-T03 — Course Authoring & Project Structure Closure
 
 CURRENT STATUS
-VERIFIED
+IN PROGRESS
 PRODUCT STATE = DOGFOOD READY
 DISTRIBUTION STATE = PARTIAL（签名 / 公证为后续候选任务，本轮不执行）
 V0 = CLOSED；V0-T01 / V0-T02 / V0-T03 / V0-T04 全部 VERIFIED
@@ -2478,10 +2474,9 @@ OPEN BLOCKERS
      不得宣称 PUBLIC RELEASE READY / 「普通用户无安全阻碍安装」
 
 AFTER CURRENT TASK
-PAUSE FEATURE DEVELOPMENT：V1-T02 的两次实施（P0 + P1 见 §35、P2 见 §36）都已完成并通过真实 Desktop 回归，
-V1-T02 = VERIFIED。等待真实使用反馈后再决定下一个任务。
-macOS 签名 / 公证 / Release 重传 / 安装 smoke 作为后续候选任务，等用户再次明确批准后才编号与启动；
-在此之前不创建 V1-T03，也不重新打开 V0。
+V1-T03 = VERIFIED 后才允许切换到 V1-T04（见 Combined Development Package §2.2）。
+macOS 签名 / 公证 / Release 重传 / 安装 smoke 仍为后续候选任务，等用户再次明确批准后才编号与启动；
+不重新打开 V0。
 
 V1
 ACTIVE
@@ -2490,8 +2485,8 @@ V2
 NOT ACTIVE
 
 NEXT ACTION
-PAUSE FEATURE DEVELOPMENT
-（V1-T02 = VERIFIED；OPEN BLOCKERS = NONE；PRODUCT STATE = DOGFOOD READY；V0 保持 CLOSED，四个 V0 任务保持 VERIFIED。）
+执行 V1-T03
+（V1-T01 / V1-T02 = VERIFIED；OPEN BLOCKERS = NONE；PRODUCT STATE = DOGFOOD READY；V0 保持 CLOSED，四个 V0 任务保持 VERIFIED。）
 ```
 
 ---

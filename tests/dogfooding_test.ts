@@ -422,6 +422,93 @@ Deno.test("the project picker opens A, B, and A again without going silent", asy
     await store.openProjectFromPicker();
     assert(/没有选择文件夹/.test(String(store.ui.toast)), "a cancelled pick must explain itself");
     assert(bridge.projectDir === "/tmp/a", "a cancelled pick must not change the project");
+    assert(
+      !/project\.bak/.test(String(store.ui.toast)),
+      "success and cancel paths must not require project.bak",
+    );
+  } finally {
+    restore();
+  }
+});
+
+/* ------------------------------------------------------------------ *
+ * V1-T03 — Valid project folder open-error contract (§7.3)
+ * ------------------------------------------------------------------ */
+
+const OPAQUE_ONLY =
+  /^这个文件夹不是可用的课程项目，请选择正确的项目后再试。$/;
+
+Deno.test("empty folder open explains missing project.json and next steps", async () => {
+  const projects: Record<string, ProjectData> = {};
+  const picker = { next: "/tmp/empty" as string | null };
+  const { bridge } = nativeBridge(projects, null, picker);
+  bridge.openProject = async () => null;
+  const { store, restore } = await bootStore(bridge);
+  try {
+    await store.openProjectFromPicker();
+    const toast = String(store.ui.toast);
+    assert(/没有找到有效的 project\.json/.test(toast), `toast must say why: ${toast}`);
+    assert(
+      /选择其他|新建课程|导入已有文件夹/.test(toast),
+      `toast must list next steps: ${toast}`,
+    );
+    assert(!OPAQUE_ONLY.test(toast), "toast must not collapse to the opaque-only sentence");
+    assert(!/project\.bak/.test(toast), "missing-json copy must not require project.bak");
+  } finally {
+    restore();
+  }
+});
+
+Deno.test("invalid project JSON open explains damage instead of opaque-only copy", async () => {
+  const a = projectWith("仍打开的课程");
+  const projects: Record<string, ProjectData> = { "/tmp/a": a };
+  const picker = { next: "/tmp/broken" as string | null };
+  const { bridge } = nativeBridge(projects, "/tmp/a", picker);
+  const { store, restore } = await bootStore(bridge);
+  try {
+    store.data = structuredClone(a);
+    store.trackProjectIdentity();
+    store.markNativeLease("/tmp/a");
+    bridge.openProject = async () => {
+      throw new Error("项目 JSON 无效: expected value at line 1 column 1");
+    };
+    await store.openProject("/tmp/broken", { reopen: true });
+    const toast = String(store.ui.toast);
+    assert(
+      /损坏|无效/.test(toast),
+      `invalid JSON toast must explain damage/invalidity: ${toast}`,
+    );
+    assert(/project\.json|项目 JSON/.test(toast), `toast must name the broken file: ${toast}`);
+    assert(!OPAQUE_ONLY.test(toast), "invalid JSON must not collapse to opaque-only copy");
+    assert(store.data.project.title === "仍打开的课程", "failed open must keep the old project");
+    assert(!/必须.*project\.bak|需要.*project\.bak/.test(toast), "must not require project.bak");
+  } finally {
+    restore();
+  }
+});
+
+Deno.test("malformed project payload open explains structure, not opaque-only copy", async () => {
+  const a = projectWith("保留中的课程");
+  const projects: Record<string, ProjectData> = { "/tmp/a": a };
+  const picker = { next: "/tmp/bad-shape" as string | null };
+  const { bridge } = nativeBridge(projects, "/tmp/a", picker);
+  const { store, restore } = await bootStore(bridge);
+  try {
+    store.data = structuredClone(a);
+    store.trackProjectIdentity();
+    store.markNativeLease("/tmp/a");
+    bridge.openProject = async () => ({ malformed: true });
+    await store.openProject("/tmp/bad-shape", { reopen: true });
+    const toast = String(store.ui.toast);
+    assert(
+      /不是.*Workbench 项目|不是可用|无法识别|缺少|结构/.test(toast),
+      `malformed payload toast must explain the problem: ${toast}`,
+    );
+    assert(
+      /选择其他|新建课程|导入已有文件夹/.test(toast),
+      `malformed payload toast must list next steps: ${toast}`,
+    );
+    assert(!OPAQUE_ONLY.test(toast), "malformed payload must not collapse to opaque-only copy");
   } finally {
     restore();
   }

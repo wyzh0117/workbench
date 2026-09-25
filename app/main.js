@@ -128,6 +128,51 @@ const assetTypeForFile = (filename, mime = "") => {
 };
 const isAssetFile = (filename, mime = "") => mime.startsWith("image/") || mime.startsWith("video/") || mime.startsWith("audio/") || /\.(gif|png|jpe?g|webp|svg|mp4|webm|mov|m4v|mp3|wav|m4a|aac|pdf|docx|md|markdown)$/i.test(filename);
 
+/**
+ * User-facing copy for a folder that is not a valid Workbench project.
+ * Why + what is missing + next steps (package §7.3). Does not require project.bak.
+ */
+const describeProjectOpenFailure = (error, hints = {}) => {
+  const raw = String(error?.message || error || "").trim();
+  // Already-structured copy from a prior mapping — keep as-is.
+  if (/导入已有文件夹/.test(raw) && /没有找到有效的 project\.json|项目 JSON 无效|可识别的课程项目结构/.test(raw)) {
+    return raw;
+  }
+  const context = `${String(error?.code || "")} ${raw}`.toLowerCase();
+  const invalidJson = Boolean(
+    hints.invalidJson || /项目 json 无效|json 无效/.test(context),
+  );
+  const notObject = Boolean(
+    hints.notObject ||
+      /必须是 json 对象|可识别的课程|缺少 content_items|缺少 blocks/.test(context),
+  );
+  // hints.missingJson and native "没有 project.json" fall through to the default branch.
+
+  let why;
+  let missing;
+  if (invalidJson) {
+    why = "这个文件夹里的 project.json 已损坏或无效，无法作为 AI Course Workbench 项目打开。";
+    missing = "项目 JSON 无效。";
+  } else if (notObject) {
+    why = "这个文件夹还不是 AI Course Workbench 项目。";
+    missing = "project.json 存在，但不是可识别的课程项目结构（需要 project、content_items、blocks）。";
+  } else {
+    why = "这个文件夹还不是 AI Course Workbench 项目。";
+    missing = "没有找到有效的 project.json。";
+  }
+
+  return [
+    why,
+    "",
+    missing,
+    "",
+    "你可以：",
+    "• 选择其他 Workbench 项目；",
+    "• 新建课程；",
+    "• 或返回后使用「导入已有文件夹」（该能力由 V1-T04 提供）。",
+  ].join("\n");
+};
+
 /** Keep technical bridge failures out of ordinary toasts. */
 const userFacingError = (error, fallback) => {
   const raw = String(error?.message || error || "").trim();
@@ -138,8 +183,21 @@ const userFacingError = (error, fallback) => {
   if (/external_modification_conflict|外部修改|外部项目文件|磁盘版本/.test(context)) {
     return "课程文件在其他地方发生了变化，保存已暂停以免覆盖内容。你仍可继续查看，请重新载入、自动合并，或明确保留本地版本。";
   }
-  if (/project\.json|可识别的课程|project data|项目文件|项目目录不存在/.test(context)) {
-    return "这个文件夹或文件不是可用的课程项目。课程内容没有改变，请选择正确的项目后再试。";
+  // Pass through copy that already includes why + next steps.
+  if (/导入已有文件夹/.test(raw) && /没有找到有效的 project\.json|项目 JSON 无效|可识别的课程项目结构|已损坏或无效/.test(raw)) {
+    return raw;
+  }
+  if (
+    /project\.json|可识别的课程|project data|项目文件|项目目录不存在|项目 json 无效|必须是 json 对象|不是可用的课程项目/.test(
+      context,
+    )
+  ) {
+    return describeProjectOpenFailure(error, {
+      missingJson: /没有 project\.json|项目目录不存在|不是可用的课程项目/.test(context) &&
+        !/项目 json 无效|必须是 json 对象|可识别的课程/.test(context),
+      invalidJson: /项目 json 无效|json 无效/.test(context),
+      notObject: /必须是 json 对象|可识别的课程/.test(context),
+    });
   }
   if (/session|会话|阅读位置/.test(context)) {
     return "上次阅读位置没有保存，但课程内容没有受影响。你可以继续使用，稍后再试。";
@@ -154,6 +212,10 @@ const userFacingError = (error, fallback) => {
   // English exception text, error codes, paths and stack fragments are useful
   // in diagnostics but not as the primary action a user sees in a toast.
   if (/^(?:[A-Za-z][A-Za-z0-9_.-]*(?::|\s|$)|Error\b|Exception\b)|(?:[\\/]|\bat\s+|ENOENT|EISDIR|EINVAL)/.test(raw)) {
+    // Native parse errors often append English "at line…" after a Chinese prefix.
+    if (/项目 json 无效|project\.json/.test(context)) {
+      return describeProjectOpenFailure(error, { invalidJson: /json 无效/.test(context) });
+    }
     return fallback;
   }
   return raw;
@@ -2540,7 +2602,7 @@ class WorkbenchStore {
           this.markNativeLease(this.bridge.projectDir);
           if (!this.isProjectData(persisted)) {
             await this.closeNativeProject(this.bridge.projectDir).catch(() => {});
-            throw new Error("这个文件夹不是可用的课程项目，请选择正确的项目后再试。");
+            throw new Error(describeProjectOpenFailure(null, { notObject: true }));
           }
         }
         recovery = await this.bridge.readRecoveryJournal();
@@ -2789,12 +2851,12 @@ class WorkbenchStore {
       this.bridge.setProjectDir(projectDir);
       // `openProject` acquires the target lease and reads its canonical data.
       const opened = await this.bridge.openProject();
-      if (opened == null) throw new Error("这个文件夹不是可用的课程项目，请选择正确的项目后再试。");
+      if (opened == null) throw new Error(describeProjectOpenFailure(null, { missingJson: true }));
       targetOpened = true;
       // A non-null open result may have acquired a lease even when validation
       // below rejects its project payload; rollback must track that lease.
       this.markNativeLease(projectDir);
-      if (!this.isProjectData(opened)) throw new Error("这个文件夹不是可用的课程项目，请选择正确的项目后再试。");
+      if (!this.isProjectData(opened)) throw new Error(describeProjectOpenFailure(null, { notObject: true }));
       const targetData = migrateUiProject(opened);
       const targetSession = this.targetSession(targetData, projectDir, "overview");
       // Save only a fully constructed target identity.  In particular, this
@@ -2847,8 +2909,11 @@ class WorkbenchStore {
       if (!await this.flush()) throw new Error("当前项目保存失败，请重试后再打开");
       this.bridge.setProjectDir(projectDir);
       const opened = await this.bridge.openProject();
-      if (opened == null || !this.isProjectData(opened)) {
-        throw new Error("这个文件夹不是可用的课程项目，请选择正确的项目后再试。");
+      if (opened == null) {
+        throw new Error(describeProjectOpenFailure(null, { missingJson: true }));
+      }
+      if (!this.isProjectData(opened)) {
+        throw new Error(describeProjectOpenFailure(null, { notObject: true }));
       }
       const targetData = migrateUiProject(opened);
       const targetSession = this.targetSession(targetData, projectDir, "project");
@@ -5900,5 +5965,12 @@ globalThis.__workbench = store;
 
 if (root) render();
 
-export { DesktopBridge, WorkbenchStore, browserHtml, browserMarkdown };
+export {
+  DesktopBridge,
+  WorkbenchStore,
+  browserHtml,
+  browserMarkdown,
+  describeProjectOpenFailure,
+  userFacingError,
+};
 export { PROJECT_FILE_PICKER } from "./constants.js";
