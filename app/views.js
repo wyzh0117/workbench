@@ -53,6 +53,7 @@ const BLOCK_PALETTE = [
   ["callout", "提示"],
   ["code", "代码"],
   ["divider", "分隔线"],
+  ["media", "媒体"],
   ["placeholder", "占位符"],
 ];
 const RIGHT_PANEL_LABELS = Object.fromEntries(RIGHT_PANELS);
@@ -1397,7 +1398,7 @@ export function createViews(store) {
     const usageCount = (assetId) => usagesForAsset(store.data, assetId).length;
     return `<section class="page"><div class="page-head"><div><span class="eyebrow">项目资产</span><h1>媒体库 <sup>${
       assets.length
-    }</sup></h1><p class="muted">导入只创建素材；插入正文或网格才会建立真实引用。</p></div><button class="primary" data-action="open-file">＋ 添加素材</button></div>${PROJECT_FILE_PICKER}<div class="drop-zone" data-drop-zone="assets"><span class="drop-icon">⇧</span><b>拖入文件，或点击添加素材</b><small>图片、GIF、视频、音频、Markdown 和普通附件</small></div><div class="asset-grid">${
+    }</sup></h1><p class="muted">导入只创建素材；「插入到当前位置」会在选中区块之后新建媒体块（无选中则追加到课末），并建立真实引用。</p></div><button class="primary" data-action="open-file">＋ 添加素材</button></div>${PROJECT_FILE_PICKER}<div class="drop-zone" data-drop-zone="assets"><span class="drop-icon">⇧</span><b>拖入文件，或点击添加素材</b><small>图片、GIF、视频、音频、Markdown 和普通附件</small></div><div class="asset-grid">${
       assets.length
         ? assets.map((asset) => {
           const usages = usagesForAsset(store.data, asset.id);
@@ -1420,7 +1421,7 @@ export function createViews(store) {
               : "还没有被任何内容引用"
           }</small></div><div class="asset-actions">${
             store.ui.activeId
-              ? `<button class="secondary" data-action="insert-asset" data-id="${asset.id}">插入当前课</button>`
+              ? `<button class="secondary" data-action="insert-asset" data-id="${asset.id}">插入到当前位置</button>`
               : ""
           }<button class="text-button danger" data-action="delete-asset" data-id="${
             asset.id
@@ -1541,11 +1542,12 @@ export function createViews(store) {
       String(asset.title).toLowerCase().includes(query)
     );
     const used = view ? view.lesson.media_count : 0;
+    const insertAnchor = store.ui.selectedBlockId
+      ? "会插入到当前选中区块之后"
+      : "会追加到当前课末尾";
     return `<div class="side-head"><div><span class="eyebrow">当前课程</span><h2>媒体库</h2></div><button class="icon-button" data-action="open-file" title="添加素材">＋</button></div><label class="field-label">搜索素材<input class="select" data-asset-search placeholder="输入文件名" value="${
       esc(store.ui.assetQuery || "")
-    }" /></label>${PROJECT_FILE_PICKER}<p class="side-note">本课已引用 ${used} 个素材。${
-      store.ui.selectedBlockId ? "选择素材会插入当前选中的区块。" : "先选中一个正文区块，再插入素材。"
-    }</p><div class="side-list">${
+    }" /></label>${PROJECT_FILE_PICKER}<p class="side-note">本课已引用 ${used} 个素材。选择素材${insertAnchor}。</p><div class="side-list">${
       visibleAssets.length
         ? visibleAssets.map((asset) => {
           const usages = usagesForAsset(store.data, asset.id);
@@ -1555,11 +1557,9 @@ export function createViews(store) {
             esc(asset.filename)
           }</b><small>${esc(assetLabel(asset.type))} · ${
             usages.length ? `已使用 ${usages.length} 处` : "还没有被引用"
-          }</small></span><span class="side-item-tools">${
-            store.ui.selectedBlockId
-              ? `<button class="icon-button" data-action="insert-asset" data-id="${asset.id}" title="插入选中区块">＋</button>`
-              : ""
-          }<button class="icon-button" data-action="show-asset-usage" data-id="${
+          }</small></span><span class="side-item-tools"><button class="icon-button" data-action="insert-asset" data-id="${
+            asset.id
+          }" title="插入到当前位置">＋</button><button class="icon-button" data-action="show-asset-usage" data-id="${
             asset.id
           }" title="查看这个素材的使用位置">?</button></span></div>`;
         }).join("")
@@ -2343,7 +2343,7 @@ export function createViews(store) {
             : `<label class="field-label">区块类型<select class="select" data-block-type data-block-id="${
               selected.id
             }">${
-              BLOCK_PALETTE.map(([type, label]) =>
+              BLOCK_PALETTE.filter(([type]) => type !== "media").map(([type, label]) =>
                 `<option value="${type}" ${
                   selected.type === type ? "selected" : ""
                 }>${label}</option>`
@@ -2482,10 +2482,12 @@ export function createViews(store) {
       const target = store.ui.assetPicker;
       const assets = store.data.assets.filter((asset) => !asset.archived);
       const context = target.blockId
-        ? "插入到选中的正文区块"
+        ? "链接到指定的正文区块"
         : target.requirementId
         ? "用素材完成这条待补"
-        : "插入当前课";
+        : store.ui.selectedBlockId
+        ? "插入到当前选中区块之后"
+        : "追加到当前课末尾";
       return `<div class="overlay" data-action="close-overlay"><div class="asset-picker modal" data-stop-click="true"><div class="modal-head"><div><span class="eyebrow">MEDIA PICKER</span><h2>选择素材</h2></div><button class="icon-button" data-action="close-overlay" title="关闭素材选择">×</button></div><p class="muted">${context}。选择后会建立真实引用，可以在媒体库看到使用位置。</p>${
         assets.length
           ? `<div class="picker-grid">${

@@ -3423,6 +3423,14 @@ class WorkbenchStore {
       this.addPlaceholder("text", content);
       return;
     }
+    if (type === "media") {
+      // Position insert: open the shared picker; choosing an asset calls
+      // insertAsset without block_id so it inserts after the selection (or
+      // appends), instead of converting a block in place.
+      this.ui.assetPicker = {};
+      this.notify();
+      return;
+    }
     // A new block starts EMPTY.  Hint text such as "开始写点什么…" belongs in
     // the control's placeholder attribute, never in canonical content: writing
     // it here would put Chinese hints into the course and into every export.
@@ -3725,26 +3733,40 @@ class WorkbenchStore {
         candidate.content_item_id === item.id
       ) ?? null
       : null;
+    // Explicit link target (picker-for-block / drop / options.block_id):
+    // convert that block in place.  Selection alone is NOT a link target —
+    // position insert creates a new media block after the selection (or
+    // appends when nothing is selected).
     // A requirement owns its anchor; using the current block selection instead
     // would resolve the wrong place and break canonical consistency.
     // A layout requirement has no anchor block at all: the usage must carry
     // `block_id: null` and only reference the layout instance.
-    const blockId = requirement
+    const linkBlockId = requirement
       ? (requirement.scope === "content" ? requirement.anchor_block_id : null)
-      : options.block_id || this.ui.assetPicker?.blockId ||
-        this.selectedBlock()?.id || null;
+      : options.block_id || this.ui.assetPicker?.blockId || null;
+    const selected = !requirement && !linkBlockId ? this.selectedBlock() : null;
+    const layoutOnly = !requirement && !linkBlockId && options.role === "layout";
     // A usage must mirror the requirement's own scope: a content requirement
     // never carries a layout instance.
     const usageLayoutId = requirement
       ? requirement.layout_instance_id
       : (options.layout_instance_id ||
-        (options.role === "layout" ? this.layout(item)?.id ?? null : null));
+        (layoutOnly ? this.layout(item)?.id ?? null : null));
+    const assetLabel = asset.title || asset.filename;
+    const anchorNote = linkBlockId
+      ? null
+      : selected
+      ? "选中区块之后"
+      : layoutOnly
+      ? null
+      : "课末尾";
     this.ui.assetPicker = null;
-    this.commit(`插入素材：${asset.title || asset.filename}`, (data) => {
+    let createdBlockId = null;
+    this.commit(`插入素材：${assetLabel}`, (data) => {
       const contentItem = data.content_items.find((candidate) => candidate.id === item.id);
       if (!contentItem) return;
       const document = data.documents.find((candidate) => candidate.content_item_id === item.id) || data.documents.find((candidate) => candidate.id === contentItem.document_id);
-      const role = requirement ? "requirement" : (options.role || (blockId ? "content" : "layout"));
+      const role = requirement ? "requirement" : (options.role || "content");
       if (requirement) {
         const target = data.requirements.find((candidate) => candidate.id === requirement.id);
         if (target) {
@@ -3755,22 +3777,41 @@ class WorkbenchStore {
           data.asset_usages = data.asset_usages.filter((usage) => !(usage.role === "requirement" && usage.content_item_id === target.content_item_id && usage.block_id === target.anchor_block_id && usage.layout_instance_id === target.layout_instance_id));
         }
       }
-      let targetBlockId = blockId;
-      if (!targetBlockId && document && !requirement) {
-        const siblings = data.blocks.filter((block) => block.document_id === document.id);
+      let targetBlockId = linkBlockId;
+      if (layoutOnly) {
+        targetBlockId = null;
+      } else if (!targetBlockId && document && !requirement) {
+        const siblings = data.blocks
+          .filter((block) => block.document_id === document.id)
+          .sort((left, right) =>
+            (left.order_index ?? 0) - (right.order_index ?? 0) ||
+            String(left.id).localeCompare(String(right.id))
+          );
+        const anchorIndex = selected
+          ? siblings.findIndex((block) => block.id === selected.id)
+          : -1;
+        const index = anchorIndex >= 0 ? anchorIndex + 1 : siblings.length;
+        // Make room so a stable renumber cannot leave the new block after a
+        // sibling that previously shared the same order_index.
+        for (const sibling of siblings) {
+          if ((sibling.order_index ?? 0) >= index) sibling.order_index += 1;
+        }
         const id = uid();
         targetBlockId = id;
+        createdBlockId = id;
         data.blocks.push(linkBlockAsset({
           id,
           document_id: document.id,
           parent_block_id: null,
           type: "paragraph",
-          order_index: siblings.length,
+          order_index: index,
           content: "",
           settings: {},
           created_at: now(),
           updated_at: now(),
         }, asset));
+        renumberBlocks(data, document.id);
+        this.ui.selectedBlockId = id;
       } else if (targetBlockId) {
         const block = data.blocks.find((candidate) => candidate.id === targetBlockId);
         if (block) linkBlockAsset(block, asset);
@@ -3786,8 +3827,11 @@ class WorkbenchStore {
         data.asset_usages.push({ id: uid(), asset_id: asset.id, content_item_id: item.id, block_id: targetBlockId ?? null, layout_instance_id: usageLayoutId, role, created_at: now() });
       }
     });
-    if (blockId) this.ui.selectedBlockId = blockId;
-    this.ui.toast = `已插入素材：${asset.title || asset.filename}`;
+    if (linkBlockId) this.ui.selectedBlockId = linkBlockId;
+    else if (createdBlockId) this.ui.selectedBlockId = createdBlockId;
+    this.ui.toast = anchorNote
+      ? `已插入素材到${anchorNote}：${assetLabel}`
+      : `已插入素材：${assetLabel}`;
   }
   detachAsset(blockId, assetId) {
     const item = this.currentItem();
@@ -5291,6 +5335,7 @@ function handleAction(action, element, event) {
     case "right-panel": store.ui.rightPanel = element.dataset.panel; store.ui.rightCollapsed = false; store.scheduleSessionSave(); store.notify(); return;
     case "insert-block":
       // A placeholder must always carry a Requirement, never just a block.
+      // Media opens the shared picker; insertAsset performs the mutation.
       if (element.dataset.type === "placeholder") store.addPlaceholder("text");
       else store.addBlock(element.dataset.type);
       return;

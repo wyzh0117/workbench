@@ -1762,3 +1762,233 @@ Deno.test("the browser export mirrors media resolution and never leaks filenames
     restore();
   }
 });
+
+/** Seed one image asset for position-insert tests. */
+function seedImageAsset(
+  store: { commit: (label: string, mutation: (data: ProjectData) => void) => void },
+  id = "asset-position",
+) {
+  store.commit("测试素材", (data) => {
+    data.assets.push({
+      id,
+      project_id: data.project.id,
+      type: "image",
+      filename: "插图.png",
+      storage_path: "assets/插图.png",
+      mime_type: "image/png",
+      width: null,
+      height: null,
+      duration_ms: null,
+      file_size: 128,
+      checksum: `checksum-${id}`,
+      title: "插图.png",
+      description: "",
+      source_type: "imported",
+      source_url: null,
+      copyright_note: null,
+      created_at: "2026-01-01T00:00:00.000Z",
+      archived: false,
+    });
+  });
+}
+
+Deno.test("block palette includes + 媒体 as a peer of + 正文", async () => {
+  const views = await Deno.readTextFile(
+    new URL("../app/views.js", import.meta.url),
+  );
+  const palette = views.match(
+    /const BLOCK_PALETTE = \[([\s\S]*?)\];/,
+  )?.[1] ?? "";
+  assert(
+    palette.includes('["media", "媒体"]') || palette.includes("媒体"),
+    "BLOCK_PALETTE must include 媒体",
+  );
+  assert(
+    views.includes('data-action="insert-block"') && views.includes("＋ ${label}"),
+    "toolbar must render palette labels as ＋ buttons",
+  );
+  assert(
+    views.includes("插入到当前位置"),
+    "Media Library must expose 「插入到当前位置」",
+  );
+  assert(
+    views.includes('data-action="insert-asset"'),
+    "library insert must use the shared insert-asset action",
+  );
+});
+
+Deno.test("insertAsset after the selected block creates a media block and AssetUsage", async () => {
+  const { store, restore } = await bootStore();
+  try {
+    store.addMapItem("当前位置插入");
+    const item = store.currentItem()!;
+    store.addBlock("heading", "标题");
+    store.addBlock("paragraph", "第一段");
+    store.addBlock("paragraph", "第二段");
+    seedImageAsset(store);
+    const before = store.blocks(item);
+    assert(before.length === 3, "three prose blocks exist");
+    store.selectBlock(before[1]!.id, { force: true });
+
+    await store.insertAsset("asset-position");
+
+    const after = store.blocks(item);
+    assert(after.length === 4, "position insert adds a new block");
+    assert(after[0]!.type === "heading", "blocks before the anchor stay put");
+    assert(
+      after[1]!.type === "paragraph" && after[1]!.content === "第一段",
+      "the selected block must not be converted in place",
+    );
+    assert(after[1]!.id === before[1]!.id, "selected block identity is preserved");
+    const media = after[2]!;
+    assert(
+      media.type === "image" && media.settings.asset_id === "asset-position",
+      "a new media block is inserted immediately after the selection",
+    );
+    assert(
+      after[3]!.content === "第二段",
+      "blocks after the anchor shift down",
+    );
+    assert(
+      after.every((block, index) => block.order_index === index),
+      "order_index stays contiguous",
+    );
+    const usage = store.data.asset_usages.find((candidate) =>
+      candidate.asset_id === "asset-position"
+    )!;
+    assert(Boolean(usage), "AssetUsage is created");
+    assert(usage.block_id === media.id, "usage points at the new media block");
+    assert(usage.content_item_id === item.id, "usage belongs to the lesson");
+    assert(usage.role === "content", "position insert is a content usage");
+    assert(
+      store.ui.selectedBlockId === media.id,
+      "the new media block becomes selected",
+    );
+    assert(
+      validateProjectData(store.data).length === 0,
+      "position insert stays canonically valid",
+    );
+  } finally {
+    restore();
+  }
+});
+
+Deno.test("insertAsset without selection appends a media block at the lesson end", async () => {
+  const { store, restore } = await bootStore();
+  try {
+    store.addMapItem("课末追加");
+    const item = store.currentItem()!;
+    store.addBlock("paragraph", "仅有正文");
+    seedImageAsset(store, "asset-append");
+    store.ui.selectedBlockId = null;
+
+    await store.insertAsset("asset-append");
+
+    const blocks = store.blocks(item);
+    assert(blocks.length === 2, "append adds one media block");
+    assert(
+      blocks[0]!.type === "paragraph" && blocks[0]!.content === "仅有正文",
+      "existing prose is left alone",
+    );
+    const media = blocks[1]!;
+    assert(
+      media.type === "image" && media.settings.asset_id === "asset-append",
+      "media is appended at the lesson end",
+    );
+    const usage = store.data.asset_usages.find((candidate) =>
+      candidate.asset_id === "asset-append"
+    )!;
+    assert(Boolean(usage), "AssetUsage is created on append");
+    assert(usage.block_id === media.id, "usage points at the appended block");
+    assert(usage.role === "content", "append is a content usage, not layout");
+  } finally {
+    restore();
+  }
+});
+
+Deno.test("+ 媒体 opens the shared asset picker for position insert", async () => {
+  const { store, restore } = await bootStore();
+  try {
+    store.addMapItem("媒体面板");
+    store.addBlock("paragraph", "正文");
+    seedImageAsset(store, "asset-picker-media");
+    store.selectBlock(store.blocks(store.currentItem()!)[0]!.id, { force: true });
+
+    store.addBlock("media");
+    assert(
+      store.ui.assetPicker !== null &&
+        !(store.ui.assetPicker as { blockId?: string }).blockId &&
+        !(store.ui.assetPicker as { requirementId?: string }).requirementId,
+      "+ 媒体 must open the asset picker without a convert-in-place target",
+    );
+    assert(
+      store.blocks(store.currentItem()!).length === 1,
+      "opening the picker must not create an empty media block yet",
+    );
+
+    await store.insertAsset("asset-picker-media");
+    const blocks = store.blocks(store.currentItem()!);
+    assert(blocks.length === 2, "choosing an asset inserts after the selection");
+    assert(blocks[0]!.type === "paragraph", "selected prose stays prose");
+    assert(
+      blocks[1]!.type === "image" &&
+        blocks[1]!.settings.asset_id === "asset-picker-media",
+      "picker choose-asset uses the same insertAsset mutation",
+    );
+  } finally {
+    restore();
+  }
+});
+
+Deno.test("Media Library insert-asset action shares insertAsset position semantics", async () => {
+  const views = await Deno.readTextFile(
+    new URL("../app/views.js", import.meta.url),
+  );
+  const mediaView = views.match(
+    /function mediaView\(\) \{([\s\S]*?)\n  function /,
+  )?.[1] ?? "";
+  assert(
+    mediaView.includes("插入到当前位置"),
+    "mediaView CTA must say 插入到当前位置",
+  );
+  assert(
+    mediaView.includes('data-action="insert-asset"'),
+    "mediaView must call insert-asset (same handler as the side panel)",
+  );
+  const mediaPanel = views.match(
+    /function mediaPanel\(view\) \{([\s\S]*?)\n  function /,
+  )?.[1] ?? "";
+  assert(
+    mediaPanel.includes("选中区块之后") || mediaPanel.includes("当前选中区块之后") ||
+      mediaPanel.includes("课末尾") || mediaPanel.includes("课末"),
+    "mediaPanel copy must state the insert anchor",
+  );
+
+  const { store, restore } = await bootStore();
+  try {
+    store.addMapItem("媒体库同路径");
+    const item = store.currentItem()!;
+    store.addBlock("paragraph", "A");
+    store.addBlock("paragraph", "B");
+    seedImageAsset(store, "asset-library");
+    store.selectBlock(store.blocks(item)[0]!.id, { force: true });
+    // Media Library 「插入到当前位置」 goes through insertAsset with no block_id.
+    await store.insertAsset("asset-library");
+    const blocks = store.blocks(item);
+    assert(blocks.length === 3, "library insert adds a block");
+    assert(blocks[0]!.content === "A", "anchor prose is not converted");
+    assert(
+      blocks[1]!.type === "image" &&
+        blocks[1]!.settings.asset_id === "asset-library",
+      "library insert lands after the selected block",
+    );
+    assert(
+      store.data.asset_usages.some((usage) =>
+        usage.asset_id === "asset-library" && usage.block_id === blocks[1]!.id
+      ),
+      "library insert creates AssetUsage via the same mutation",
+    );
+  } finally {
+    restore();
+  }
+});
