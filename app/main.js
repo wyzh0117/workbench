@@ -1320,7 +1320,24 @@ class WorkbenchStore {
     if (!known) return;
     this.ui.selectedBlockId = this.ui.selectedBlockId === id && !options.force ? null : id;
     if (options.mode && this.ui.mode !== options.mode) this.setMode(options.mode, { silent: true });
+    // Placeholder click / select must surface 状态 so the gap is editable
+    // without a second trip to the right rail.
+    if (this.ui.selectedBlockId) {
+      const selected = blocksFor(this.data, item.id).find((block) =>
+        block.id === this.ui.selectedBlockId
+      );
+      if (selected?.type === "placeholder") {
+        this.ui.rightPanel = "status";
+        this.ui.rightCollapsed = false;
+        this.scheduleSessionSave();
+        this.notify();
+        return;
+      }
+    }
     this.scheduleSessionSave();
+    // Soft selection (textarea focus / in-place accent) must not rebuild the
+    // editor: a full notify() would replace the DOM and drop caret / IME.
+    if (options.soft) return;
     this.notify();
   }
   commit(label, mutation) {
@@ -5614,6 +5631,9 @@ function bindEvents() {
       store.ui.selectedBlockId = element.dataset.blockId;
       // Remember where typing started so undo can revert the edit itself.
       element.dataset.editBaseline = element.value;
+      // Accent only — never notify(): replacing the DOM would drop the caret
+      // and break an in-flight IME composition.
+      syncBlockSelectionClasses();
       store.scheduleSessionSave();
     });
     element.addEventListener("blur", () => flushPendingEdit(element));
@@ -5627,16 +5647,31 @@ function bindEvents() {
       // Opening the overflow menu must not re-render or the <details> closes.
       const inMore = typeof event.target?.closest === "function" &&
         event.target.closest("details.block-more");
-      if (store.ui.selectedBlockId === blockId) return;
-      store.ui.selectedBlockId = blockId;
-      store.scheduleSessionSave();
-      if (inMore) {
-        element.classList.add("selected");
+      const onControl = typeof event.target?.closest === "function" &&
+        event.target.closest("button, a, summary, input, textarea, select, label");
+      const block = store.data.blocks.find((candidate) => candidate.id === blockId);
+      const openStatus = block?.type === "placeholder" && !onControl && !inMore;
+      if (store.ui.selectedBlockId === blockId && !openStatus) {
+        syncBlockSelectionClasses();
         return;
       }
-      // A full render keeps the selection rings and the right-hand panels in
-      // step; text fields are skipped below so this never steals focus.
-      if (document.activeElement && document.activeElement.closest?.("article.block")) return;
+      store.ui.selectedBlockId = blockId;
+      if (openStatus) {
+        store.ui.rightPanel = "status";
+        store.ui.rightCollapsed = false;
+      }
+      store.scheduleSessionSave();
+      if (inMore) {
+        syncBlockSelectionClasses();
+        return;
+      }
+      // A focused text field owns the caret: update the accent in place and
+      // only rebuild when the right panel must switch (placeholder → 状态).
+      if (document.activeElement && document.activeElement.closest?.("article.block")) {
+        syncBlockSelectionClasses();
+        if (openStatus) store.notify();
+        return;
+      }
       store.notify();
     });
   });
@@ -5832,44 +5867,163 @@ function bindAssetDropTargets() {
   }
 }
 
+/** Keep `.selected` accents in sync without replacing the editor DOM. */
+function syncBlockSelectionClasses() {
+  if (!root) return;
+  const selectedId = store.ui.selectedBlockId;
+  for (const element of root.querySelectorAll("article.block[data-block-id]")) {
+    element.classList.toggle("selected", element.dataset.blockId === selectedId);
+  }
+}
+
+function clearBlockDropIndicators() {
+  if (!root) return;
+  for (const element of root.querySelectorAll("article.block.drop-before")) {
+    element.classList.remove("drop-before");
+  }
+}
+
 /**
- * Reorder正文 by dragging the block rail.
+ * Pick the block id whose top edge is the drop line for a pointer Y.
+ * `rects` is `[{ id, top, height }]`, typically from getBoundingClientRect().
+ */
+function findBlockReorderTarget(rects, sourceId, clientY) {
+  let lastId = null;
+  for (const rect of rects || []) {
+    if (!rect || rect.id === sourceId) continue;
+    const top = Number(rect.top) || 0;
+    const height = Number(rect.height) || 0;
+    const mid = top + height / 2;
+    if (clientY < mid) return rect.id;
+    lastId = rect.id;
+  }
+  return lastId;
+}
+
+/**
+ * Pure pointer-reorder state machine: threshold → arm → target → commit.
+ * Exported so tests can drive the path without a real OS mouse.
+ */
+function createPointerReorderSession({
+  sourceId,
+  startX = 0,
+  startY = 0,
+  threshold = 5,
+} = {}) {
+  let active = false;
+  let targetId = null;
+  return {
+    get active() {
+      return active;
+    },
+    get targetId() {
+      return targetId;
+    },
+    move(clientX, clientY, rects) {
+      if (!active) {
+        const dx = (Number(clientX) || 0) - startX;
+        const dy = (Number(clientY) || 0) - startY;
+        if (Math.hypot(dx, dy) < threshold) {
+          return { active: false, targetId: null };
+        }
+        active = true;
+      }
+      targetId = findBlockReorderTarget(rects, sourceId, clientY);
+      return { active, targetId };
+    },
+    commit(reorder) {
+      if (!active || !targetId || targetId === sourceId) return false;
+      if (typeof reorder === "function") reorder(sourceId, targetId);
+      return true;
+    },
+  };
+}
+
+function blockReorderRects() {
+  const rects = [];
+  for (const element of root.querySelectorAll("article.block[data-block-id]")) {
+    const id = element.dataset.blockId;
+    if (!id) continue;
+    try {
+      const box = element.getBoundingClientRect?.();
+      if (!box) continue;
+      rects.push({ id, top: box.top, height: box.height });
+    } catch {
+      /* geometry is best effort during tests without layout */
+    }
+  }
+  return rects;
+}
+
+/**
+ * Reorder正文 by pointer-dragging the block handle.
  *
- * The `dragstart` listener lives on the descendant `.block-handle`, so the
- * handle — not the whole article — is the draggable element: an article that
- * is `draggable="true"` swallows text selection inside its own textarea.
- * The drag image is still the whole block, so the gesture reads correctly.
+ * HTML5 DataTransfer proved unreliable with a real mouse in the Tauri
+ * WebView, so the gesture is: pointerdown → threshold → setPointerCapture →
+ * move (drop indicator) → pointerup → reorderBlockTo.
  */
 function bindBlockDrag() {
-  let draggingId = null;
+  const doc = globalThis.document;
   for (const element of root.querySelectorAll("article.block[data-block-id]")) {
     const blockId = element.dataset.blockId;
     const handle = element.querySelector(".block-handle");
-    if (!handle) continue;
-    handle.addEventListener("dragstart", (event) => {
-      draggingId = blockId;
-      event.dataTransfer.effectAllowed = "move";
-      event.dataTransfer.setData("application/x-block-id", blockId);
-      try {
-        event.dataTransfer.setDragImage(element, 24, 20);
-      } catch { /* the platform drag image is optional */ }
-    });
-    handle.addEventListener("dragend", () => { draggingId = null; });
-    element.addEventListener("dragover", (event) => {
-      if (!draggingId || draggingId === blockId) return;
-      if (event.dataTransfer.types.includes("text/plain") && !event.dataTransfer.types.includes("application/x-block-id")) return;
-      event.preventDefault();
-      element.classList.add("drop-before");
-    });
-    element.addEventListener("dragleave", () => element.classList.remove("drop-before"));
-    element.addEventListener("drop", (event) => {
-      element.classList.remove("drop-before");
-      const source = draggingId || event.dataTransfer.getData("application/x-block-id");
-      if (!source || source === blockId) return;
-      event.preventDefault();
-      event.stopPropagation();
-      store.reorderBlockTo(source, blockId);
-      draggingId = null;
+    if (!handle || !blockId) continue;
+    handle.addEventListener("pointerdown", (event) => {
+      if (event.button != null && event.button !== 0) return;
+      const pointerId = event.pointerId;
+      const session = createPointerReorderSession({
+        sourceId: blockId,
+        startX: event.clientX ?? 0,
+        startY: event.clientY ?? 0,
+        threshold: 5,
+      });
+      let captured = false;
+
+      const onMove = (moveEvent) => {
+        if (moveEvent.pointerId !== pointerId) return;
+        const wasActive = session.active;
+        const next = session.move(
+          moveEvent.clientX ?? 0,
+          moveEvent.clientY ?? 0,
+          blockReorderRects(),
+        );
+        if (next.active && !wasActive && !captured) {
+          captured = true;
+          try {
+            handle.setPointerCapture?.(pointerId);
+          } catch { /* capture is best effort */ }
+          element.classList.add("is-dragging");
+        }
+        if (!next.active) return;
+        moveEvent.preventDefault?.();
+        clearBlockDropIndicators();
+        if (next.targetId) {
+          root
+            .querySelector(`article.block[data-block-id="${next.targetId}"]`)
+            ?.classList.add("drop-before");
+        }
+      };
+
+      const onUp = (upEvent) => {
+        if (upEvent.pointerId !== pointerId) return;
+        doc?.removeEventListener?.("pointermove", onMove, true);
+        doc?.removeEventListener?.("pointerup", onUp, true);
+        doc?.removeEventListener?.("pointercancel", onUp, true);
+        if (captured) {
+          try {
+            handle.releasePointerCapture?.(pointerId);
+          } catch { /* release is best effort */ }
+        }
+        element.classList.remove("is-dragging");
+        clearBlockDropIndicators();
+        session.commit((source, target) => store.reorderBlockTo(source, target));
+      };
+
+      // Listen on document until the threshold arms capture, so the pointer can
+      // leave the handle before the gesture is considered a drag.
+      doc?.addEventListener?.("pointermove", onMove, true);
+      doc?.addEventListener?.("pointerup", onUp, true);
+      doc?.addEventListener?.("pointercancel", onUp, true);
     });
   }
 }
@@ -5977,7 +6131,9 @@ export {
   WorkbenchStore,
   browserHtml,
   browserMarkdown,
+  createPointerReorderSession,
   describeProjectOpenFailure,
+  findBlockReorderTarget,
   userFacingError,
 };
 export { PROJECT_FILE_PICKER } from "./constants.js";

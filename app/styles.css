@@ -244,8 +244,9 @@ kbd { background: #f2f3f7; border: 1px solid #e0e2eb; border-radius: 4px; color:
 .block-head {
   align-items: center; display: flex; flex: none; gap: 6px; min-height: 24px;
 }
-.block-handle { color: #b9bdca; cursor: grab; flex: none; font-size: 13px; line-height: 1; padding: 0; }
+.block-handle { color: #b9bdca; cursor: grab; flex: none; font-size: 13px; line-height: 1; padding: 0; touch-action: none; user-select: none; }
 .block-handle:active { cursor: grabbing; }
+.block.is-dragging { opacity: .72; }
 .block-type-label { color: #b0b3be; flex: none; font-size: 10px; font-weight: 650; }
 .block-order { color: #c0c3cf; font-family: ui-monospace, monospace; font-size: 9px; }
 .block-head-actions {

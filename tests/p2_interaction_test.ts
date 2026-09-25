@@ -460,6 +460,100 @@ Deno.test("T03 block outer ceilings: Small 100px, Medium/Large scaled, textarea 
   );
 });
 
+Deno.test("T03 selected block keeps a left accent; handle uses pointer reorder not HTML5 DoD", async () => {
+  const styles = await Deno.readTextFile(
+    new URL("../app/styles.css", import.meta.url),
+  );
+  assert(
+    /\.block\.selected\s*\{[^}]*box-shadow:\s*inset 3px 0 0\s+var\(--primary\)/m
+      .test(styles),
+    "selected blocks must show a left accent bar",
+  );
+  assert(
+    /\.block\.drop-before\s*\{/.test(styles),
+    "pointer reorder must still have a drop indicator style",
+  );
+
+  const data = createEmptyProjectData("选中强调");
+  const stage = data.stages[0];
+  const contentId = crypto.randomUUID();
+  const document = createDocument(data, contentId);
+  data.content_items.push({
+    id: contentId,
+    project_id: data.project.id,
+    stage_id: stage?.id ?? null,
+    code: "S01-01",
+    title: "第一课",
+    type: "lesson",
+    description: "",
+    order_index: 0,
+    document_id: document.id,
+    archived: false,
+    created_at: now(),
+    updated_at: now(),
+  });
+  initializeContentStatuses(data, contentId);
+  appendBlock(data, contentId, "paragraph", "选中我");
+  const blockId = data.blocks[0]!.id;
+  const item = data.content_items[0]!;
+  const store = {
+    data,
+    ui: {
+      screen: "project",
+      route: "editor",
+      mode: "writing",
+      activeId: item.id,
+      selectedBlockId: blockId,
+      focusRequirementId: null,
+      leftCollapsed: false,
+      rightCollapsed: false,
+      editingProjectTitle: false,
+      seedType: null,
+      seedText: "",
+      seedBusy: false,
+      rightPanel: "properties",
+      toast: "",
+      showPreviewNotes: true,
+      gridEditing: false,
+      palette: false,
+      capture: false,
+      preflight: false,
+      snapshot: false,
+      assetPicker: null,
+    },
+    tabs: [{ content_item_id: item.id, pinned: false }],
+    saveStatus: "已保存",
+    assetPreview: new Map(),
+    bridge: { isNative: () => false },
+    currentItem() {
+      return data.content_items.find((candidate) => candidate.id === this.ui.activeId) ??
+        null;
+    },
+  };
+  const html = createViews(store as never).shellView();
+  const card = firstBlockCard(html);
+  assert(
+    card.includes(" selected") && card.includes(`data-block-id="${blockId}"`),
+    "the selected block card must carry the selected class for the accent",
+  );
+  assert(
+    card.includes("block-handle"),
+    "the drag handle must remain in the header",
+  );
+  assert(
+    !card.includes('draggable="true"'),
+    "draggable=true must not be the reorder DoD; pointer capture owns the gesture",
+  );
+
+  const main = await Deno.readTextFile(new URL("../app/main.js", import.meta.url));
+  assert(
+    main.includes("setPointerCapture") &&
+      main.includes("createPointerReorderSession") &&
+      main.includes("pointerdown"),
+    "bindBlockDrag must use the pointer reorder path",
+  );
+});
+
 /* ------------------------------------------------------------------ *
  * P2-3 / P2-4 — Flow order and Grid interaction live in
  * `dogfooding_test.ts`, where the store/DOM harness already exists.

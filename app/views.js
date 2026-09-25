@@ -596,7 +596,7 @@ export function createViews(store) {
       size.tier
     }" data-requirement-id="${
       block.requirement_id || ""
-    }"><div class="block-head"><span class="block-handle" draggable="true" title="按住拖动以调整正文顺序">⠿</span><span class="block-type-label">${typeLabel}</span><span class="block-order">${
+    }"><div class="block-head"><span class="block-handle" title="按住拖动以调整正文顺序">⠿</span><span class="block-type-label">${typeLabel}</span><span class="block-order">${
       String(index + 1).padStart(2, "0")
     }</span><div class="block-head-actions"><button class="icon-button" data-action="insert-block-below" data-id="${
       block.id

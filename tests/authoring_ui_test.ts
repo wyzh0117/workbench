@@ -291,6 +291,118 @@ Deno.test("block authoring keeps text, structure and selection in sync", async (
   }
 });
 
+Deno.test("selecting a placeholder opens the status right panel", async () => {
+  const { store, restore } = await bootStore();
+  try {
+    store.addMapItem("占位打开状态");
+    store.addBlock("paragraph", "正文");
+    store.addPlaceholder("text", "补一段说明");
+    const placeholder = store.blocks(store.currentItem()!).find((block) =>
+      block.type === "placeholder"
+    )!;
+    store.ui.rightPanel = "properties";
+    store.ui.rightCollapsed = true;
+    store.selectBlock(placeholder.id, { force: true });
+    assert(
+      store.ui.selectedBlockId === placeholder.id,
+      "the placeholder must become the selected block",
+    );
+    assert(
+      store.ui.rightPanel === "status",
+      "placeholder selection must open the 状态 panel",
+    );
+    assert(
+      store.ui.rightCollapsed === false,
+      "opening 状态 must expand the right rail",
+    );
+  } finally {
+    restore();
+  }
+});
+
+Deno.test("soft block selection does not call full notify()", async () => {
+  const { store, restore } = await bootStore();
+  try {
+    store.addMapItem("软选中");
+    store.addBlock("paragraph", "一段");
+    const id = store.blocks(store.currentItem()!)[0]!.id;
+    const mutable = store as typeof store & {
+      notify: (...args: unknown[]) => void;
+    };
+    let fullNotifies = 0;
+    const previous = mutable.notify.bind(mutable);
+    mutable.notify = (...args: unknown[]) => {
+      fullNotifies += 1;
+      previous(...args);
+    };
+    mutable.selectBlock(id, { force: true, soft: true });
+    assert(mutable.ui.selectedBlockId === id, "soft select still records selectedBlockId");
+    assert(
+      fullNotifies === 0,
+      "soft selection must not rebuild the editor via notify()",
+    );
+  } finally {
+    restore();
+  }
+});
+
+Deno.test("pointer reorder session commits canonical order_index via reorderBlockTo", async () => {
+  const { store, restore } = await bootStore();
+  try {
+    store.addMapItem("指针排序");
+    store.addBlock("paragraph", "A");
+    store.addBlock("paragraph", "B");
+    store.addBlock("paragraph", "C");
+    const item = store.currentItem()!;
+    const before = store.blocks(item).map((block) => block.id);
+    const { createPointerReorderSession } = await import(
+      `../app/main.js?pointer-reorder-${importCounter}`
+    );
+    assert(
+      typeof createPointerReorderSession === "function",
+      "pointer reorder helpers must be exported for the interaction path",
+    );
+    // Geometry stand-in: three stacked 100px frames. Drag C into the top half of A.
+    const rects = before.map((id, index) => ({
+      id,
+      top: index * 100,
+      height: 100,
+    }));
+    const session = createPointerReorderSession({
+      sourceId: before[2]!,
+      startX: 12,
+      startY: 250,
+      threshold: 5,
+    });
+    assert(
+      session.move(12, 248, rects).active === false,
+      "movement under the threshold must not start a reorder",
+    );
+    const armed = session.move(12, 40, rects);
+    assert(armed.active === true, "crossing the threshold arms the gesture");
+    assert(
+      armed.targetId === before[0],
+      "pointer over the top half of A must target A",
+    );
+    const committed = session.commit((source: string, target: string) =>
+      store.reorderBlockTo(source, target)
+    );
+    assert(committed === true, "an armed gesture with a target must commit");
+    const after = store.blocks(item).map((block) => block.id);
+    assert(after[0] === before[2], "C must move before A");
+    assert(
+      after.every((id, index) => store.blocks(item)[index]!.order_index === index),
+      "order_index must stay contiguous after pointer reorder",
+    );
+    assert(
+      validateProjectData(store.data).length === 0,
+      "pointer reorder must leave a valid project",
+    );
+  } finally {
+    restore();
+  }
+});
+
 Deno.test("placeholder and requirement lifecycle survives navigation", async () => {
   const { store, restore } = await bootStore();
   try {
