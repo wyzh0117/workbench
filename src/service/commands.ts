@@ -32,6 +32,7 @@ export const HIGH_LEVEL_COMMANDS = [
   "import.preview",
   "import.confirm",
   "folder.scan",
+  "folder.read_preview",
   "asset.import",
   "inbox.create",
   "inbox.triage",

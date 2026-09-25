@@ -57,7 +57,7 @@ import {
   preflightExport,
   previewImport,
 } from "./import_export.ts";
-import { scanFolder } from "./folder_scan.ts";
+import { readFolderPreview, scanFolder } from "./folder_scan.ts";
 import type { ExportPreset } from "../domain/types.ts";
 
 function decodeBase64(value: string): Uint8Array {
@@ -804,6 +804,38 @@ export class DesktopService {
           metadata: {
             count: report.entries.length,
             root: report.root,
+          },
+        },
+      };
+    });
+    // Read-only preview for Workspace Explorer. Never writes project.json.
+    this.commands.register("folder.read_preview", async (input) => {
+      const candidate = input && typeof input === "object"
+        ? input as {
+          root?: string;
+          path?: string;
+          relative_path?: string;
+          relativePath?: string;
+        }
+        : {};
+      const root = String(candidate.root ?? candidate.path ?? "").trim();
+      const relativePath = String(
+        candidate.relative_path ?? candidate.relativePath ?? "",
+      ).trim();
+      if (!root) throw new Error("folder.read_preview requires the scanned root");
+      if (!relativePath) {
+        throw new Error("folder.read_preview requires a relative_path");
+      }
+      const preview = await readFolderPreview(root, relativePath);
+      return {
+        value: preview,
+        audit: {
+          object_type: "import",
+          action: "folder_read_preview",
+          metadata: {
+            root,
+            relative_path: relativePath,
+            preview_kind: preview.preview_kind,
           },
         },
       };

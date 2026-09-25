@@ -28,7 +28,12 @@ import {
   textOf,
   usagesForAsset,
 } from "./authoring.js";
-import { AssetPreviewCache, esc } from "./canvas.js";
+import {
+  AssetPreviewCache,
+  esc,
+  explorerPreviewKind,
+  explorerUrlForBytes,
+} from "./canvas.js";
 import { createViews } from "./views.js";
 import {
   AI_FAILURE_CODES,
@@ -233,6 +238,7 @@ const NAV = [
   ["overview", "项目概览", "⌂"],
   ["map", "课程地图", "▦"],
   ["workbench", "工作台", "✎"],
+  ["explorer", "文件", "📂"],
   ["inbox", "收件箱", "↓"],
   ["board", "制作看板", "▤"],
   ["media", "媒体库", "◈"],
@@ -402,6 +408,7 @@ class DesktopBridge {
       "import.preview": "import_preview",
       "import.confirm": "import_confirm",
       "folder.scan": "folder_scan",
+      "folder.read_preview": "folder_read_preview",
       "course.seed.create": "course_seed_create",
       "blueprint.build": "blueprint_build",
       "asset.import": "asset_import",
@@ -1046,6 +1053,12 @@ class WorkbenchStore {
       /** V1-T04 read-only folder scan result (Task 9). Not Canonical. */
       folderScan: null,
       importFolderRoot: null,
+      /** Workspace Explorer UI (§§27–28, 36–37, 39) — session/workspace only. */
+      explorerFilter: "",
+      explorerExpanded: [],
+      explorerSelected: null,
+      explorerRecent: [],
+      explorerPreview: null,
     };
     this.tabs = [];
     this.history = [];
@@ -1070,6 +1083,7 @@ class WorkbenchStore {
     this.pendingRecovery = null;
     this.editTimer = 0;
     this.assetSearchTimer = 0;
+    this.explorerFilterTimer = 0;
     this.expectedProjectId = null;
     /** Preview cache: bounded, read-only, never a source of truth. */
     this.assetPreview = new AssetPreviewCache(bridge);
@@ -2932,18 +2946,173 @@ class WorkbenchStore {
       if (!report || !Array.isArray(report.entries)) {
         throw new Error("文件夹扫描没有返回可用结果。请重试，或选择其他文件夹。");
       }
+      const resolvedRoot = report.root || root;
       this.ui.folderScan = report;
-      this.ui.importFolderRoot = report.root || root;
+      this.ui.importFolderRoot = resolvedRoot;
+      this.ui.explorerFilter = "";
+      this.ui.explorerSelected = null;
+      this.ui.explorerPreview = null;
+      // Expand top-level directories so the first glance shows nested files.
+      this.ui.explorerExpanded = report.entries
+        .filter((entry) =>
+          entry.kind === "directory" &&
+          !String(entry.relative_path || "").includes("/")
+        )
+        .map((entry) => String(entry.relative_path));
+      const recent = Array.isArray(this.ui.explorerRecent) ? this.ui.explorerRecent.slice() : [];
+      const nextRecent = [resolvedRoot, ...recent.filter((path) => path !== resolvedRoot)].slice(0, 8);
+      this.ui.explorerRecent = nextRecent;
+      this.ui.route = "explorer";
+      this.ui.screen = "project";
       const files = report.entries.filter((entry) => entry.kind === "file").length;
       const folders = report.entries.filter((entry) => entry.kind === "directory").length;
       const degraded = report.entries.filter((entry) => entry.error).length;
       const parts = [`已扫描 ${files} 个文件`];
       if (folders) parts.push(`${folders} 个文件夹`);
       if (degraded) parts.push(`${degraded} 项无法读取（已跳过，不影响其余文件）`);
-      this.ui.toast = `${parts.join("，")}。只读扫描，尚未写入课程项目；完整浏览与确认导入将在后续步骤提供。`;
+      this.ui.toast = `${parts.join("，")}。已打开资源浏览器（只读，尚未写入课程项目）。`;
+      this.scheduleSessionSave();
       this.notify();
     } catch (error) {
       this.ui.toast = userFacingError(error, "无法扫描文件夹。当前项目没有改变，请重试。");
+      this.notify();
+    }
+  }
+  setExplorerFilter(query) {
+    this.ui.explorerFilter = String(query ?? "");
+    this.scheduleSessionSave();
+    this.notify();
+  }
+  toggleExplorerExpanded(relativePath) {
+    const path = String(relativePath || "");
+    if (!path) return;
+    const current = Array.isArray(this.ui.explorerExpanded) ? this.ui.explorerExpanded.slice() : [];
+    const index = current.indexOf(path);
+    if (index >= 0) current.splice(index, 1);
+    else current.push(path);
+    this.ui.explorerExpanded = current;
+    this.scheduleSessionSave();
+    this.notify();
+  }
+  /**
+   * Select a ScanResult row and load a non-blank preview (§28).
+   * UI-only: never writes Canonical / mapping confirm.
+   */
+  async selectExplorerEntry(relativePath) {
+    const path = String(relativePath || "");
+    const report = this.ui.folderScan;
+    const root = this.ui.importFolderRoot || report?.root || "";
+    const entry = Array.isArray(report?.entries)
+      ? report.entries.find((row) => String(row.relative_path) === path)
+      : null;
+    this.ui.explorerSelected = path || null;
+    if (!entry) {
+      this.ui.explorerPreview = null;
+      this.scheduleSessionSave();
+      this.notify();
+      return;
+    }
+    const kind = explorerPreviewKind(entry);
+    if (entry.kind === "directory") {
+      this.ui.explorerPreview = {
+        relative_path: path,
+        preview_kind: "directory",
+        text: null,
+        url: null,
+        note: "文件夹",
+        failed: false,
+        size: null,
+        mime: null,
+      };
+      const expanded = Array.isArray(this.ui.explorerExpanded)
+        ? this.ui.explorerExpanded.slice()
+        : [];
+      if (!expanded.includes(path)) expanded.push(path);
+      this.ui.explorerExpanded = expanded;
+      this.scheduleSessionSave();
+      this.notify();
+      return;
+    }
+    if (kind === "reference") {
+      this.ui.explorerPreview = {
+        relative_path: path,
+        preview_kind: "reference",
+        text: null,
+        url: null,
+        note: "作为参考文件导入",
+        failed: false,
+        size: entry.size,
+        mime: entry.mime,
+      };
+      this.scheduleSessionSave();
+      this.notify();
+      return;
+    }
+    this.ui.explorerPreview = {
+      relative_path: path,
+      preview_kind: kind,
+      text: null,
+      url: null,
+      note: null,
+      failed: false,
+      loading: true,
+      size: entry.size,
+      mime: entry.mime,
+    };
+    this.scheduleSessionSave();
+    this.notify();
+    if (!root) {
+      this.ui.explorerPreview = {
+        ...this.ui.explorerPreview,
+        loading: false,
+        failed: true,
+        note: "没有可预览的扫描根目录",
+      };
+      this.notify();
+      return;
+    }
+    try {
+      const preview = await this.bridge.command("folder.read_preview", {
+        root,
+        relative_path: path,
+      });
+      if (this.ui.explorerSelected !== path) return;
+      let url = null;
+      if (preview?.bytes_base64 && (kind === "image" || kind === "video" || kind === "audio")) {
+        const binary = atob(String(preview.bytes_base64));
+        const bytes = new Uint8Array(binary.length);
+        for (let index = 0; index < binary.length; index += 1) {
+          bytes[index] = binary.charCodeAt(index);
+        }
+        url = explorerUrlForBytes(bytes, preview.mime || entry.mime);
+      }
+      this.ui.explorerPreview = {
+        relative_path: path,
+        preview_kind: preview?.preview_kind || kind,
+        text: typeof preview?.text === "string" ? preview.text : null,
+        url,
+        note: preview?.note || null,
+        failed: Boolean(preview?.error),
+        loading: false,
+        size: preview?.size ?? entry.size,
+        mime: preview?.mime ?? entry.mime,
+        error: preview?.error || null,
+      };
+      this.notify();
+    } catch (error) {
+      if (this.ui.explorerSelected !== path) return;
+      this.ui.explorerPreview = {
+        relative_path: path,
+        preview_kind: kind,
+        text: null,
+        url: null,
+        note: null,
+        failed: true,
+        loading: false,
+        size: entry.size,
+        mime: entry.mime,
+        error: userFacingError(error, "无法预览该文件"),
+      };
       this.notify();
     }
   }
@@ -4828,7 +4997,7 @@ class WorkbenchStore {
 
 // 「工作台」is a left-nav entry (openWorkbench); authoring still uses route "editor".
 // "workbench" is accepted as a session alias and normalized to "editor".
-const ROUTES = ["overview", "map", "workbench", "inbox", "board", "media", "backlog", "updates", "publish", "versions", "settings", "editor"];
+const ROUTES = ["overview", "map", "workbench", "explorer", "inbox", "board", "media", "backlog", "updates", "publish", "versions", "settings", "editor"];
 /**
  * Directory failures from the shell's `explicit_project_dir`, i.e. the cases
  * where the stored path genuinely is not a usable project directory.
@@ -5272,6 +5441,7 @@ function focusSelector(element) {
   if (dataset.blockId) return `textarea[data-block-id="${dataset.blockId}"], input[data-block-id="${dataset.blockId}"]`;
   if (dataset.requirementNote) return `[data-requirement-note][data-id="${dataset.id || ""}"]`;
   if (dataset.assetSearch !== undefined) return "[data-asset-search]";
+  if (dataset.explorerFilter !== undefined) return "[data-explorer-filter]";
   if (dataset.aiInstruction !== undefined) return "[data-ai-instruction]";
   if (dataset.lessonTitle !== undefined) return "[data-lesson-title]";
   if (element.id) return `#${element.id}`;
@@ -5578,6 +5748,12 @@ function handleAction(action, element, event) {
     case "open-file": if (store.bridge.isNative()) void store.selectAndImportAsset(); else root.querySelector("[data-project-file]")?.click(); return;
     case "open-project-dir": void store.openProjectFromPicker(); return;
     case "import-folder": void store.importExistingFolderFromPicker(); return;
+    case "explorer-select": void store.selectExplorerEntry(element.dataset.path || ""); return;
+    case "explorer-toggle":
+      event.stopPropagation();
+      store.toggleExplorerExpanded(element.dataset.path || "");
+      return;
+    case "import-folder-again": void store.importExistingFolderFromPicker(); return;
     case "toggle-left": store.ui.leftCollapsed = !store.ui.leftCollapsed; store.scheduleSessionSave(); store.notify(); return;
     case "toggle-right": store.ui.rightCollapsed = !store.ui.rightCollapsed; store.scheduleSessionSave(); store.notify(); return;
     case "route": store.ui.route = element.dataset.route; store.scheduleSessionSave(); store.notify(); return;
@@ -6138,6 +6314,18 @@ function bindEvents() {
       store.ui.assetQuery = assetSearch.value;
       clearTimeout(store.assetSearchTimer);
       store.assetSearchTimer = setTimeout(() => store.notify(), 200);
+    });
+  }
+  const explorerFilter = root.querySelector("[data-explorer-filter]");
+  if (explorerFilter) {
+    store.ui.explorerFilter = explorerFilter.value;
+    explorerFilter.addEventListener("input", () => {
+      store.ui.explorerFilter = explorerFilter.value;
+      clearTimeout(store.explorerFilterTimer);
+      store.explorerFilterTimer = setTimeout(() => {
+        store.scheduleSessionSave();
+        store.notify();
+      }, 160);
     });
   }
   const previewNotes = root.querySelector("[data-preview-notes]");

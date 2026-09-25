@@ -303,3 +303,195 @@ export async function scanFolder(root: string): Promise<FolderScanReport> {
   );
   return { root: resolved, entries, warnings, errors };
 }
+
+/** Preview kinds returned by readFolderPreview (§28). */
+export type FolderPreviewKind =
+  | "text"
+  | "image"
+  | "video"
+  | "audio"
+  | "reference"
+  | "unsupported"
+  | "directory";
+
+export interface FolderPreviewResult {
+  relative_path: string;
+  mime: string | null;
+  size: number | null;
+  preview_kind: FolderPreviewKind;
+  text: string | null;
+  bytes_base64: string | null;
+  /** Set for PDF/DOCX (no full parser) or other non-editable references. */
+  note: string | null;
+  error?: string | null;
+}
+
+const PREVIEW_TEXT_LIMIT = 512 * 1024;
+const PREVIEW_MEDIA_LIMIT = 16 * 1024 * 1024;
+
+function encodeBase64(bytes: Uint8Array): string {
+  let binary = "";
+  for (const byte of bytes) binary += String.fromCharCode(byte);
+  return btoa(binary);
+}
+
+function previewKindForName(name: string, mime: string | null): FolderPreviewKind {
+  const lowerMime = String(mime || "").toLowerCase();
+  if (lowerMime.startsWith("text/") || TEXT_EXTENSIONS.has(extension(name))) {
+    return "text";
+  }
+  if (lowerMime.startsWith("image/") || /^\.(png|jpe?g|gif|webp|svg|avif)$/i.test(extension(name))) {
+    return "image";
+  }
+  if (lowerMime.startsWith("video/") || /^\.(mp4|webm|mov|m4v)$/i.test(extension(name))) {
+    return "video";
+  }
+  if (lowerMime.startsWith("audio/") || /^\.(mp3|wav|m4a|ogg)$/i.test(extension(name))) {
+    return "audio";
+  }
+  if (
+    WORD_EXTENSIONS.has(extension(name)) ||
+    extension(name) === ".pdf" ||
+    lowerMime === "application/pdf" ||
+    /word|document/.test(lowerMime)
+  ) {
+    return "reference";
+  }
+  return "unsupported";
+}
+
+/**
+ * Read-only preview payload for one path under a previously scanned root.
+ * Does not write Canonical / project.json. PDF/DOCX return file info + note.
+ */
+export async function readFolderPreview(
+  root: string,
+  relativePath: string,
+): Promise<FolderPreviewResult> {
+  const resolvedRoot = await assertScanRoot(root);
+  const rel = String(relativePath || "").replaceAll("\\", "/").replace(/^\/+/, "");
+  if (!rel || rel.includes("\0") || rel.split("/").some((part) => part === "..")) {
+    throw new Error("预览路径无效");
+  }
+  const absolute = join(resolvedRoot, ...rel.split("/").filter(Boolean));
+  // Ensure the resolved path stays inside the scan root.
+  toRelative(resolvedRoot, absolute);
+
+  let stat: Deno.FileInfo;
+  try {
+    stat = await Deno.lstat(absolute);
+  } catch (caught) {
+    return {
+      relative_path: rel,
+      mime: mimeFor(basename(absolute)),
+      size: null,
+      preview_kind: "unsupported",
+      text: null,
+      bytes_base64: null,
+      note: null,
+      error: `无法读取：${caught instanceof Error ? caught.message : String(caught)}`,
+    };
+  }
+  if (stat.isSymlink) {
+    return {
+      relative_path: rel,
+      mime: null,
+      size: null,
+      preview_kind: "unsupported",
+      text: null,
+      bytes_base64: null,
+      note: null,
+      error: "已跳过符号链接，避免越过所选文件夹",
+    };
+  }
+  if (stat.isDirectory) {
+    return {
+      relative_path: rel,
+      mime: null,
+      size: null,
+      preview_kind: "directory",
+      text: null,
+      bytes_base64: null,
+      note: "文件夹",
+    };
+  }
+
+  const mime = mimeFor(basename(absolute));
+  const kind = previewKindForName(basename(absolute), mime);
+  const size = Number.isFinite(stat.size) ? Number(stat.size) : null;
+
+  if (kind === "reference") {
+    return {
+      relative_path: rel,
+      mime,
+      size,
+      preview_kind: "reference",
+      text: null,
+      bytes_base64: null,
+      note: "作为参考文件导入",
+    };
+  }
+  if (kind === "unsupported") {
+    return {
+      relative_path: rel,
+      mime,
+      size,
+      preview_kind: "unsupported",
+      text: null,
+      bytes_base64: null,
+      note: "当前版本暂不支持预览此类型",
+    };
+  }
+
+  const limit = kind === "text" ? PREVIEW_TEXT_LIMIT : PREVIEW_MEDIA_LIMIT;
+  if (size != null && size > limit) {
+    return {
+      relative_path: rel,
+      mime,
+      size,
+      preview_kind: kind,
+      text: null,
+      bytes_base64: null,
+      note: "文件过大，无法在资源浏览器内预览",
+      error: "文件过大，无法在资源浏览器内预览",
+    };
+  }
+
+  let bytes: Uint8Array;
+  try {
+    bytes = await Deno.readFile(absolute);
+  } catch (caught) {
+    return {
+      relative_path: rel,
+      mime,
+      size,
+      preview_kind: kind,
+      text: null,
+      bytes_base64: null,
+      note: null,
+      error: `无法读取文件：${caught instanceof Error ? caught.message : String(caught)}`,
+    };
+  }
+
+  if (kind === "text") {
+    return {
+      relative_path: rel,
+      mime,
+      size: bytes.byteLength,
+      preview_kind: "text",
+      text: new TextDecoder().decode(bytes),
+      bytes_base64: null,
+      note: null,
+    };
+  }
+
+  return {
+    relative_path: rel,
+    mime,
+    size: bytes.byteLength,
+    preview_kind: kind,
+    text: null,
+    bytes_base64: encodeBase64(bytes),
+    note: null,
+  };
+}

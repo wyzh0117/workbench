@@ -2360,6 +2360,188 @@ fn folder_scan(
     }))
 }
 
+fn folder_preview_kind(name: &str, mime: Option<&str>) -> &'static str {
+    let ext = Path::new(name)
+        .extension()
+        .and_then(|value| value.to_str())
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+    let lower_mime = mime.unwrap_or("").to_ascii_lowercase();
+    if lower_mime.starts_with("text/")
+        || matches!(ext.as_str(), "md" | "markdown" | "txt" | "text")
+    {
+        return "text";
+    }
+    if lower_mime.starts_with("image/")
+        || matches!(
+            ext.as_str(),
+            "png" | "jpg" | "jpeg" | "gif" | "webp" | "svg" | "avif"
+        )
+    {
+        return "image";
+    }
+    if lower_mime.starts_with("video/") || matches!(ext.as_str(), "mp4" | "webm" | "mov" | "m4v")
+    {
+        return "video";
+    }
+    if lower_mime.starts_with("audio/") || matches!(ext.as_str(), "mp3" | "wav" | "m4a" | "ogg")
+    {
+        return "audio";
+    }
+    if lower_mime == "application/pdf"
+        || lower_mime.contains("word")
+        || lower_mime.contains("document")
+        || matches!(ext.as_str(), "pdf" | "doc" | "docx" | "odt" | "rtf")
+    {
+        return "reference";
+    }
+    "unsupported"
+}
+
+/// Read-only preview for Workspace Explorer. Never writes project.json.
+#[tauri::command]
+fn folder_read_preview(
+    root: Option<String>,
+    path: Option<String>,
+    relative_path: Option<String>,
+) -> Result<Value, String> {
+    const TEXT_LIMIT: u64 = 512 * 1024;
+    const MEDIA_LIMIT: u64 = 16 * 1024 * 1024;
+    let root_raw = root.or(path).unwrap_or_default();
+    let root_trimmed = root_raw.trim();
+    let rel = relative_path.unwrap_or_default();
+    let rel = rel.trim().trim_start_matches(|c| c == '/' || c == '\\');
+    if root_trimmed.is_empty() {
+        return Err("folder.read_preview requires the scanned root".into());
+    }
+    if rel.is_empty() || rel.contains('\0') || rel.split(['/', '\\']).any(|part| part == "..") {
+        return Err("预览路径无效".into());
+    }
+    let root_path = PathBuf::from(root_trimmed);
+    if !root_path.is_absolute() {
+        return Err("导入文件夹必须是用户明确选择的绝对路径".into());
+    }
+    reject_symlink(&root_path, "导入文件夹")?;
+    let root_meta = fs::symlink_metadata(&root_path)
+        .map_err(|error| format!("无法打开所选文件夹：{error}"))?;
+    if root_meta.file_type().is_symlink() {
+        return Err("为避免越过目录边界，导入不支持以符号链接作为根目录".into());
+    }
+    if !root_meta.is_dir() {
+        return Err("导入已有文件夹需要选择一个文件夹，而不是单个文件".into());
+    }
+    let resolved_root = fs::canonicalize(&root_path).unwrap_or(root_path.clone());
+    reject_symlink(&resolved_root, "导入文件夹")?;
+    let mut absolute = resolved_root.clone();
+    for part in rel.split(['/', '\\']).filter(|part| !part.is_empty()) {
+        absolute.push(part);
+    }
+    let _ = scan_relative(&resolved_root, &absolute)?;
+    let name = absolute
+        .file_name()
+        .and_then(|value| value.to_str())
+        .unwrap_or("")
+        .to_string();
+    let meta = match fs::symlink_metadata(&absolute) {
+        Ok(value) => value,
+        Err(error) => {
+            return Ok(json!({
+                "relative_path": rel,
+                "mime": Value::Null,
+                "size": Value::Null,
+                "preview_kind": "unsupported",
+                "text": Value::Null,
+                "bytes_base64": Value::Null,
+                "note": Value::Null,
+                "error": format!("无法读取：{error}"),
+            }));
+        }
+    };
+    if meta.file_type().is_symlink() {
+        return Ok(json!({
+            "relative_path": rel,
+            "mime": Value::Null,
+            "size": Value::Null,
+            "preview_kind": "unsupported",
+            "text": Value::Null,
+            "bytes_base64": Value::Null,
+            "note": Value::Null,
+            "error": "已跳过符号链接，避免越过所选文件夹",
+        }));
+    }
+    if meta.is_dir() {
+        return Ok(json!({
+            "relative_path": rel,
+            "mime": Value::Null,
+            "size": Value::Null,
+            "preview_kind": "directory",
+            "text": Value::Null,
+            "bytes_base64": Value::Null,
+            "note": "文件夹",
+        }));
+    }
+    let mime = scan_mime_for(&name);
+    let kind = folder_preview_kind(&name, mime);
+    let size = meta.len();
+    if kind == "reference" {
+        return Ok(json!({
+            "relative_path": rel,
+            "mime": mime,
+            "size": size,
+            "preview_kind": "reference",
+            "text": Value::Null,
+            "bytes_base64": Value::Null,
+            "note": "作为参考文件导入",
+        }));
+    }
+    if kind == "unsupported" {
+        return Ok(json!({
+            "relative_path": rel,
+            "mime": mime,
+            "size": size,
+            "preview_kind": "unsupported",
+            "text": Value::Null,
+            "bytes_base64": Value::Null,
+            "note": "当前版本暂不支持预览此类型",
+        }));
+    }
+    let limit = if kind == "text" { TEXT_LIMIT } else { MEDIA_LIMIT };
+    if size > limit {
+        return Ok(json!({
+            "relative_path": rel,
+            "mime": mime,
+            "size": size,
+            "preview_kind": kind,
+            "text": Value::Null,
+            "bytes_base64": Value::Null,
+            "note": "文件过大，无法在资源浏览器内预览",
+            "error": "文件过大，无法在资源浏览器内预览",
+        }));
+    }
+    let bytes = fs::read(&absolute).map_err(|error| format!("无法读取文件：{error}"))?;
+    if kind == "text" {
+        let text = String::from_utf8_lossy(&bytes).into_owned();
+        return Ok(json!({
+            "relative_path": rel,
+            "mime": mime,
+            "size": bytes.len(),
+            "preview_kind": "text",
+            "text": text,
+            "bytes_base64": Value::Null,
+            "note": Value::Null,
+        }));
+    }
+    Ok(json!({
+        "relative_path": rel,
+        "mime": mime,
+        "size": bytes.len(),
+        "preview_kind": kind,
+        "text": Value::Null,
+        "bytes_base64": BASE64.encode(&bytes),
+        "note": Value::Null,
+    }))
+}
+
 fn append_inbox_item(project: &mut Value, item: Value) -> Result<String, String> {
     let project_id = project
         .get("project")
@@ -9355,6 +9537,7 @@ pub fn run() {
             import_preview,
             import_confirm,
             folder_scan,
+            folder_read_preview,
             course_seed_create,
             blueprint_build,
             asset_import,

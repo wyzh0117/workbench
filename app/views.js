@@ -33,6 +33,14 @@ import {
   aiContextPreviewLines,
   aiProviderDescriptors,
 } from "./ai.js";
+import {
+  buildExplorerTree,
+  explorerEntryName,
+  explorerStatusLabel,
+  explorerTypeLabel,
+  filterExplorerEntries,
+  markdownToHtml,
+} from "./canvas.js";
 
 const EDITOR_MODES = [
   ["writing", "正文"],
@@ -285,6 +293,7 @@ export function createViews(store) {
       ["overview", "项目概览", "⌂"],
       ["map", "课程地图", "▦"],
       ["workbench", "工作台", "✎"],
+      ["explorer", "文件", "📂"],
       ["inbox", "收件箱", "↓"],
       ["board", "制作看板", "▤"],
       ["media", "媒体库", "◈"],
@@ -347,6 +356,7 @@ export function createViews(store) {
   function centerView() {
     if (store.ui.route === "editor") return editorView();
     if (store.ui.route === "map") return mapView();
+    if (store.ui.route === "explorer") return explorerView();
     if (store.ui.route === "inbox") return inboxView();
     if (store.ui.route === "board") return boardView();
     if (store.ui.route === "media") return mediaView();
@@ -1453,6 +1463,130 @@ export function createViews(store) {
   }
 
   /* --------------------------------------------------------------- media */
+
+  function explorerView() {
+    const report = store.ui.folderScan;
+    const rootLabel = store.ui.importFolderRoot || report?.root || "";
+    const entries = Array.isArray(report?.entries) ? report.entries : [];
+    const filter = String(store.ui.explorerFilter || "");
+    const filtered = filterExplorerEntries(entries, filter);
+    const tree = buildExplorerTree(filtered);
+    const expanded = new Set(
+      Array.isArray(store.ui.explorerExpanded) ? store.ui.explorerExpanded : [],
+    );
+    const selected = store.ui.explorerSelected || "";
+    const preview = store.ui.explorerPreview;
+
+    const renderNode = (node, depth) => {
+      const isDir = node.kind === "directory";
+      const isOpen = expanded.has(node.relative_path);
+      const isSelected = selected === node.relative_path;
+      const entry = node.entry || {};
+      const type = explorerTypeLabel(entry);
+      const status = explorerStatusLabel(entry);
+      const size = isDir || entry.size == null ? "—" : formatBytes(entry.size);
+      const toggle = isDir
+        ? `<button class="explorer-toggle" data-action="explorer-toggle" data-path="${
+          esc(node.relative_path)
+        }" title="${isOpen ? "折叠" : "展开"}" aria-expanded="${isOpen ? "true" : "false"}">${
+          isOpen ? "▾" : "▸"
+        }</button>`
+        : `<span class="explorer-toggle spacer"></span>`;
+      const children = isDir && isOpen
+        ? node.children.map((child) => renderNode(child, depth + 1)).join("")
+        : "";
+      return `<div class="explorer-row ${isSelected ? "selected" : ""} ${
+        entry.error ? "degraded" : ""
+      }" style="--explorer-depth:${depth}" data-action="explorer-select" data-path="${
+        esc(node.relative_path)
+      }">${toggle}<span class="explorer-name" title="${
+        esc(node.relative_path)
+      }">${isDir ? "📁" : "📄"} ${esc(node.name)}</span><span class="explorer-type">${
+        esc(type)
+      }</span><span class="explorer-size">${esc(size)}</span><span class="explorer-status">${
+        esc(status)
+      }</span></div>${children}`;
+    };
+
+    const previewPane = () => {
+      if (!selected || !preview) {
+        return `<div class="explorer-preview-empty"><div class="empty-icon">📂</div><h2>选择一个文件查看预览</h2><p class="muted">Markdown / TXT 显示文本；图片显示缩略图；视频显示媒体卡；PDF / DOCX 显示文件信息（作为参考文件导入）。不会出现白板。</p></div>`;
+      }
+      const name = explorerEntryName(preview.relative_path || selected);
+      const meta = [
+        explorerTypeLabel({
+          relative_path: preview.relative_path || selected,
+          mime: preview.mime,
+          kind: preview.preview_kind === "directory" ? "directory" : "file",
+          suggested_role: preview.preview_kind === "reference" ? "reference" : null,
+        }),
+        preview.size != null ? formatBytes(preview.size) : null,
+        preview.mime || null,
+      ].filter(Boolean).join(" · ");
+      const head =
+        `<div class="explorer-preview-head"><span class="eyebrow">文件预览</span><h2>${
+          esc(name)
+        }</h2><p class="muted">${esc(meta || selected)}</p></div>`;
+      if (preview.loading) {
+        return `${head}<div class="explorer-preview-body loading"><p class="muted">正在读取预览…</p></div>`;
+      }
+      if (preview.failed) {
+        return `${head}<div class="explorer-preview-body failed"><p>${
+          esc(preview.error || preview.note || "无法预览该文件")
+        }</p></div>`;
+      }
+      if (preview.preview_kind === "text" && typeof preview.text === "string") {
+        const isMd = /\.(md|markdown)$/i.test(name);
+        return `${head}<div class="explorer-preview-body text">${
+          isMd
+            ? `<div class="explorer-md">${markdownToHtml(preview.text)}</div>`
+            : `<pre class="explorer-text">${esc(preview.text)}</pre>`
+        }</div>`;
+      }
+      if (preview.preview_kind === "image" && preview.url) {
+        return `${head}<div class="explorer-preview-body media"><img class="explorer-image" src="${
+          esc(preview.url)
+        }" alt="${esc(name)}" /></div>`;
+      }
+      if (preview.preview_kind === "video" && preview.url) {
+        return `${head}<div class="explorer-preview-body media"><div class="explorer-media-card"><video class="explorer-video" src="${
+          esc(preview.url)
+        }" controls preload="metadata" playsinline></video><small>视频媒体卡</small></div></div>`;
+      }
+      if (preview.preview_kind === "audio" && preview.url) {
+        return `${head}<div class="explorer-preview-body media"><div class="explorer-media-card"><audio class="explorer-audio" src="${
+          esc(preview.url)
+        }" controls preload="metadata"></audio><small>音频</small></div></div>`;
+      }
+      if (preview.preview_kind === "reference") {
+        return `${head}<div class="explorer-preview-body reference"><div class="explorer-reference-card"><span class="asset-attachment-icon">📎</span><div><b>${
+          esc(name)
+        }</b><p class="muted">文件信息 · ${
+          esc(meta || "参考文件")
+        }</p><p><strong>作为参考文件导入</strong></p><p class="muted">当前版本不提供完整正文解析；确认导入前不会改写原文件。</p></div></div></div>`;
+      }
+      if (preview.preview_kind === "directory") {
+        return `${head}<div class="explorer-preview-body"><p class="muted">这是一个文件夹。展开左侧树可浏览其中的文件。</p></div>`;
+      }
+      return `${head}<div class="explorer-preview-body"><p class="muted">${
+        esc(preview.note || "当前版本暂不支持预览此类型")
+      }</p></div>`;
+    };
+
+    if (!report) {
+      return `<section class="page explorer-page"><div class="page-head"><div><span class="eyebrow">外部源资料</span><h1>资源浏览器</h1><p class="muted">浏览已扫描的文件夹树；只读，不会写入课程项目。确认导入在后续步骤。</p></div><button class="primary" data-action="import-folder-again">导入已有文件夹</button></div><div class="empty-state"><div class="empty-icon">📂</div><h2>还没有扫描结果</h2><p class="muted">从项目选择页使用「导入已有文件夹」，或点上方按钮选择一个文件夹（桌面应用）。</p></div></section>`;
+    }
+
+    return `<section class="page explorer-page"><div class="page-head"><div><span class="eyebrow">外部源资料</span><h1>资源浏览器</h1><p class="muted">只读浏览 · ${
+      esc(rootLabel || "已扫描文件夹")
+    } · 不会改写原文件，也不会写入课程项目。</p></div><button class="secondary" data-action="import-folder-again">重新选择文件夹</button></div><div class="explorer-layout"><div class="explorer-tree-pane"><label class="field-label">按文件名过滤<input class="select" data-explorer-filter data-focus-key="explorer-filter" placeholder="输入文件名" value="${
+      esc(filter)
+    }" /></label><div class="explorer-columns"><span></span><span>文件</span><span>类型</span><span>大小</span><span>可识别状态</span></div><div class="explorer-tree">${
+      tree.length
+        ? tree.map((node) => renderNode(node, 0)).join("")
+        : `<div class="side-empty">没有匹配「${esc(filter)}」的文件名</div>`
+    }</div></div><div class="explorer-preview-pane">${previewPane()}</div></div></section>`;
+  }
 
   function mediaView() {
     const assets = store.data.assets.filter((asset) => !asset.archived);
@@ -2662,6 +2796,7 @@ export function createViews(store) {
       const [label, route] of [
         ["打开工作台", "workbench"],
         ["打开课程地图", "map"],
+        ["打开资源浏览器", "explorer"],
         ["打开收件箱", "inbox"],
         ["打开制作看板", "board"],
         ["打开待补总览", "backlog"],

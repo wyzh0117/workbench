@@ -229,3 +229,148 @@ function urlForBytes(bytes, asset) {
   for (const byte of bytes) binary += String.fromCharCode(byte);
   return `data:${mime};base64,${btoa(binary)}`;
 }
+
+/** Basename of a ScanResult relative_path ( /-separated). */
+export function explorerEntryName(relativePath) {
+  const path = String(relativePath || "").replaceAll("\\", "/").replace(/^\/+|\/+$/g, "");
+  if (!path) return "";
+  const slash = path.lastIndexOf("/");
+  return slash >= 0 ? path.slice(slash + 1) : path;
+}
+
+/**
+ * Preview kind for Workspace Explorer (§28). Recognition ≠ editable.
+ * PDF/DOCX stay "reference" until a real parser exists.
+ */
+export function explorerPreviewKind(entry) {
+  if (!entry) return "unsupported";
+  if (entry.kind === "directory") return "directory";
+  const mime = String(entry.mime || "").toLowerCase();
+  const name = explorerEntryName(entry.relative_path || entry.path || "");
+  if (mime.startsWith("text/") || /\.(md|markdown|txt|text)$/i.test(name)) {
+    return "text";
+  }
+  if (mime.startsWith("image/") || /\.(png|jpe?g|gif|webp|svg|avif)$/i.test(name)) {
+    return "image";
+  }
+  if (mime.startsWith("video/") || /\.(mp4|webm|mov|m4v)$/i.test(name)) {
+    return "video";
+  }
+  if (mime.startsWith("audio/") || /\.(mp3|wav|m4a|ogg)$/i.test(name)) {
+    return "audio";
+  }
+  if (
+    entry.suggested_role === "reference" ||
+    mime === "application/pdf" ||
+    /word|document/.test(mime) ||
+    /\.(pdf|docx?|odt|rtf)$/i.test(name)
+  ) {
+    return "reference";
+  }
+  return "unsupported";
+}
+
+/** Chinese type label for the explorer file list (§27). */
+export function explorerTypeLabel(entry) {
+  const kind = explorerPreviewKind(entry);
+  const name = explorerEntryName(entry?.relative_path || "");
+  return {
+    directory: "文件夹",
+    text: /\.(md|markdown)$/i.test(name) ? "Markdown" : "TXT",
+    image: "图片",
+    video: "视频",
+    audio: "音频",
+    reference: /\.pdf$/i.test(name) ? "PDF" : "DOCX",
+    unsupported: "未识别",
+  }[kind] || "未识别";
+}
+
+/** Recognizable status label from ScanResult.suggested_role / error. */
+export function explorerStatusLabel(entry) {
+  if (!entry) return "未知";
+  if (entry.error) return "无法读取";
+  const role = entry.suggested_role;
+  return {
+    stage: "建议阶段",
+    folder: "文件夹",
+    lesson: "建议课文",
+    asset: "建议素材",
+    reference: "建议参考",
+    unsupported: "暂不支持",
+  }[role] || "已识别";
+}
+
+/**
+ * Filename-only filter (§37). Keeps matching files and their ancestor folders.
+ * @param {Array<{relative_path: string, kind?: string}>} entries
+ * @param {string} query
+ */
+export function filterExplorerEntries(entries, query) {
+  const list = Array.isArray(entries) ? entries : [];
+  const needle = String(query || "").trim().toLowerCase();
+  if (!needle) return list.slice();
+  const matched = new Set();
+  for (const entry of list) {
+    const rel = String(entry.relative_path || "").replaceAll("\\", "/");
+    const name = explorerEntryName(rel).toLowerCase();
+    if (!name.includes(needle) && !rel.toLowerCase().includes(needle)) continue;
+    matched.add(rel);
+    const parts = rel.split("/").filter(Boolean);
+    let prefix = "";
+    for (let index = 0; index < parts.length - 1; index += 1) {
+      prefix = prefix ? `${prefix}/${parts[index]}` : parts[index];
+      matched.add(prefix);
+    }
+  }
+  return list.filter((entry) =>
+    matched.has(String(entry.relative_path || "").replaceAll("\\", "/"))
+  );
+}
+
+/**
+ * Nest flat ScanResult rows into a folder tree for the explorer.
+ * @param {Array<{relative_path: string, kind?: string}>} entries
+ */
+export function buildExplorerTree(entries) {
+  const list = Array.isArray(entries) ? entries : [];
+  const byPath = new Map();
+  for (const entry of list) {
+    const rel = String(entry.relative_path || "").replaceAll("\\", "/");
+    if (!rel) continue;
+    byPath.set(rel, {
+      relative_path: rel,
+      name: explorerEntryName(rel),
+      kind: entry.kind === "directory" ? "directory" : "file",
+      entry,
+      children: [],
+    });
+  }
+  const roots = [];
+  for (const node of byPath.values()) {
+    const slash = node.relative_path.lastIndexOf("/");
+    if (slash < 0) {
+      roots.push(node);
+      continue;
+    }
+    const parentPath = node.relative_path.slice(0, slash);
+    const parent = byPath.get(parentPath);
+    if (parent) parent.children.push(node);
+    else roots.push(node);
+  }
+  const sortNodes = (nodes) => {
+    nodes.sort((left, right) => {
+      if (left.kind !== right.kind) {
+        return left.kind === "directory" ? -1 : 1;
+      }
+      return left.name.localeCompare(right.name, "zh");
+    });
+    for (const node of nodes) sortNodes(node.children);
+  };
+  sortNodes(roots);
+  return roots;
+}
+
+/** Build a data/object URL for explorer media previews (reuse asset path). */
+export function explorerUrlForBytes(bytes, mime) {
+  return urlForBytes(bytes, { mime_type: mime || "application/octet-stream", filename: "" });
+}

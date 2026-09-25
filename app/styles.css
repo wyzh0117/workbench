@@ -593,3 +593,34 @@ kbd { background: #f2f3f7; border: 1px solid #e0e2eb; border-radius: 4px; color:
 .project-name.editing { gap: 4px; }
 .project-title-input { border: 1px solid var(--primary); border-radius: 6px; font: inherit; font-size: 12px; max-width: 260px; padding: 2px 6px; }
 .project-title-hint { color: var(--muted); font-size: 10px; }
+
+/* V1-T04 Workspace Explorer (§§27–28, 36–37) */
+.explorer-layout { display: grid; gap: 14px; grid-template-columns: minmax(320px, 1.1fr) minmax(280px, 0.9fr); min-height: 520px; }
+.explorer-tree-pane, .explorer-preview-pane { background: #fff; border: 1px solid var(--line); border-radius: 9px; display: flex; flex-direction: column; min-height: 480px; overflow: hidden; }
+.explorer-tree-pane { padding: 12px; }
+.explorer-columns, .explorer-row { align-items: center; display: grid; gap: 8px; grid-template-columns: 22px minmax(0, 1.6fr) 72px 64px 88px; }
+.explorer-columns { color: var(--muted); font-size: 10px; font-weight: 650; letter-spacing: .04em; padding: 4px 6px 8px; text-transform: uppercase; }
+.explorer-tree { flex: 1; overflow: auto; }
+.explorer-row { border-radius: 6px; cursor: pointer; font-size: 12px; padding: 7px 6px 7px calc(6px + (var(--explorer-depth, 0) * 14px)); text-align: left; width: 100%; }
+.explorer-row:hover { background: #f8f7ff; }
+.explorer-row.selected { background: var(--primary-soft); color: var(--primary-dark); }
+.explorer-row.degraded { opacity: .72; }
+.explorer-toggle { background: transparent; color: var(--muted); font-size: 11px; height: 18px; line-height: 1; padding: 0; width: 18px; }
+.explorer-toggle.spacer { visibility: hidden; }
+.explorer-name { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.explorer-type, .explorer-size, .explorer-status { color: var(--muted); font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.explorer-preview-pane { padding: 16px; }
+.explorer-preview-head { margin-bottom: 14px; }
+.explorer-preview-head h2 { margin-top: 6px; }
+.explorer-preview-body { flex: 1; overflow: auto; }
+.explorer-preview-body.loading, .explorer-preview-body.failed, .explorer-preview-empty { align-items: center; color: var(--muted); display: flex; flex-direction: column; justify-content: center; min-height: 280px; text-align: center; }
+.explorer-preview-empty h2 { color: var(--text); margin-top: 8px; }
+.explorer-text, .explorer-md { background: #fafafd; border: 1px solid var(--line); border-radius: 8px; font-size: 13px; line-height: 1.7; max-height: 420px; overflow: auto; padding: 14px; white-space: pre-wrap; }
+.explorer-md { white-space: normal; }
+.explorer-image, .explorer-video { background: #f2f3f8; border-radius: 8px; display: block; max-height: 360px; max-width: 100%; object-fit: contain; width: 100%; }
+.explorer-media-card, .explorer-reference-card { align-items: flex-start; background: #fafaff; border: 1px solid var(--line); border-radius: 8px; display: flex; flex-direction: column; gap: 10px; padding: 14px; }
+.explorer-reference-card { flex-direction: row; gap: 12px; }
+.explorer-reference-card .asset-attachment-icon { font-size: 22px; }
+@media (max-width: 1150px) {
+  .explorer-layout { grid-template-columns: 1fr; }
+}
