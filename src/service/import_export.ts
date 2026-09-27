@@ -16,6 +16,7 @@ import type {
   ContentItem,
   ExportPreset,
   JsonObject,
+  LayoutPageSize,
   ProjectData,
   Publication,
 } from "../domain/types.ts";
@@ -33,6 +34,7 @@ import {
   renderPublishMarkdown,
   renderPublishPdf,
 } from "./publish.ts";
+import type { PublishProjection } from "./publish.ts";
 
 /**
  * Import, export, and publication are deliberately kept behind one service
@@ -143,8 +145,16 @@ export interface ExportIssue {
     | "unsafe_path"
     | "canonical_invalid"
     | "media_downgrade"
+    | "unplaced_content"
+    | "layout_linearized"
+    | "legacy_grid_sections_require_pagination"
+    | "stale_snapshot"
+    | "projection_mismatch"
+    | "layout_export_unsupported"
     | "unsupported_format";
   message: string;
+  count?: number;
+  block_ids?: string[];
   content_item_id?: string;
   requirement_id?: string;
   asset_id?: string;
@@ -156,6 +166,7 @@ export interface ExportPreflightReport {
   blocking: ExportIssue[];
   warnings: ExportIssue[];
   ok: boolean;
+  snapshot_revision: string;
   counts: {
     content_requirements: number;
     layout_requirements: number;
@@ -165,6 +176,7 @@ export interface ExportPreflightReport {
     missing_fonts: number;
     external_references: number;
     media_downgrades: number;
+    unplaced_content: number;
   };
 }
 
@@ -176,6 +188,12 @@ export interface ExportFile {
 
 export interface ExportOptions {
   content_item_id?: string | null;
+  layout_instance_id?: string | null;
+  page_ids?: string[] | null;
+  target_page_size?: LayoutPageSize | null;
+  projection?: PublishProjection;
+  snapshot_revision?: string;
+  acknowledged_warnings?: string[];
   project_root?: string;
   output_dir?: string;
   include_private_conversations?: boolean;
@@ -196,6 +214,18 @@ export class ExportBlockedError extends Error {
   constructor(report: ExportPreflightReport) {
     super("导出前检查发现无法生成的严重问题");
     this.name = "ExportBlockedError";
+    this.report = report;
+  }
+}
+
+export class ExportWarningConfirmationError extends Error {
+  readonly warning_codes: string[];
+  readonly report: ExportPreflightReport;
+
+  constructor(report: ExportPreflightReport, warningCodes: string[]) {
+    super("导出包含尚未确认的保真度警告");
+    this.name = "ExportWarningConfirmationError";
+    this.warning_codes = warningCodes;
     this.report = report;
   }
 }
@@ -1297,8 +1327,34 @@ function emptyReport(): ExportPreflightReport {
       missing_fonts: 0,
       external_references: 0,
       media_downgrades: 0,
+      unplaced_content: 0,
     },
+    snapshot_revision: "",
   };
+}
+
+function exportProjectionOptions(options: ExportOptions) {
+  return {
+    content_item_id: options.content_item_id,
+    layout_instance_id: options.layout_instance_id,
+    page_ids: options.page_ids,
+    target_page_size: options.target_page_size,
+  };
+}
+
+function projectionForExport(
+  data: ProjectData,
+  options: ExportOptions,
+): PublishProjection {
+  const expected = buildPublishProjection(data, exportProjectionOptions(options));
+  if (options.projection && JSON.stringify(options.projection) !== JSON.stringify(expected)) {
+    throw new Error("预检与导出使用的页面投影不一致，请重新预检。");
+  }
+  return options.projection ?? expected;
+}
+
+async function exportSnapshotRevision(data: ProjectData): Promise<string> {
+  return await sha256Bytes(new TextEncoder().encode(JSON.stringify(data)));
 }
 
 async function assetExists(
@@ -1328,7 +1384,16 @@ export async function preflightExport(
   preset: ExportPreset,
   options: ExportOptions = {},
 ): Promise<ExportPreflightReport> {
+  data = structuredClone(data);
   const report = emptyReport();
+  report.snapshot_revision = await exportSnapshotRevision(data);
+  if (options.snapshot_revision && options.snapshot_revision !== report.snapshot_revision) {
+    reportIssue(report, {
+      severity: "blocking",
+      code: "stale_snapshot",
+      message: "课程内容在预检后发生变化，请重新预检并确认警告。",
+    });
+  }
   const target = resolveTarget(preset);
   const allowed: ExportTarget[] = [
     "markdown",
@@ -1371,14 +1436,17 @@ export async function preflightExport(
   const itemIds = new Set(
     semanticItems(data, options.content_item_id).map((item) => item.id),
   );
-  const layoutId = preset.layout_instance_id;
+  const layoutId = options.layout_instance_id ?? preset.layout_instance_id;
+  const projectionOptions = {
+    ...options,
+    layout_instance_id: options.layout_instance_id ?? preset.layout_instance_id ?? null,
+  };
+  let publicationProjection: PublishProjection | null = null;
   const checkedMissingAssets = new Set<string>();
   if (["markdown", "html", "web", "wechat", "pdf"].includes(target)) {
     try {
-      const projection = buildPublishProjection(data, {
-        content_item_id: options.content_item_id,
-      });
-      for (const media of projection.media) {
+      publicationProjection = projectionForExport(data, projectionOptions);
+      for (const media of publicationProjection.media) {
         const asset = data.assets.find((candidate) => candidate.id === media.id);
         if (!asset || checkedMissingAssets.has(media.id)) continue;
         if (!relativeSafePath(asset.storage_path)) {
@@ -1404,7 +1472,7 @@ export async function preflightExport(
     } catch (caught) {
       reportIssue(report, {
         severity: "blocking",
-        code: "canonical_invalid",
+        code: options.projection ? "projection_mismatch" : "canonical_invalid",
         message: caught instanceof Error ? caught.message : "无法建立发布投影",
       });
     }
@@ -1529,27 +1597,34 @@ export async function preflightExport(
   }
   // Markdown is semantic-only.  A layout is checked only when the preset
   // names the current layout instance; its grid cannot block a prose export.
-  const layouts = layoutId
-    ? data.layout_instances.filter((layout) =>
-      layout.id === layoutId && itemIds.has(layout.content_item_id)
-    )
-    : [];
+  const layoutAwareTarget = ["html", "web", "pdf"].includes(target);
+  const layouts = data.layout_instances.filter((layout) =>
+    itemIds.has(layout.content_item_id) &&
+    (layoutId ? layout.id === layoutId : layoutAwareTarget)
+  );
+  const selectedPageIds = options.page_ids == null ? null : new Set(options.page_ids);
   for (const layout of layouts) {
     const grid = layout.grid_definition as Record<string, unknown>;
     const columns = Array.isArray(grid.columns) ? grid.columns.length : 1;
     const rows = Array.isArray(grid.rows) ? grid.rows.length : 1;
     for (
       const placement of data.placements.filter((candidate) =>
-        candidate.layout_instance_id === layout.id
+        candidate.layout_instance_id === layout.id &&
+        (!selectedPageIds || (candidate.page_id != null && selectedPageIds.has(candidate.page_id)))
       )
     ) {
+      const page = placement.page_id
+        ? data.layout_pages.find((candidate) =>
+          candidate.id === placement.page_id && candidate.layout_instance_id === layout.id
+        )
+        : null;
       const section = placement.section_id
         ? data.layout_sections.find((candidate) =>
           candidate.id === placement.section_id &&
           candidate.layout_instance_id === layout.id
         )
         : null;
-      const sectionGrid = (section?.grid_definition ?? grid) as Record<
+      const sectionGrid = (page?.grid_definition ?? section?.grid_definition ?? grid) as Record<
         string,
         unknown
       >;
@@ -1637,6 +1712,60 @@ export async function preflightExport(
           asset_id: asset.id,
         });
       }
+    }
+  }
+  const hasGridLayout = publicationProjection?.lessons.some((lesson) =>
+    lesson.layout?.mode === "grid"
+  ) ?? false;
+  if (options.target_page_size) {
+    reportIssue(report, {
+      severity: "blocking",
+      code: "layout_export_unsupported",
+      message: "浏览器服务的导出适配器不支持统一输出页面尺寸；请在桌面版使用原生 PDF/PPTX 导出。",
+    });
+  }
+  if (target === "pdf" && hasGridLayout) {
+    reportIssue(report, {
+      severity: "blocking",
+      code: "layout_export_unsupported",
+      message: "浏览器服务的 PDF 适配器不保留页面布局；请在桌面版使用原生分页导出。",
+    });
+  }
+  const ambiguousLegacyGrid = publicationProjection?.notices.find((notice) =>
+    notice.code === "legacy_grid_sections_require_pagination"
+  );
+  if (ambiguousLegacyGrid && ["html", "web", "pdf"].includes(target)) {
+    reportIssue(report, {
+      severity: "blocking",
+      code: "legacy_grid_sections_require_pagination",
+      layout_instance_id: ambiguousLegacyGrid.layout_instance_id,
+      message: ambiguousLegacyGrid.message,
+    });
+  }
+  if (publicationProjection && hasGridLayout && ["markdown", "wechat"].includes(target)) {
+    reportIssue(report, {
+      severity: "warning",
+      code: "layout_linearized",
+      count: 1,
+      message: "此格式会把页面布局线性化，位置、页面尺寸和分页不会保留。",
+    });
+  }
+  if (
+    publicationProjection && ["html", "web"].includes(target) &&
+    options.page_ids == null
+  ) {
+    const unplaced = publicationProjection.lessons.flatMap((lesson) =>
+      lesson.layout?.mode === "grid" ? lesson.layout.unplaced_block_ids : []
+    );
+    if (unplaced.length) {
+      report.counts.unplaced_content = unplaced.length;
+      reportIssue(report, {
+        severity: "warning",
+        code: "unplaced_content",
+        count: unplaced.length,
+        block_ids: unplaced,
+        message: `仍有 ${unplaced.length} 块正文尚未放置；本次仅输出已排版内容。`,
+      });
     }
   }
   report.ok = report.blocking.length === 0;
@@ -1791,6 +1920,9 @@ export async function exportProject(
   preset: ExportPreset,
   options: ExportOptions = {},
 ): Promise<ExportResult> {
+  data = structuredClone(data);
+  options = structuredClone(options);
+  options.layout_instance_id ??= preset.layout_instance_id ?? null;
   const target = resolveTarget(preset);
   const preflight = await preflightExport(data, preset, options);
   const presetFormat = preset.format ?? preset.settings.format;
@@ -1801,11 +1933,17 @@ export async function exportProject(
   // Warnings may be acknowledged by the caller; a blocking issue must never
   // be bypassed because that would create a known damaged export.
   if (preflight.blocking.length) throw new ExportBlockedError(preflight);
+  const requiredWarnings = [...new Set(preflight.warnings.map((issue) => issue.code))];
+  const acknowledgedWarnings = new Set(options.acknowledged_warnings ?? []);
+  const missingWarnings = requiredWarnings.filter((code) => !acknowledgedWarnings.has(code));
+  if (missingWarnings.length) {
+    throw new ExportWarningConfirmationError(preflight, missingWarnings);
+  }
   const files: ExportFile[] = [];
   const items = semanticItems(data, options.content_item_id);
   const projectionTargets: ExportTarget[] = ["markdown", "html", "web", "wechat", "pdf"];
   const projection = projectionTargets.includes(target)
-    ? buildPublishProjection(data, { content_item_id: options.content_item_id })
+    ? projectionForExport(data, options)
     : null;
   if (target === "markdown" && projection) {
     files.push({

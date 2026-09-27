@@ -16,24 +16,11 @@
 |---|---|
 | 最新版本页面（含 Release Notes） | https://github.com/wyzh0117/workbench/releases/latest |
 | 直接下载最新 DMG（固定链接，始终指向最新版本） | https://github.com/wyzh0117/workbench/releases/latest/download/AI-Course-Workbench-macOS.dmg |
+| 下载最新 DMG 的 SHA-256 校验文件 | https://github.com/wyzh0117/workbench/releases/latest/download/AI-Course-Workbench-macOS.dmg.sha256 |
 
 把第二个链接粘贴到 Safari / Chrome 回车，浏览器就会开始下载最新的 `AI-Course-Workbench-macOS.dmg`，不需要先找 Assets，也不需要判断版本号。
 
-### 当前已发布版本
-
-```text
-Release Tag ：v0.1.2
-文件名      ：AI-Course-Workbench-macOS.dmg（固定不变，版本号只在 Tag 与 Release Notes 里）
-大小        ：10,616,574 字节
-SHA-256     ：1740d8f921adff2787550f276749e055bb6ea963fff2ca28543c57f8a284cb8b
-仓库可见性  ：public（Release 页面与 latest 直链对匿名访问者可用）
-```
-
-因为文件名固定不变，以后发布 `v0.2.0` 等后续版本时，上面那条「直接下载最新 DMG」链接**依然有效**，
-永远指向最新版本；只有 Release Notes 与 SHA-256 会随版本更新。
-
-`v0.1.2` 按当前 `main` 构建，包含已 VERIFIED 的 V1-T03 / V1-T04。`v0.1.1` 与 `v0.1.0` 已发布并**冻结**
-（tag / DMG / SHA-256 不变），仍可从历史 Release 下载，但 `/releases/latest` 指向 `v0.1.2`。
+SHA-256 会随版本更新，可下载上述 sidecar 校验文件；它与固定 DMG 文件来自同一个 Release。已发布版本及其 tag、DMG 和校验值保持冻结，历史版本可在各自的 Release 页面下载。
 
 ### 系统要求与架构
 
@@ -119,18 +106,22 @@ BLOCKER            = 缺正式 macOS signing / notarization credentials
 
 ## 当前开发位置
 
-- **Latest public release：`v0.1.2`**（上面 Download 区的 DMG / SHA-256 / 直链均指向该已发布 tag；`v0.1.1` 冻结保留）
+- 最新公开版本与校验文件通过上方 `releases/latest` 链接动态查看；已发布版本及资产保持冻结。
 - 当前版本：**V1（ACTIVE）**
 - V1-T01 — V0 Hardening & UX Polish：**VERIFIED**
 - V1-T02 — Dogfooding Critical Fixes & Authoring UX Refinement：**VERIFIED**
 - V1-T03 — Course Authoring & Project Structure Closure：**VERIFIED**
 - V1-T04 — Workspace Explorer & Existing-Folder Adoption：**VERIFIED**
-- 当前任务：**V1-T04 — Workspace Explorer & Existing-Folder Adoption**
-- 当前状态：**VERIFIED**
+- V1-T05 — Paged Canvas & Pagination：**VERIFIED**
+- V1-T06 — Layout-aware Export & PPTX：**VERIFIED**
+- 当前交接：V1-T05/T06 验收完成；下一步由用户 dogfood
+- 当前状态：**VERIFIED — V1 ACTIVE**
 - 产品状态：**DOGFOOD READY — ROUND 3**
 - 分发状态：**PARTIAL**（DMG / Release / 固定直链已完成；签名与公证未完成）
 - V0 状态：**V0 CLOSED；V0-T01 / V0-T02 / V0-T03 / V0-T04 全部 VERIFIED**
-- NEXT ACTION：**PAUSE FEATURE DEVELOPMENT**（不创建 V1-T05；先真实使用）
+- NEXT ACTION：用户 dogfood；不创建 V1-T07，不关闭 V1
+
+T05/T06 自动化检查为 346/346，Rust 检查 78/78。页面恢复修复已在隔离桌面项目上连续两次重启验证；最终 Universal 构建也已恢复 page 3。最终 Universal native PDF smoke 输出一页 960×540 pt，正确包含第 3 页标题与正文。PowerPoint 已打开新的三页 PPTX 且未触发 Repair，并在副本中验证文字与图片可编辑。三页、两张图片的 Static Web 样例已通过独立 Chrome `file://` 阅读检查。V1-T05/T06 已 VERIFIED；下一步由用户 dogfood。`v0.2.0` 由 tag-triggered workflow 发布，旧 Release 保持冻结。分发包为 ad-hoc signed，未做 Apple Developer ID 签名或公证。
 - 分发剩余工作（后续候选任务，等用户批准后再启动）：签名 / 公证 / 安装 smoke
 
 ---

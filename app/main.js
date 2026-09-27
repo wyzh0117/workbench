@@ -40,6 +40,27 @@ import {
 } from "./canvas.js";
 import { createViews } from "./views.js";
 import {
+  addLayoutPage as addLayoutPageData,
+  convertSectionsToPages as convertSectionsToPagesData,
+  deleteLayoutPage as deleteLayoutPageData,
+  duplicateLayoutPage as duplicateLayoutPageData,
+  movePlacementToPage as movePlacementToPageData,
+  reorderLayoutPage as reorderLayoutPageData,
+  renameLayoutPage as renameLayoutPageData,
+  setLayoutPageSize as setLayoutPageSizeData,
+} from "./layout_pages.js";
+import {
+  buildPublicationProjection,
+  fitPageRect,
+  getAvailablePublicationAdapters,
+  getLayoutPages,
+  getPublicationCapabilities,
+  PAGE_SIZE_PRESETS,
+  pageGrid,
+  projectPageGeometry,
+  resolvePageSize,
+} from "./publication.js";
+import {
   AI_FAILURE_CODES,
   AiFailure,
   FakeAiConnector,
@@ -61,6 +82,8 @@ const SESSION_READER_KEYS = [
   "right_panel",
   "route",
   "selected_block_id",
+  "layout_page_id",
+  "layout_zoom",
   "ai_scope",
   "ai_provider_id",
   "ai_model",
@@ -594,7 +617,7 @@ class DesktopBridge {
     }
     return new Uint8Array(await response.arrayBuffer());
   }
-  async exportProject(format, project, preset, outputPath = "", contentItemId = null) {
+  async exportProject(format, project, preset, outputPath = "", contentItemId = null, options = {}) {
     const nextPreset = { ...(preset || { name: format, output_type: format, platform: "通用", page_mode: "single", settings: {} }) };
     if (contentItemId) nextPreset.content_item_id = contentItemId;
     if (outputPath) {
@@ -603,7 +626,10 @@ class DesktopBridge {
       nextPreset.output_dir = parts.output_dir;
       nextPreset.output_path = outputPath;
     }
-    return await this.invoke("export.run", { preset: nextPreset, options: { content_item_id: contentItemId || null } });
+    return await this.invoke("export.run", {
+      preset: nextPreset,
+      options: { ...options, content_item_id: contentItemId || null },
+    });
   }
   async revealExport(path) {
     if (!this.isNative()) throw new Error("浏览器下载的文件请在下载目录查看。");
@@ -699,6 +725,21 @@ class DesktopBridge {
       const projectDir = session && typeof session.project_dir === "string"
         ? session.project_dir
         : null;
+      // Rust returns the canonical --project-dir locator before it reads the
+      // app-data session. Read once more to restore the reader position, but
+      // only attach it when it names that exact project directory.
+      if (
+        projectDir && session && typeof session === "object" &&
+        Object.keys(session).length === 1 && Object.hasOwn(session, "project_dir")
+      ) {
+        this.projectDir = projectDir;
+        this.projectDirFromUrl = false;
+        const saved = await this.nativeInvoke("load_session", {});
+        if (saved && typeof saved === "object" && saved.project_dir === projectDir) {
+          return saved;
+        }
+        return session;
+      }
       if (!this.projectDirFromUrl && projectDir) this.projectDir = projectDir;
       // The session file holds the whole reader position, not just the
       // directory.  Returning only `project_dir` here would silently drop the
@@ -1023,11 +1064,26 @@ class WorkbenchStore {
       capture: false,
       preflight: false,
       preflightReport: null,
+      preflightRevision: null,
+      preflightFormat: null,
+      preflightOptions: null,
+      acknowledgedWarnings: [],
       publishScope: "lesson",
       publishFormat: "markdown",
       lastExport: null,
       snapshot: false,
       gridEditing: false,
+      layoutPageId: null,
+      layoutZoom: "fit",
+      movingPlacementTargetPageId: null,
+      paginationConversionPreview: false,
+      pageSizePreview: null,
+      previewPageIds: [],
+      previewFit: true,
+      publishPageMode: "all",
+      publishSelectedPageIds: [],
+      publishTargetPageSize: null,
+      publishCapabilities: null,
       assetPicker: null,
       assetUsageId: null,
       editingRequirementId: null,
@@ -1164,6 +1220,8 @@ class WorkbenchStore {
       right_panel: this.ui.rightPanel,
       route: this.ui.route,
       selected_block_id: this.ui.selectedBlockId,
+      layout_page_id: this.ui.layoutPageId,
+      layout_zoom: this.ui.layoutZoom,
       ai_scope: this.ui.aiScope,
       ai_provider_id: this.ui.aiProviderId,
       ai_model: this.ui.aiModel,
@@ -1183,6 +1241,13 @@ class WorkbenchStore {
       right_panel: "requirements",
       route,
       selected_block_id: null,
+      layout_page_id: (() => {
+        const layout = project?.layout_instances?.find((candidate) =>
+          candidate.content_item_id === activeId
+        );
+        return layout ? getLayoutPages(project, layout.id)[0]?.id ?? null : null;
+      })(),
+      layout_zoom: "fit",
       ai_scope: "lesson",
       ai_provider_id: "fake",
       ai_model: "",
@@ -1215,6 +1280,15 @@ class WorkbenchStore {
         blocksFor(project, activeId).some((block) => block.id === value.selected_block_id)
       ? value.selected_block_id
       : null;
+    const activeLayout = project.layout_instances?.find((candidate) =>
+      candidate.content_item_id === activeId
+    );
+    const activePages = activeLayout
+      ? getLayoutPages(project, activeLayout.id)
+      : [];
+    const layoutPageId = activePages.some((page) => page.id === value.layout_page_id)
+      ? value.layout_page_id
+      : activePages[0]?.id ?? null;
     const tabs = Array.isArray(value.tabs)
       ? value.tabs
         .filter((tab) => tab && knownItem(tab.content_item_id))
@@ -1235,6 +1309,10 @@ class WorkbenchStore {
       right_panel: rightPanel,
       route: nextRoute,
       selected_block_id: selectedBlockId,
+      layout_page_id: layoutPageId,
+      layout_zoom: ["fit", "actual"].includes(value.layout_zoom)
+        ? value.layout_zoom
+        : defaults.layout_zoom,
       ai_scope: ["course", "lesson", "block"].includes(value.ai_scope) ? value.ai_scope : defaults.ai_scope,
       ai_provider_id: typeof value.ai_provider_id === "string" && value.ai_provider_id.trim()
         ? value.ai_provider_id.trim()
@@ -1257,6 +1335,8 @@ class WorkbenchStore {
     this.ui.rightPanel = value.right_panel || "requirements";
     this.ui.route = value.route || "overview";
     this.ui.selectedBlockId = value.selected_block_id || null;
+    this.ui.layoutPageId = value.layout_page_id || null;
+    this.ui.layoutZoom = value.layout_zoom === "actual" ? "actual" : "fit";
     this.ui.aiScope = value.ai_scope || "lesson";
     this.ui.aiProviderId = value.ai_provider_id || "fake";
     this.ui.aiModel = value.ai_model || "";
@@ -1266,6 +1346,7 @@ class WorkbenchStore {
     this.ui.explorerFilter = typeof value.explorer_filter === "string" ? value.explorer_filter : "";
     this.ui.explorerExpanded = normalizeExplorerPathList(value.explorer_expanded);
     this.ui.explorerRecent = normalizeExplorerPathList(value.explorer_recent, 8);
+    this.normalizeActiveLayoutPage();
   }
   cacheSessionRecord(session) {
     if (!session || typeof session !== "object") return;
@@ -1400,7 +1481,44 @@ class WorkbenchStore {
   currentItem() { return this.data.content_items.find((item) => item.id === this.ui.activeId) ?? this.data.content_items[0] ?? null; }
   blocks(item = this.currentItem()) { return item ? blocksFor(this.data, item.id) : []; }
   layout(item = this.currentItem()) { return item ? this.data.layout_instances.find((candidate) => candidate.content_item_id === item.id) ?? null : null; }
-  lesson(item = this.currentItem()) { return item ? lessonView(this.data, item.id) : null; }
+  layoutPages(item = this.currentItem()) {
+    const layout = this.layout(item);
+    return layout ? getLayoutPages(this.data, layout.id) : [];
+  }
+  gridForLayout(layout, data = this.data, pageId = this.ui.layoutPageId) {
+    if (layout?.pagination_mode !== "paged") return layout?.grid_definition ?? null;
+    const page = getLayoutPages(data, layout.id).find((candidate) => candidate.id === pageId);
+    return page ? pageGrid(layout, page) : null;
+  }
+  placementsForLayoutPage(layout, data = this.data, pageId = this.ui.layoutPageId) {
+    return (data.placements || []).filter((placement) =>
+      placement.layout_instance_id === layout?.id &&
+      (layout?.pagination_mode !== "paged" || placement.page_id === pageId)
+    );
+  }
+  normalizeActiveLayoutPage(item = this.currentItem()) {
+    const pages = this.layoutPages(item);
+    if (!pages.some((page) => page.id === this.ui.layoutPageId)) {
+      this.ui.layoutPageId = pages[0]?.id ?? null;
+    }
+    if (!["fit", "actual"].includes(this.ui.layoutZoom)) {
+      this.ui.layoutZoom = "fit";
+    }
+  }
+  selectLayoutPage(pageId) {
+    if (!this.layoutPages().some((page) => page.id === pageId)) return;
+    this.ui.layoutPageId = pageId;
+    this.ui.movingPlacementTargetPageId = null;
+    this.scheduleSessionSave();
+    this.notify();
+  }
+  setLayoutZoom(mode) {
+    if (!["fit", "actual"].includes(mode)) return;
+    this.ui.layoutZoom = mode;
+    this.scheduleSessionSave();
+    this.notify();
+  }
+  lesson(item = this.currentItem()) { return item ? lessonView(this.data, item.id, this.ui.layoutPageId) : null; }
   map() { return courseMap(this.data, this.ui.activeId); }
   gaps(item = this.currentItem()) {
     return item ? lessonView(this.data, item.id).lesson.gaps : { content: 0, layout: 0, total: 0 };
@@ -1444,6 +1562,12 @@ class WorkbenchStore {
     if (!item) return;
     const known = blocksFor(this.data, item.id).some((block) => block.id === id);
     if (!known) return;
+    const placement = (this.data.placements || []).find((candidate) =>
+      candidate.layout_instance_id === this.layout(item)?.id && candidate.block_id === id
+    );
+    if (placement?.page_id && this.layoutPages(item).some((page) => page.id === placement.page_id)) {
+      this.ui.layoutPageId = placement.page_id;
+    }
     this.ui.selectedBlockId = this.ui.selectedBlockId === id && !options.force ? null : id;
     if (options.mode && this.ui.mode !== options.mode) this.setMode(options.mode, { silent: true });
     // Placeholder selection surfaces 状态 unless the caller opts out (e.g. a
@@ -1521,6 +1645,7 @@ class WorkbenchStore {
       this.ui.selectedBlockId = null;
     }
     if (!this.layout(item)) this.ui.gridEditing = false;
+    this.normalizeActiveLayoutPage(item);
     if (this.ui.assetUsageId && !this.data.assets.some((asset) => asset.id === this.ui.assetUsageId)) {
       this.ui.assetUsageId = null;
     }
@@ -3810,6 +3935,7 @@ class WorkbenchStore {
     this.ui.screen = "project";
     const lessonChanged = this.ui.activeId !== id;
     this.ui.activeId = id;
+    this.normalizeActiveLayoutPage(item);
     this.ui.route = "editor";
     this.ui.focusRequirementId = null;
     this.ui.selectedBlockId = null;
@@ -4840,27 +4966,323 @@ class WorkbenchStore {
       target.updated_at = now();
     });
   }
+  beginPaginationConversion() {
+    const layout = this.layout();
+    if (!layout || layout.mode !== "grid") return;
+    const preview = clone(this.data);
+    convertSectionsToPagesData(preview, layout.id);
+    const legacySize = preview.layout_instances.find((candidate) => candidate.id === layout.id)?.page_size;
+    this.ui.paginationConversionPreview = true;
+    this.ui.pageSizePreview = { preset: "legacy", size: legacySize, conversion: true };
+    this.notify();
+  }
+  cancelPaginationConversion() {
+    this.ui.paginationConversionPreview = false;
+    this.ui.pageSizePreview = null;
+    this.notify();
+  }
+  setPageSizePreview(preset) {
+    if (!["legacy", "16:9", "a4-portrait", "a4-landscape"].includes(preset)) return;
+    const current = this.ui.pageSizePreview;
+    const size = preset === "legacy"
+      ? current?.conversion
+        ? (() => {
+          const preview = clone(this.data);
+          convertSectionsToPagesData(preview, this.layout().id);
+          return preview.layout_instances.find((candidate) => candidate.id === this.layout().id)?.page_size;
+        })()
+        : this.layout()?.page_size || resolvePageSize(this.layout())
+      : PAGE_SIZE_PRESETS[preset];
+    this.ui.pageSizePreview = { preset, size, conversion: Boolean(current?.conversion) };
+    this.notify();
+  }
+  confirmPaginationConversion() {
+    const layout = this.layout();
+    if (!layout || layout.mode !== "grid") return;
+    const preview = this.ui.pageSizePreview;
+    const size = preview?.size || PAGE_SIZE_PRESETS["16:9"];
+    let firstPage = null;
+    this.commit("把输出分区转换为页面", (data) => {
+      convertSectionsToPagesData(data, layout.id, { page_size: size });
+      const currentLayout = data.layout_instances.find((candidate) => candidate.id === layout.id);
+      if (currentLayout) {
+        currentLayout.pagination_mode = "paged";
+        currentLayout.page_size = size;
+        currentLayout.updated_at = now();
+      }
+      firstPage = getLayoutPages(data, layout.id)[0] || null;
+    });
+    this.ui.layoutPageId = firstPage?.id ?? null;
+    this.ui.paginationConversionPreview = false;
+    this.ui.pageSizePreview = null;
+    this.scheduleSessionSave();
+    this.notify();
+  }
+  addLayoutPage() {
+    const layout = this.layout();
+    if (!layout || layout.pagination_mode !== "paged") return;
+    let created = null;
+    this.commit("新增页面", (data) => {
+      created = addLayoutPageData(data, layout.id, {
+        after_page_id: this.ui.layoutPageId,
+      });
+    });
+    if (created) this.ui.layoutPageId = created.id;
+    this.normalizeActiveLayoutPage();
+    this.scheduleSessionSave();
+    this.notify();
+  }
+  renamePage(pageId, title) {
+    const next = String(title ?? "").trim();
+    if (!next || !this.layoutPages().some((page) => page.id === pageId)) return;
+    this.commit("重命名页面", (data) => renameLayoutPageData(data, pageId, next));
+  }
+  movePage(pageId, direction) {
+    const pages = this.layoutPages();
+    const index = pages.findIndex((page) => page.id === pageId);
+    const nextIndex = index + (direction === "up" ? -1 : 1);
+    if (index < 0 || nextIndex < 0 || nextIndex >= pages.length) return;
+    this.commit("调整页面顺序", (data) => reorderLayoutPageData(data, pageId, nextIndex));
+  }
+  duplicatePage(pageId) {
+    if (!this.layoutPages().some((page) => page.id === pageId)) return;
+    let copied = null;
+    this.commit("复制页面", (data) => {
+      copied = duplicateLayoutPageData(data, pageId);
+    });
+    if (copied) this.ui.layoutPageId = copied.id;
+    this.normalizeActiveLayoutPage();
+    this.scheduleSessionSave();
+    this.notify();
+  }
+  deletePage(pageId) {
+    const pages = this.layoutPages();
+    if (pages.length <= 1) {
+      this.say("分页画布至少保留一页；可以移出内容或切回 Flow。", { ttl: 4500 });
+      return false;
+    }
+    const page = pages.find((candidate) => candidate.id === pageId);
+    if (!page) return false;
+    const count = (this.data.placements || []).filter((placement) => placement.page_id === pageId).length;
+    if (globalThis.confirm?.(`删除页面「${page.title}」的排版？${count ? `其中 ${count} 块正文会回到未放置列表。` : ""}正文、素材和其他页面不会删除。`) === false) return false;
+    let result = null;
+    this.commit("删除页面排版", (data) => {
+      result = deleteLayoutPageData(data, pageId);
+    });
+    if (this.ui.layoutPageId === pageId) {
+      this.ui.layoutPageId = pages.find((candidate) => candidate.id !== pageId)?.id ?? null;
+    }
+    this.normalizeActiveLayoutPage();
+    this.scheduleSessionSave();
+    const unplaced = Array.isArray(result?.unplaced_block_ids) ? result.unplaced_block_ids.length : count;
+    this.say(`已删除页面排版；${unplaced} 块正文仍保留在课程中。`);
+    return true;
+  }
+  changePageSize(preset) {
+    const layout = this.layout();
+    if (!layout || layout.pagination_mode !== "paged") return;
+    const size = preset === "legacy"
+      ? layout.page_size || resolvePageSize(layout)
+      : PAGE_SIZE_PRESETS[preset];
+    if (!size) return;
+    this.ui.pageSizePreview = { preset, size, conversion: false };
+    this.notify();
+  }
+  confirmPageSizeChange() {
+    const layout = this.layout();
+    const pending = this.ui.pageSizePreview;
+    if (!layout || !pending || typeof pending !== "object") return;
+    this.commit("更改页面尺寸", (data) => {
+      setLayoutPageSizeData(data, layout.id, pending.size);
+    });
+    this.ui.pageSizePreview = null;
+    this.scheduleSessionSave();
+    this.notify();
+  }
+  cancelPageSizeChange() {
+    this.ui.pageSizePreview = null;
+    this.notify();
+  }
+  startPageMove(placementId) {
+    const page = (this.data.placements || []).find((placement) => placement.id === placementId);
+    if (!page || !this.layoutPages().some((candidate) => candidate.id === page.page_id)) return;
+    this.ui.movingPlacementTargetPageId = { placementId, targetPageId: null };
+    this.notify();
+  }
+  choosePageMoveTarget(targetPageId) {
+    const pending = this.ui.movingPlacementTargetPageId;
+    if (!pending || !this.layoutPages().some((page) => page.id === targetPageId)) return;
+    this.ui.movingPlacementTargetPageId = { ...pending, targetPageId };
+    this.notify();
+  }
+  cancelPageMove() {
+    this.ui.movingPlacementTargetPageId = null;
+    this.notify();
+  }
+  movePlacementAcrossPage(placementId, targetPageId, row, column) {
+    const layout = this.layout();
+    const placement = (this.data.placements || []).find((candidate) => candidate.id === placementId);
+    const page = this.layoutPages().find((candidate) => candidate.id === targetPageId);
+    if (!layout || !placement || !page || layout.pagination_mode !== "paged") return false;
+    const bounds = {
+      row_start: row,
+      row_end: row + (placement.row_end - placement.row_start),
+      column_start: column,
+      column_end: column + (placement.column_end - placement.column_start),
+    };
+    try {
+      movePlacementToPageData(clone(this.data), placementId, targetPageId, bounds);
+    } catch (error) {
+      this.say(error instanceof Error ? error.message : "目标页没有可用位置；原放置保持不变。");
+      return false;
+    }
+    this.commit("跨页移动排版内容", (data) => {
+      movePlacementToPageData(data, placementId, targetPageId, bounds);
+    });
+    this.ui.layoutPageId = targetPageId;
+    this.ui.movingPlacementTargetPageId = null;
+    this.scheduleSessionSave();
+    this.notify();
+    return true;
+  }
+  selectPublishPageMode(mode) {
+    if (!["all", "current", "selected"].includes(mode)) return;
+    this.ui.publishPageMode = mode;
+    if (mode === "selected" && !this.ui.publishSelectedPageIds.length && this.ui.layoutPageId) {
+      this.ui.publishSelectedPageIds = [this.ui.layoutPageId];
+    }
+    this.ui.preflightReport = null;
+    this.notify();
+  }
+  togglePublishPage(pageId) {
+    if (!this.layoutPages().some((page) => page.id === pageId)) return;
+    const selected = new Set(this.ui.publishSelectedPageIds);
+    if (selected.has(pageId)) selected.delete(pageId);
+    else selected.add(pageId);
+    this.ui.publishSelectedPageIds = [...selected];
+    this.ui.preflightReport = null;
+    this.notify();
+  }
+  acknowledgeExportWarning(code, checked) {
+    const key = String(code || "").trim();
+    if (!key) return;
+    const values = new Set(this.ui.acknowledgedWarnings || []);
+    if (checked) values.add(key);
+    else values.delete(key);
+    this.ui.acknowledgedWarnings = [...values];
+    this.notify();
+  }
+  setPublishTargetPageSize(preset) {
+    if (preset === "original") this.ui.publishTargetPageSize = null;
+    else if (preset === "custom") {
+      this.ui.publishTargetPageSize = this.ui.publishTargetPageSize?.preset === "custom"
+        ? this.ui.publishTargetPageSize
+        : { preset: "custom", width_pt: 960, height_pt: 540 };
+    }
+    else if (Object.prototype.hasOwnProperty.call(PAGE_SIZE_PRESETS, preset)) {
+      this.ui.publishTargetPageSize = clone(PAGE_SIZE_PRESETS[preset]);
+    } else return;
+    this.ui.preflightReport = null;
+    this.notify();
+  }
+  setPublishTargetPageSizeValue(axis, value) {
+    if (axis !== "width_pt" && axis !== "height_pt") return;
+    const number = Number(value);
+    if (!Number.isFinite(number) || number < 1 || number > 100000) return;
+    const current = this.ui.publishTargetPageSize?.preset === "custom"
+      ? this.ui.publishTargetPageSize
+      : { preset: "custom", width_pt: 960, height_pt: 540 };
+    this.ui.publishTargetPageSize = { ...current, [axis]: number };
+    this.ui.preflightReport = null;
+    this.notify();
+  }
+  publicationOptions() {
+    const courseScope = this.ui.publishScope === "course";
+    const item = this.currentItem();
+    const layout = !courseScope && item ? this.layout(item) : null;
+    const adapters = getAvailablePublicationAdapters({
+      native: this.bridge.isNative(),
+      service: !this.bridge.isNative(),
+    });
+    const adapter = adapters[this.ui.publishFormat];
+    const baseProjection = item && !courseScope
+      ? buildPublicationProjection(this.data, {
+        content_item_id: item.id,
+        layout_instance_id: layout?.id ?? null,
+      })
+      : buildPublicationProjection(this.data, { content_item_id: null });
+    const canSelectPages = layout?.pagination_mode === "paged" && adapter?.layout === true &&
+      getPublicationCapabilities(
+        baseProjection,
+        this.ui.publishFormat,
+        adapters,
+      ).status === "available";
+    let pageIds = null;
+    if (canSelectPages && this.ui.publishPageMode === "current") {
+      pageIds = this.ui.layoutPageId ? [this.ui.layoutPageId] : [];
+    } else if (canSelectPages && this.ui.publishPageMode === "selected") {
+      const selected = new Set(this.ui.publishSelectedPageIds);
+      pageIds = this.layoutPages(item).filter((page) => selected.has(page.id))
+        .map((page) => page.id);
+    }
+    return {
+      content_item_id: courseScope ? null : item?.id ?? null,
+      layout_instance_id: layout?.id ?? null,
+      page_ids: pageIds,
+      target_page_size: adapter?.layout === true && this.ui.publishTargetPageSize
+        ? clone(this.ui.publishTargetPageSize)
+        : null,
+    };
+  }
+  publicationProjection() {
+    return buildPublicationProjection(this.data, this.publicationOptions());
+  }
+  publicationCapability(format = this.ui.publishFormat, projection = null) {
+    const adapters = getAvailablePublicationAdapters({
+      native: this.bridge.isNative(),
+      service: !this.bridge.isNative(),
+    });
+    const adapter = adapters[format];
+    const current = projection || buildPublicationProjection(this.data, {
+      ...this.publicationOptions(),
+      page_ids: null,
+      target_page_size: adapter?.layout && this.ui.publishTargetPageSize
+        ? clone(this.ui.publishTargetPageSize)
+        : null,
+    });
+    if (Object.prototype.hasOwnProperty.call(adapters, format)) {
+      return getPublicationCapabilities(current, format, adapters);
+    }
+    const legacyNativeOnly = ["json", "asset_package", "full_project"];
+    return legacyNativeOnly.includes(format) && !this.bridge.isNative()
+      ? { status: "unavailable", code: "adapter_unavailable" }
+      : { status: "available", code: null };
+  }
   changeGrid(kind, amount = 1) {
     const layout = this.layout();
     if (!layout) return;
+    const pageId = layout.pagination_mode === "paged" ? this.ui.layoutPageId : null;
     const key = kind === "row" ? "rows" : "columns";
     const remove = amount < 0;
     this.commit(remove ? "减少网格轨道" : "增加网格轨道", (data) => {
       const target = data.layout_instances.find((candidate) => candidate.id === layout.id);
       if (!target) return;
-      const tracks = Array.isArray(target.grid_definition[key]) ? [...target.grid_definition[key]] : [1];
+      const page = pageId ? data.layout_pages.find((candidate) => candidate.id === pageId) : null;
+      const grid = page ? page.grid_definition : target.grid_definition;
+      if (!grid) return;
+      const tracks = Array.isArray(grid[key]) ? [...grid[key]] : [1];
       if (remove) {
         const wanted = Math.abs(Number(amount) || 1);
         if (tracks.length <= 1) return;
         const kept = tracks.slice(0, Math.max(1, tracks.length - wanted));
-        target.grid_definition[key] = kept;
-        for (const placement of data.placements.filter((candidate) => candidate.layout_instance_id === layout.id)) {
-          clampPlacementToGrid(placement, target.grid_definition);
+        grid[key] = kept;
+        for (const placement of this.placementsForLayoutPage(target, data, pageId)) {
+          clampPlacementToGrid(placement, grid);
         }
         target.updated_at = now();
         return;
       }
-      target.grid_definition[key] = [...tracks, ...Array.from({ length: Math.max(1, amount) }, () => 1)];
+      grid[key] = [...tracks, ...Array.from({ length: Math.max(1, amount) }, () => 1)];
       target.updated_at = now();
     });
   }
@@ -4868,22 +5290,37 @@ class WorkbenchStore {
     const item = this.currentItem();
     const layout = this.layout();
     if (!item || !layout) return;
+    const pageId = layout.pagination_mode === "paged" ? this.ui.layoutPageId : null;
+    const selectedGrid = this.gridForLayout(layout);
+    if (!selectedGrid) return;
+    if (layout.pagination_mode === "paged") {
+      const cell = nextFreeCell(selectedGrid, this.placementsForLayoutPage(layout));
+      if (cell.row >= selectedGrid.rows.length) {
+        this.say("当前页没有空位；请调整网格或切换到其他页。", { ttl: 4500 });
+        return;
+      }
+    }
     this.commit("放入排版内容", (data) => {
       const target = data.layout_instances.find((candidate) => candidate.id === layout.id);
       const block = data.blocks.find((candidate) => candidate.id === blockId);
       const document = data.documents.find((candidate) => candidate.id === block?.document_id);
       if (!target || !block || document?.content_item_id !== item.id) return;
       if (data.placements.some((placement) => placement.layout_instance_id === target.id && placement.block_id === blockId)) return;
-      const grid = target.grid_definition;
-      let cell = nextFreeCell(grid, data.placements.filter((placement) => placement.layout_instance_id === target.id));
+      const page = pageId ? data.layout_pages.find((candidate) => candidate.id === pageId) : null;
+      const grid = page ? page.grid_definition : target.grid_definition;
+      const current = data.placements.filter((placement) =>
+        placement.layout_instance_id === target.id && (!page || placement.page_id === page.id)
+      );
+      let cell = nextFreeCell(grid, current);
       // A full grid grows by one row rather than pushing a placement outside
-      // the canvas.
-      if (cell.row >= (Array.isArray(grid.rows) ? grid.rows.length : 1)) {
+      // a continuous canvas. A page is a finite surface and stays unchanged.
+      if (cell.row >= (Array.isArray(grid.rows) ? grid.rows.length : 1) && !page) {
         grid.rows = [...(Array.isArray(grid.rows) ? grid.rows : [1]), 1];
-        cell = nextFreeCell(grid, data.placements.filter((placement) => placement.layout_instance_id === target.id));
+        cell = nextFreeCell(grid, current);
       }
+      if (cell.row >= (Array.isArray(grid.rows) ? grid.rows.length : 1)) return;
       const section = data.layout_sections.filter((candidate) => candidate.layout_instance_id === target.id).sort((a, b) => a.order_index - b.order_index)[0];
-      data.placements.push({ id: uid(), layout_instance_id: target.id, block_id: blockId, section_id: section ? section.id : null, row_start: cell.row, row_end: cell.row + 1, column_start: cell.column, column_end: cell.column + 1, alignment: {}, fit_mode: "natural", padding: {}, z_index: 0 });
+      data.placements.push({ id: uid(), layout_instance_id: target.id, block_id: blockId, page_id: page?.id ?? null, section_id: section ? section.id : null, row_start: cell.row, row_end: cell.row + 1, column_start: cell.column, column_end: cell.column + 1, alignment: {}, fit_mode: "natural", padding: {}, z_index: 0 });
       target.updated_at = now();
     });
   }
@@ -4902,22 +5339,35 @@ class WorkbenchStore {
     this.commit("一键排版全部正文", (data) => {
       const target = data.layout_instances.find((candidate) => candidate.id === layout.id);
       if (!target) return;
-      const grid = target.grid_definition;
-      const existing = data.placements.filter((placement) => placement.layout_instance_id === target.id);
-      const placed = new Set(existing.map((placement) => placement.block_id));
+      const page = target.pagination_mode === "paged"
+        ? data.layout_pages.find((candidate) => candidate.id === this.ui.layoutPageId)
+        : null;
+      const grid = page ? page.grid_definition : target.grid_definition;
+      const existing = data.placements.filter((placement) =>
+        placement.layout_instance_id === target.id && (!page || placement.page_id === page.id)
+      );
+      const placed = new Set(data.placements.filter((placement) =>
+        placement.layout_instance_id === target.id
+      ).map((placement) => placement.block_id));
       const section = data.layout_sections.filter((candidate) => candidate.layout_instance_id === target.id).sort((a, b) => a.order_index - b.order_index)[0];
       let cursor = nextFreeCell(grid, existing);
       for (const block of blocks) {
         if (placed.has(block.id)) continue;
-        if (cursor.row >= grid.rows.length) {
+        if (cursor.row >= grid.rows.length && !page) {
           grid.rows = [...grid.rows, 1, 1];
         }
-        data.placements.push({ id: uid(), layout_instance_id: target.id, block_id: block.id, section_id: section ? section.id : null, row_start: cursor.row, row_end: cursor.row + 1, column_start: cursor.column, column_end: Math.min(grid.columns.length, cursor.column + 2), alignment: {}, fit_mode: "natural", padding: {}, z_index: 0 });
-        cursor = nextFreeCell(grid, data.placements.filter((placement) => placement.layout_instance_id === target.id));
+        if (cursor.row >= grid.rows.length) break;
+        const placement = { id: uid(), layout_instance_id: target.id, block_id: block.id, page_id: page?.id ?? null, section_id: section ? section.id : null, row_start: cursor.row, row_end: cursor.row + 1, column_start: cursor.column, column_end: Math.min(grid.columns.length, cursor.column + 2), alignment: {}, fit_mode: "natural", padding: {}, z_index: 0 };
+        data.placements.push(placement);
+        placed.add(block.id);
+        existing.push(placement);
+        cursor = nextFreeCell(grid, existing);
       }
       target.updated_at = now();
     });
-    this.ui.toast = "已把还没有放入网格的正文排进去";
+    this.ui.toast = layout.pagination_mode === "paged"
+      ? "已排入当前页能放下的正文；其他页面内容保持原位"
+      : "已把还没有放入网格的正文排进去";
   }
   movePlacement(id, dr, dc) {
     const layout = this.layout();
@@ -4926,8 +5376,12 @@ class WorkbenchStore {
       const target = data.layout_instances.find((candidate) => candidate.id === layout.id);
       const placement = data.placements.find((candidate) => candidate.id === id);
       if (!target || !placement) return;
-      const rows = target.grid_definition.rows.length;
-      const columns = target.grid_definition.columns.length;
+      const page = target.pagination_mode === "paged"
+        ? data.layout_pages.find((candidate) => candidate.id === placement.page_id)
+        : null;
+      const grid = page ? page.grid_definition : target.grid_definition;
+      const rows = grid.rows.length;
+      const columns = grid.columns.length;
       const rowSpan = placement.row_end - placement.row_start;
       const colSpan = placement.column_end - placement.column_start;
       placement.row_start = Math.max(0, Math.min(rows - rowSpan, Math.round(placement.row_start + dr)));
@@ -4962,13 +5416,15 @@ class WorkbenchStore {
     if (!layout) return false;
     const placement = (this.data.placements || []).find((candidate) => candidate.id === id);
     if (!placement) return false;
-    const rows = Math.max(1, layout.grid_definition.rows.length);
-    const columns = Math.max(1, layout.grid_definition.columns.length);
+    const grid = this.gridForLayout(layout);
+    if (!grid || (layout.pagination_mode === "paged" && placement.page_id !== this.ui.layoutPageId)) return false;
+    const rows = Math.max(1, grid.rows.length);
+    const columns = Math.max(1, grid.columns.length);
     const rowSpan = Math.max(1, placement.row_end - placement.row_start);
     const columnSpan = Math.max(1, placement.column_end - placement.column_start);
     const rowStart = Math.max(0, Math.min(rows - rowSpan, Math.round(row)));
     const columnStart = Math.max(0, Math.min(columns - columnSpan, Math.round(column)));
-    const allowed = freeCellsFor(layout.grid_definition, placementsFor(this.data, layout.id), {
+    const allowed = freeCellsFor(grid, this.placementsForLayoutPage(layout), {
       rowSpan,
       columnSpan,
       exceptId: id,
@@ -4997,8 +5453,13 @@ class WorkbenchStore {
       const target = data.layout_instances.find((candidate) => candidate.id === layout.id);
       const placement = data.placements.find((candidate) => candidate.id === id);
       if (!target || !placement) return;
-      const rows = target.grid_definition.rows.length;
-      const columns = target.grid_definition.columns.length;
+      const page = target.pagination_mode === "paged"
+        ? data.layout_pages.find((candidate) => candidate.id === this.ui.layoutPageId)
+        : null;
+      if (page && placement.page_id !== page.id) return;
+      const grid = page ? page.grid_definition : target.grid_definition;
+      const rows = grid.rows.length;
+      const columns = grid.columns.length;
       placement.column_end = Math.max(placement.column_start + 1, Math.min(columns, placement.column_end + dw));
       placement.row_end = Math.max(placement.row_start + 1, Math.min(rows, placement.row_end + dh));
     });
@@ -5039,6 +5500,7 @@ class WorkbenchStore {
     this.ui.toast = "已恢复，恢复前备份已保留";
   }
   exportPreflight() {
+    const options = this.publicationOptions();
     const selected = this.ui.publishScope === "course"
       ? this.data.content_items.filter((candidate) => !candidate.archived)
       : [this.currentItem()].filter(Boolean);
@@ -5049,7 +5511,14 @@ class WorkbenchStore {
     const usages = this.data.asset_usages.filter((usage) => ids.has(usage.content_item_id));
     const missingAssets = usages.filter((usage) => !this.data.assets.some((asset) => asset.id === usage.asset_id && !asset.archived)).length;
     const layouts = this.data.layout_instances.filter((candidate) => ids.has(candidate.content_item_id));
-    const overflow = layouts.reduce((sum, layoutInstance) => sum + this.data.placements.filter((placement) => placement.layout_instance_id === layoutInstance.id).filter((placement) => placement.row_end > layoutInstance.grid_definition.rows.length || placement.column_end > layoutInstance.grid_definition.columns.length).length, 0);
+    const selectedPageIds = options.page_ids == null ? null : new Set(options.page_ids);
+    const overflow = layouts.reduce((sum, layoutInstance) => sum + this.data.placements
+      .filter((placement) => placement.layout_instance_id === layoutInstance.id)
+      .filter((placement) => !selectedPageIds || selectedPageIds.has(placement.page_id))
+      .filter((placement) => {
+        const grid = this.gridForLayout(layoutInstance, this.data, placement.page_id);
+        return grid && (placement.row_end > grid.rows.length || placement.column_end > grid.columns.length);
+      }).length, 0);
     const text = selected.reduce((sum, item) => sum + lessonView(this.data, item.id).progress.empty_text_blocks, 0);
     const fonts = 0;
     const external = selected.flatMap((item) => blocksFor(this.data, item.id)).filter((block) => /https?:\/\//i.test(textOf(block.content))).length;
@@ -5060,29 +5529,142 @@ class WorkbenchStore {
       const asset = this.data.assets.find((candidate) => candidate.id === usage.asset_id);
       return asset && downgradeTypes.has(asset.type) && all.findIndex((candidate) => candidate.asset_id === usage.asset_id) === index;
     }).length;
-    const blocking = overflow + missingAssets;
-    const warnings = content + layout + text + fonts + external + mediaDowngrades;
-    return { content, layout, missingAssets, overflow, text, fonts, external, mediaDowngrades, blocking, warnings, total: blocking + warnings, issues: [] };
+    let projection = null;
+    let projectionError = null;
+    try {
+      projection = buildPublicationProjection(this.data, options);
+    } catch (error) {
+      projectionError = error instanceof Error ? error.message : String(error);
+    }
+    const capability = projection
+      ? this.publicationCapability(this.ui.publishFormat, projection)
+      : { status: "unavailable", code: "invalid_selection" };
+    const unsupported = ["unavailable", "unsupported"].includes(capability.status);
+    const unplaced = projection?.lessons.reduce((sum, lesson) =>
+      sum + (lesson.layout?.unplaced_block_ids?.length || 0), 0) || 0;
+    const blocking = overflow + missingAssets + Number(Boolean(projectionError)) + Number(unsupported);
+    const warningCount = content + layout + text + fonts + external + mediaDowngrades + unplaced + Number(capability.status === "lossy");
+    const issues = [];
+    if (projectionError) issues.push({ severity: "blocking", code: "invalid_publication_selection", message: projectionError });
+    if (unsupported) issues.push({
+      severity: "blocking",
+      code: capability.code || "adapter_unavailable",
+      message: capability.status === "unsupported"
+        ? "所选格式不支持当前排版方式。请改用支持页面布局的格式，或切换为 Grid 排版。"
+        : "当前运行环境没有这个导出格式的可用适配器。",
+    });
+    const warning = (code, count, message) => {
+      if (count > 0) issues.push({ severity: "warning", code, count, message });
+    };
+    warning("open_content_requirements", content, `${content} 项正文待补仍未完成；这些内容会按现状导出。`);
+    warning("open_layout_requirements", layout, `${layout} 项排版待补仍未完成；这些内容会按现状导出。`);
+    warning("empty_text", text, `${text} 段正文为空，导出时会保留为空白或跳过。`);
+    warning("external_references", external, `${external} 处内容含外部引用，目标平台可能无法访问。`);
+    warning("media_downgrade", mediaDowngrades, `${mediaDowngrades} 种媒体会以附件或迁移说明呈现。`);
+    warning("unplaced_content", unplaced, `${unplaced} 块正文未放在排版页面中；本次布局导出只包含已放置内容。`);
+    if (capability.status === "lossy") warning(
+      capability.code || "layout_linearized",
+      1,
+      "此格式会把页面布局线性化，位置、页面尺寸和分页不会保留。",
+    );
+    return {
+      content, layout, missingAssets, overflow, text, fonts, external,
+      mediaDowngrades, blocking, warnings: warningCount,
+      total: blocking + warningCount, issues, capability,
+    };
   }
   async openPreflight() {
+    if (!await this.flush()) {
+      this.ui.preflight = false;
+      this.ui.toast = this.ui.toast || "保存没有完成，尚未检查导出；请修复保存问题后重试。";
+      this.notify();
+      return;
+    }
+    const selection = this.publicationOptions();
+    const revision = this.data.project.updated_at;
+    let projection = null;
+    try {
+      projection = buildPublicationProjection(this.data, selection);
+    } catch {
+      // exportPreflight keeps the actionable validation message.
+    }
     this.ui.preflight = true;
     this.ui.preflightReport = this.exportPreflight();
+    this.ui.preflightRevision = revision;
+    this.ui.preflightFormat = this.ui.publishFormat;
+    this.ui.preflightOptions = {
+      ...selection,
+      ...(projection ? { projection } : {}),
+      // Native export binds projections to project.updated_at. The service
+      // computes a canonical SHA revision and returns it from preflight.
+      ...(this.bridge.isNative() ? { snapshot_revision: revision } : {}),
+    };
+    this.ui.acknowledgedWarnings = [];
     this.notify();
-    if (!this.bridge.isNative()) return;
+    if (!projection) return;
+    if (typeof this.bridge.invoke !== "function") return;
     try {
-      const item = this.currentItem();
-      const contentItemId = this.ui.publishScope === "lesson" ? item?.id || null : null;
+      const options = this.ui.preflightOptions;
+      const checkedRevision = this.ui.preflightRevision;
       const preset = { name: this.ui.publishFormat, output_type: this.ui.publishFormat, target_type: this.ui.publishFormat, platform: "通用", settings: {} };
-      const report = await this.bridge.invoke("export.preflight", { preset, options: { content_item_id: contentItemId } });
+      const report = await this.bridge.invoke("export.preflight", { preset, options });
       const local = this.exportPreflight();
-      const errors = Array.isArray(report?.errors) ? report.errors : [];
+      if (this.data.project.updated_at !== checkedRevision) {
+        this.ui.preflightReport = {
+          ...local,
+          blocking: Math.max(1, local.blocking),
+          issues: [...local.issues, {
+            severity: "blocking",
+            code: "project_changed_after_preflight",
+            message: "课程在检查期间发生变化，请重新运行导出前检查。",
+          }],
+        };
+        this.notify();
+        return;
+      }
+      const errors = Array.isArray(report?.blocking)
+        ? report.blocking
+        : Array.isArray(report?.errors)
+        ? report.errors
+        : [];
       const warnings = Array.isArray(report?.warnings) ? report.warnings : [];
+      const authoritativeIssues = Array.isArray(report?.issues)
+        ? report.issues
+        : [
+          ...errors.map((issue) => ({ ...issue, severity: "blocking" })),
+          ...warnings.map((issue) => ({ ...issue, severity: "warning" })),
+        ];
+      if (typeof report?.snapshot_revision !== "string" || !report.snapshot_revision) {
+        throw new Error("导出预检没有返回快照版本；请重新检查后再试。");
+      }
+      this.ui.preflightOptions = {
+        ...this.ui.preflightOptions,
+        snapshot_revision: report.snapshot_revision,
+      };
       const blockingCount = Math.max(errors.length, local.blocking);
-      const warningCount = Math.max(warnings.length, local.warnings);
+      const warningCount = warnings.length || authoritativeIssues.filter((issue) => issue.severity === "warning").length;
       // 本地只统计「引用断链」，磁盘上文件缺失由原生检查发现；两者都会让导出被阻止，
       // 因此这一行必须同时反映原生错误，否则会出现「缺失素材文件 ✓ 0 / BLOCKING 1」的矛盾显示。
       const missingAssets = Math.max(local.missingAssets, errors.filter((issue) => issue.code === "missing_asset").length);
-      this.ui.preflightReport = { ...local, missingAssets, blocking: blockingCount, warnings: warningCount, total: blockingCount + warningCount, issues: [...errors.map((issue) => ({ ...issue, severity: "blocking" })), ...warnings.map((issue) => ({ ...issue, severity: "warning" }))] };
+      const issueMap = new Map();
+      for (const issue of [
+        ...local.issues.filter((issue) => issue.severity === "blocking"),
+        ...authoritativeIssues,
+      ]) {
+        const key = `${issue.severity || "warning"}:${issue.code || issue.message || "unknown"}`;
+        const previous = issueMap.get(key);
+        issueMap.set(key, previous
+          ? { ...previous, ...issue, count: Math.max(previous.count || 0, issue.count || 0) }
+          : issue);
+      }
+      this.ui.preflightReport = {
+        ...local,
+        missingAssets,
+        blocking: blockingCount,
+        warnings: warningCount,
+        total: blockingCount + warningCount,
+        issues: [...issueMap.values()],
+      };
     } catch (error) {
       this.ui.preflightReport = { ...this.exportPreflight(), blocking: 1, issues: [{ severity: "blocking", message: userFacingError(error, "导出检查没有完成。请稍后再试。") }] };
     }
@@ -5095,19 +5677,61 @@ class WorkbenchStore {
       this.notify();
       return;
     }
-    const contentItemId = this.ui.publishScope === "lesson" ? item.id : null;
+    const report = this.ui.preflightReport || this.exportPreflight();
+    if (report.blocking) {
+      this.ui.toast = `导出前检查还有 ${report.blocking} 个必须修复的问题。请先返回检查并修复`;
+      this.notify();
+      return;
+    }
+    const currentSelection = this.publicationOptions();
+    const frozen = this.ui.preflightOptions;
+    const selectionKeys = ["content_item_id", "layout_instance_id", "page_ids", "target_page_size"];
+    const sameSelection = frozen && selectionKeys.every((key) =>
+      JSON.stringify(frozen[key] ?? null) === JSON.stringify(currentSelection[key] ?? null)
+    );
+    if (
+      !sameSelection ||
+      this.ui.preflightRevision !== this.data.project.updated_at ||
+      this.ui.preflightFormat !== format
+    ) {
+      this.ui.toast = "课程或导出范围在检查后发生变化，正在重新检查。";
+      this.ui.preflight = true;
+      this.notify();
+      void this.openPreflight();
+      return;
+    }
+    const warningCodes = [...new Set((report.issues || [])
+      .filter((issue) => issue.severity === "warning" && issue.code)
+      .map((issue) => issue.code))];
+    const acknowledged = new Set(this.ui.acknowledgedWarnings || []);
+    const missingAcknowledgement = warningCodes.filter((code) => !acknowledged.has(code));
+    if (missingAcknowledgement.length) {
+      this.ui.toast = "请逐项确认导出提示后再继续。";
+      this.ui.preflight = true;
+      this.notify();
+      return;
+    }
+    const options = {
+      ...clone(frozen),
+      acknowledged_warnings: warningCodes,
+    };
+    const contentItemId = options.content_item_id;
+    const preset = {
+      name: format,
+      output_type: format,
+      target_type: format,
+      platform: "通用",
+      page_mode: "multi_page",
+      layout_instance_id: options.layout_instance_id,
+      settings: {},
+    };
     if (this.bridge.isNative()) {
       try {
-        if (!await this.flush()) {
-          this.ui.toast = this.ui.toast || "导出前保存失败，请重试";
-          this.notify();
-          return;
-        }
-        const extensions = { markdown: "md", html: "html", web: "web", wechat: "html", pdf: "pdf", json: "json", asset_package: "assets", full_project: "project-package" };
+        const extensions = { markdown: "md", html: "html", web: "zip", wechat: "html", pdf: "pdf", pptx: "pptx", json: "json", asset_package: "zip", full_project: "zip" };
         const stem = this.ui.publishScope === "lesson" ? `${item.code}-${item.title}` : this.data.project.title;
         const outputPath = await this.bridge.selectExportPath(`${stem}.${extensions[format] || format}`, format);
         if (!outputPath) return;
-        const result = await this.bridge.exportProject(format, this.data, null, outputPath, contentItemId);
+        const result = await this.bridge.exportProject(format, this.data, preset, outputPath, contentItemId, options);
         const files = Array.isArray(result?.files) ? result.files.length : 0;
         this.ui.lastExport = { format, scope: this.ui.publishScope, path: result?.output_path || outputPath, files };
         this.ui.toast = `导出完成：${files || 1} 个文件，可在 ${this.ui.lastExport.path} 打开`;
@@ -5119,13 +5743,24 @@ class WorkbenchStore {
       return;
     }
     try {
-      if (!["markdown", "html", "wechat"].includes(format)) throw new Error("浏览器只能下载 Markdown、HTML 或富文本结果；课程内容没有改变，请使用桌面应用导出其他格式。");
-      const items = this.ui.publishScope === "course" ? this.data.content_items.filter((candidate) => !candidate.archived) : [item];
-      const contents = items.map((candidate) => format === "markdown" ? browserMarkdown(this.data, candidate) : browserHtml(this.data, candidate)).join(format === "markdown" ? "\n" : "\n");
-      const extension = format === "markdown" ? "md" : "html";
-      browserDownload(`${stemForExport(this.data.project.title)}-${this.ui.publishScope}.${extension}`, contents, format === "markdown" ? "text/markdown" : "text/html");
-      this.ui.lastExport = { format, scope: this.ui.publishScope, path: "浏览器下载目录", files: 1 };
-      this.ui.toast = "已下载导出文件";
+      if (typeof this.bridge.exportProject !== "function") {
+        throw new Error("当前浏览器没有连接可用的导出服务；课程内容没有改变。");
+      }
+      const result = await this.bridge.exportProject(format, this.data, preset, "", contentItemId, options);
+      const files = Array.isArray(result?.files) ? result.files : [];
+      if (!files.length) throw new Error("导出服务没有返回可下载文件；课程内容没有改变。");
+      let downloaded = 0;
+      for (const file of files) {
+        if (!file || typeof file.relative_path !== "string" || !file.bytes) continue;
+        downloaded += Number(browserDownload(
+          file.relative_path.split(/[\\/]/).at(-1) || format,
+          file.bytes,
+          file.mime_type || "application/octet-stream",
+        ));
+      }
+      if (!downloaded) throw new Error("导出文件没有可下载的内容；课程内容没有改变。");
+      this.ui.lastExport = { format, scope: this.ui.publishScope, path: "浏览器下载目录", files: downloaded };
+      this.ui.toast = `已下载 ${downloaded} 个导出文件`;
     } catch (error) {
       this.ui.toast = userFacingError(error, "导出没有完成。源课程没有修改，请修复提示后重试。");
     }
@@ -5215,6 +5850,7 @@ function assertAuthoringInvariants(data) {
   const blockIds = ids("blocks");
   const assetIds = ids("assets");
   const layoutIds = ids("layout_instances");
+  const pageIds = ids("layout_pages");
   const contentIds = ids("content_items");
   const optionIds = ids("status_options");
   const dimensionIds = ids("status_dimensions");
@@ -5334,6 +5970,17 @@ function assertAuthoringInvariants(data) {
     if (!integers.every((value) => Number.isInteger(value))) {
       issues.push(`排版位置 ${placement.id} 的网格坐标必须是整数`);
     }
+    if (placement.page_id != null) {
+      const page = rows("layout_pages").find((candidate) => candidate.id === placement.page_id);
+      if (!page) issues.push(`排版位置 ${placement.id} 指向不存在的页面`);
+      else if (page.layout_instance_id !== placement.layout_instance_id) {
+        issues.push(`排版位置 ${placement.id} 指向其他排版版本的页面`);
+      }
+    } else if (rows("layout_instances").some((candidate) =>
+      candidate.id === placement.layout_instance_id && candidate.pagination_mode === "paged"
+    )) {
+      issues.push(`分页排版位置 ${placement.id} 缺少页面引用`);
+    }
   }
   for (const section of rows("layout_sections")) {
     if (!layoutIds.has(section.layout_instance_id)) {
@@ -5343,6 +5990,25 @@ function assertAuthoringInvariants(data) {
   for (const layout of rows("layout_instances")) {
     if (!contentIds.has(layout.content_item_id)) {
       issues.push(`排版版本 ${layout.id} 指向不存在的课程内容`);
+    }
+    const pages = rows("layout_pages").filter((page) => page.layout_instance_id === layout.id);
+    if (layout.pagination_mode === "paged" && pages.length === 0) {
+      issues.push(`分页排版版本 ${layout.id} 至少需要一页`);
+    }
+  }
+  const seenPageIds = new Set();
+  for (const page of rows("layout_pages")) {
+    if (seenPageIds.has(page.id)) issues.push(`页面标识重复：${page.id}`);
+    seenPageIds.add(page.id);
+    if (!layoutIds.has(page.layout_instance_id)) {
+      issues.push(`页面 ${page.id} 指向不存在的排版版本`);
+    }
+    if (!String(page.title || "").trim()) issues.push(`页面 ${page.id} 缺少标题`);
+    if (!Number.isInteger(page.order_index) || page.order_index < 0) {
+      issues.push(`页面 ${page.id} 的顺序必须是非负整数`);
+    }
+    if (!page.grid_definition || !Array.isArray(page.grid_definition.rows) || !Array.isArray(page.grid_definition.columns)) {
+      issues.push(`页面 ${page.id} 缺少有效网格`);
     }
   }
 
@@ -5452,7 +6118,7 @@ function emptyProject(title = "未命名课程") {
     project,
     stages: [], content_items: [], documents: [], blocks: [], groups: [], requirements: [],
     assets: [], asset_usages: [], status_dimensions, status_options, status_assignments: [],
-    layout_templates: [], layout_instances: [], layout_sections: [], placements: [],
+    layout_templates: [], layout_instances: [], layout_sections: [], layout_pages: [], placements: [],
     inbox_items: [], export_presets: [], course_seeds: [], blueprint_drafts: [], blueprint_nodes: [],
     conversation_sources: [], conversations: [], messages: [], context_packs: [], context_pack_items: [],
     suggestions: [], change_drafts: [], snapshots: [], publications: [],
@@ -6037,6 +6703,35 @@ function handleAction(action, element, event) {
     case "move-block": store.moveBlock(element.dataset.id, element.dataset.direction); return;
     case "delete-block": store.deleteBlock(element.dataset.id); return;
     case "layout-mode": store.setLayoutMode(element.dataset.layoutMode); return;
+    case "pagination-conversion": store.beginPaginationConversion(); return;
+    case "cancel-pagination-conversion": store.cancelPaginationConversion(); return;
+    case "confirm-pagination-conversion": store.confirmPaginationConversion(); return;
+    case "conversion-page-size": store.setPageSizePreview(element.value); return;
+    case "page-size-preview": store.changePageSize(element.value); return;
+    case "confirm-page-size": store.confirmPageSizeChange(); return;
+    case "cancel-page-size": store.cancelPageSizeChange(); return;
+    case "page-add": store.addLayoutPage(); return;
+    case "select-layout-page": store.selectLayoutPage(element.dataset.id); return;
+    case "page-rename": {
+      const page = store.layoutPages().find((candidate) => candidate.id === element.dataset.id);
+      if (!page) return;
+      const title = globalThis.prompt?.("重命名页面", page.title);
+      if (typeof title === "string") store.renamePage(page.id, title);
+      return;
+    }
+    case "page-reorder": store.movePage(element.dataset.id, element.dataset.direction); return;
+    case "page-duplicate": store.duplicatePage(element.dataset.id); return;
+    case "page-delete": store.deletePage(element.dataset.id); return;
+    case "start-page-move": store.startPageMove(element.dataset.id); return;
+    case "choose-page-move-target": store.choosePageMoveTarget(element.dataset.id); return;
+    case "move-placement-page-cell": store.movePlacementAcrossPage(
+      element.dataset.id,
+      element.dataset.pageId,
+      Number(element.dataset.row),
+      Number(element.dataset.col),
+    ); return;
+    case "cancel-page-move": store.cancelPageMove(); return;
+    case "layout-zoom": store.setLayoutZoom(element.dataset.zoom); return;
     case "create-layout": store.createLayout("grid"); return;
     case "rename-layout": {
       const layout = store.layout();
@@ -6188,11 +6883,22 @@ function handleAction(action, element, event) {
       store.ui.preflightReport = null;
       store.notify();
       return;
+    case "publish-page-mode": store.selectPublishPageMode(element.dataset.mode); return;
+    case "publish-page-toggle": store.togglePublishPage(element.dataset.id); return;
+    case "publish-target-size": store.setPublishTargetPageSize(element.value); return;
+    case "publish-target-size-value": store.setPublishTargetPageSizeValue(element.dataset.axis, element.value); return;
+    case "acknowledge-export-warning": store.acknowledgeExportWarning(
+      element.dataset.code,
+      Boolean(element.checked),
+    ); return;
     case "export-format": {
       const format = element.dataset.format || store.ui.publishFormat || "markdown";
       store.ui.publishFormat = format;
       const report = store.ui.preflightReport || store.exportPreflight();
       if (report.blocking) { store.ui.toast = `导出前检查还有 ${report.blocking} 个必须修复的问题。请先返回检查并修复`; store.notify(); return; }
+      const required = [...new Set((report.issues || []).filter((issue) => issue.severity === "warning" && issue.code).map((issue) => issue.code))];
+      const acknowledged = new Set(store.ui.acknowledgedWarnings || []);
+      if (required.some((code) => !acknowledged.has(code))) { store.ui.toast = "请逐项确认导出提示后再继续。"; store.notify(); return; }
       store.ui.preflight = false;
       void store.exportCurrent(format);
       return;
@@ -6244,6 +6950,7 @@ function scheduleToastDismissal() {
 
 function bindEvents() {
   root.querySelectorAll("[data-action]").forEach((element) => element.addEventListener("click", (event) => {
+    if (element.matches?.("select[data-action], input[data-action]")) return;
     if (element.dataset.stopClick === "true") event.stopPropagation();
     // A dialog carries `data-stop-click="true"` so that a click inside it is
     // not a click on the backdrop.  The guard used to sit on the `[data-action]`
@@ -6261,6 +6968,11 @@ function bindEvents() {
     ) return;
     handleAction(element.dataset.action, element, event);
   }));
+  root.querySelectorAll("select[data-action], input[data-action]").forEach((element) => {
+    element.addEventListener("change", (event) => {
+      handleAction(element.dataset.action, element, event);
+    });
+  });
 
   // P2-1: the manual Model ID is a first-class choice.  Typing in it updates the
   // "将要使用的模型" line in place — no re-render, so the caret and IME survive —

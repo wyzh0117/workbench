@@ -12,6 +12,7 @@ import {
   appendBlock,
   createDocument,
   createEmptyProjectData,
+  createLayoutInstance,
   initializeContentStatuses,
   now,
 } from "../src/domain/index.ts";
@@ -37,6 +38,8 @@ interface SessionShape {
   project_dir?: string | null;
   project_id?: string | null;
   active_content_item_id?: string | null;
+  layout_page_id?: string | null;
+  layout_zoom?: "fit" | "actual";
   mode?: string;
   route?: string;
   right_panel?: string;
@@ -47,6 +50,8 @@ interface NativeStore {
   data: ProjectData;
   ui: {
     activeId: string | null;
+    layoutPageId: string | null;
+    layoutZoom: "fit" | "actual";
     mode: string;
     rightPanel: string;
     route: string;
@@ -86,6 +91,7 @@ async function bootNative(options: {
   project: ProjectData;
   launchProjectDir: string | null;
   persistedSession?: SessionShape | null;
+  locationHref?: string;
   /** When set, `project_open` fails with this shell message. */
   openError?: string;
 }) {
@@ -124,7 +130,9 @@ async function bootNative(options: {
     querySelectorAll: () => [],
     addEventListener: () => undefined,
   };
-  runtime.location = { href: "tauri://localhost/index.html" } as unknown as Location;
+  runtime.location = {
+    href: options.locationHref ?? "tauri://localhost/index.html",
+  } as unknown as Location;
   globalThis.fetch = async () => {
     throw new Error("原生构建不得使用 fetch 存取项目");
   };
@@ -234,6 +242,27 @@ function seededProject(): ProjectData {
   });
   assert(data.content_items.length === 2, "测试夹具必须包含两节课");
   return data;
+}
+
+function seededPagedProject(prefix = "page") {
+  const data = seededProject();
+  const item = data.content_items[0];
+  assert(item, "分页夹具必须有当前课时");
+  const layout = createLayoutInstance(data, item.id, {
+    name: "三页排版",
+    mode: "grid",
+  });
+  layout.pagination_mode = "paged";
+  layout.page_size = { preset: "16:9", width_pt: 960, height_pt: 540 };
+  const pageIds = [`${prefix}-1`, `${prefix}-2`, `${prefix}-3`];
+  data.layout_pages.push(...pageIds.map((id, order_index) => ({
+    id,
+    layout_instance_id: layout.id,
+    title: `第 ${order_index + 1} 页`,
+    order_index,
+    grid_definition: structuredClone(layout.grid_definition),
+  })));
+  return { data, itemId: item.id, pageIds };
 }
 
 Deno.test("native launch opens the --project-dir project and persists it", async () => {
@@ -361,6 +390,92 @@ Deno.test("native session keeps the reader position for restart", async () => {
     }
   } finally {
     first.restore();
+  }
+});
+
+Deno.test("native launch locator restores the matching persisted layout page", async () => {
+  const fixture = seededPagedProject();
+  const projectDir = "/private/tmp/tauri-acceptance/project";
+  const { store, state, restore } = await bootNative({
+    project: fixture.data,
+    launchProjectDir: projectDir,
+    locationHref: "tauri://localhost/index.html?project_dir=%2Ftmp%2Ftauri-acceptance%2Fproject",
+    persistedSession: {
+      project_dir: projectDir,
+      project_id: fixture.data.project.id,
+      active_content_item_id: fixture.itemId,
+      layout_page_id: fixture.pageIds[2],
+      layout_zoom: "actual",
+      mode: "layout",
+      route: "editor",
+    },
+  });
+  try {
+    await until(() => state.sessionWrites > 0, "写回原生页面会话");
+    assertEquals(store.ui.layoutPageId, fixture.pageIds[2], "启动 locator must not replace the saved page with the first page");
+    assertEquals(store.ui.layoutZoom, "actual", "启动 locator must preserve layout zoom");
+    assertEquals(store.bridge.projectDir, projectDir, "Rust canonical launch directory wins over the URL alias");
+    assertEquals(state.session?.layout_page_id, fixture.pageIds[2], "startup session write must retain page three");
+    assertEquals(
+      state.calls.filter((call) => call.command === "load_session").length,
+      2,
+      "a launch locator requires one follow-up read of the app-data session",
+    );
+    const opened = state.calls.find((call) => call.command === "project_open");
+    assertEquals(opened?.args.projectDir, projectDir, "project.open must use the canonical launch directory");
+  } finally {
+    restore();
+  }
+});
+
+Deno.test("native launch does not inherit a different project's reader page", async () => {
+  const savedProject = seededPagedProject("saved");
+  const launchedProject = seededPagedProject("launched");
+  const { store, state, restore } = await bootNative({
+    project: launchedProject.data,
+    launchProjectDir: "/private/tmp/other-project",
+    persistedSession: {
+      project_dir: "/private/tmp/saved-project",
+      project_id: savedProject.data.project.id,
+      active_content_item_id: savedProject.itemId,
+      layout_page_id: savedProject.pageIds[2],
+      mode: "layout",
+    },
+  });
+  try {
+    await until(() => state.sessionWrites > 0, "保存新打开项目的默认位置");
+    assertEquals(store.ui.layoutPageId, launchedProject.pageIds[0], "a different directory must not inherit page three");
+    assertEquals(state.session?.project_dir, "/private/tmp/other-project", "launch target becomes the session identity");
+    assertEquals(state.session?.project_id, launchedProject.data.project.id, "launch target project id replaces the unrelated session");
+  } finally {
+    restore();
+  }
+});
+
+Deno.test("native relaunch without a launch locator reads a full session once", async () => {
+  const fixture = seededPagedProject();
+  const projectDir = "/private/tmp/session-only-project";
+  const { store, state, restore } = await bootNative({
+    project: fixture.data,
+    launchProjectDir: null,
+    persistedSession: {
+      project_dir: projectDir,
+      project_id: fixture.data.project.id,
+      active_content_item_id: fixture.itemId,
+      layout_page_id: fixture.pageIds[2],
+      mode: "layout",
+    },
+  });
+  try {
+    await until(() => state.sessionWrites > 0, "载入普通 session");
+    assertEquals(store.ui.layoutPageId, fixture.pageIds[2], "session-only restart restores its selected page");
+    assertEquals(
+      state.calls.filter((call) => call.command === "load_session").length,
+      1,
+      "ordinary persisted sessions are read only once",
+    );
+  } finally {
+    restore();
   }
 });
 

@@ -27,7 +27,7 @@ function tracks(grid: Record<string, unknown>): {
 }
 
 /** Boot a fresh WorkbenchStore over an isolated in-memory project. */
-async function bootStore() {
+async function bootStore(bridgeOverrides: Record<string, unknown> = {}) {
   const source = createEmptyProjectData("Authoring UI 测试");
   const state = {
     project: structuredClone(source) as ProjectData,
@@ -88,6 +88,7 @@ async function bootStore() {
     restoreProjectDir: () => {},
     projectIdentity: async () => state.project.project.id,
   };
+  Object.assign(bridge, bridgeOverrides);
   const store = new (WorkbenchStore as new (bridge: unknown) => {
     data: ProjectData;
     ui: Record<string, unknown>;
@@ -127,6 +128,20 @@ async function bootStore() {
     deleteAsset: (assetId: string) => void;
     renameAsset: (assetId: string, title: string) => void;
     createLayout: (mode?: string) => void;
+    layoutPages: () => ProjectData["layout_pages"];
+    beginPaginationConversion: () => void;
+    confirmPaginationConversion: () => void;
+    cancelPaginationConversion: () => void;
+    addLayoutPage: () => void;
+    selectLayoutPage: (id: string) => void;
+    renamePage: (id: string, title: string) => void;
+    movePage: (id: string, direction: string) => void;
+    duplicatePage: (id: string) => void;
+    deletePage: (id: string) => boolean;
+    movePlacementAcrossPage: (placementId: string, pageId: string, row: number, column: number) => boolean;
+    normalizeReaderState: (project: ProjectData, candidate?: Record<string, unknown>, route?: string) => Record<string, unknown>;
+    setLayoutZoom: (zoom: string) => void;
+    session: () => Record<string, unknown>;
     setLayoutMode: (mode: string) => void;
     changeGrid: (kind: string, amount?: number) => void;
     placeBlock: (blockId: string) => void;
@@ -158,11 +173,15 @@ async function bootStore() {
       warnings: number;
       total: number;
     };
+    openPreflight: () => Promise<void>;
+    exportCurrent: (format?: string) => Promise<void>;
+    acknowledgeExportWarning: (code: string, checked?: boolean) => void;
+    publicationCapability: (format?: string) => { status: string; code: string | null };
+    setPublishTargetPageSize: (preset: string) => void;
     resolveLessonId: () => string | null;
     resumeLessonId: () => string | null;
     openWorkbench: () => void;
     setMode: (mode: string, options?: Record<string, unknown>) => void;
-    session: () => Record<string, unknown>;
     openProject: (dir?: string) => Promise<void>;
     flush: () => Promise<boolean>;
     saveTimer: number;
@@ -174,6 +193,7 @@ async function bootStore() {
   return {
     store,
     state,
+    bridge,
     restore: () => {
       runtime.document = previousDocument;
       runtime.__TAURI__ = previousTauri;
@@ -1032,6 +1052,249 @@ Deno.test("flow and grid layout edits persist on the canonical layout row", asyn
   }
 });
 
+Deno.test("page conversion preview is read-only and reader state falls back to a real page", async () => {
+  const { store, restore } = await bootStore();
+  try {
+    store.addMapItem("分页会话课");
+    store.addBlock("paragraph", "第一页内容");
+    store.createLayout("grid");
+    const before = JSON.stringify(store.data);
+    const historyBefore = store.history.length;
+    store.beginPaginationConversion();
+    assert(JSON.stringify(store.data) === before, "conversion preview cannot mutate canonical data");
+    assert(store.history.length === historyBefore, "preview does not create history");
+    store.cancelPaginationConversion();
+    assert(JSON.stringify(store.data) === before, "cancel leaves the source layout unchanged");
+
+    store.beginPaginationConversion();
+    store.confirmPaginationConversion();
+    const layout = store.data.layout_instances[0]!;
+    const first = store.layoutPages()[0]!;
+    assert(layout.pagination_mode === "paged", "confirmation enables paged layout");
+    assert(first.id && first.layout_instance_id === layout.id, "conversion creates stable page identity");
+    store.addLayoutPage();
+    const second = store.layoutPages().find((page) => page.id !== first.id)!;
+    store.selectLayoutPage(second.id);
+    store.setLayoutZoom("actual");
+    const saved = store.session();
+    assert(saved.layout_page_id === second.id, "session records the selected page id");
+    assert(saved.layout_zoom === "actual", "session records the chosen zoom mode");
+
+    const recovered = store.normalizeReaderState(store.data, {
+      active_content_item_id: store.currentItem()!.id,
+      layout_page_id: "deleted-page-id",
+      layout_zoom: "invalid",
+    });
+    assert(recovered.layout_page_id === first.id, "deleted or unknown page ids fall back to the first valid page");
+    assert(recovered.layout_zoom === "fit", "invalid zoom falls back to fit");
+    assert(validateProjectData(store.data).length === 0, "page conversion leaves a valid project");
+  } finally {
+    restore();
+  }
+});
+
+Deno.test("page duplication edits independent blocks and page deletion preserves content", async () => {
+  const { store, restore } = await bootStore();
+  const previousConfirm = globalThis.confirm;
+  globalThis.confirm = () => true;
+  try {
+    store.addMapItem("独立复制页");
+    store.addBlock("paragraph", "原始正文");
+    store.createLayout("grid");
+    store.autofillGrid();
+    store.beginPaginationConversion();
+    store.confirmPaginationConversion();
+    const sourcePage = store.layoutPages()[0]!;
+    const sourcePlacement = store.data.placements.find((placement) => placement.page_id === sourcePage.id)!;
+    const sourceBlock = store.data.blocks.find((block) => block.id === sourcePlacement.block_id)!;
+
+    store.duplicatePage(sourcePage.id);
+    const copiedPage = store.layoutPages().find((page) => page.id !== sourcePage.id)!;
+    const copiedPlacement = store.data.placements.find((placement) => placement.page_id === copiedPage.id)!;
+    const copiedBlock = store.data.blocks.find((block) => block.id === copiedPlacement.block_id)!;
+    assert(copiedBlock.id !== sourceBlock.id, "copy creates a new canonical block id");
+    assert(copiedPlacement.id !== sourcePlacement.id, "copy creates a new placement id");
+    store.editBlockText(copiedBlock.id, "复制页已独立编辑");
+    assert(copiedBlock.content === "复制页已独立编辑", "copy accepts its own content edit");
+    assert(sourceBlock.content === "原始正文", "editing the copy does not edit source content");
+
+    assert(store.deletePage(copiedPage.id), "a non-final page can be deleted");
+    assert(store.data.layout_pages.every((page) => page.id !== copiedPage.id), "deleted page identity is removed");
+    assert(store.data.blocks.some((block) => block.id === copiedBlock.id), "page deletion never deletes canonical content");
+    assert(!store.data.placements.some((placement) => placement.page_id === copiedPage.id), "page deletion removes only its layout placements");
+    assert(store.lesson()!.unplaced_blocks.some((block) => block.id === copiedBlock.id), "preserved content returns to the unplaced list");
+    assert(validateProjectData(store.data).length === 0, "copy and deletion leave valid canonical data");
+  } finally {
+    globalThis.confirm = previousConfirm;
+    restore();
+  }
+});
+
+Deno.test("cross-page move rejects an occupied target atomically and accepts a free cell", async () => {
+  const { store, restore } = await bootStore();
+  try {
+    store.addMapItem("跨页移动");
+    store.addBlock("paragraph", "移动正文");
+    store.addBlock("paragraph", "目标占位");
+    store.createLayout("grid");
+    store.beginPaginationConversion();
+    store.confirmPaginationConversion();
+    const sourcePage = store.layoutPages()[0]!;
+    const movableBlock = store.blocks()[0]!;
+    const targetBlock = store.blocks()[1]!;
+    store.placeBlock(movableBlock.id);
+    const moving = store.data.placements.find((placement) => placement.block_id === movableBlock.id)!;
+    store.addLayoutPage();
+    const targetPage = store.layoutPages().find((page) => page.id !== sourcePage.id)!;
+    store.placeBlock(targetBlock.id);
+    const historyBeforeFailure = store.history.length;
+    const beforeFailure = JSON.stringify(store.data);
+
+    assert(!store.movePlacementAcrossPage(moving.id, targetPage.id, 0, 0), "occupied destination is rejected");
+    assert(JSON.stringify(store.data) === beforeFailure, "failed cross-page move does not partially change placement");
+    assert(store.history.length === historyBeforeFailure, "failed move does not create a history entry");
+
+    assert(store.movePlacementAcrossPage(moving.id, targetPage.id, 0, 1), "free destination accepts the move");
+    const moved = store.data.placements.find((placement) => placement.id === moving.id)!;
+    assert(moved.page_id === targetPage.id && moved.column_start === 1, "successful move writes the chosen page and cell");
+    assert(validateProjectData(store.data).length === 0, "cross-page moves leave valid canonical data");
+  } finally {
+    restore();
+  }
+});
+
+Deno.test("paged canvas stays finite and editor, preview, and publish show real page data", async () => {
+  const { store, restore } = await bootStore();
+  try {
+    store.addMapItem("分页界面课");
+    store.addBlock("paragraph", "分页中的真实正文");
+    store.addBlock("heading", "页面标题");
+    store.createLayout("grid");
+    store.beginPaginationConversion();
+    store.confirmPaginationConversion();
+    const page = store.layoutPages()[0]!;
+    store.commit("把页面设为单格", (data) => {
+      const target = data.layout_pages.find((candidate) => candidate.id === page.id)!;
+      target.grid_definition = { columns: [1], rows: [1] };
+    });
+    const before = store.data.placements.length;
+    store.placeBlock(store.blocks()[0]!.id);
+    store.placeBlock(store.blocks()[1]!.id);
+    assert(store.data.placements.length === before + 1, "a full page refuses another placement");
+    const pageTrackCounts = tracks(page.grid_definition as Record<string, unknown>);
+    assert(pageTrackCounts.rows.length === 1 && pageTrackCounts.columns.length === 1, "filling a page never grows its finite grid");
+
+    const { createViews } = await import(`../app/views.js?paged-ui-${importCounter}`);
+    store.ui.screen = "project";
+    store.ui.route = "editor";
+    store.ui.mode = "layout";
+    let html = createViews(store).shellView() as string;
+    assert(html.includes("data-action=\"select-layout-page\""), "editor renders selectable page identities");
+    assert(html.includes("data-action=\"page-duplicate\""), "editor exposes page duplication");
+    assert(html.includes("有限页面"), "editor identifies finite page geometry");
+
+    store.setMode("preview");
+    html = createViews(store).shellView() as string;
+    assert(html.includes("page-preview-sheet"), "preview renders a physical page canvas");
+    assert(html.includes("data-action=\"layout-zoom\""), "preview exposes fit and actual-size controls");
+
+    store.ui.route = "publish";
+    store.ui.publishFormat = "html";
+    store.ui.publishPageMode = "all";
+    store.ui.publishTargetPageSize = { preset: "a4-landscape", width_pt: 841.8898, height_pt: 595.2756 };
+    html = createViews(store).shellView() as string;
+    assert(html.includes("data-action=\"publish-page-mode\""), "layout-aware publishing exposes page range controls");
+    assert(html.includes("data-action=\"publish-target-size\""), "publishing exposes per-output target size");
+    assert(html.includes("fit-source-page"), "target-size preview draws the centered aspect-fit rectangle");
+  } finally {
+    restore();
+  }
+});
+
+Deno.test("whole-course PDF and PPTX fit preview includes every lesson page", async () => {
+  const { store, restore } = await bootStore({ isNative: () => true });
+  try {
+    store.addMapItem("横向课");
+    store.addBlock("paragraph", "横向内容");
+    store.createLayout("grid");
+    store.beginPaginationConversion();
+    store.confirmPaginationConversion();
+    const landscapeLesson = store.currentItem()!;
+
+    store.addMapItem("纵向课");
+    store.addBlock("paragraph", "纵向内容");
+    store.createLayout("grid");
+    store.beginPaginationConversion();
+    store.confirmPaginationConversion();
+    const portraitLesson = store.currentItem()!;
+
+    store.commit("设置课程页尺寸", (data) => {
+      const firstLayout = data.layout_instances.find((layout) =>
+        layout.content_item_id === landscapeLesson.id
+      )!;
+      const secondLayout = data.layout_instances.find((layout) =>
+        layout.content_item_id === portraitLesson.id
+      )!;
+      firstLayout.page_size = { preset: "16:9", width_pt: 960, height_pt: 540 };
+      secondLayout.page_size = {
+        preset: "a4-portrait",
+        width_pt: 595.2756,
+        height_pt: 841.8898,
+      };
+      for (const page of data.layout_pages) {
+        if (page.layout_instance_id === firstLayout.id) page.title = "横版页面";
+        if (page.layout_instance_id === secondLayout.id) page.title = "竖版页面";
+      }
+    });
+
+    store.ui.screen = "project";
+    store.ui.route = "publish";
+    store.ui.publishScope = "course";
+    store.ui.publishFormat = "markdown";
+    store.ui.publishTargetPageSize = null;
+    const originalSizes = store.data.layout_instances.map((layout) =>
+      structuredClone(layout.page_size)
+    );
+
+    for (const format of ["pdf", "pptx"]) {
+      const capability = store.publicationCapability(format);
+      assert(
+        capability.code === "explicit_target_page_size_required",
+        `${format} requires an explicit size for mixed whole-course pages`,
+      );
+    }
+    const { createViews } = await import(`../app/views.js?course-fit-${importCounter}`);
+    let html = createViews(store).shellView() as string;
+    assert(html.includes("publish-size-warning"), "mixed sizes prompt for a unified target");
+    assert(html.includes("页面尺寸不同，需选择统一尺寸"), "original-size option no longer implies a false shared size");
+    assert(html.includes('data-action="publish-target-size"'), "target size remains selectable before PDF is active");
+    assert(html.includes('data-format="pdf" disabled'), "PDF is disabled until a target is chosen");
+    assert(html.includes('data-format="pptx" disabled'), "PPTX is disabled until a target is chosen");
+
+    store.setPublishTargetPageSize("16:9");
+    store.ui.publishFormat = "pdf";
+    for (const format of ["pdf", "pptx"]) {
+      assert(
+        store.publicationCapability(format).status === "available",
+        `${format} becomes available after choosing a target size`,
+      );
+    }
+    html = createViews(store).shellView() as string;
+    assert(html.includes(landscapeLesson.code), "preview names the landscape lesson");
+    assert(html.includes(portraitLesson.code), "preview names the portrait lesson");
+    assert(html.includes("横版页面") && html.includes("竖版页面"), "preview includes page cards from both lessons");
+    assert((html.match(/fit-source-page/g) || []).length === 2, "every selected lesson page gets its own fit rectangle");
+    assert(html.includes("1.000×") && html.includes("0.641×"), "preview shows a separate uniform fit scale for each source page");
+    assert(
+      JSON.stringify(store.data.layout_instances.map((layout) => layout.page_size)) ===
+        JSON.stringify(originalSizes),
+      "target sizing stays export-only and does not change canonical page sizes",
+    );
+  } finally {
+    restore();
+  }
+});
+
 Deno.test("completion state is derived from real data and drives navigation", async () => {
   const { store, restore } = await bootStore();
   try {
@@ -1204,6 +1467,65 @@ Deno.test("export preflight and every export entry point stay callable", async (
     assert(
       withGap.total > report.total,
       "adding a gap raises the total issue count",
+    );
+  } finally {
+    restore();
+  }
+});
+
+Deno.test("service export reuses its authoritative revision, projection, and warning codes", async () => {
+  const calls: Array<{ command: string; args: Record<string, unknown> }> = [];
+  const revision = "sha256:service-snapshot";
+  const bridgeOverrides = {
+    invoke: async (command: string, args: Record<string, unknown>) => {
+      calls.push({ command, args });
+      assert(command === "export.preflight", "openPreflight calls the service authority");
+      return {
+        issues: [{ severity: "warning", code: "service_warning", count: 1, message: "service warning" }],
+        blocking: [],
+        warnings: [{ code: "service_warning", count: 1, message: "service warning" }],
+        ok: true,
+        snapshot_revision: revision,
+        counts: {},
+      };
+    },
+    exportProject: async (...args: unknown[]) => {
+      calls.push({ command: "export.run", args: { options: args[5] as Record<string, unknown> } });
+      return { files: [] };
+    },
+  };
+  const { store, restore } = await bootStore(bridgeOverrides);
+  try {
+    store.addMapItem("服务导出契约");
+    store.addBlock("paragraph", "预检与运行使用同一投影");
+    store.addPlaceholder("image", "仅用于产生本地别名警告");
+    store.ui.publishFormat = "markdown";
+
+    await store.openPreflight();
+    const preflight = calls.find((call) => call.command === "export.preflight")!;
+    const preflightOptions = preflight.args.options as Record<string, unknown>;
+    const storedOptions = store.ui.preflightOptions as Record<string, unknown>;
+    const storedReport = store.ui.preflightReport as { issues: Array<{ severity?: string; code?: string }> };
+    assert(preflightOptions.snapshot_revision === undefined, "service computes its own snapshot revision");
+    assert(storedOptions.snapshot_revision === revision, "opaque service revision is retained for run");
+    assert(
+      storedReport.issues.filter((issue) => issue.severity === "warning")
+        .map((issue) => issue.code).join(",") === "service_warning",
+      "service warning codes replace locally synthesized warning aliases",
+    );
+
+    store.acknowledgeExportWarning("service_warning", true);
+    await store.exportCurrent("markdown");
+    const run = calls.find((call) => call.command === "export.run")!;
+    const runOptions = run.args.options as Record<string, unknown>;
+    assert(runOptions.snapshot_revision === revision, "run sends the exact authoritative service revision");
+    assert(
+      JSON.stringify(runOptions.acknowledged_warnings) === JSON.stringify(["service_warning"]),
+      "run acknowledges exactly the codes returned by service preflight",
+    );
+    assert(
+      JSON.stringify(runOptions.projection) === JSON.stringify(preflightOptions.projection),
+      "run sends the exact projection checked during preflight",
     );
   } finally {
     restore();

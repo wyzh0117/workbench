@@ -12,6 +12,8 @@ const READER_KEYS = [
   "right_panel",
   "route",
   "selected_block_id",
+  "layout_page_id",
+  "layout_zoom",
   "ai_scope",
   "ai_provider_id",
   "ai_model",
@@ -253,8 +255,13 @@ function normalizeSession(value: unknown, projectId: string): BrowserReaderSessi
     }
     if (["left_collapsed", "right_collapsed"].includes(key)) {
       if (typeof child !== "boolean") return null;
-    } else if (key === "active_content_item_id" || key === "selected_block_id") {
+    } else if (
+      key === "active_content_item_id" || key === "selected_block_id" ||
+      key === "layout_page_id"
+    ) {
       if (child !== null && typeof child !== "string") return null;
+    } else if (key === "layout_zoom") {
+      if (child !== "fit" && child !== "actual") return null;
     } else if (typeof child !== "string") {
       return null;
     }

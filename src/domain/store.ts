@@ -23,6 +23,7 @@ const CANONICAL_ARRAYS = [
   "layout_templates",
   "layout_instances",
   "layout_sections",
+  "layout_pages",
   "placements",
   "inbox_items",
   "export_presets",
@@ -151,6 +152,7 @@ export function createEmptyProjectData(
     layout_templates: [],
     layout_instances: [],
     layout_sections: [],
+    layout_pages: [],
     placements: [],
     inbox_items: [],
     export_presets: [],
@@ -549,6 +551,11 @@ export function validateProjectData(input: unknown): ValidationIssue[] {
     "layout_sections",
     issues,
   );
+  const pages = ids<AnyRecord>(
+    collection("layout_pages"),
+    "layout_pages",
+    issues,
+  );
   const placements = ids<AnyRecord>(
     collection("placements"),
     "placements",
@@ -639,6 +646,7 @@ export function validateProjectData(input: unknown): ValidationIssue[] {
       ["layout_templates", templates],
       ["layout_instances", layouts],
       ["layout_sections", sections],
+      ["layout_pages", pages],
       ["placements", placements],
       ["inbox_items", inbox],
       ["export_presets", presets],
@@ -1238,6 +1246,62 @@ export function validateProjectData(input: unknown): ValidationIssue[] {
       "排版模板不存在",
     );
     requireEnum(value.mode, ENUMS.layout_mode, `${path}.mode`, issues);
+    if (value.pagination_mode !== undefined) {
+      requireEnum(
+        value.pagination_mode,
+        ["continuous", "paged"],
+        `${path}.pagination_mode`,
+        issues,
+      );
+    }
+    if (value.page_size !== undefined && value.page_size !== null) {
+      const pageSize = isRecord(value.page_size) ? value.page_size : null;
+      if (!pageSize) {
+        issues.push({
+          path: `${path}.page_size`,
+          code: "invalid_value",
+          message: "页面尺寸必须是对象",
+        });
+      } else {
+        if (pageSize.preset !== undefined) {
+          requireEnum(
+            pageSize.preset,
+            ["16:9", "a4-portrait", "a4-landscape", "custom", "legacy"],
+            `${path}.page_size.preset`,
+            issues,
+          );
+        }
+        for (const field of ["width_pt", "height_pt"]) {
+          const dimension = pageSize[field];
+          if (typeof dimension !== "number" || !Number.isFinite(dimension) ||
+            dimension <= 0 || dimension > 14400) {
+            issues.push({
+              path: `${path}.page_size.${field}`,
+              code: "invalid_value",
+              message: "页面尺寸必须是 0 到 14400pt 之间的有限正数",
+            });
+          }
+        }
+        const presetSizes: Record<string, [number, number]> = {
+          "16:9": [960, 540],
+          "a4-portrait": [595.2756, 841.8898],
+          "a4-landscape": [841.8898, 595.2756],
+        };
+        const expected = typeof pageSize.preset === "string"
+          ? presetSizes[pageSize.preset]
+          : undefined;
+        if (expected && (
+          Math.abs(Number(pageSize.width_pt) - expected[0]) > 0.01 ||
+          Math.abs(Number(pageSize.height_pt) - expected[1]) > 0.01
+        )) {
+          issues.push({
+            path: `${path}.page_size`,
+            code: "invalid_value",
+            message: "预设页面尺寸与对应方向不一致",
+          });
+        }
+      }
+    }
     const template = typeof value.template_id === "string"
       ? templates.get(value.template_id)
       : null;
@@ -1258,6 +1322,15 @@ export function validateProjectData(input: unknown): ValidationIssue[] {
         message: "排版实例与模板模式不一致",
       });
     }
+    if (value.pagination_mode === "paged" && ![...pages.values()].some((page) =>
+      page.layout_instance_id === value.id
+    )) {
+      issues.push({
+        path: `${path}.pagination_mode`,
+        code: "invalid_value",
+        message: "分页排版至少需要一个页面",
+      });
+    }
   }
   for (const [key, value] of sections) {
     requireRef(
@@ -1267,6 +1340,43 @@ export function validateProjectData(input: unknown): ValidationIssue[] {
       issues,
       "排版区域所属版本不存在",
     );
+  }
+  for (const [key, value] of pages) {
+    const path = `layout_pages.${key}`;
+    requireRef(
+      layouts,
+      value.layout_instance_id,
+      `${path}.layout_instance_id`,
+      issues,
+      "页面所属排版不存在",
+    );
+    if (typeof value.title !== "string" || !value.title.trim()) {
+      issues.push({
+        path: `${path}.title`,
+        code: "invalid_value",
+        message: "页面标题不能为空",
+      });
+    }
+    if (!Number.isInteger(value.order_index) || Number(value.order_index) < 0) {
+      issues.push({
+        path: `${path}.order_index`,
+        code: "invalid_value",
+        message: "页面顺序必须是非负整数",
+      });
+    }
+    const grid = isRecord(value.grid_definition) ? value.grid_definition : null;
+    for (const field of ["rows", "columns"]) {
+      const tracks = grid?.[field];
+      if (!Array.isArray(tracks) || !tracks.length || tracks.some((track) =>
+        typeof track !== "number" || !Number.isFinite(track) || track <= 0
+      )) {
+        issues.push({
+          path: `${path}.grid_definition.${field}`,
+          code: "invalid_value",
+          message: "页面网格轨道必须是有限正数数组",
+        });
+      }
+    }
   }
   for (const [key, value] of placements) {
     const path = `placements.${key}`;
@@ -1290,6 +1400,13 @@ export function validateProjectData(input: unknown): ValidationIssue[] {
       `${path}.section_id`,
       issues,
       "放置区域不存在",
+    );
+    requireNullableRef(
+      pages,
+      value.page_id,
+      `${path}.page_id`,
+      issues,
+      "放置页面不存在",
     );
     requireEnum(
       value.fit_mode,
@@ -1344,6 +1461,35 @@ export function validateProjectData(input: unknown): ValidationIssue[] {
         code: "cross_content_reference",
         message: "排版放置区块不属于该内容",
       });
+    }
+    const page = typeof value.page_id === "string"
+      ? pages.get(value.page_id)
+      : null;
+    if (page && page.layout_instance_id !== value.layout_instance_id) {
+      issues.push({
+        path: `${path}.page_id`,
+        code: "cross_layout_reference",
+        message: "放置页面不属于该排版",
+      });
+    }
+    if (layout?.pagination_mode === "paged" && !page) {
+      issues.push({
+        path: `${path}.page_id`,
+        code: "required_reference",
+        message: "分页排版中的正文必须归属一个页面",
+      });
+    }
+    if (page) {
+      const grid = isRecord(page.grid_definition) ? page.grid_definition : {};
+      const rowCount = Array.isArray(grid.rows) ? grid.rows.length : 0;
+      const columnCount = Array.isArray(grid.columns) ? grid.columns.length : 0;
+      if (Number(value.row_end) > rowCount || Number(value.column_end) > columnCount) {
+        issues.push({
+          path: `${path}.page_id`,
+          code: "out_of_bounds",
+          message: "放置范围超出页面网格",
+        });
+      }
     }
     const section = typeof value.section_id === "string"
       ? sections.get(value.section_id)

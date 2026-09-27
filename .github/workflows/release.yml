@@ -127,7 +127,8 @@ jobs:
           spctl --assess --type execute --verbose "$APP" 2>&1 || true
 
       - name: Publish release assets
-        if: github.ref_type == 'tag'
+        # Only the tag push publishes; workflow_dispatch stays build-only even on a tag.
+        if: github.event_name == 'push' && github.ref_type == 'tag'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
@@ -156,11 +157,16 @@ jobs:
           )"
           fi
 
-          cat > dist/release-notes.md <<EOF
-          # AI Course Workbench ${VERSION}
-
-          首个可公开安装的 macOS 分发版本。
-
+          NOTES_FILE=".github/release-notes/${TAG}.md"
+          {
+            printf '# AI Course Workbench %s\n\n' "$VERSION"
+            if [ -f "$NOTES_FILE" ]; then
+              cat "$NOTES_FILE"
+              printf '\n'
+            else
+              printf 'Universal macOS update.\n\n'
+            fi
+            cat <<EOF
           ## System
 
           - macOS 11.0 (Big Sur) 或更高版本
@@ -194,6 +200,7 @@ jobs:
           - Latest release page: https://github.com/${GITHUB_REPOSITORY}/releases/latest
           - Direct download: https://github.com/${GITHUB_REPOSITORY}/releases/latest/download/AI-Course-Workbench-macOS.dmg
           EOF
+          } > dist/release-notes.md
 
           if ! gh release view "$TAG" >/dev/null 2>&1; then
             # Normal path: a brand-new tag, so the Release does not exist yet.
@@ -232,7 +239,7 @@ jobs:
                 echo ""
                 echo "Overwriting it would give anyone who already downloaded $TAG a same-named file with a different SHA-256 — exactly what the rule prevents."
                 echo ""
-                echo "To ship this build, cut a NEW version: fix -> new commit -> new tag -> new Release (for example v0.1.1 -> v0.1.2)."
+                echo "To ship this build, fix it in a new commit and cut a new tag; never reuse a published tag."
               } >> "$GITHUB_STEP_SUMMARY"
               exit 1
             fi

@@ -2,7 +2,7 @@ use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
 use serde::Serialize;
 use serde_json::{json, Map, Value};
 use sha2::{Digest, Sha256};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fs::{self, File, OpenOptions};
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::{Component, Path, PathBuf};
@@ -13,6 +13,8 @@ use std::thread;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tauri::{AppHandle, Emitter, Manager, State};
 use tauri_plugin_dialog::DialogExt;
+
+mod paged_export;
 
 static ID_COUNTER: AtomicU64 = AtomicU64::new(0);
 const PROJECT_LOCK_RELATIVE_PATH: &str = ".workspace/project.lock";
@@ -2090,9 +2092,9 @@ fn scan_mime_for(name: &str) -> Option<&'static str> {
             .as_str()
         {
             "pdf" => Some("application/pdf"),
-            "docx" => Some(
-                "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-            ),
+            "docx" => {
+                Some("application/vnd.openxmlformats-officedocument.wordprocessingml.document")
+            }
             "doc" => Some("application/msword"),
             "text" => Some("text/plain"),
             _ => None,
@@ -2148,9 +2150,7 @@ fn push_scan_entry(
         .and_then(|value| value.to_str())
         .unwrap_or("");
     let mime = if kind == "file" {
-        scan_mime_for(name)
-            .map(Value::from)
-            .unwrap_or(Value::Null)
+        scan_mime_for(name).map(Value::from).unwrap_or(Value::Null)
     } else {
         Value::Null
     };
@@ -2181,7 +2181,8 @@ fn walk_folder_scan(
     let meta = match fs::symlink_metadata(path) {
         Ok(meta) => meta,
         Err(error) => {
-            let relative = scan_relative(root, path).unwrap_or_else(|_| path.to_string_lossy().into());
+            let relative =
+                scan_relative(root, path).unwrap_or_else(|_| path.to_string_lossy().into());
             let message = format!("无法读取：{error}");
             push_scan_entry(
                 entries,
@@ -2291,14 +2292,7 @@ fn walk_folder_scan(
             meta.len()
         ));
     }
-    push_scan_entry(
-        entries,
-        path,
-        &relative,
-        "file",
-        Some(meta.len()),
-        None,
-    );
+    push_scan_entry(entries, path, &relative, "file", Some(meta.len()), None);
 }
 
 /// Read-only folder scan for 导入已有文件夹 (V1-T04). Does not write project.json.
@@ -2309,10 +2303,7 @@ fn folder_scan(
     folder_path: Option<String>,
     root: Option<String>,
 ) -> Result<Value, String> {
-    let raw = path
-        .or(folder_path)
-        .or(root)
-        .unwrap_or_default();
+    let raw = path.or(folder_path).or(root).unwrap_or_default();
     let trimmed = raw.trim();
     let path = PathBuf::from(trimmed);
     if trimmed.is_empty() || !path.is_absolute() {
@@ -2367,8 +2358,7 @@ fn folder_preview_kind(name: &str, mime: Option<&str>) -> &'static str {
         .unwrap_or_default()
         .to_ascii_lowercase();
     let lower_mime = mime.unwrap_or("").to_ascii_lowercase();
-    if lower_mime.starts_with("text/")
-        || matches!(ext.as_str(), "md" | "markdown" | "txt" | "text")
+    if lower_mime.starts_with("text/") || matches!(ext.as_str(), "md" | "markdown" | "txt" | "text")
     {
         return "text";
     }
@@ -2380,12 +2370,10 @@ fn folder_preview_kind(name: &str, mime: Option<&str>) -> &'static str {
     {
         return "image";
     }
-    if lower_mime.starts_with("video/") || matches!(ext.as_str(), "mp4" | "webm" | "mov" | "m4v")
-    {
+    if lower_mime.starts_with("video/") || matches!(ext.as_str(), "mp4" | "webm" | "mov" | "m4v") {
         return "video";
     }
-    if lower_mime.starts_with("audio/") || matches!(ext.as_str(), "mp3" | "wav" | "m4a" | "ogg")
-    {
+    if lower_mime.starts_with("audio/") || matches!(ext.as_str(), "mp3" | "wav" | "m4a" | "ogg") {
         return "audio";
     }
     if lower_mime == "application/pdf"
@@ -2422,8 +2410,8 @@ fn folder_read_preview(
         return Err("导入文件夹必须是用户明确选择的绝对路径".into());
     }
     reject_symlink(&root_path, "导入文件夹")?;
-    let root_meta = fs::symlink_metadata(&root_path)
-        .map_err(|error| format!("无法打开所选文件夹：{error}"))?;
+    let root_meta =
+        fs::symlink_metadata(&root_path).map_err(|error| format!("无法打开所选文件夹：{error}"))?;
     if root_meta.file_type().is_symlink() {
         return Err("为避免越过目录边界，导入不支持以符号链接作为根目录".into());
     }
@@ -2505,7 +2493,11 @@ fn folder_read_preview(
             "note": "当前版本暂不支持预览此类型",
         }));
     }
-    let limit = if kind == "text" { TEXT_LIMIT } else { MEDIA_LIMIT };
+    let limit = if kind == "text" {
+        TEXT_LIMIT
+    } else {
+        MEDIA_LIMIT
+    };
     if size > limit {
         return Ok(json!({
             "relative_path": rel,
@@ -2541,7 +2533,6 @@ fn folder_read_preview(
         "note": Value::Null,
     }))
 }
-
 
 /// Strategy A in-place adoption after confirm (§§32–35).
 /// Writes project.json + .workspace into the chosen folder; copies media into
@@ -2580,8 +2571,8 @@ fn folder_adopt(
         return Err("导入文件夹必须是用户明确选择的绝对路径".into());
     }
     reject_symlink(&root_path, "导入文件夹")?;
-    let root_meta = fs::symlink_metadata(&root_path)
-        .map_err(|error| format!("无法打开所选文件夹：{error}"))?;
+    let root_meta =
+        fs::symlink_metadata(&root_path).map_err(|error| format!("无法打开所选文件夹：{error}"))?;
     if root_meta.file_type().is_symlink() || !root_meta.is_dir() {
         return Err("导入已有文件夹需要选择一个文件夹，而不是单个文件".into());
     }
@@ -2814,10 +2805,7 @@ fn folder_adopt(
                     }
                 }
                 let body = if is_text && mapping == "source" {
-                    format!(
-                        "源资料：{rel}\n\n{}",
-                        String::from_utf8_lossy(&bytes)
-                    )
+                    format!("源资料：{rel}\n\n{}", String::from_utf8_lossy(&bytes))
                 } else if mapping == "reference" {
                     format!("参考资料：{rel}")
                 } else {
@@ -3042,7 +3030,10 @@ fn adopt_add_lesson(
             .and_then(|stages| {
                 stages.iter().find_map(|stage| {
                     if stage.get("id").and_then(Value::as_str) == Some(stage_id) {
-                        stage.get("code").and_then(Value::as_str).map(str::to_string)
+                        stage
+                            .get("code")
+                            .and_then(Value::as_str)
+                            .map(str::to_string)
                     } else {
                         None
                     }
@@ -3163,9 +3154,7 @@ fn adopt_import_asset(
                 .unwrap_or("")
                 .to_string();
             reused_asset_ids.push(id.clone());
-            warnings.push(format!(
-                "素材「{filename}」checksum 已存在，已复用现有素材"
-            ));
+            warnings.push(format!("素材「{filename}」checksum 已存在，已复用现有素材"));
             return Ok(Some(id));
         }
     }
@@ -3282,7 +3271,9 @@ fn seed_content_type(title: &str) -> &'static str {
     if normalized.contains("总结") || normalized.contains("summary") {
         return "summary";
     }
-    if normalized.contains("测验") || normalized.contains("考试") || normalized.contains("assessment")
+    if normalized.contains("测验")
+        || normalized.contains("考试")
+        || normalized.contains("assessment")
     {
         return "assessment";
     }
@@ -3577,6 +3568,7 @@ fn export_format(preset: &Value) -> Result<String, String> {
         "web" | "static_web" | "web_package" => "web",
         "wechat" | "wechat_html" | "rich_text" => "wechat",
         "pdf" => "pdf",
+        "pptx" | "powerpoint" => "pptx",
         "asset" | "assets" | "asset_package" => "asset_package",
         "package" | "full_package" | "full_project" => "full_project",
         _ => return Err("当前原生导出不支持这个格式".into()),
@@ -3616,6 +3608,7 @@ fn output_filename(preset: &Value, project: &Value, format: &str) -> String {
         "json" | "full_project" | "asset_package" => "json",
         "markdown" => "md",
         "pdf" => "pdf",
+        "pptx" => "pptx",
         "web" => "web",
         _ => "html",
     };
@@ -4162,6 +4155,155 @@ fn export_content_item_id(
     Ok(Some(content_item_id.to_owned()))
 }
 
+const PPTX_IMAGE_READ_LIMIT: u64 = 64 * 1024 * 1024;
+
+fn export_revision(project: &Value) -> &str {
+    project
+        .get("project")
+        .and_then(|value| value.get("updated_at"))
+        .and_then(Value::as_str)
+        .unwrap_or("")
+}
+
+fn has_paged_layout(project: &Value, content_item_id: Option<&str>) -> bool {
+    project
+        .get("layout_instances")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .any(|layout| {
+            layout.get("pagination_mode").and_then(Value::as_str) == Some("paged")
+                && content_item_id.map_or(true, |id| {
+                    layout.get("content_item_id").and_then(Value::as_str) == Some(id)
+                })
+        })
+}
+
+fn canonical_export_asset_path(
+    project: &Value,
+    project_dir: &Path,
+    asset_id: &str,
+) -> Result<PathBuf, String> {
+    let asset = project
+        .get("assets")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .find(|asset| asset.get("id").and_then(Value::as_str) == Some(asset_id))
+        .ok_or_else(|| format!("投影引用了不存在的素材：{asset_id}"))?;
+    if asset.get("archived").and_then(Value::as_bool) == Some(true) {
+        return Err(format!("投影引用了已归档的素材：{asset_id}"));
+    }
+    let storage_path = asset
+        .get("storage_path")
+        .and_then(Value::as_str)
+        .ok_or_else(|| format!("素材缺少项目内路径：{asset_id}"))?;
+    let relative = Path::new(storage_path);
+    let mut components = relative.components();
+    if relative.is_absolute()
+        || !matches!(components.next(), Some(Component::Normal(name)) if name == "assets")
+        || components.any(|component| !matches!(component, Component::Normal(_)))
+    {
+        return Err(format!("素材路径不安全：{asset_id}"));
+    }
+    let mut target = project_dir.to_path_buf();
+    for component in relative.components() {
+        target.push(component.as_os_str());
+        reject_symlink(&target, "项目素材")?;
+    }
+    let real_root =
+        fs::canonicalize(project_dir).map_err(|error| format!("无法解析项目目录：{error}"))?;
+    let real_target =
+        fs::canonicalize(&target).map_err(|error| format!("无法读取项目素材：{error}"))?;
+    if !real_target.starts_with(&real_root) {
+        return Err("项目素材路径超出项目目录".into());
+    }
+    let metadata =
+        fs::metadata(&real_target).map_err(|error| format!("无法读取项目素材：{error}"))?;
+    if !metadata.is_file() {
+        return Err("项目素材路径不是文件".into());
+    }
+    Ok(real_target)
+}
+
+fn projection_media<'a>(projection: &'a Value, id: &str) -> Option<&'a Value> {
+    projection
+        .get("media")
+        .and_then(Value::as_array)
+        .and_then(|media| {
+            media
+                .iter()
+                .find(|item| item.get("id").and_then(Value::as_str) == Some(id))
+        })
+}
+
+fn projection_matches_options(projection: &Value, options: Option<&Value>) -> bool {
+    let Some(options) = options.and_then(Value::as_object) else {
+        return true;
+    };
+    let selection = projection.get("selection").unwrap_or(&Value::Null);
+    for (option_key, projection_key) in [
+        ("layout_instance_id", "layout_instance_id"),
+        ("page_ids", "page_ids"),
+    ] {
+        if let Some(expected) = options.get(option_key) {
+            let actual = selection.get(projection_key).unwrap_or(&Value::Null);
+            if actual != expected {
+                return false;
+            }
+        }
+    }
+    if let Some(expected) = options.get("target_page_size") {
+        if projection.get("target_page_size").unwrap_or(&Value::Null) != expected {
+            return false;
+        }
+    }
+    true
+}
+
+fn validate_projection_media(
+    projection: &Value,
+    project: &Value,
+    project_dir: &Path,
+    format: &str,
+) -> Vec<Value> {
+    let mut errors = Vec::new();
+    for id in paged_export::selected_media_ids(projection) {
+        let media = projection_media(projection, &id);
+        let resolved = canonical_export_asset_path(project, project_dir, &id);
+        match resolved {
+            Ok(path) if format == "pptx" => {
+                let kind = media
+                    .and_then(|value| value.get("type"))
+                    .and_then(Value::as_str)
+                    .unwrap_or("");
+                if matches!(kind, "image" | "gif") {
+                    match fs::metadata(&path) {
+                        Ok(metadata) if metadata.len() <= PPTX_IMAGE_READ_LIMIT => {}
+                        Ok(_) => errors.push(json!({
+                            "code": "asset_too_large",
+                            "asset_id": id,
+                            "message": "PPTX 图片超过 64 MB 的原生读取上限。"
+                        })),
+                        Err(error) => errors.push(json!({
+                            "code": "missing_asset",
+                            "asset_id": id,
+                            "message": format!("无法读取 PPTX 图片：{error}")
+                        })),
+                    }
+                }
+            }
+            Ok(_) => {}
+            Err(error) => errors.push(json!({
+                "code": "missing_asset",
+                "asset_id": id,
+                "message": error
+            })),
+        }
+    }
+    errors
+}
+
 fn export_preflight_report(
     preset: &Value,
     options: Option<&Value>,
@@ -4204,20 +4346,187 @@ fn export_preflight_report(
     reject_symlink(&output_path, "导出目标")?;
     let mut errors = Vec::new();
     let mut warnings = Vec::new();
+    let revision = export_revision(&project);
+    let option_object = options.and_then(Value::as_object);
+    let projection = option_object
+        .and_then(|object| object.get("projection"))
+        .filter(|value| value.is_object());
+    let page_aware_format = matches!(format.as_str(), "pdf" | "html" | "web" | "pptx");
+    if page_aware_format {
+        let selected_layout_id = option_object
+            .and_then(|object| object.get("layout_instance_id"))
+            .and_then(Value::as_str)
+            .or_else(|| {
+                field(object, &["layout_instance_id", "layoutInstanceId"]).and_then(Value::as_str)
+            });
+        match paged_export::legacy_grid_section_notices(
+            &project,
+            content_item_id.as_deref(),
+            selected_layout_id,
+        ) {
+            Ok(notices) => {
+                for notice in notices {
+                    errors.push(json!({
+                        "code": "legacy_grid_sections_require_pagination",
+                        "layout_instance_id": notice.get("layout_instance_id"),
+                        "section_ids": notice.get("section_ids"),
+                        "includes_unsectioned": notice.get("includes_unsectioned"),
+                        "message": notice.get("message")
+                    }));
+                }
+            }
+            Err(message) => errors.push(json!({
+                "code": "canonical_invalid",
+                "message": message
+            })),
+        }
+    }
+    let require_projection = page_aware_format
+        && (format == "pptx" || has_paged_layout(&project, content_item_id.as_deref()));
+    if page_aware_format && projection.is_none() && require_projection {
+        errors.push(json!({
+            "code": "missing_projection",
+            "message": "分页导出缺少冻结的页面投影，请重新打开预检后再试。"
+        }));
+    }
+    if let Some(snapshot_revision) = option_object
+        .and_then(|object| object.get("snapshot_revision"))
+        .and_then(Value::as_str)
+    {
+        if snapshot_revision != revision {
+            errors.push(json!({
+                "code": "stale_projection",
+                "message": "课程内容在预检后发生变化，请重新预检并确认导出警告。"
+            }));
+        }
+    }
+    let mut projected_media_ids = HashSet::new();
+    if let Some(projection) = projection.filter(|_| page_aware_format) {
+        if !projection_matches_options(projection, options) {
+            errors.push(json!({
+                "code": "projection_selection_mismatch",
+                "message": "冻结的页面范围与当前导出选择不一致，请重新预检。"
+            }));
+        }
+        match paged_export::validate_projection(
+            projection,
+            &project,
+            content_item_id.as_deref(),
+            &format,
+        ) {
+            Ok(()) => {}
+            Err(message) => {
+                let needs_target_page_size =
+                    message == paged_export::EXPLICIT_TARGET_PAGE_SIZE_REQUIRED;
+                errors.push(json!({
+                    "code": if needs_target_page_size {
+                        paged_export::EXPLICIT_TARGET_PAGE_SIZE_REQUIRED
+                    } else {
+                        "invalid_projection"
+                    },
+                    "message": if needs_target_page_size {
+                        "所选课时页面尺寸不同；请指定统一的输出页面尺寸后重试。"
+                    } else {
+                        message.as_str()
+                    }
+                }));
+            }
+        }
+        projected_media_ids = paged_export::selected_media_ids(projection)
+            .into_iter()
+            .collect::<HashSet<_>>();
+        errors.extend(validate_projection_media(
+            projection,
+            &project,
+            &project_dir,
+            &format,
+        ));
+        let unplaced = paged_export::unplaced_block_ids(projection);
+        let unplaced_attachments = if format == "pptx" {
+            paged_export::unplaced_attachment_ids(projection)
+        } else {
+            Vec::new()
+        };
+        if !unplaced.is_empty() || !unplaced_attachments.is_empty() {
+            let count = unplaced.len() + unplaced_attachments.len();
+            let message = if unplaced_attachments.is_empty() {
+                format!(
+                    "仍有 {} 块正文尚未放置；本次仅输出已排版内容。",
+                    unplaced.len()
+                )
+            } else {
+                format!(
+                    "仍有 {} 块正文与 {} 个素材附件尚未放入页面；本次仅输出已排版内容。",
+                    unplaced.len(),
+                    unplaced_attachments.len()
+                )
+            };
+            warnings.push(json!({
+                "code": "unplaced_content",
+                "count": count,
+                "block_ids": unplaced,
+                "attachment_ids": unplaced_attachments,
+                "message": message
+            }));
+        }
+        if let Some(assets) = project.get("assets").and_then(Value::as_array) {
+            for asset in assets {
+                if !asset
+                    .get("id")
+                    .and_then(Value::as_str)
+                    .is_some_and(|id| projected_media_ids.contains(id))
+                {
+                    continue;
+                }
+                let asset_type = asset.get("type").and_then(Value::as_str).unwrap_or("other");
+                let downgraded = (format == "pdf"
+                    && matches!(asset_type, "video" | "audio" | "document" | "other" | "gif"))
+                    || (format == "pptx"
+                        && matches!(asset_type, "gif" | "video" | "audio" | "document" | "other"));
+                if downgraded {
+                    warnings.push(json!({
+                        "code": "media_downgrade",
+                        "asset_id": asset.get("id"),
+                        "message": "该媒体在当前格式中将以附件卡片呈现"
+                    }));
+                }
+            }
+        }
+    }
     if let Some(requirements) = project.get("requirements").and_then(Value::as_array) {
-        let open = requirements
+        let open_content = requirements
             .iter()
             .filter(|requirement| {
                 requirement.get("status").and_then(Value::as_str) == Some("open")
+                    && requirement.get("scope").and_then(Value::as_str) == Some("content")
                     && content_item_id.as_deref().map_or(true, |id| {
                         requirement.get("content_item_id").and_then(Value::as_str) == Some(id)
                     })
             })
             .count();
-        if open > 0 {
-            warnings.push(
-                json!({ "code": "open_requirements", "count": open, "message": "仍有待补项目" }),
-            );
+        if open_content > 0 {
+            warnings.push(json!({
+                "code": "open_content_requirements",
+                "count": open_content,
+                "message": "仍有待补正文要求"
+            }));
+        }
+        let open_layout = requirements
+            .iter()
+            .filter(|requirement| {
+                requirement.get("status").and_then(Value::as_str) == Some("open")
+                    && requirement.get("scope").and_then(Value::as_str) == Some("layout")
+                    && content_item_id.as_deref().map_or(true, |id| {
+                        requirement.get("content_item_id").and_then(Value::as_str) == Some(id)
+                    })
+            })
+            .count();
+        if open_layout > 0 {
+            warnings.push(json!({
+                "code": "open_layout_requirements",
+                "count": open_layout,
+                "message": "仍有待补排版要求"
+            }));
         }
     }
     if let Some(assets) = project.get("assets").and_then(Value::as_array) {
@@ -4226,13 +4535,18 @@ fn export_preflight_report(
             let Some(asset_id) = asset.get("id").and_then(Value::as_str) else {
                 continue;
             };
+            if page_aware_format && projection.is_some() && !projected_media_ids.contains(asset_id)
+            {
+                continue;
+            }
             if !include_all_assets
                 && !asset_selected_for_content(&project, asset_id, content_item_id.as_deref())
             {
                 continue;
             }
             let asset_type = asset.get("type").and_then(Value::as_str).unwrap_or("other");
-            let downgraded = matches!(format.as_str(), "markdown" | "pdf" | "wechat")
+            let downgraded = !(page_aware_format && projection.is_some())
+                && matches!(format.as_str(), "markdown" | "pdf" | "wechat")
                 && (matches!(asset_type, "video" | "audio" | "document" | "other")
                     || (format == "pdf" && asset_type == "gif"));
             if downgraded {
@@ -4248,10 +4562,13 @@ fn export_preflight_report(
                 .is_some_and(|url| url.starts_with("http://") || url.starts_with("https://"))
             {
                 warnings.push(json!({
-                    "code": "external_reference",
+                    "code": "external_references",
                     "asset_id": asset_id,
                     "message": "外部素材链接不会被验证"
                 }));
+            }
+            if page_aware_format && projection.is_some() {
+                continue;
             }
             let Some(storage_path) = asset.get("storage_path").and_then(Value::as_str) else {
                 continue;
@@ -4271,12 +4588,71 @@ fn export_preflight_report(
             }
         }
     }
+    let acknowledgement_value =
+        option_object.and_then(|object| object.get("acknowledged_warnings"));
+    if acknowledgement_value.is_some_and(|value| !value.is_array()) {
+        errors.push(json!({
+            "code": "invalid_warning_acknowledgement",
+            "message": "导出警告确认格式无效，请重新预检。"
+        }));
+    }
+    let ack_values = acknowledgement_value
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    let acknowledged = ack_values
+        .iter()
+        .filter_map(Value::as_str)
+        .collect::<HashSet<_>>();
+    if acknowledged.len() != ack_values.len() {
+        errors.push(json!({
+            "code": "invalid_warning_acknowledgement",
+            "message": "导出警告确认包含无效项目。"
+        }));
+    }
+    if !acknowledged.is_empty() {
+        if option_object
+            .and_then(|object| object.get("snapshot_revision"))
+            .and_then(Value::as_str)
+            != Some(revision)
+        {
+            errors.push(json!({
+                "code": "stale_warning_acknowledgement",
+                "message": "导出警告确认没有绑定到当前课程版本，请重新预检。"
+            }));
+        }
+        let current_codes = warnings
+            .iter()
+            .filter_map(|warning| warning.get("code").and_then(Value::as_str))
+            .collect::<HashSet<_>>();
+        const KNOWN_CODES: &[&str] = &[
+            "open_content_requirements",
+            "open_layout_requirements",
+            "empty_text",
+            "external_references",
+            "media_downgrade",
+            "unplaced_content",
+            "layout_linearized",
+            "open_requirements",
+            "external_reference",
+        ];
+        if acknowledged
+            .iter()
+            .any(|code| !current_codes.contains(code) && !KNOWN_CODES.contains(code))
+        {
+            errors.push(json!({
+                "code": "invalid_warning_acknowledgement",
+                "message": "导出警告确认与当前预检结果不一致，请重新预检。"
+            }));
+        }
+    }
     let report = json!({
         "ok": errors.is_empty(),
         "errors": errors,
         "warnings": warnings,
         "format": format,
         "content_item_id": content_item_id,
+        "snapshot_revision": revision,
         "output_path": output_path,
         "target_path": output_path,
     });
@@ -4388,6 +4764,171 @@ fn copy_export_assets(
     Ok(copied)
 }
 
+fn safe_projection_output_path(media: &Value) -> Result<PathBuf, String> {
+    let raw = media
+        .get("output_path")
+        .and_then(Value::as_str)
+        .ok_or("投影素材缺少输出路径")?;
+    let relative = Path::new(raw);
+    if raw.contains('\\')
+        || relative.is_absolute()
+        || relative.as_os_str().is_empty()
+        || relative
+            .components()
+            .any(|component| !matches!(component, Component::Normal(_)))
+    {
+        return Err("投影素材输出路径不安全".into());
+    }
+    Ok(relative.to_path_buf())
+}
+
+fn projection_media_sources(projection: &Value) -> Result<HashMap<String, String>, String> {
+    let mut sources = HashMap::new();
+    for id in paged_export::selected_media_ids(projection) {
+        let media = projection_media(projection, &id).ok_or("投影素材缺少媒体记录")?;
+        let relative = safe_projection_output_path(media)?;
+        sources.insert(id, relative.to_string_lossy().replace('\\', "/"));
+    }
+    Ok(sources)
+}
+
+fn copy_projection_assets(
+    projection: &Value,
+    project: &Value,
+    project_dir: &Path,
+    destination_root: &Path,
+) -> Result<Vec<String>, String> {
+    let destination_root = fs::canonicalize(destination_root)
+        .map_err(|error| format!("无法解析素材输出目录：{error}"))?;
+    let mut copied = Vec::new();
+    for id in paged_export::selected_media_ids(projection) {
+        let media = projection_media(projection, &id).ok_or("投影素材缺少媒体记录")?;
+        let relative = safe_projection_output_path(media)?;
+        let source = canonical_export_asset_path(project, project_dir, &id)?;
+        let target = destination_root.join(&relative);
+        let mut cursor = destination_root.clone();
+        let components: Vec<_> = relative.components().collect();
+        for (index, component) in components.iter().enumerate() {
+            cursor.push(component.as_os_str());
+            reject_symlink(&cursor, "素材输出路径")?;
+            if index + 1 < components.len() && !cursor.exists() {
+                fs::create_dir(&cursor)
+                    .map_err(|error| format!("无法创建素材输出目录：{error}"))?;
+            }
+            if index + 1 < components.len() && !cursor.is_dir() {
+                return Err("素材输出路径的父级不是目录".into());
+            }
+        }
+        if target.exists() {
+            let real_target = fs::canonicalize(&target)
+                .map_err(|error| format!("无法解析素材输出路径：{error}"))?;
+            if real_target == source {
+                copied.push(relative.to_string_lossy().replace('\\', "/"));
+                continue;
+            }
+            return Err(format!(
+                "素材输出路径已存在，请选择新的导出位置：{}",
+                relative.display()
+            ));
+        }
+        let parent = target.parent().ok_or("素材输出路径的父目录无效")?;
+        let real_parent =
+            fs::canonicalize(parent).map_err(|error| format!("无法解析素材输出目录：{error}"))?;
+        if !real_parent.starts_with(&destination_root) {
+            return Err("素材输出路径超出导出目录".into());
+        }
+        fs::copy(&source, &target).map_err(|error| format!("无法复制导出素材：{error}"))?;
+        copied.push(relative.to_string_lossy().replace('\\', "/"));
+    }
+    copied.sort();
+    copied.dedup();
+    Ok(copied)
+}
+
+fn load_pptx_media(
+    projection: &Value,
+    project: &Value,
+    project_dir: &Path,
+) -> Result<HashMap<String, (String, Vec<u8>)>, String> {
+    const PPTX_MEDIA_TOTAL_LIMIT: u64 = 256 * 1024 * 1024;
+    let mut total = 0_u64;
+    let mut result = HashMap::new();
+    for id in paged_export::selected_media_ids(projection) {
+        let media = projection_media(projection, &id).ok_or("投影素材缺少媒体记录")?;
+        if media.get("type").and_then(Value::as_str) != Some("image") {
+            continue;
+        }
+        let source = canonical_export_asset_path(project, project_dir, &id)?;
+        let metadata =
+            fs::metadata(&source).map_err(|error| format!("无法读取 PPTX 图片：{error}"))?;
+        total = total.saturating_add(metadata.len());
+        if total > PPTX_MEDIA_TOTAL_LIMIT {
+            return Err("PPTX 图片总量超过 256 MB 的原生读取上限。".into());
+        }
+        let bytes = fs::read(&source).map_err(|error| format!("无法读取 PPTX 图片：{error}"))?;
+        let mime = media
+            .get("mime_type")
+            .and_then(Value::as_str)
+            .or_else(|| {
+                project
+                    .get("assets")
+                    .and_then(Value::as_array)
+                    .and_then(|assets| {
+                        assets.iter().find(|asset| {
+                            asset.get("id").and_then(Value::as_str) == Some(id.as_str())
+                        })
+                    })
+                    .and_then(|asset| asset.get("mime_type"))
+                    .and_then(Value::as_str)
+            })
+            .unwrap_or("application/octet-stream")
+            .to_owned();
+        result.insert(id, (mime, bytes));
+    }
+    Ok(result)
+}
+
+fn print_projection_pdf(
+    html: &str,
+    projection: &Value,
+    project: &Value,
+    project_dir: &Path,
+    output_path: &Path,
+) -> Result<(), String> {
+    let chrome = chrome_binary()
+        .ok_or("PDF 导出需要本机 Google Chrome/Chromium 打印引擎；请安装后重试，或先导出 HTML。")?;
+    let staging = unique_export_staging(output_path)?;
+    fs::create_dir_all(&staging).map_err(|error| format!("无法创建 PDF 临时目录：{error}"))?;
+    let result = (|| {
+        let html_path = staging.join("index.html");
+        fs::write(&html_path, html).map_err(|error| format!("无法写入 PDF 临时页面：{error}"))?;
+        copy_projection_assets(projection, project, project_dir, &staging)?;
+        let pdf_path = staging.join("result.pdf");
+        let file_url = format!("file://{}", html_path.to_string_lossy());
+        let status = ProcessCommand::new(chrome)
+            .args([
+                "--headless=new",
+                "--disable-gpu",
+                "--allow-file-access-from-files",
+                "--no-pdf-header-footer",
+                &format!("--print-to-pdf={}", pdf_path.to_string_lossy()),
+                &file_url,
+            ])
+            .status()
+            .map_err(|error| format!("无法启动 PDF 打印引擎：{error}"))?;
+        if !status.success() || !pdf_path.is_file() {
+            return Err("PDF 打印引擎没有生成可用文件；未修改源项目，请重试或导出 HTML。".into());
+        }
+        let bytes = fs::read(&pdf_path).map_err(|error| format!("无法读取 PDF 输出：{error}"))?;
+        if !bytes.starts_with(b"%PDF-") || bytes.len() < 1024 {
+            return Err("PDF 输出验证失败；临时文件已清理。".into());
+        }
+        atomic_write_bytes_path(output_path, &bytes)
+    })();
+    let _ = fs::remove_dir_all(&staging);
+    result
+}
+
 fn unique_export_staging(target: &Path) -> Result<PathBuf, String> {
     let parent = target.parent().ok_or("导出目标父目录无效")?;
     let name = target
@@ -4479,13 +5020,55 @@ fn export_run(preset: Value, options: Option<Value>) -> Result<Value, String> {
             report.clone(),
         ));
     }
+    let acknowledged = options
+        .as_ref()
+        .and_then(|value| value.get("acknowledged_warnings"))
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(Value::as_str)
+        .collect::<HashSet<_>>();
+    let unacknowledged = report
+        .get("warnings")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|warning| warning.get("code").and_then(Value::as_str))
+        .filter(|code| !acknowledged.contains(code))
+        .collect::<Vec<_>>();
+    if !unacknowledged.is_empty() {
+        return Err(structured_boundary_error(
+            "export_warnings_unacknowledged",
+            "请先在导出预检中确认所有警告，然后使用同一课程版本重新导出。",
+            report.clone(),
+        ));
+    }
     let content_item_id = report.get("content_item_id").and_then(Value::as_str);
+    let projection = options
+        .as_ref()
+        .and_then(|value| value.get("projection"))
+        .filter(|value| value.is_object());
     let mut exported_files: Vec<Value> = Vec::new();
     let mut total_bytes = 0_u64;
     match format.as_str() {
         "markdown" | "html" | "wechat" => {
+            let mut projection_copied = None;
             let contents = if format == "markdown" {
                 markdown_for_project(&project, content_item_id)
+            } else if format == "html" {
+                if let Some(projection) = projection {
+                    let sources = projection_media_sources(projection)?;
+                    let parent = output_path.parent().ok_or("导出目标父目录无效")?;
+                    projection_copied = Some(copy_projection_assets(
+                        projection,
+                        &project,
+                        &project_dir,
+                        parent,
+                    )?);
+                    paged_export::render_html(projection, &sources, false)?
+                } else {
+                    html_for_project(&project, content_item_id)
+                }
             } else {
                 let html = html_for_project(&project, content_item_id);
                 if format == "wechat" {
@@ -4499,9 +5082,12 @@ fn export_run(preset: Value, options: Option<Value>) -> Result<Value, String> {
                 }
             };
             atomic_write_path(&output_path, &contents, false)?;
-            let parent = output_path.parent().ok_or("导出目标父目录无效")?;
-            let copied =
-                copy_export_assets(&project, &project_dir, parent, content_item_id, false)?;
+            let copied = if let Some(copied) = projection_copied {
+                copied
+            } else {
+                let parent = output_path.parent().ok_or("导出目标父目录无效")?;
+                copy_export_assets(&project, &project_dir, parent, content_item_id, false)?
+            };
             total_bytes = contents.len() as u64;
             exported_files.push(json!({
                 "relative_path": output_path.file_name().and_then(|value| value.to_str()).unwrap_or("export"),
@@ -4530,8 +5116,14 @@ fn export_run(preset: Value, options: Option<Value>) -> Result<Value, String> {
             }));
         }
         "pdf" => {
-            let html = html_for_project(&project, content_item_id);
-            print_html_pdf(&html, &project, &project_dir, &output_path, content_item_id)?;
+            if let Some(projection) = projection {
+                let sources = projection_media_sources(projection)?;
+                let html = paged_export::render_html(projection, &sources, true)?;
+                print_projection_pdf(&html, projection, &project, &project_dir, &output_path)?;
+            } else {
+                let html = html_for_project(&project, content_item_id);
+                print_html_pdf(&html, &project, &project_dir, &output_path, content_item_id)?;
+            }
             total_bytes = fs::metadata(&output_path)
                 .map_err(|error| format!("无法检查 PDF 输出: {error}"))?
                 .len();
@@ -4539,6 +5131,18 @@ fn export_run(preset: Value, options: Option<Value>) -> Result<Value, String> {
                 "relative_path": output_path.file_name().and_then(|value| value.to_str()).unwrap_or("course.pdf"),
                 "path": output_path,
                 "mime_type": "application/pdf",
+            }));
+        }
+        "pptx" => {
+            let projection = projection.ok_or("PPTX 导出缺少页面投影，请重新预检后重试。")?;
+            let media = load_pptx_media(projection, &project, &project_dir)?;
+            let bytes = paged_export::render_pptx(projection, &media)?;
+            atomic_write_bytes_path(&output_path, &bytes)?;
+            total_bytes = bytes.len() as u64;
+            exported_files.push(json!({
+                "relative_path": output_path.file_name().and_then(|value| value.to_str()).unwrap_or("course.pptx"),
+                "path": output_path,
+                "mime_type": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
             }));
         }
         "web" | "asset_package" | "full_project" => {
@@ -4549,15 +5153,28 @@ fn export_run(preset: Value, options: Option<Value>) -> Result<Value, String> {
             fs::create_dir_all(&staging)
                 .map_err(|error| format!("无法创建导出临时目录: {error}"))?;
             let build = (|| -> Result<(), String> {
-                let copied = copy_export_assets(
-                    &project,
-                    &project_dir,
-                    &staging,
-                    content_item_id,
-                    format != "web",
-                )?;
+                let copied = if format == "web" {
+                    if let Some(projection) = projection {
+                        copy_projection_assets(projection, &project, &project_dir, &staging)?
+                    } else {
+                        copy_export_assets(
+                            &project,
+                            &project_dir,
+                            &staging,
+                            content_item_id,
+                            false,
+                        )?
+                    }
+                } else {
+                    copy_export_assets(&project, &project_dir, &staging, content_item_id, true)?
+                };
                 if format == "web" {
-                    let html = html_for_project(&project, content_item_id);
+                    let html = if let Some(projection) = projection {
+                        let sources = projection_media_sources(projection)?;
+                        paged_export::render_html(projection, &sources, false)?
+                    } else {
+                        html_for_project(&project, content_item_id)
+                    };
                     fs::write(staging.join("index.html"), html.as_bytes())
                         .map_err(|error| format!("无法写入网页入口: {error}"))?;
                     let manifest = json!({
@@ -5375,9 +5992,7 @@ fn security_command(args: &[String]) -> Result<(i32, Vec<u8>), String> {
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::null());
-        let output = command
-            .output()
-            .map_err(|_| keychain_failure("process"))?;
+        let output = command.output().map_err(|_| keychain_failure("process"))?;
         Ok((output.status.code().unwrap_or(-1), output.stdout))
     }
 }
@@ -7613,7 +8228,11 @@ mod tests {
 
     #[test]
     fn keychain_add_arguments_carry_the_secret_as_the_value_of_dash_w() {
-        let args = keychain_add_args("project-abc:provider:deepseek", "com.example.app", "sk-secret");
+        let args = keychain_add_args(
+            "project-abc:provider:deepseek",
+            "com.example.app",
+            "sk-secret",
+        );
         assert_eq!(args[0], "add-generic-password");
         assert_eq!(args[1], "-a");
         assert_eq!(args[2], "project-abc:provider:deepseek");
@@ -7623,7 +8242,10 @@ mod tests {
         assert!(args.contains(&"-U".to_string()));
         // A trailing bare `-w` means "prompt me", which stores an EMPTY
         // password without a TTY. The secret must be its argument instead.
-        let dash_w = args.iter().position(|arg| arg == "-w").expect("`-w` must be present");
+        let dash_w = args
+            .iter()
+            .position(|arg| arg == "-w")
+            .expect("`-w` must be present");
         assert_eq!(
             args.get(dash_w + 1).map(String::as_str),
             Some("sk-secret"),
@@ -7673,7 +8295,6 @@ mod tests {
         project
     }
 
-
     #[test]
     fn seed_outline_lines_become_stages_and_contents() {
         let nodes = seed_lines_to_nodes(
@@ -7681,11 +8302,7 @@ mod tests {
         );
         let types: Vec<&str> = nodes
             .iter()
-            .map(|node| {
-                node.get("node_type")
-                    .and_then(Value::as_str)
-                    .unwrap_or("")
-            })
+            .map(|node| node.get("node_type").and_then(Value::as_str).unwrap_or(""))
             .collect();
         assert_eq!(types, vec!["stage", "content", "content", "content"]);
         assert_eq!(
@@ -7732,11 +8349,7 @@ mod tests {
         let nodes = seed_lines_to_nodes("## 第二阶段 进阶\n1. 让 AI 稳定理解需求\n2) 交付结果");
         let types: Vec<&str> = nodes
             .iter()
-            .map(|node| {
-                node.get("node_type")
-                    .and_then(Value::as_str)
-                    .unwrap_or("")
-            })
+            .map(|node| node.get("node_type").and_then(Value::as_str).unwrap_or(""))
             .collect();
         assert_eq!(
             types,
@@ -7754,9 +8367,16 @@ mod tests {
             "stage nodes stay at the top level"
         );
         let empty = seed_lines_to_nodes("   \n\n");
-        assert_eq!(empty.len(), 2, "an empty input gets one stage and one lesson");
+        assert_eq!(
+            empty.len(),
+            2,
+            "an empty input gets one stage and one lesson"
+        );
         assert_eq!(empty[0].get("title").and_then(Value::as_str), Some("开始"));
-        assert_eq!(empty[1].get("title").and_then(Value::as_str), Some("第一课"));
+        assert_eq!(
+            empty[1].get("title").and_then(Value::as_str),
+            Some("第一课")
+        );
         assert_eq!(
             first_meaningful_line("### AI 五阶段成长课程\n第二阶段"),
             "AI 五阶段成长课程",
@@ -8298,6 +8918,7 @@ mod tests {
             "project_dir": "/tmp/example-project",
             "project_id": "p1",
             "active_content_item_id": "c1",
+            "layout_page_id": "page-1",
             "mode": "writing",
             "right_panel": "requirements",
             "route": "editor",
@@ -8314,6 +8935,10 @@ mod tests {
             Some("c1"),
             "the persisted session must keep the lesson the user was editing"
         );
+        assert_eq!(
+            session.get("layout_page_id").and_then(Value::as_str),
+            Some("page-1")
+        );
         let with_secret = json!({
             "project_dir": "/tmp/example-project",
             "active_content_item_id": "c1",
@@ -8327,6 +8952,215 @@ mod tests {
             ASSET_READ_SIZE_LIMIT > 0 && ASSET_READ_SIZE_LIMIT <= 64 * 1024 * 1024,
             "asset preview reads must stay bounded"
         );
+    }
+
+    #[test]
+    fn paged_pptx_run_requires_revision_bound_warning_acknowledgement() {
+        let directory = test_directory("paged-pptx-run");
+        let project_dir = directory.to_string_lossy().into_owned();
+        let output_path = directory.join("lesson.pptx");
+        let mut project = blank_adopt_project("分页导出").expect("canonical project");
+        project["project"]["id"] = json!("project-1");
+        project["project"]["updated_at"] = json!("revision-1");
+        project["content_items"] = json!([{
+            "id": "lesson-1", "title": "Lesson", "document_id": "doc-1",
+            "order_index": 0, "archived": false
+        }]);
+        project["layout_instances"] = json!([{
+            "id": "layout-1", "content_item_id": "lesson-1", "mode": "grid",
+            "pagination_mode": "paged",
+            "page_size": { "preset": "16:9", "width_pt": 960.0, "height_pt": 540.0 }
+        }]);
+        project["layout_pages"] = json!([{
+            "id": "page-1", "layout_instance_id": "layout-1", "title": "第一张",
+            "order_index": 0, "grid_definition": { "columns": [], "rows": [] }
+        }]);
+        project_create(project_dir.clone(), project).expect("open test project");
+
+        let projection = json!({
+            "schema_version": "2",
+            "project_id": "project-1",
+            "title": "分页导出",
+            "generated_from_updated_at": "revision-1",
+            "scope": "lesson",
+            "content_item_id": "lesson-1",
+            "selection": {
+                "content_item_id": "lesson-1",
+                "layout_instance_id": "layout-1",
+                "page_ids": null
+            },
+            "target_page_size": null,
+            "lessons": [{
+                "id": "lesson-1", "title": "Lesson", "blocks": [], "attachments": [],
+                "layout": {
+                    "layout_instance_id": "layout-1", "mode": "grid",
+                    "pagination_mode": "paged", "pages": [{
+                        "page_id": "page-1", "title": "第一张", "order": 0,
+                        "logical_width_pt": 960.0, "logical_height_pt": 540.0,
+                        "items": [{
+                            "placement_id": "place-1", "block_id": "block-1",
+                            "kind": "paragraph", "text": "Editable text", "heading_level": null,
+                            "rect": { "x_pt": 40.0, "y_pt": 30.0, "width_pt": 360.0, "height_pt": 90.0 },
+                            "style": { "alignment": {}, "fit_mode": "natural", "padding": {}, "z_index": 0 },
+                            "media": null
+                        }]
+                    }],
+                    "unplaced_block_ids": ["block-unplaced"]
+                }
+            }],
+            "media": []
+        });
+        let preset = json!({
+            "project_dir": project_dir,
+            "output_path": output_path,
+            "output_type": "pptx",
+            "content_item_id": "lesson-1"
+        });
+        let options = json!({
+            "content_item_id": "lesson-1",
+            "layout_instance_id": "layout-1",
+            "page_ids": null,
+            "target_page_size": null,
+            "snapshot_revision": "revision-1",
+            "projection": projection
+        });
+
+        let preflight = export_preflight(preset.clone(), Some(options.clone()))
+            .expect("preflight should report the unplaced block");
+        assert_eq!(preflight["ok"], json!(true));
+        assert_eq!(preflight["snapshot_revision"], json!("revision-1"));
+        assert_eq!(preflight["warnings"][0]["code"], json!("unplaced_content"));
+        assert_eq!(
+            preflight["warnings"][0]["block_ids"],
+            json!(["block-unplaced"])
+        );
+
+        let rejected = export_run(preset.clone(), Some(options.clone()))
+            .expect_err("export without warning acknowledgement must be refused");
+        assert!(
+            rejected.contains("export_warnings_unacknowledged"),
+            "{rejected}"
+        );
+
+        let mut acknowledged = options;
+        acknowledged["acknowledged_warnings"] = json!(["unplaced_content"]);
+        let completed = export_run(preset, Some(acknowledged))
+            .expect("acknowledged page-aware PPTX export should complete");
+        assert_eq!(completed["status"], json!("completed"));
+        assert_eq!(completed["format"], json!("pptx"));
+        let bytes = fs::read(directory.join("lesson.pptx")).expect("PPTX output");
+        assert!(bytes.starts_with(b"PK\x03\x04"));
+        assert!(bytes.len() > 1000);
+        let _ = project_close(project_dir);
+        let _ = fs::remove_dir_all(directory);
+    }
+
+    #[test]
+    fn native_preflight_requires_target_for_mixed_course_page_sizes() {
+        let directory = test_directory("mixed-course-page-sizes");
+        let project_dir = directory.to_string_lossy().into_owned();
+        let mut project = blank_adopt_project("异尺寸课件").expect("canonical project");
+        project["project"]["id"] = json!("project-mixed");
+        project["project"]["updated_at"] = json!("revision-mixed");
+        project["content_items"] = json!([
+            {"id":"lesson-1","title":"Landscape","document_id":"doc-1","order_index":0,"archived":false},
+            {"id":"lesson-2","title":"Portrait","document_id":"doc-2","order_index":1,"archived":false}
+        ]);
+        project["layout_instances"] = json!([
+            {"id":"layout-1","content_item_id":"lesson-1","mode":"grid","pagination_mode":"paged","page_size":{"preset":"16:9","width_pt":960.0,"height_pt":540.0}},
+            {"id":"layout-2","content_item_id":"lesson-2","mode":"grid","pagination_mode":"paged","page_size":{"preset":"a4-portrait","width_pt":595.2756,"height_pt":841.8898}}
+        ]);
+        project["layout_pages"] = json!([
+            {"id":"page-1","layout_instance_id":"layout-1","title":"Landscape","order_index":0,"grid_definition":{"columns":[],"rows":[]}},
+            {"id":"page-2","layout_instance_id":"layout-2","title":"Portrait","order_index":0,"grid_definition":{"columns":[],"rows":[]}}
+        ]);
+        project_create(project_dir.clone(), project).expect("open test project");
+
+        let projection = json!({
+            "schema_version":"2", "project_id":"project-mixed", "title":"异尺寸课件",
+            "generated_from_updated_at":"revision-mixed", "scope":"course", "content_item_id":null,
+            "selection":{"content_item_id":null,"layout_instance_id":null,"page_ids":null},
+            "target_page_size":null, "notices":[], "media":[],
+            "lessons":[
+                {"id":"lesson-1","title":"Landscape","blocks":[],"attachments":[],"layout":{
+                    "layout_instance_id":"layout-1","mode":"grid","pagination_mode":"paged","pages":[
+                        {"page_id":"page-1","title":"Landscape","order":0,"logical_width_pt":960.0,"logical_height_pt":540.0,"items":[]}
+                    ],"unplaced_block_ids":[]
+                }},
+                {"id":"lesson-2","title":"Portrait","blocks":[],"attachments":[],"layout":{
+                    "layout_instance_id":"layout-2","mode":"grid","pagination_mode":"paged","pages":[
+                        {"page_id":"page-2","title":"Portrait","order":0,"logical_width_pt":595.2756,"logical_height_pt":841.8898,"items":[]}
+                    ],"unplaced_block_ids":[]
+                }}
+            ]
+        });
+        let preset = json!({
+            "project_dir":project_dir, "output_path":directory.join("course.pdf"), "output_type":"pdf"
+        });
+        let options = json!({
+            "content_item_id":null, "layout_instance_id":null, "page_ids":null,
+            "target_page_size":null, "snapshot_revision":"revision-mixed", "projection":projection
+        });
+
+        let preflight = export_preflight(preset.clone(), Some(options.clone()))
+            .expect("preflight should return a blocking issue");
+        assert_eq!(preflight["ok"], json!(false));
+        assert!(preflight["errors"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|issue| { issue["code"] == json!("explicit_target_page_size_required") }));
+        assert!(export_run(preset, Some(options)).is_err());
+        assert!(!directory.join("course.pdf").exists());
+        let _ = project_close(project_dir);
+        let _ = fs::remove_dir_all(directory);
+    }
+
+    #[test]
+    fn native_preflight_blocks_ambiguous_legacy_grid_without_projection_notice() {
+        let directory = test_directory("legacy-grid-preflight");
+        let project_dir = directory.to_string_lossy().into_owned();
+        let mut project = blank_adopt_project("旧版 Grid").expect("canonical project");
+        project["project"]["id"] = json!("project-legacy");
+        project["content_items"] = json!([{
+            "id": "lesson-legacy", "title": "Lesson", "document_id": "doc-legacy",
+            "order_index": 0, "archived": false
+        }]);
+        project["layout_instances"] = json!([{
+            "id": "layout-legacy", "content_item_id": "lesson-legacy", "mode": "grid"
+        }]);
+        project["layout_sections"] = json!([
+            {"id":"section-1","layout_instance_id":"layout-legacy","order_index":0,"page_index":0},
+            {"id":"section-2","layout_instance_id":"layout-legacy","order_index":1,"page_index":0}
+        ]);
+        project["placements"] = json!([
+            {"id":"placement-1","layout_instance_id":"layout-legacy","block_id":"block-1","section_id":"section-1"},
+            {"id":"placement-2","layout_instance_id":"layout-legacy","block_id":"block-2","section_id":"section-2"}
+        ]);
+        project_create(project_dir.clone(), project).expect("write canonical project");
+
+        let preset = json!({
+            "project_dir": project_dir,
+            "output_path": directory.join("lesson.pdf"),
+            "output_type": "pdf",
+            "content_item_id": "lesson-legacy"
+        });
+        let options = json!({
+            "content_item_id": "lesson-legacy",
+            "layout_instance_id": "layout-legacy",
+            "page_ids": null
+        });
+        let preflight = export_preflight(preset.clone(), Some(options.clone()))
+            .expect("preflight should report canonical layout ambiguity");
+        assert_eq!(preflight["ok"], json!(false));
+        assert!(preflight["errors"].as_array().unwrap().iter().any(|issue| {
+            issue["code"] == json!("legacy_grid_sections_require_pagination")
+                && issue["section_ids"] == json!(["section-1", "section-2"])
+        }));
+        assert!(export_run(preset, Some(options)).is_err());
+        assert!(!directory.join("lesson.pdf").exists());
+        let _ = project_close(project_dir);
+        let _ = fs::remove_dir_all(directory);
     }
 
     #[test]
@@ -10194,8 +11028,15 @@ mod tests {
         let text = preview["text"].as_str().unwrap_or("");
         assert!(text.contains("导论"), "got text: {text}");
         assert!(preview["bytes_base64"].is_null());
-        assert_eq!(folder_scan_fingerprint(&root), before, "preview must not mutate files");
-        assert!(!root.join("project.json").exists(), "preview must not create project.json");
+        assert_eq!(
+            folder_scan_fingerprint(&root),
+            before,
+            "preview must not mutate files"
+        );
+        assert!(
+            !root.join("project.json").exists(),
+            "preview must not create project.json"
+        );
         let _ = fs::remove_dir_all(root);
     }
 
@@ -10254,7 +11095,11 @@ mod tests {
         assert!(docx["text"].is_null());
         assert!(docx["bytes_base64"].is_null());
 
-        assert_eq!(folder_scan_fingerprint(&root), before, "reference preview is metadata-only");
+        assert_eq!(
+            folder_scan_fingerprint(&root),
+            before,
+            "reference preview is metadata-only"
+        );
         assert!(!root.join("project.json").exists());
         let _ = fs::remove_dir_all(root);
     }
@@ -10326,8 +11171,12 @@ mod tests {
             "snapshots": [],
             "publications": []
         });
-        project_create(root.to_string_lossy().into_owned(), project).expect("create in nonempty folder");
-        assert!(root.join("project.json").exists(), "Strategy A writes project.json in place");
+        project_create(root.to_string_lossy().into_owned(), project)
+            .expect("create in nonempty folder");
+        assert!(
+            root.join("project.json").exists(),
+            "Strategy A writes project.json in place"
+        );
         let after = folder_scan_fingerprint(&root);
         // Fingerprint helper may include project.json; originals must remain.
         assert_eq!(
@@ -10414,7 +11263,11 @@ mod tests {
             "stages become Canonical"
         );
         assert!(
-            result["content_item_ids"].as_array().map(|v| v.len()).unwrap_or(0) >= 1,
+            result["content_item_ids"]
+                .as_array()
+                .map(|v| v.len())
+                .unwrap_or(0)
+                >= 1,
             "lessons become Canonical"
         );
         assert!(
@@ -10422,12 +11275,21 @@ mod tests {
             "media become Assets"
         );
         assert!(
-            result["source_ids"].as_array().map(|v| v.len()).unwrap_or(0) >= 1,
+            result["source_ids"]
+                .as_array()
+                .map(|v| v.len())
+                .unwrap_or(0)
+                >= 1,
             "pdf becomes Source/Reference"
         );
-        let copied = result["copied_files"].as_array().cloned().unwrap_or_default();
+        let copied = result["copied_files"]
+            .as_array()
+            .cloned()
+            .unwrap_or_default();
         assert!(
-            copied.iter().any(|value| value.as_str().unwrap_or("").starts_with("assets/")),
+            copied
+                .iter()
+                .any(|value| value.as_str().unwrap_or("").starts_with("assets/")),
             "managed copies live under assets/"
         );
         let _ = project_close(root.to_string_lossy().into_owned());
@@ -10530,7 +11392,10 @@ mod tests {
             ]
         });
         let second = folder_adopt(plan2, None, None).expect("second adopt");
-        let reused = second["reused_asset_ids"].as_array().cloned().unwrap_or_default();
+        let reused = second["reused_asset_ids"]
+            .as_array()
+            .cloned()
+            .unwrap_or_default();
         assert!(
             !reused.is_empty() || second["asset_ids"].as_array().map(|v| v.len()).unwrap_or(0) == 1,
             "identical checksum within one adopt must reuse one Asset id"
@@ -10598,7 +11463,10 @@ mod tests {
             ]
         });
         let result = folder_adopt(plan, None, None).expect("adopt");
-        let assets = result["data"]["assets"].as_array().cloned().unwrap_or_default();
+        let assets = result["data"]["assets"]
+            .as_array()
+            .cloned()
+            .unwrap_or_default();
         assert_eq!(assets.len(), 2, "different bytes → two Asset records");
         let paths: Vec<String> = assets
             .iter()
@@ -10606,7 +11474,9 @@ mod tests {
             .collect();
         assert_ne!(paths[0], paths[1], "storage paths must differ");
         assert!(
-            paths.iter().all(|p| p.starts_with("assets/") && p.contains("-shot.png")),
+            paths
+                .iter()
+                .all(|p| p.starts_with("assets/") && p.contains("-shot.png")),
             "id-prefixed assets/ paths"
         );
         assert_eq!(fs::read(root.join("a/shot.png")).unwrap(), bytes_a);
@@ -10666,7 +11536,10 @@ mod tests {
         });
         let result = folder_adopt(plan, None, None).expect("adopt");
         assert_eq!(
-            result["content_item_ids"].as_array().map(|v| v.len()).unwrap_or(0),
+            result["content_item_ids"]
+                .as_array()
+                .map(|v| v.len())
+                .unwrap_or(0),
             1,
             "only keep.md lesson"
         );
@@ -10680,12 +11553,14 @@ mod tests {
             .iter()
             .filter_map(|item| item["title"].as_str().map(str::to_string))
             .collect();
-        assert!(titles.iter().all(|t| !t.contains("notes")), "ignore mapping skipped");
+        assert!(
+            titles.iter().all(|t| !t.contains("notes")),
+            "ignore mapping skipped"
+        );
         assert_eq!(fs::read(root.join("skip.png")).unwrap(), vec![7, 7, 7]);
         let _ = project_close(root.to_string_lossy().into_owned());
         let _ = fs::remove_dir_all(root);
     }
-
 }
 
 pub fn run() {

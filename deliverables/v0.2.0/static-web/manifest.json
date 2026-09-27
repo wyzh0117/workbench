@@ -1,0 +1,11 @@
+{
+  "assets": [
+    "assets/campus-landscape.png",
+    "assets/river-evening.jpg"
+  ],
+  "content_item_id": null,
+  "entrypoint": "index.html",
+  "project_id": "58d220db-2947-4bf5-a8dd-705bbe6a54b2",
+  "schema_version": 1,
+  "scope": "course"
+}
