@@ -2402,7 +2402,7 @@ PROJECT_MASTER_CONTROL.md
 
 > **V0 仍为 CLOSED；V0-T01 / V0-T02 / V0-T03 / V0-T04 全部 VERIFIED。V1 保持 ACTIVE。V1-T01—T06 全部 VERIFIED。**
 
-用户已授权发布新的 v0.2.0 Release；该授权覆盖联合开发文档中旧的“不发布新 Release”条款，但不改写 v0.1.2 或更早已发布 tag / 资产。当前不创建新任务层级，不创建 V1-T07，也不关闭 V1。
+用户授权 T05/T06 验收通过后发布新 Release，覆盖联合开发文档中旧的“不发布新 Release”条款，但不改写既有 tag / 资产。v0.2.1 已发布；此前 v0.2.0 workflow 失败且无 Release / 资产。当前不创建新任务层级，不创建 V1-T07，也不关闭 V1。
 
 T05/T06 自动化、独立 review、桌面与真实阅读器验收证据见 **§38** 与 `V1-T05_T06_Completion_Report.md`。签名 / 公证仍为 PARTIAL 分发边界。
 
@@ -2428,7 +2428,7 @@ BACKLOG         Tauri WebView pointer-reorder；原生 folder picker / invalid-f
 用户 dogfood V1；签名 / 公证作为单独获批的分发工作
 ```
 
-T05/T06 已 VERIFIED。按已授权范围发布 v0.2.0，并严格保护 §0.4 规则，不覆盖 `v0.1.2` 等已发布 tag/Release/资产。
+T05/T06 已 VERIFIED；v0.2.1 已按授权发布，v0.2.0 失败 tag 冻结且无 Release / 资产。严格保护 §0.4，不覆盖已发布 tag / Release / 资产。
 
 注意：Dogfooding 是产品使用状态，不是新的产品阶段；不得创建
 `Dogfood Phase` / `V1-Dogfood` / `V1.1` / `V1-T01A`。
@@ -2542,7 +2542,7 @@ BACKLOG
 - Tauri WebView Explorer / Mapping / Adopt smoke（本轮未在 WKWebView 内复测）
 
 AFTER CURRENT TASK
-用户 dogfood 已验证的 V1-T05/T06。按已授权范围发布 v0.2.0；旧 tags / assets 冻结。V0 不重新打开。
+用户 dogfood V1-T05/T06。v0.2.1 已发布；既有 release tags / assets 均冻结。V0 不重新打开。
 
 V1
 ACTIVE
