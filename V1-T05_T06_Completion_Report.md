@@ -1,6 +1,6 @@
 # V1-T05 / V1-T06 Completion Report
 
-Updated: 2026-09-27
+Updated: 2026-09-28
 
 Status: **VERIFIED. V1 remains ACTIVE; next step is user dogfood.**
 
@@ -8,7 +8,7 @@ Status: **VERIFIED. V1 remains ACTIVE; next step is user dogfood.**
 
 V0 remains CLOSED and V1-T01 through V1-T06 are VERIFIED. Do not create V1-T07 or close V1 before separately authorized work.
 
-The user authorized a new release after acceptance and independent review, superseding the task spec's earlier “do not publish a new Release” limitation. The `v0.2.0` tag-triggered workflow failed during macOS certificate import before creating a GitHub Release or assets; that tag remains immutable. The workflow fix is being prepared for a new `v0.2.1` release. Existing published tags and assets remain immutable.
+The user authorized a new release after acceptance and independent review, superseding the task spec's earlier “do not publish a new Release” limitation. `v0.2.1` is now published. The earlier `v0.2.0` tag-triggered workflow failed during macOS certificate import before creating a GitHub Release or assets; that tag remains immutable. All previously published tags and assets remain immutable.
 
 ## Delivered
 
@@ -41,7 +41,7 @@ The user authorized a new release after acceptance and independent review, super
 ## Verified local Universal build used for T05/T06 acceptance
 
     App: src-tauri/target/universal-apple-darwin/release/bundle/macos/AI Course Workbench.app
-    Version: 0.2.0 (acceptance build; the next release target is 0.2.1)
+    Version: 0.2.0 (local T05/T06 reader acceptance build, predating the v0.2.1 release)
     Architectures: x86_64 arm64
     Executable SHA-256: 885fb6b143bf578405ba85db29edb623031d58994d624a12e0aa266d43de3d29
 
@@ -51,6 +51,10 @@ The user authorized a new release after acceptance and independent review, super
 
 hdiutil verify passed. The app is ad-hoc signed; it has no Apple Developer ID signature and is not notarized. The listed DMG hash identifies this local build. The tag-triggered release workflow supplies the published DMG's own SHA-256 sidecar.
 
-## Release status and next path
+## Published release
 
-The v0.2.0 tag-triggered run failed before creating a Release: the workflow passed empty `APPLE_CERTIFICATE` and password values to Tauri, and macOS `security import` rejected the empty certificate. No v0.2.0 Release assets were published; the failed tag is frozen. The next release candidate is v0.2.1, with mutually exclusive Developer ID and ad-hoc build steps so the ad-hoc path receives no certificate or notarization variables. Only a push of the final `v0.2.1` tag may publish; verify `main`, `origin/main` and the tag resolve to one commit, then anonymously download the Universal DMG and `.sha256` sidecar and verify version, architectures and checksum. The ad-hoc distribution has no Apple Developer ID signature or notarization; users may see macOS security prompts.
+GitHub Actions run [`36325086880`](https://github.com/wyzh0117/workbench/actions/runs/36325086880) succeeded and published [`v0.2.1`](https://github.com/wyzh0117/workbench/releases/tag/v0.2.1). The release source commit and peeled `v0.2.1` tag are `60f697697843a340da3a793f1bbd2165e390f783`. This documentation-only follow-up is a later commit on `main`; the published tag remains pinned to its release source commit.
+
+The Universal DMG is 10,857,264 bytes with SHA-256 `ca151a578065939f6c2e0dfa4f23955faee5f512c6833ccbe4931a68bf66817c`. An unauthenticated download matched the public `.sha256` sidecar and GitHub asset digest; `hdiutil verify` reported a valid image. The app bundle reports version 0.2.1 and contains x86_64 + arm64. It is ad-hoc signed without Apple Developer ID signing or notarization; users may see macOS security prompts.
+
+The `v0.2.0` tag-triggered run failed before creating a Release because macOS `security import` rejected the workflow's empty certificate values. No v0.2.0 Release assets were published and that tag remains frozen.

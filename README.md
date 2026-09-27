@@ -121,7 +121,7 @@ BLOCKER            = 缺正式 macOS signing / notarization credentials
 - V0 状态：**V0 CLOSED；V0-T01 / V0-T02 / V0-T03 / V0-T04 全部 VERIFIED**
 - NEXT ACTION：用户 dogfood；不创建 V1-T07，不关闭 V1
 
-T05/T06 自动化检查为 346/346，Rust 检查 78/78。页面恢复修复已在隔离桌面项目上连续两次重启验证；最终 Universal 构建也已恢复 page 3。最终 Universal native PDF smoke 输出一页 960×540 pt，正确包含第 3 页标题与正文。PowerPoint 已打开新的三页 PPTX 且未触发 Repair，并在副本中验证文字与图片可编辑。三页、两张图片的 Static Web 样例已通过独立 Chrome `file://` 阅读检查。V1-T05/T06 已 VERIFIED；下一步由用户 dogfood。当前 latest public release 仍为 `v0.1.2`；`v0.2.0` 的 tag workflow 在空 Apple 证书导入时失败，没有创建 Release 或资产，失败 tag 保持冻结。修复后的下一发布目标为 `v0.2.1`。分发包为 ad-hoc signed，未做 Apple Developer ID 签名或公证。
+T05/T06 自动化检查为 346/346，Rust 检查 78/78。页面恢复修复已在隔离桌面项目上连续两次重启验证；T05/T06 的 Universal app 恢复了 page 3。原生 PDF smoke 输出一页 960×540 pt，正确包含第 3 页标题与正文。PowerPoint 已打开三页 PPTX 且未触发 Repair，并在副本中验证文字与图片可编辑。三页、两张图片的 Static Web 样例已通过独立 Chrome `file://` 阅读检查。V1-T05/T06 已 VERIFIED；下一步由用户 dogfood。当前 latest public release 为 `v0.2.1`；tag-triggered run `36325086880` 成功。公开 Universal DMG SHA-256：`ca151a578065939f6c2e0dfa4f23955faee5f512c6833ccbe4931a68bf66817c`，匿名下载与 `.sha256` sidecar 校验一致。`v0.2.0` 失败 tag 保持冻结且没有 Release/资产。分发包为 ad-hoc signed，未做 Apple Developer ID 签名或公证。
 - 分发剩余工作（后续候选任务，等用户批准后再启动）：签名 / 公证 / 安装 smoke
 
 ---

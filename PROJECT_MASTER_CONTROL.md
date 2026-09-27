@@ -569,16 +569,16 @@ N1
 >
 > 产品状态：**DOGFOOD READY — ROUND 3；V1 ACTIVE**
 >
-> 分发状态：**PARTIAL / 公开下载可用**（latest public release 仍为 `v0.1.2`；T05/T06 的 `v0.2.0` tag workflow 失败且未创建 Release 或资产；下一发布目标 `v0.2.1`；Developer ID 签名与 Apple 公证仍未完成）
+> 分发状态：**PARTIAL / 公开下载可用**（latest public release `v0.2.1` 已发布；Universal DMG 与 SHA-256 sidecar 已匿名下载校验；Developer ID 签名与 Apple 公证仍未完成）
 >
-> Release 边界：**用户授权发布 T05/T06 新版本，覆盖设计文档旧“不发布新 Release”条款。`v0.2.0` tag 的 CI 在空 Apple 证书导入时失败且没有生成 Release；该 tag 与已发布的旧 tags / assets 均保持冻结，修复后改发 `v0.2.1`。**
+> Release 边界：**T05/T06 由 `v0.2.1` tag-triggered workflow 成功发布；此前失败的 `v0.2.0` tag 未移动且没有 Release/资产，所有已发布 tags / assets 均保持冻结。`v0.2.1` 源码提交为 `60f697697843a340da3a793f1bbd2165e390f783`；本次文档回写是后续 docs-only 提交，tag 保持指向发布源码提交。**
 >
 > 下一步：**用户 dogfood；不创建 V1-T07，不关闭 V1。**
 >
 > V0 状态保持：**V0 CLOSED；V0-T01 / V0-T02 / V0-T03 / V0-T04 全部 VERIFIED**
 >
 > V1-T01 状态保持：**VERIFIED**（见 **§33**）；V1-T02 状态保持：**VERIFIED**（见 **§29** / **§35** / **§36**）；V1-T03 状态保持：**VERIFIED**（ego-browser §21：26 PASS / 1 N-A / 0 FAIL；§9.3 真鼠 Drag Handle PASS；Tauri WebView 拖拽与原生非法文件夹 picker toast 记 BACKLOG，非 BLOCKER）；V1-T04 状态保持：**VERIFIED**（见 **§37**；ego-browser CourseFolder §41 走查；原生 folder picker N-A；Strategy A 原地接管；自动化 gate 全绿）；
-> T05/T06 完成报告与当前证据见 **§38** 和 `V1-T05_T06_Completion_Report.md`。此前 macOS Distribution & Public Release Closure 的已完成/未完成事实保留在 **§34**；当前签名/公证仍缺失，且 v0.2.1 等待修复后的 tag-triggered 构建。
+> T05/T06 完成报告与当前证据见 **§38** 和 `V1-T05_T06_Completion_Report.md`。此前 macOS Distribution & Public Release Closure 的已完成/未完成事实保留在 **§34**；`v0.2.1` 已发布，但签名/公证仍缺失。
 > 不发明 `V1-T03+04`、`V1-T05+T06` 或 `V1-T07` 编号。
 
 ---
@@ -3510,12 +3510,15 @@ V1 = ACTIVE
 V1-T05 Paged Canvas & Pagination = VERIFIED
 V1-T06 Layout-aware Export & PPTX = VERIFIED
 NEXT ACTION = USER DOGFOOD; V1 remains ACTIVE; no V1-T07
-Latest public release = v0.1.2
+Latest public release = v0.2.1
+Release source commit = 60f697697843a340da3a793f1bbd2165e390f783
+GitHub Actions run 36325086880 = SUCCESS
 v0.2.0 tag workflow = FAILED before creating a Release; tag stays immutable
-Next release target = v0.2.1 after the ad-hoc workflow fix; existing published tags/assets stay immutable
+v0.2.1 Universal DMG = SHA-256 ca151a578065939f6c2e0dfa4f23955faee5f512c6833ccbe4931a68bf66817c
+Distribution = ad-hoc signed; no Developer ID signature or notarization
 ```
 
-用户授权发布 T05/T06 新版本；该授权覆盖需求文档中旧的“不发布新 Release”范围限制，但不覆盖或改写既有 tag / 资产。`v0.2.0` tag-triggered run `36323485548` 在构建阶段因空 `APPLE_CERTIFICATE` 被 `security import` 拒绝，未创建 Release 或资产；该 tag 保持冻结。工作流修复使用互斥的 Developer ID 与 ad-hoc 构建步骤，下一发布目标为 `v0.2.1`。README 使用 latest Release 与 SHA-256 sidecar 动态链接，不把本地构建 hash 当成公开资产。
+用户授权发布 T05/T06 新版本；该授权覆盖需求文档中旧的“不发布新 Release”范围限制，但不覆盖或改写既有 tag / 资产。`v0.2.0` tag-triggered run `36323485548` 因空 `APPLE_CERTIFICATE` 导入失败，未创建 Release 或资产；该 tag 保持冻结。`v0.2.1` 已由 run `36325086880` 成功发布，源码提交为 `60f697697843a340da3a793f1bbd2165e390f783`。后续 docs-only PR 会让 `main` 前进，发布 tag 仍固定在该源码提交。README 使用 latest Release 与 SHA-256 sidecar 动态链接，不把本地构建 hash 当成公开资产。
 
 ## 38.2 Implementation and Automated Gates
 
@@ -3532,9 +3535,9 @@ Next release target = v0.2.1 after the ad-hoc workflow fix; existing published t
 - 最终 Universal app executable SHA-256 `885fb6b143bf578405ba85db29edb623031d58994d624a12e0aa266d43de3d29`；Launch → Workbench 后恢复已保存的第 3 页。Native current-page PDF smoke 输出 1 页、960×540 pt，含第 3 页标题与正文；文件 SHA-256 `7eec0f3524f3feb696b6e8a45be27bca60dc48020e72ffe3934c493b1914bc73`。完整 reader 证据见 Completion Report。
 - 本地 Universal DMG：`src-tauri/target/universal-apple-darwin/release/bundle/dmg/AI Course Workbench_0.2.0_universal.dmg`，x86_64 + arm64，10,856,185 bytes，SHA-256 `6800e76ea5717e9cc64403eeba3eb73c525fefd662442c3a6977e82f2ed0ffb2`；`hdiutil verify` 通过。该构建为 ad-hoc signed，无 Developer ID 签名或公证；README 不把本地 hash 冒充公开 CI 资产。
 
-## 38.4 Release Status and Next Path
+## 38.4 Published Release
 
-- `.github/release-notes/v0.2.0.md` 保留原 T05/T06 正文；失败 run 未创建 Release。下一版 notes 位于 `.github/release-notes/v0.2.1.md`，包含 T05/T06 正文及空证书 fallback 修复说明。
-- `v0.2.0` tag-triggered run `36323485548` 因空证书导入失败，没有生成 Release 或资产；tag 不移动、不重跑发布。修复后的唯一新公开目标为 `v0.2.1`。
-- 唯一公开路径仍是合并验收代码并 push 新 tag；仅 tag **push** 创建 Release 和上传 Universal DMG 与 SHA-256 sidecar。`workflow_dispatch`（即使选中 tag）只构建、不发布。已发布 tag/assets 不可覆盖。
-- 发布校验核对 `main = origin/main = v0.2.1` tag commit，并匿名下载 DMG 与 `.sha256` 验证版本、Universal 架构和 checksum。V1 保持 ACTIVE，下一步用户 dogfood；不创建 T07。
+- `.github/release-notes/v0.2.1.md` 保存 T05/T06 正文及空证书 fallback 修复说明。唯一公开路径仍是 tag **push**；`workflow_dispatch`（即使选中 tag）只构建、不发布。已发布 tag/assets 不可覆盖。
+- `v0.2.1` 由 run `36325086880` 成功发布：[GitHub Release](https://github.com/wyzh0117/workbench/releases/tag/v0.2.1)。发布源码 commit 与 peeled tag 均为 `60f697697843a340da3a793f1bbd2165e390f783`；本次 docs-only 回写提交晚于此源码提交，`main` 因此会前进而 Release tag 不移动。
+- Universal DMG 大小 10,857,264 bytes，SHA-256 `ca151a578065939f6c2e0dfa4f23955faee5f512c6833ccbe4931a68bf66817c`。匿名下载文件、公开 `.sha256` sidecar 与 GitHub asset digest 一致；`hdiutil verify` 为 VALID。bundle version `0.2.1`，架构 x86_64 + arm64，ad-hoc signed，无 Apple Developer ID 签名或公证。
+- `v0.2.0` tag-triggered run `36323485548` 因空证书导入失败，未创建 Release 或资产；tag 仍固定于原 commit。V1 保持 ACTIVE，下一步用户 dogfood；不创建 T07。
