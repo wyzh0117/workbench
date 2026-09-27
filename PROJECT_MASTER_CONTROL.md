@@ -558,7 +558,7 @@ N1
 
 # 6. 当前项目位置
 
-> 最后更新时间：2026-09-25
+> 最后更新时间：2026-09-27
 >
 > 当前版本：**V1（ACTIVE）**
 >
@@ -568,7 +568,7 @@ N1
 >
 > 产品状态：**DOGFOOD READY — ROUND 3**
 >
-> 分发状态：**PARTIAL / 公开下载已恢复**（正式 Universal DMG、GitHub Release、固定 latest 直链与 SHA-256 已完成；**Latest public release = v0.1.1**，冻结；分支 `v1-t03-t04` 含未发布 T03+T04（均 VERIFIED），**不等于** v0.1.1 安装包字节；Developer ID 签名与 Apple 公证仍未完成）
+> 分发状态：**PARTIAL / 公开下载已恢复**（正式 Universal DMG、GitHub Release、固定 latest 直链与 SHA-256 已完成；**Latest public release = v0.1.2**，含已 VERIFIED 的 V1-T03 / V1-T04；`v0.1.1` 冻结保留；Developer ID 签名与 Apple 公证仍未完成）
 >
 > 下一步：**PAUSE FEATURE DEVELOPMENT**（不创建 V1-T05）
 >
@@ -1971,6 +1971,14 @@ YYYY-MM-DD | Task | From → To | Summary
 当前：
 
 ```text
+2026-09-27 | V1-T03 / V1-T04 | 发布 v0.1.2（新 tag / 新 Release；不覆盖 v0.1.1）
+版本提交：da6e3e9 chore(release): bump version to 0.1.2
+（tauri.conf.json / Cargo.toml / Cargo.lock 0.1.1 → 0.1.2）。
+构建：本机 `APPLE_SIGNING_IDENTITY="-" cargo tauri build --target universal-apple-darwin --bundles app,dmg`。
+资产（固定文件名）：`AI-Course-Workbench-macOS.dmg` 10,616,574 字节，
+SHA-256 `1740d8f921adff2787550f276749e055bb6ea963fff2ca28543c57f8a284cb8b`。
+`v0.1.1` 冻结保留。`/releases/latest` 改指 v0.1.2。签名 / 公证仍未完成（ad-hoc；`spctl` rejected）。
+
 2026-09-25 | V1-T04 | IN PROGRESS → VERIFIED；NEXT ACTION = PAUSE FEATURE DEVELOPMENT
 按 Combined Package §2.3：V1-T03 / V1-T04 = VERIFIED；CURRENT STATUS = VERIFIED；
 PRODUCT STATE = DOGFOOD READY — ROUND 3；OPEN BLOCKERS = NONE；不创建 V1-T05。
@@ -2536,7 +2544,7 @@ NOT ACTIVE
 NEXT ACTION
 PAUSE FEATURE DEVELOPMENT
 （V1-T01 / V1-T02 / V1-T03 / V1-T04 = VERIFIED；CURRENT STATUS = VERIFIED；
- PRODUCT STATE = DOGFOOD READY — ROUND 3；Latest public release = v0.1.1；V0 保持 CLOSED，四个 V0 任务保持 VERIFIED；不创建 V1-T05。）
+ PRODUCT STATE = DOGFOOD READY — ROUND 3；Latest public release = v0.1.2；V0 保持 CLOSED，四个 V0 任务保持 VERIFIED；不创建 V1-T05。）
 ```
 
 ---
@@ -2949,6 +2957,30 @@ AI 助手 → 关闭 → 重启），因此 §34.7 表格中「安装 / 首启 /
 
 推送 `v0.1.1` tag 前同样按上面记载的做法临时停用了 `.github/workflows/release.yml`
 （避免 CI 用未签名的并行产物覆盖本机已验证的 DMG），Release 建好后重新启用（active）。
+
+### 34.6.2 v0.1.2 发行（2026-09-27）
+
+按用户要求把本地 `main`（含已 VERIFIED 的 V1-T03 / V1-T04）同步到 GitHub，并新发公开 Release。
+**不覆盖**已冻结的 `v0.1.1`。
+
+```text
+版本提交：  da6e3e9 chore(release): bump version to 0.1.2
+构建：      cargo tauri build --target universal-apple-darwin --bundles app,dmg
+             APPLE_SIGNING_IDENTITY="-"（与 34.5 / 34.6.1 同一条 ad-hoc 路径）
+Release Tag：v0.1.2
+Release 标题：AI Course Workbench v0.1.2 — macOS (Universal)
+资产：
+  AI-Course-Workbench-macOS.dmg           10,616,574 bytes
+  AI-Course-Workbench-macOS.dmg.sha256
+SHA-256：1740d8f921adff2787550f276749e055bb6ea963fff2ca28543c57f8a284cb8b
+lipo -archs：x86_64 arm64
+codesign --verify --deep --strict：通过（adhoc, Sealed Resources version=2）
+spctl --assess --type execute：rejected（缺 Developer ID 与公证）
+hdiutil verify：VALID
+启动 smoke：指定项目目录存活 10s 后 SIGTERM；--project-dir 指向不存在目录时开窗前退出并打印「项目目录不存在」
+```
+
+`v0.1.1` 的 tag / DMG / SHA-256 **未改动**。`/releases/latest` 改指 `v0.1.2`。
 
 ## 34.7 交付与验证证据
 
@@ -3413,7 +3445,7 @@ OPEN BLOCKERS   NONE
 NEXT ACTION     PAUSE FEATURE DEVELOPMENT
 ```
 
-不创建 V1-T05。Latest public release 仍为 **v0.1.1**（未改 tag / Release / DMG）。
+不创建 V1-T05。Latest public release = **v0.1.2**（`v0.1.1` 冻结保留，未改写其 tag / DMG / SHA-256）。
 
 ## 37.2 Strategy A
 

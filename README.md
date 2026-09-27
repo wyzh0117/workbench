@@ -22,19 +22,18 @@
 ### 当前已发布版本
 
 ```text
-Release Tag ：v0.1.1
+Release Tag ：v0.1.2
 文件名      ：AI-Course-Workbench-macOS.dmg（固定不变，版本号只在 Tag 与 Release Notes 里）
-大小        ：10,468,230 字节
-SHA-256     ：801fb7ea27610a8799cc5017e5c960462c76894f4ef7274af299ec0384071857
+大小        ：10,616,574 字节
+SHA-256     ：1740d8f921adff2787550f276749e055bb6ea963fff2ca28543c57f8a284cb8b
 仓库可见性  ：public（Release 页面与 latest 直链对匿名访问者可用）
 ```
 
 因为文件名固定不变，以后发布 `v0.2.0` 等后续版本时，上面那条「直接下载最新 DMG」链接**依然有效**，
 永远指向最新版本；只有 Release Notes 与 SHA-256 会随版本更新。
 
-`v0.1.1` 是已发布并**冻结**的公开安装包（tag / DMG / SHA-256 不变）。它**不是**从当前
-`main` 或开发分支 `v1-t03-t04` 的 tip 构建的：那些分支上还有**尚未发版**的 V1-T03 / V1-T04
-改动。`v0.1.0` 构建自更早的提交；若要把 T03/T04 发给用户，必须新 commit → 新 tag → 新 Release。
+`v0.1.2` 按当前 `main` 构建，包含已 VERIFIED 的 V1-T03 / V1-T04。`v0.1.1` 与 `v0.1.0` 已发布并**冻结**
+（tag / DMG / SHA-256 不变），仍可从历史 Release 下载，但 `/releases/latest` 指向 `v0.1.2`。
 
 ### 系统要求与架构
 
@@ -120,8 +119,7 @@ BLOCKER            = 缺正式 macOS signing / notarization credentials
 
 ## 当前开发位置
 
-- **Latest public release：`v0.1.1`**（上面 Download 区的 DMG / SHA-256 / 直链均指向该已发布 tag；**未改动**）
-- 当前开发分支：`v1-t03-t04` — 含**尚未发布**的 V1-T03 与 V1-T04（均已 VERIFIED）；**不等于**已发布的 `v0.1.1`
+- **Latest public release：`v0.1.2`**（上面 Download 区的 DMG / SHA-256 / 直链均指向该已发布 tag；`v0.1.1` 冻结保留）
 - 当前版本：**V1（ACTIVE）**
 - V1-T01 — V0 Hardening & UX Polish：**VERIFIED**
 - V1-T02 — Dogfooding Critical Fixes & Authoring UX Refinement：**VERIFIED**
