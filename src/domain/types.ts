@@ -309,8 +309,24 @@ export interface LayoutInstance {
   mode: LayoutMode;
   grid_definition: JsonObject;
   settings: JsonObject;
+  pagination_mode?: "continuous" | "paged";
+  page_size?: LayoutPageSize | null;
   created_at: ISODate;
   updated_at: ISODate;
+}
+
+export interface LayoutPageSize {
+  preset?: "16:9" | "a4-portrait" | "a4-landscape" | "custom" | "legacy";
+  width_pt: number;
+  height_pt: number;
+}
+
+export interface LayoutPage {
+  id: UUID;
+  layout_instance_id: UUID;
+  title: string;
+  order_index: number;
+  grid_definition: JsonObject;
 }
 
 export interface LayoutSection {
@@ -330,6 +346,7 @@ export interface Placement {
   layout_instance_id: UUID;
   block_id: UUID;
   section_id: UUID | null;
+  page_id?: UUID | null;
   row_start: number;
   row_end: number;
   column_start: number;
@@ -578,6 +595,7 @@ export interface ProjectData {
   layout_templates: LayoutTemplate[];
   layout_instances: LayoutInstance[];
   layout_sections: LayoutSection[];
+  layout_pages: LayoutPage[];
   placements: Placement[];
   inbox_items: InboxItem[];
   export_presets: ExportPreset[];

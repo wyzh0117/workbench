@@ -1,6 +1,7 @@
 import {
   addAsset,
   addAssetUsage,
+  addLayoutPage,
   addLayoutSection,
   addPlacement,
   appendBlock,
@@ -14,12 +15,19 @@ import {
   createLayoutInstance,
   DesktopService,
   ExportBlockedError,
+  ExportWarningConfirmationError,
   exportProject,
   insertPlaceholder,
   ManualPublishAdapter,
+  movePlacementToPage,
   preflightExport,
   previewImport,
 } from "../src/domain/index.ts";
+import {
+  buildPublicationProjection,
+  getAvailablePublicationAdapters,
+  getPublicationCapabilities,
+} from "../app/publication.js";
 
 function assert(condition: unknown, message: string): asserts condition {
   if (!condition) throw new Error(message);
@@ -186,6 +194,180 @@ Deno.test("Markdown and clean semantic HTML exports are deterministic", async ()
   assert(
     !htmlText.includes("<script>"),
     "HTML export must not carry executable markup",
+  );
+});
+
+Deno.test("paged HTML preflight freezes ordered pages and requires every warning acknowledgement", async () => {
+  const data = courseData();
+  const item = data.content_items[0]!;
+  const placed = appendBlock(data, item.id, "paragraph", "页面内正文");
+  appendBlock(data, item.id, "paragraph", "尚未放置的正文");
+  const layout = createLayoutInstance(data, item.id, {
+    name: "分页布局",
+    mode: "grid",
+    grid_definition: { columns: [1, 1], rows: [1, 1] },
+  });
+  const first = addLayoutPage(data, layout.id, { title: "第一页" });
+  const second = addLayoutPage(data, layout.id, { title: "第二页" });
+  const placement = addPlacement(data, layout.id, placed.id, {
+    row_start: 0,
+    row_end: 1,
+    column_start: 0,
+    column_end: 1,
+  });
+  movePlacementToPage(data, placement.id, second.id);
+  const preset = createExportPreset(data, {
+    name: "分页网页",
+    output_type: "html",
+    platform: "网页",
+  });
+  const selection = { content_item_id: item.id, layout_instance_id: layout.id };
+  const projection = buildPublicationProjection(data, selection);
+  const full = await preflightExport(data, preset, { ...selection, projection });
+  assert(
+    full.ok && full.warnings.some((issue) => issue.code === "unplaced_content"),
+    "full-page output should report omitted unplaced content",
+  );
+  const reversed = buildPublicationProjection(data, {
+    ...selection,
+    page_ids: [second.id, first.id],
+  });
+  assert(
+    reversed.selection.page_ids?.join(",") === `${first.id},${second.id}` &&
+      reversed.lessons[0]?.layout?.pages.map((page) => page.title).join(",") ===
+        "第一页,第二页" &&
+      reversed.lessons[0]?.layout?.pages[0]?.items.length === 0,
+    "page selection should preserve project order and retain empty pages",
+  );
+  const scoped = await preflightExport(data, preset, {
+    ...selection,
+    page_ids: [first.id],
+    projection: buildPublicationProjection(data, { ...selection, page_ids: [first.id] }),
+  });
+  assert(
+    !scoped.warnings.some((issue) => issue.code === "unplaced_content"),
+    "a single-page export should not warn about content outside its scope",
+  );
+  let confirmationError: unknown;
+  try {
+    await exportProject(data, preset, {
+      ...selection,
+      projection,
+      snapshot_revision: full.snapshot_revision,
+    });
+  } catch (error) {
+    confirmationError = error;
+  }
+  assert(
+    confirmationError instanceof ExportWarningConfirmationError &&
+      confirmationError.warning_codes.includes("unplaced_content"),
+    "export must stop until the report's warnings are acknowledged",
+  );
+  const exported = await exportProject(data, preset, {
+    ...selection,
+    projection,
+    snapshot_revision: full.snapshot_revision,
+    acknowledged_warnings: [...new Set(full.warnings.map((issue) => issue.code))],
+  });
+  const html = new TextDecoder().decode(exported.files[0]!.bytes);
+  assert(
+    html.includes("页面内正文") && !html.includes("尚未放置的正文"),
+    "HTML should render placed page content only after acknowledgement",
+  );
+  let staleError: unknown;
+  try {
+    await exportProject(data, preset, {
+      ...selection,
+      projection,
+      snapshot_revision: "stale-revision",
+      acknowledged_warnings: [...new Set(full.warnings.map((issue) => issue.code))],
+    });
+  } catch (error) {
+    staleError = error;
+  }
+  assert(
+    staleError instanceof ExportBlockedError &&
+      staleError.report.blocking.some((issue) => issue.code === "stale_snapshot"),
+    "a stale preflight snapshot must block output",
+  );
+});
+
+Deno.test("browser PDF cannot silently ignore a requested output page size", async () => {
+  const data = courseData();
+  const item = data.content_items[0]!;
+  appendBlock(data, item.id, "paragraph", "正文");
+  const target_page_size = { preset: "custom", width_pt: 720, height_pt: 540 } as const;
+  const preset = createExportPreset(data, {
+    name: "PDF",
+    output_type: "pdf",
+    platform: "通用",
+  });
+  const projection = buildPublicationProjection(data, {
+    content_item_id: item.id,
+    target_page_size,
+  });
+  const report = await preflightExport(data, preset, {
+    content_item_id: item.id,
+    target_page_size,
+    projection,
+  });
+  assert(
+    report.blocking.some((issue) => issue.code === "layout_export_unsupported"),
+    "the browser PDF adapter must block an output-size choice it cannot honor",
+  );
+});
+
+Deno.test("legacy single-section grids keep their section geometry; mixed coordinates require pagination", () => {
+  const data = courseData();
+  const item = data.content_items[0]!;
+  const firstBlock = appendBlock(data, item.id, "paragraph", "分区正文");
+  const layout = createLayoutInstance(data, item.id, {
+    name: "旧版连续网格",
+    mode: "grid",
+    grid_definition: { columns: [1, 1], rows: [1, 1] },
+  });
+  const section = addLayoutSection(data, layout.id, {
+    name: "唯一使用分区",
+    grid_definition: { columns: [1], rows: [1] },
+  });
+  addPlacement(data, layout.id, firstBlock.id, {
+    row_start: 0,
+    row_end: 1,
+    column_start: 0,
+    column_end: 1,
+    section_id: section.id,
+  });
+  const selection = { content_item_id: item.id, layout_instance_id: layout.id };
+  const singleSection = buildPublicationProjection(data, selection);
+  const page = singleSection.lessons[0]?.layout?.pages[0];
+  assert(
+    singleSection.notices.length === 0 &&
+      page?.items[0]?.rect.width_pt === 595.2756 &&
+      page.items[0]?.rect.height_pt === 841.8898,
+    "one used section remains exportable and uses its own 1×1 grid",
+  );
+
+  const looseBlock = appendBlock(data, item.id, "paragraph", "未分区正文");
+  addPlacement(data, layout.id, looseBlock.id, {
+    row_start: 0,
+    row_end: 1,
+    column_start: 0,
+    column_end: 1,
+  });
+  const mixedCoordinates = buildPublicationProjection(data, selection);
+  const notice = mixedCoordinates.notices[0];
+  const adapters = getAvailablePublicationAdapters({ service: true });
+  assert(
+    notice?.code === "legacy_grid_sections_require_pagination" &&
+      notice.section_ids[0] === section.id && notice.includes_unsectioned &&
+      mixedCoordinates.lessons[0]?.layout?.pages.length === 0,
+    "section-local and loose placements must not be flattened into one overlapping page",
+  );
+  assert(
+    getPublicationCapabilities(mixedCoordinates, "html", adapters).code ===
+      "legacy_grid_sections_require_pagination" &&
+      getPublicationCapabilities(mixedCoordinates, "markdown", adapters).status === "lossy",
+    "layout output is blocked while linear formats remain an explicit downgrade",
   );
 });
 

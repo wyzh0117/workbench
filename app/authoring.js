@@ -1,4 +1,5 @@
 // @ts-check
+import { getLayoutPages, pageGrid } from "./publication.js";
 /*
  * Course Authoring projections.
  *
@@ -897,12 +898,23 @@ export function blockView(data, block) {
  * @param {ProjectData} data
  * @param {string | null | undefined} contentItemId
  */
-export function lessonView(data, contentItemId) {
+export function lessonView(data, contentItemId, selectedPageId = null) {
   if (!contentItemId) return null;
   const lesson = lessonSummary(data, contentItemId);
   const layout = lesson.layout;
+  const allPlacements = layout ? placementsFor(data, layout.id) : [];
+  const pages = layout ? getLayoutPages(data, layout.id) : [];
+  const activePage = pages.find((page) => page.id === selectedPageId) ||
+    pages[0] || null;
+  const isPaged = layout?.pagination_mode === "paged";
+  const placements = isPaged && activePage
+    ? allPlacements.filter((placement) => placement.page_id === activePage.id)
+    : allPlacements;
+  const pagePlacementByBlock = new Map(
+    placements.map((placement) => [placement.block_id, placement]),
+  );
   const placementByBlock = new Map(
-    (layout ? placementsFor(data, layout.id) : []).map((placement) => [
+    allPlacements.map((placement) => [
       placement.block_id,
       placement,
     ]),
@@ -914,10 +926,23 @@ export function lessonView(data, contentItemId) {
     unplaced_blocks: lesson.blocks.filter((block) =>
       !placementByBlock.has(block.id)
     ),
-    placements: layout ? placementsFor(data, layout.id) : [],
+    placed_elsewhere_blocks: isPaged && activePage
+      ? lesson.blocks.filter((block) => {
+        const placement = placementByBlock.get(block.id);
+        return placement && placement.page_id !== activePage.id;
+      })
+      : [],
+    placements,
+    all_placements: allPlacements,
     sections: layout ? sectionsFor(data, layout.id) : [],
+    pages,
+    active_page: activePage,
+    page_grid: isPaged && activePage ? pageGrid(layout, activePage) : layout?.grid_definition,
+    pagination_mode: isPaged ? "paged" : "continuous",
     placement_of: (/** @type {string} */ blockId) =>
       placementByBlock.get(blockId) || null,
+    current_placement_of: (/** @type {string} */ blockId) =>
+      pagePlacementByBlock.get(blockId) || null,
     progress: lesson.progress,
   };
 }

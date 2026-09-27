@@ -12,6 +12,18 @@ import {
 import { assert, id, now } from "./util.ts";
 import { touchProject } from "./store.ts";
 
+export {
+  addLayoutPage,
+  convertSectionsToPages,
+  createPagedLayout,
+  deleteLayoutPage,
+  duplicateLayoutPage,
+  movePlacementToPage,
+  reorderLayoutPage,
+  renameLayoutPage,
+  setLayoutPageSize,
+} from "../../app/layout_pages.js";
+
 export interface LayoutTemplateInput {
   project_id?: string | null;
   name: string;

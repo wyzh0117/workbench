@@ -43,6 +43,15 @@ import {
   mappingRoleLabel,
   markdownToHtml,
 } from "./canvas.js";
+import {
+  buildPublicationProjection,
+  fitPageRect,
+  getAvailablePublicationAdapters,
+  getPublicationCapabilities,
+  PAGE_SIZE_PRESETS,
+  projectPageGeometry,
+  resolvePageSize,
+} from "./publication.js";
 
 const EDITOR_MODES = [
   ["writing", "正文"],
@@ -555,7 +564,7 @@ export function createViews(store) {
         "打开课程地图",
       );
     }
-    const view = lessonView(store.data, item.id);
+    const view = store.lesson(item);
     const lesson = view ? view.lesson : null;
     const map = courseMap(store.data, item.id);
     const stage = store.data.stages.find((candidate) =>
@@ -814,8 +823,7 @@ export function createViews(store) {
     if (!view || view.blocks.length === 0) {
       return `<div class="empty-state inline"><h2>还没有可调整的结构</h2><p class="muted">这门课还没有正文，所以暂时没有结构可以调整。先回到正文继续写。</p><button class="primary" data-action="mode" data-mode="writing">回到正文</button></div>`;
     }
-    const placementOf = (blockId) =>
-      view.placements.find((placement) => placement.block_id === blockId);
+    const placementOf = (blockId) => view.placement_of(blockId);
     return `<div class="structure-toolbar"><span>结构视图只看结构：点击一行回到正文定位。调整先后顺序请到「排版 → Flow」。</span><button class="secondary" data-action="layout-mode" data-layout-mode="flow" title="到 Flow 调整正文先后顺序">到 Flow 调整顺序</button><button class="secondary" data-action="add-placeholder">＋ 添加占位符</button></div><div class="structure-list">${
       view.blocks.map((block, index) => {
         const placement = placementOf(block.id);
@@ -842,7 +850,7 @@ export function createViews(store) {
             : ""
         }${
           placement
-            ? `<span class="badge">已排版 R${placement.row_start + 1}C${
+            ? `<span class="badge">${view.pagination_mode === "paged" ? `已放在「${esc(view.pages.find((page) => page.id === placement.page_id)?.title || "其他页面")}」 · ` : "已排版 "}R${placement.row_start + 1}C${
               placement.column_start + 1
             }</span>`
             : ""
@@ -861,28 +869,31 @@ export function createViews(store) {
       return `<div class="empty-state"><div class="empty-icon">▦</div><h2>还没有排版版本</h2><p class="muted">正文还没有排版位置。创建一个版本后，就可以继续安排内容。</p><button class="primary" data-action="create-layout">创建排版版本</button></div>`;
     }
     const mode = layout.mode === "flow" ? "flow" : "grid";
+    const paged = layout.pagination_mode === "paged";
+    const grid = view.page_grid || layout.grid_definition;
+    const pageSize = resolvePageSize(layout);
     const toolbar = `<div class="layout-toolbar"><button class="secondary ${
       mode === "flow" ? "active-tool" : ""
     }" data-action="layout-mode" data-layout-mode="flow">Flow</button><button class="secondary ${
       mode === "grid" ? "active-tool" : ""
     }" data-action="layout-mode" data-layout-mode="grid">Grid</button>${
       mode === "grid"
-        ? `<button class="secondary ${store.ui.gridEditing ? "active-tool" : ""}" data-action="grid-toggle-edit" title="行列结构会影响所有已经放进网格的内容">${
+        ? `<button class="secondary ${store.ui.gridEditing ? "active-tool" : ""}" data-action="grid-toggle-edit" title="行列结构会影响当前画布里的放置">${
           store.ui.gridEditing ? "完成编辑网格" : "编辑网格"
         }</button>${
           store.ui.gridEditing
-            ? `<button class="secondary" data-action="grid-add-col">＋ 列</button><button class="secondary" data-action="grid-add-row">＋ 行</button><button class="secondary" data-action="grid-remove-col">− 列</button><button class="secondary" data-action="grid-remove-row">− 行</button><span class="toolbar-hint">正在编辑网格：这里改的是行列结构，所有位置都会跟着变。</span>`
-            : `<span class="toolbar-hint">网格当前 ${layout.grid_definition.columns.length} 列 × ${layout.grid_definition.rows.length} 行；需要增减行列时先点「编辑网格」。</span>`
-        }`
+            ? `<button class="secondary" data-action="grid-add-col">＋ 列</button><button class="secondary" data-action="grid-add-row">＋ 行</button><button class="secondary" data-action="grid-remove-col">− 列</button><button class="secondary" data-action="grid-remove-row">− 行</button><span class="toolbar-hint">正在编辑${paged ? "当前页" : "网格"}行列；已有放置会按现有规则调整。</span>`
+            : `<span class="toolbar-hint">${grid.columns.length} 列 × ${grid.rows.length} 行${paged ? " · 有限页面" : " · 连续画布"}；修改行列前先点「编辑网格」。</span>`
+        }${paged ? "" : `<button class="secondary" data-action="pagination-conversion">启用分页</button>`}<button class="secondary" data-action="grid-autofill">${paged ? "排入当前页" : "一键排版全部正文"}</button>`
         : `<span class="toolbar-hint">Flow 是一维文档流：这里调整的就是正文的先后顺序（写回 Canonical order）。</span>`
-    }<span class="toolbar-separator"></span><button class="secondary" data-action="grid-autofill">一键排版全部正文</button></div>`;
+    }</div>`;
     const meta = `<div class="layout-meta"><span><b>${
       esc(layout.name)
-    }</b> · ${mode === "flow" ? "Flow" : "Grid"}</span><span>${
+    }</b> · ${mode === "flow" ? "Flow" : paged ? "分页 Grid" : "连续 Grid"}</span><span>${
       mode === "grid"
-        ? `${layout.grid_definition.columns.length} 列 × ${
-          layout.grid_definition.rows.length
-        } 行 · 同一份正文只保存一次位置`
+        ? paged
+          ? `${view.pages.length} 页 · ${pageSize.width_pt} × ${pageSize.height_pt} pt · 页面尺寸与屏幕缩放分开`
+          : `${grid.columns.length} 列 × ${grid.rows.length} 行 · 同一份正文只保存一次位置`
         : "正文顺序决定阅读顺序"
     }</span><button class="text-button" data-action="rename-layout">重命名排版</button></div>`;
     if (mode === "flow") {
@@ -912,10 +923,22 @@ export function createViews(store) {
         ).join("")
       }</div><p class="layout-note">Flow 就是正文顺序本身：这里的上移 / 下移直接写回 Canonical Block order，结构视图与预览都跟着同一条顺序走。</p>`;
     }
-    const grid = layout.grid_definition;
-    const sections = view.sections;
+    const page = view.active_page;
     const placements = view.placements;
     const unplaced = view.unplaced_blocks;
+    const gridTracks = (tracks) => tracks.map((track) => `minmax(0, ${Number(track) || 1}fr)`).join(" ");
+    const pageGeometry = paged && page
+      ? projectPageGeometry(layout, page, view.all_placements)
+      : null;
+    const zoomWidth = store.ui.layoutZoom === "actual"
+      ? `${pageSize.width_pt * 4 / 3}px`
+      : `min(100%, 900px, ${Math.min(68, 68 * pageSize.width_pt / pageSize.height_pt)}vh)`;
+    const canvasStyle = paged
+      ? `style="--cols:${grid.columns.length};--rows:${grid.rows.length};width:${zoomWidth};aspect-ratio:${pageSize.width_pt}/${pageSize.height_pt};grid-template-columns:${gridTracks(grid.columns)};grid-template-rows:${gridTracks(grid.rows)}"`
+      : `style="--cols:${grid.columns.length};--rows:${grid.rows.length};"`;
+    const pageOverflow = placements.filter((placement) =>
+      placement.row_end > grid.rows.length || placement.column_end > grid.columns.length
+    ).length;
     // P2-4: while a block is being moved the canvas highlights every cell it
     // can land in, and clicking one writes the new position.
     const movingId = store.ui.movingPlacementId || "";
@@ -926,13 +949,11 @@ export function createViews(store) {
       placement
         ? view.blocks.find((block) => block.id === placement.block_id) || null
         : null;
-    return `${toolbar}${meta}${sectionStrip(sections, placements)}<div class="grid-wrap ${
+    return `${toolbar}${meta}${paged ? pageNavigation(view, layout) : sectionStrip(view.sections, placements)}${store.ui.paginationConversionPreview ? paginationConversionPreview(view, layout) : ""}${store.ui.pageSizePreview && !store.ui.pageSizePreview.conversion ? pageSizePreview(layout) : ""}<div class="grid-wrap ${
       store.ui.gridEditing ? "editing" : ""
-    }">${
+    }${paged ? " paged-canvas-wrap" : ""}">${paged && !page ? `<p class="layout-note">当前分页布局还没有页面，请新建页面后继续。</p>` : ""}${pageGeometry ? `<span class="page-canvas-size" data-page-id="${pageGeometry.page_id}" data-width-pt="${pageGeometry.logical_width_pt}" data-height-pt="${pageGeometry.logical_height_pt}">${esc(page.title)} · ${pageGeometry.logical_width_pt} × ${pageGeometry.logical_height_pt} pt · ${store.ui.layoutZoom === "actual" ? "实际尺寸" : "适合窗口"}</span>` : ""}${pageOverflow ? `<div class="page-overflow-warning">${pageOverflow} 块内容超出当前网格范围；页面保留了原放置，请调整网格或位置。</div>` : ""}${
       movingId ? movingBanner(moving, blockOf(moving)) : ""
-    }<div class="grid-canvas" style="--cols:${
-      grid.columns.length
-    };--rows:${grid.rows.length};">${
+    }<div class="grid-canvas${paged ? " paged-grid-canvas" : ""}" ${canvasStyle}>${
       store.ui.gridEditing ? gridLabels(grid) : ""
     }${
       placements.map((placement) => {
@@ -958,7 +979,7 @@ export function createViews(store) {
           placement.row_start + 1
         }C${placement.column_start + 1}</span><div class="placement-actions"><button data-action="select-block" data-id="${
           placement.block_id
-        }" title="编辑这块内容">✎</button><button data-action="resize-placement" data-id="${
+        }" title="编辑这块内容">✎</button>${paged && view.pages.length > 1 ? `<button data-action="start-page-move" data-id="${placement.id}" title="移动到其他页面">↗</button>` : ""}<button data-action="resize-placement" data-id="${
           placement.id
         }" data-dw="1" title="加宽一列">＋宽</button><button data-action="resize-placement" data-id="${
           placement.id
@@ -984,7 +1005,56 @@ export function createViews(store) {
           ).join("")
         }</div>`
         : `<span class="muted small">全部正文都已经放进网格</span>`
-    }</div><p class="layout-note">左键点正文上画布、左键点格子移动、右键移出；↑↓←→ 不再用于移动。网格只保存位置，正文、素材引用和待补仍然保存在原来的地方。</p>`;
+    }</div>${paged && view.placed_elsewhere_blocks?.length ? `<div class="placed-elsewhere"><span class="eyebrow">其他页面（${view.placed_elsewhere_blocks.length} 块）</span>${view.placed_elsewhere_blocks.map((block) => { const placement = view.placement_of(block.id); const pageTitle = view.pages.find((candidate) => candidate.id === placement?.page_id)?.title || "其他页面"; return `<button class="secondary" data-action="select-layout-page" data-id="${placement?.page_id || ""}">${esc(block.label)} · ${esc(pageTitle)}</button>`; }).join("")}</div>` : ""}${paged ? `<p class="compatibility-note">旧版工作台不识别独立页面；重新打开时会按连续网格显示，不会删除当前分页数据。</p>` : ""}<p class="layout-note">左键点正文上画布、左键点格子移动、右键移出；↑↓←→ 不再用于移动。网格只保存位置，正文、素材引用和待补仍然保存在原来的地方。</p>`;
+  }
+
+  function pageNavigation(view, layout) {
+    const pages = view.pages || [];
+    const current = view.active_page;
+    const currentIndex = pages.findIndex((page) => page.id === current?.id);
+    const preset = layout.page_size?.preset || "legacy";
+    const sizeOptions = [
+      ["16:9", "16:9 横向"],
+      ["a4-portrait", "A4 纵向"],
+      ["a4-landscape", "A4 横向"],
+      ...(preset === "legacy" ? [["legacy", "继承旧尺寸"]] : []),
+    ];
+    return `<div class="paged-page-tools"><div class="page-tabs" role="tablist" aria-label="页面导航">${pages.map((page, index) => `<button role="tab" aria-selected="${page.id === current?.id}" class="page-tab ${page.id === current?.id ? "active" : ""}" data-action="select-layout-page" data-id="${page.id}" title="第 ${index + 1} 页 · ${esc(page.title)}"><span>第 ${index + 1} 页</span><small>${esc(page.title)}</small></button>`).join("")}<button class="secondary page-add" data-action="page-add">＋ 新建页</button></div><div class="page-action-row"><div class="page-actions"><button class="secondary" data-action="page-rename" data-id="${current?.id || ""}" ${!current ? "disabled" : ""}>重命名</button><button class="secondary" data-action="page-reorder" data-id="${current?.id || ""}" data-direction="up" ${currentIndex <= 0 ? "disabled" : ""}>↑ 上移</button><button class="secondary" data-action="page-reorder" data-id="${current?.id || ""}" data-direction="down" ${currentIndex < 0 || currentIndex >= pages.length - 1 ? "disabled" : ""}>↓ 下移</button><button class="secondary" data-action="page-duplicate" data-id="${current?.id || ""}" ${!current ? "disabled" : ""}>复制页</button><button class="secondary" data-action="page-delete" data-id="${current?.id || ""}" ${pages.length <= 1 ? "disabled title=\"至少保留一页\"" : ""}>删除页</button></div><div class="page-view-controls"><label class="page-size-control">页面尺寸<select class="select" data-action="page-size-preview">${sizeOptions.map(([value, label]) => `<option value="${value}" ${preset === value ? "selected" : ""}>${label}</option>`).join("")}</select></label><button class="secondary ${store.ui.layoutZoom === "fit" ? "active-tool" : ""}" data-action="layout-zoom" data-zoom="fit">适合窗口</button><button class="secondary ${store.ui.layoutZoom === "actual" ? "active-tool" : ""}" data-action="layout-zoom" data-zoom="actual">实际尺寸</button></div></div>${store.ui.movingPlacementTargetPageId ? pageMovePanel(view, layout) : ""}</div>`;
+  }
+
+  function paginationConversionPreview(view, layout) {
+    const sections = view.sections || [];
+    const placements = view.all_placements || view.placements;
+    const loose = placements.filter((placement) => !sections.some((section) => section.id === placement.section_id)).length;
+    const pending = store.ui.pageSizePreview || {};
+    const size = pending.size || resolvePageSize(layout);
+    const options = [["legacy", "保留旧布局几何"], ["16:9", "16:9 横向"], ["a4-portrait", "A4 纵向"], ["a4-landscape", "A4 横向"]];
+    return `<div class="page-conversion-preview"><b>转换预览：${sections.length ? `${sections.length} 个输出分区各生成一页` : "现有网格生成一页"}</b><span>已有 ${placements.length} 块放置会保留网格位置；${loose ? `${loose} 块未分组放置会归到第一页；` : ""}未放置正文继续留在未放置列表。转换可以撤销。</span><label>页面尺寸<select class="select" data-action="conversion-page-size">${options.map(([value, label]) => `<option value="${value}" ${pending.preset === value ? "selected" : ""}>${label}</option>`).join("")}</select></label><small>${sections.length || 1} 页 · ${size.width_pt} × ${size.height_pt} pt · 页面标题和跨格位置保留</small><div class="page-confirm-actions"><button class="secondary" data-action="cancel-pagination-conversion">取消</button><button class="primary" data-action="confirm-pagination-conversion">确认启用分页</button></div></div>`;
+  }
+
+  function pageSizePreview(layout) {
+    const pending = store.ui.pageSizePreview;
+    const current = resolvePageSize(layout);
+    const next = pending.size || current;
+    return `<div class="page-size-preview"><span>全部 ${store.layoutPages().length} 页将从 ${current.width_pt} × ${current.height_pt} pt 调整为 ${next.width_pt} × ${next.height_pt} pt。页面内相对位置和跨格保持，屏幕缩放不变。</span><div class="page-confirm-actions"><button class="secondary" data-action="cancel-page-size">取消</button><button class="primary" data-action="confirm-page-size">确认并保存到历史</button></div></div>`;
+  }
+
+  function pageMovePanel(view, layout) {
+    const pending = store.ui.movingPlacementTargetPageId;
+    const placement = view.all_placements.find((candidate) => candidate.id === pending.placementId);
+    if (!placement) return `<div class="page-move-panel"><span>这块放置已经不存在。</span><button class="text-button" data-action="cancel-page-move">关闭</button></div>`;
+    const block = view.blocks.find((candidate) => candidate.id === placement.block_id);
+    if (!pending.targetPageId) {
+      return `<div class="page-move-panel"><b>移动「${esc(block?.label || "正文")}」到…</b>${view.pages.filter((page) => page.id !== placement.page_id).map((page) => `<button class="secondary" data-action="choose-page-move-target" data-id="${page.id}">${esc(page.title)}</button>`).join("")}<button class="text-button" data-action="cancel-page-move">取消</button></div>`;
+    }
+    const targetPage = view.pages.find((page) => page.id === pending.targetPageId);
+    if (!targetPage) return "";
+    const grid = pageGrid(layout, targetPage);
+    const rowSpan = Math.max(1, placement.row_end - placement.row_start);
+    const columnSpan = Math.max(1, placement.column_end - placement.column_start);
+    const occupied = view.all_placements.filter((candidate) => candidate.page_id === targetPage.id);
+    const targets = freeCellsFor(grid, occupied, { rowSpan, columnSpan });
+    return `<div class="page-move-panel"><b>选择「${esc(targetPage.title)}」里的可用位置（跨 ${rowSpan} 行 × ${columnSpan} 列）</b>${targets.length ? targets.map((cell) => `<button class="secondary" data-action="move-placement-page-cell" data-id="${placement.id}" data-page-id="${targetPage.id}" data-row="${cell.row}" data-col="${cell.column}">R${cell.row + 1} · C${cell.column + 1}</button>`).join("") : `<span class="muted small">目标页没有能容纳此内容的空位；原放置保持不变。</span>`}<button class="text-button" data-action="cancel-page-move">取消</button></div>`;
   }
 
   /** The output-section strip above the canvas (P1-9). */
@@ -1194,6 +1264,45 @@ export function createViews(store) {
     };
   }
 
+  function previewPagedHtml(item, view, layout, showNotes) {
+    const pages = view.pages || [];
+    const page = view.active_page || pages[0];
+    if (!page) return { html: `<div class="empty-state"><h2>还没有页面</h2><p>回到排版画布新建页面。</p></div>`, unplacedCount: view.blocks.length, grid: view.page_grid };
+    const projection = buildPublicationProjection(store.data, {
+      content_item_id: item.id,
+      layout_instance_id: layout.id,
+      page_ids: [page.id],
+    });
+    const projectedLayout = projection.lessons[0]?.layout;
+    const projectedPage = projectedLayout?.pages?.[0];
+    if (!projectedPage) return { html: "", unplacedCount: 0, grid: view.page_grid };
+    const width = projectedPage.logical_width_pt;
+    const height = projectedPage.logical_height_pt;
+    const ratio = width / height;
+    const displayWidth = store.ui.layoutZoom === "actual"
+      ? `${width * 4 / 3}px`
+      : `min(100%, 900px, ${Math.min(68, 68 * ratio)}vh)`;
+    const blockById = new Map(view.blocks.map((block) => [block.id, block]));
+    const items = projectedPage.items.map((entry) => {
+      const block = blockById.get(entry.block_id);
+      if (!block) return "";
+      const rect = entry.rect;
+      const style = `left:${rect.x_pt / width * 100}%;top:${rect.y_pt / height * 100}%;width:${rect.width_pt / width * 100}%;height:${rect.height_pt / height * 100}%;z-index:${entry.style.z_index};text-align:${esc(entry.style.alignment?.horizontal || "left")};`;
+      return `<div class="page-preview-item" data-preview-block="${block.id}" style="${style}">${previewBlockHtml(block, showNotes)}</div>`;
+    }).join("");
+    const pageIndex = pages.findIndex((candidate) => candidate.id === page.id);
+    const pageNav = `<div class="page-preview-tabs" role="tablist" aria-label="预览页面">${pages.map((candidate, index) => `<button role="tab" aria-selected="${candidate.id === page.id}" class="page-tab ${candidate.id === page.id ? "active" : ""}" data-action="select-layout-page" data-id="${candidate.id}">第 ${index + 1} 页 · ${esc(candidate.title)}</button>`).join("")}</div><div class="page-preview-controls"><span>${pageIndex + 1} / ${pages.length} · ${width} × ${height} pt</span><button class="secondary" data-action="layout-zoom" data-zoom="fit">适合窗口</button><button class="secondary" data-action="layout-zoom" data-zoom="actual">实际尺寸</button></div>`;
+    const unplaced = (projectedLayout.unplaced_block_ids || []).map((blockId) => blockById.get(blockId)).filter(Boolean);
+    const unplacedHtml = unplaced.length
+      ? `<div class="preview-unplaced"><span class="eyebrow">还没有放在页面上（${unplaced.length} 块）</span>${unplaced.map((block) => `<div class="preview-unplaced-item" data-preview-block="${block.id}">${previewBlockHtml(block, showNotes)}</div>`).join("")}</div>`
+      : "";
+    return {
+      html: `${pageNav}<div class="page-preview-viewport ${store.ui.layoutZoom === "actual" ? "actual" : "fit"}"><section class="page-preview-sheet" style="width:${displayWidth};aspect-ratio:${width}/${height}"><div class="page-preview-content">${items}</div></section></div>${unplacedHtml}`,
+      unplacedCount: unplaced.length,
+      grid: view.page_grid,
+    };
+  }
+
   function previewView(item, view) {
     if (!view) return "";
     const showNotes = store.ui.showPreviewNotes !== false;
@@ -1201,10 +1310,13 @@ export function createViews(store) {
     // only summarises what is already shown instead of adding a second copy.
     const gallery = view.blocks.filter((block) => block.asset);
     const layout = view.lesson.layout;
+    const pagedMode = Boolean(layout?.mode === "grid" && layout.pagination_mode === "paged");
     const gridMode = Boolean(
-      layout && layout.mode === "grid" && view.placements.length,
+      layout && layout.mode === "grid" && (pagedMode || view.placements.length),
     );
-    const projected = gridMode
+    const projected = pagedMode
+      ? previewPagedHtml(item, view, layout, showNotes)
+      : gridMode
       ? previewGridHtml(view, layout, showNotes)
       : null;
     const body = gridMode ? "" : view.blocks.map((block) =>
@@ -1224,7 +1336,7 @@ export function createViews(store) {
         ? `Flow 按正文顺序输出（${placedCount} 块已放置，不影响顺序）`
         : "还没有网格放置"
     }</span><span>正文 ${view.blocks.length} 块</span></div><article class="preview-paper${
-      gridMode ? " preview-paper-grid" : ""
+      gridMode || pagedMode ? " preview-paper-grid" : ""
     }">${
       gridMode
         ? projected.html
@@ -1711,21 +1823,77 @@ export function createViews(store) {
     const publications = (store.data.publications || []).filter((publication) =>
       courseScope || publication.content_item_id === (item && item.id)
     );
-    const view = item ? lessonView(store.data, item.id) : null;
+    const view = item ? store.lesson(item) : null;
+    const layout = !courseScope && item ? store.layout(item) : null;
+    const adapters = getAvailablePublicationAdapters({
+      native: store.bridge.isNative(),
+      service: !store.bridge.isNative(),
+    });
     const formats = [
       ["markdown", "Markdown", "可编辑文本与稳定相对素材引用"],
       ["html", "Semantic HTML", "无需 Workbench 即可独立阅读"],
       ["web", "Static Web Package", "index.html + 实际使用的素材"],
       ["pdf", "PDF", "交付、阅读与留档"],
+      ["pptx", "PowerPoint", "按页面尺寸生成演示文稿"],
       ["wechat", "微信 / 富文本", "保守样式与媒体迁移提示"],
       ["json", "Project JSON", "去除私有会话的结构化备份"],
       ["asset_package", "素材包", "素材文件与 manifest"],
       ["full_project", "完整项目包", "可恢复课程数据、正文与素材"],
     ];
+    const projection = (() => {
+      try { return store.publicationProjection(); } catch { return null; }
+    })();
+    const targetSize = store.ui.publishTargetPageSize;
+    const adapter = adapters[store.ui.publishFormat];
+    const supportsLayout = adapter?.layout === true;
+    const canChooseTargetSize = supportsLayout ||
+      ["html", "web", "pdf", "pptx"].some((format) =>
+        adapters[format]?.available && adapters[format]?.layout
+      );
+    const showLayoutControls = courseScope || layout?.mode === "grid";
+    const selectedCapability = projection
+      ? store.publicationCapability(store.ui.publishFormat, projection)
+      : { status: "unavailable", code: null };
+    const requiresTargetSize = projection && ["pdf", "pptx"].some((format) =>
+      store.publicationCapability(format, projection).code === "explicit_target_page_size_required"
+    );
+    const targetSizeNotice = requiresTargetSize
+      ? `<p class="publish-size-warning" role="status">全课程页面尺寸不同。PDF 和 PowerPoint 需要统一目标尺寸；请选择输出尺寸后查看逐页适配预览。</p>`
+      : "";
+    const originalSizeLabel = requiresTargetSize
+      ? "页面尺寸不同，需选择统一尺寸"
+      : "各课保持原尺寸";
+    const fitPages = targetSize && projection
+      ? projection.lessons.flatMap((lesson) => (lesson.layout?.pages || []).map((page) => {
+        const fit = fitPageRect(
+          page.logical_width_pt,
+          page.logical_height_pt,
+          targetSize.width_pt,
+          targetSize.height_pt,
+        );
+        return { lesson, page, fit };
+      }))
+      : [];
+    const pageRange = layout?.pagination_mode === "paged" && view && supportsLayout
+      ? `<div class="publish-layout-controls"><b>页面范围</b><div class="publish-page-options">${[
+        ["all", "全部页面"], ["current", "当前页"], ["selected", "选定页面"],
+      ].map(([mode, label]) => `<button class="secondary ${store.ui.publishPageMode === mode ? "active-tool" : ""}" data-action="publish-page-mode" data-mode="${mode}" aria-pressed="${store.ui.publishPageMode === mode}">${label}</button>`).join("")}</div>${store.ui.publishPageMode === "selected" ? `<div class="publish-page-options">${view.pages.map((page, index) => `<label><input type="checkbox" data-action="publish-page-toggle" data-id="${page.id}" ${store.ui.publishSelectedPageIds.includes(page.id) ? "checked" : ""}/>第 ${index + 1} 页 · ${esc(page.title)}</label>`).join("")}</div>` : ""}<small class="muted">导出页序遵循排版页面顺序；不改变课程内容。</small></div>`
+      : "";
+    const targetSizeControl = canChooseTargetSize
+      ? `<label class="page-size-control">输出页面尺寸<select class="select" data-action="publish-target-size"><option value="original" ${!targetSize ? "selected" : ""}>${originalSizeLabel}</option>${[["16:9", "16:9 横向"], ["a4-portrait", "A4 纵向"], ["a4-landscape", "A4 横向"], ["custom", "自定义尺寸"]].map(([preset, label]) => `<option value="${preset}" ${targetSize?.preset === preset ? "selected" : ""}>${label}</option>`).join("")}</select></label>${targetSize?.preset === "custom" ? `<div class="publish-page-options"><label>宽度 (pt)<input class="select" type="number" min="1" max="100000" step="1" data-action="publish-target-size-value" data-axis="width_pt" value="${targetSize.width_pt}"/></label><label>高度 (pt)<input class="select" type="number" min="1" max="100000" step="1" data-action="publish-target-size-value" data-axis="height_pt" value="${targetSize.height_pt}"/></label></div>` : ""}`
+      : `<span class="muted small">当前格式不保留页面尺寸或位置。</span>`;
+    const fitPreview = canChooseTargetSize && targetSize && fitPages.length
+      ? `<div class="publish-fit-preview"><b>等比适配预览</b><div class="publish-fit-pages">${fitPages.slice(0, 8).map(({ lesson, page, fit }) => `<div class="publish-fit-page-card"><div class="fit-target-page" style="aspect-ratio:${targetSize.width_pt}/${targetSize.height_pt}"><div class="fit-source-page" style="left:${fit.x_pt / targetSize.width_pt * 100}%;top:${fit.y_pt / targetSize.height_pt * 100}%;width:${fit.width_pt / targetSize.width_pt * 100}%;height:${fit.height_pt / targetSize.height_pt * 100}%"></div></div><small>${esc(lesson.code)} · ${esc(page.title || `第 ${page.order + 1} 页`)} · ${fit.scale.toFixed(3)}×</small></div>`).join("")}</div><span>整页等比缩放并居中，不裁切；目标尺寸只用于本次输出。${fitPages.length > 8 ? `显示前 8 页，共 ${fitPages.length} 页。` : ""}</span></div>`
+      : canChooseTargetSize && targetSize
+      ? `<div class="publish-fit-preview">所选范围没有已排版页面可供尺寸适配预览。</div>`
+      : canChooseTargetSize && projection?.lessons.some((lesson) => lesson.layout?.pages?.length > 1)
+      ? `<div class="publish-fit-preview">不同课程可保留各自页面尺寸；选择统一目标尺寸后会显示等比缩放与居中预览，不会裁切。</div>`
+      : "";
     const last = store.ui.lastExport;
     return `<section class="page"><div class="page-head"><div><span class="eyebrow">OUTPUT & PUBLISH</span><h1>发布与导出</h1><p class="muted">从同一份课程内容生成可搬走的结果；导出不会改写正文、排版或素材引用。</p></div><button class="primary" data-action="preflight">运行导出前检查</button></div>
       <div class="card publish-card"><h2>1. 选择输出范围</h2><div class="segmented"><button class="${courseScope ? "" : "active"}" data-action="publish-scope" data-scope="lesson">当前课${item ? ` · ${esc(item.code)}` : ""}</button><button class="${courseScope ? "active" : ""}" data-action="publish-scope" data-scope="course">整门课程</button></div><p class="muted">${courseScope ? `整门课程 · ${store.data.content_items.filter((candidate) => !candidate.archived).length} 课` : view ? `${esc(item.title)} · 完成 ${view.progress.percentage}% · 待补 ${view.progress.open_requirements} 项` : "尚未选择课程"}</p></div>
-      <div class="card publish-card"><h2>2. 选择格式</h2><div class="format-grid">${formats.map(([key, label, detail]) => `<button class="format-card ${store.ui.publishFormat === key ? "active" : ""}" data-action="publish-format" data-format="${key}"><b>${label}</b><small>${detail}</small></button>`).join("")}</div><div class="modal-actions"><button class="primary" data-action="preflight">检查并导出 ${esc(formats.find(([key]) => key === store.ui.publishFormat)?.[1] || "输出")}</button></div></div>
+      ${showLayoutControls ? `<div class="card publish-card"><h2>2. 输出布局与页面</h2><div class="publish-layout-controls">${pageRange}${layout?.pagination_mode === "paged" && !supportsLayout ? `<p class="muted">当前格式不会保留页面布局，因此无法按页筛选。</p>` : ""}<div class="page-action-row">${targetSizeControl}</div>${targetSizeNotice}${fitPreview}</div><p class="muted">页面筛选与目标尺寸仅影响本次导出；尺寸不同的课时会按同一比例居中适配，不裁掉页面内容。</p></div>` : ""}
+      <div class="card publish-card"><h2>3. 选择格式</h2><div class="format-grid">${formats.map(([key, label, detail]) => { let capability = { status: "unavailable" }; try { capability = store.publicationCapability(key); } catch { /* selection validation is shown in preflight */ } const unavailable = ["unavailable", "unsupported"].includes(capability.status); const capabilityLabel = capability.code === "explicit_target_page_size_required" ? "请先选择统一尺寸" : capability.status === "available" ? (adapters[key]?.layout ? "页面布局保留" : "可用") : capability.status === "lossy" ? "页面布局会线性化" : capability.status === "unsupported" ? "当前排版不支持" : "此环境不可用"; return `<button class="format-card ${store.ui.publishFormat === key ? "active" : ""}" data-action="publish-format" data-format="${key}" ${unavailable ? "disabled" : ""}><b>${label}</b><small>${detail}</small><small class="format-capability">${capabilityLabel}</small></button>`; }).join("")}</div><div class="modal-actions"><button class="primary" data-action="preflight">检查并导出 ${esc(formats.find(([key]) => key === store.ui.publishFormat)?.[1] || "输出")}</button></div></div>
       ${last ? `<div class="card publish-card success-card"><h2>最近一次导出</h2><p><b>${esc(last.format)}</b> · ${last.scope === "course" ? "整门课程" : "当前课"} · ${last.files} 个文件</p><p class="muted">实际位置：<code>${esc(last.path)}</code></p><p class="muted">输出不依赖 Workbench 运行。</p>${store.bridge.isNative() ? `<button class="secondary" data-action="reveal-export">在 Finder 中显示</button>` : ""}</div>` : ""}
       <div class="card publish-card"><h2>发布记录</h2><p class="muted">发布记录只记录你确认过的发布节点，不会改变课程内容。</p><button class="secondary" data-action="record-publication">记录已发布</button></div><div class="version-list">${publications.map((publication) => `<article class="version-card"><span class="version-icon">↗</span><div><b>${esc(publication.version_label)}</b><p>${esc(publication.platform)} · ${esc(publication.status)}</p><small>${esc(publication.published_at || "")}</small></div></article>`).join("") || `<div class="empty-state"><h2>还没有发布记录</h2><p class="muted">导出并实际迁移后，可以记录这个发布节点；课程内容不会因此改变。</p></div>`}</div></section>`;
   }
@@ -2782,8 +2950,12 @@ export function createViews(store) {
     if (store.ui.preflight) {
       const report = store.ui.preflightReport || store.exportPreflight();
       const issues = Array.isArray(report.issues) ? report.issues : [];
-      const formatNames = { markdown: "Markdown", html: "Semantic HTML", web: "Static Web Package", pdf: "PDF", wechat: "微信 / 富文本", json: "Project JSON", asset_package: "素材包", full_project: "完整项目包" };
-      return `<div class="overlay" data-action="close-overlay"><div class="preflight modal" data-stop-click="true"><div class="modal-head"><div><span class="eyebrow">导出前检查</span><h2>导出前检查</h2></div><button class="icon-button" data-action="close-overlay" title="关闭导出前检查">×</button></div><p><b>${store.ui.publishScope === "course" ? "整门课程" : "当前课"}</b> → <b>${esc(formatNames[store.ui.publishFormat] || store.ui.publishFormat)}</b></p><p class="muted">先检查课程内容和素材。标为“必须修复”的问题会阻止导出；“提示”可以确认后继续。检查不会修改课程，也不会调用 AI。</p><div class="check-list">${[
+      const formatNames = { markdown: "Markdown", html: "Semantic HTML", web: "Static Web Package", pdf: "PDF", pptx: "PowerPoint", wechat: "微信 / 富文本", json: "Project JSON", asset_package: "素材包", full_project: "完整项目包" };
+      const warningIssues = issues.filter((issue) => issue.severity === "warning" && issue.code);
+      const requiredCodes = new Set(warningIssues.map((issue) => issue.code));
+      const acknowledged = new Set(store.ui.acknowledgedWarnings || []);
+      const allWarningsAcknowledged = [...requiredCodes].every((code) => acknowledged.has(code)) && !(report.warnings > 0 && !requiredCodes.size);
+      return `<div class="overlay" data-action="close-overlay"><div class="preflight modal" data-stop-click="true"><div class="modal-head"><div><span class="eyebrow">导出前检查</span><h2>导出前检查</h2></div><button class="icon-button" data-action="close-overlay" title="关闭导出前检查">×</button></div><p><b>${store.ui.publishScope === "course" ? "整门课程" : "当前课"}</b> → <b>${esc(formatNames[store.ui.publishFormat] || store.ui.publishFormat)}</b></p><p class="muted">先检查课程内容和素材。标为“必须修复”的问题会阻止导出；每项提示都需要你明确确认。检查不会修改课程，也不会调用 AI。</p><div class="check-list">${[
         ["内容级待补", report.content, false],
         ["当前排版待补", report.layout, false],
         ["缺失素材文件", report.missingAssets, true],
@@ -2792,7 +2964,7 @@ export function createViews(store) {
         ["未加载字体", report.fonts, false],
         ["外部引用", report.external, false],
         ["媒体降级", report.mediaDowngrades || 0, false],
-      ].map(([label, count, blocking]) => `<div><span class="check ${count ? blocking ? "danger" : "warning" : "ok"}">${count || "✓"}</span><span>${label}</span><b>${count}</b></div>`).join("")}</div>${issues.length ? `<div class="issue-list">${issues.map((issue) => `<article class="${issue.severity === "blocking" ? "issue-blocking" : "issue-warning"}"><b>${issue.severity === "blocking" ? "必须修复" : "提示"}</b><span>${esc(issueMessage(issue))}</span>${issueDiagnostics(issue)}</article>`).join("")}</div>` : ""}<div class="preflight-total">必须修复 <strong>${report.blocking}</strong> · 提示 <strong>${report.warnings}</strong></div>${report.blocking ? `<p class="error-text">当前不能导出：请先修复上面标为“必须修复”的问题。不会生成半成品，也不会修改源课程。</p>` : report.warnings ? `<p class="muted">可以继续；确认后，待补内容不会进入正式正文，无法交互的媒体会以附件说明呈现。</p>` : `<p class="success-text">检查通过，可以生成输出；源课程不会被修改。</p>`}<div class="modal-actions"><button class="secondary" data-action="close-overlay">返回继续修复</button><button class="primary" data-action="export-format" data-format="${esc(store.ui.publishFormat)}" ${report.blocking ? "disabled" : ""}>${report.warnings ? "确认提示并导出" : "开始导出"}</button></div></div></div>`;
+      ].map(([label, count, blocking]) => `<div><span class="check ${count ? blocking ? "danger" : "warning" : "ok"}">${count || "✓"}</span><span>${label}</span><b>${count}</b></div>`).join("")}</div>${issues.length ? `<div class="issue-list">${issues.map((issue) => `<article class="${issue.severity === "blocking" ? "issue-blocking" : "issue-warning"}"><b>${issue.severity === "blocking" ? "必须修复" : "提示"}</b><span>${esc(issueMessage(issue))}</span>${issueDiagnostics(issue)}</article>`).join("")}</div>` : ""}${warningIssues.length ? `<div class="warning-ack-list"><b>逐项确认本次输出提示</b>${warningIssues.map((issue) => `<label><input type="checkbox" data-action="acknowledge-export-warning" data-code="${esc(issue.code)}" ${acknowledged.has(issue.code) ? "checked" : ""}/><span>${esc(issueMessage(issue))}${issue.count > 1 ? `（${issue.count} 项）` : ""}</span></label>`).join("")}</div>` : ""}<div class="preflight-total">必须修复 <strong>${report.blocking}</strong> · 提示 <strong>${report.warnings}</strong></div>${report.blocking ? `<p class="error-text">当前不能导出：请先修复上面标为“必须修复”的问题。不会生成半成品，也不会修改源课程。</p>` : report.warnings ? `<p class="muted">仅在勾选确认全部提示后才会继续生成；未放置正文、线性化或媒体降级会按上方说明处理。</p>` : `<p class="success-text">检查通过，可以生成输出；源课程不会被修改。</p>`}<div class="modal-actions"><button class="secondary" data-action="close-overlay">返回继续修复</button><button class="primary" data-action="export-format" data-format="${esc(store.ui.publishFormat)}" ${report.blocking || !allWarningsAcknowledged ? "disabled" : ""}>${report.warnings ? "确认提示并导出" : "开始导出"}</button></div></div></div>`;
     }
     if (store.ui.snapshot) {
       return `<div class="overlay" data-action="close-overlay"><div class="capture modal" data-stop-click="true"><div class="modal-head"><div><span class="eyebrow">长期历史</span><h2>保存版本</h2></div><button class="icon-button" data-action="close-overlay" title="关闭保存版本">×</button></div><label class="field-label">版本名称<input data-snapshot-name data-focus-key="snapshot-name" placeholder="例如：第一课正文定稿" /></label><label class="field-label">备注<textarea data-snapshot-note data-focus-key="snapshot-note" placeholder="记录这个节点为什么重要"></textarea></label><div class="modal-actions"><button class="secondary" data-action="close-overlay">取消</button><button class="primary" data-action="submit-snapshot">保存版本</button></div></div></div>`;

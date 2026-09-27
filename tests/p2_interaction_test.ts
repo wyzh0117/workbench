@@ -36,6 +36,7 @@ import {
   blockSizeTierForLines,
   blockSizeView,
   estimateBlockLines,
+  lessonView,
 } from "../app/authoring.js";
 import { createViews } from "../app/views.js";
 
@@ -98,6 +99,9 @@ function renderShortBlockCardHtml(): string {
     currentItem() {
       return data.content_items.find((candidate) => candidate.id === this.ui.activeId) ??
         null;
+    },
+    lesson(candidate: (typeof data.content_items)[number]) {
+      return lessonView(data, candidate.id);
     },
     resumeLessonId() {
       return item.id;
@@ -528,6 +532,9 @@ Deno.test("T03 selected block keeps a left accent; handle uses pointer reorder n
     currentItem() {
       return data.content_items.find((candidate) => candidate.id === this.ui.activeId) ??
         null;
+    },
+    lesson(candidate: (typeof data.content_items)[number]) {
+      return lessonView(data, candidate.id);
     },
   };
   const html = createViews(store as never).shellView();

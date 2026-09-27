@@ -5,33 +5,47 @@
  * Non-destructive: originals are never moved/renamed/deleted.
  */
 import { join } from "node:path";
-import { createEmptyProjectData } from "../src/domain/index.ts";
+import {
+  addPlacement,
+  appendBlock,
+  createEmptyProjectData,
+  createExportPreset,
+  createLayoutInstance,
+  exportProject,
+  movePlacementToPage,
+  preflightExport,
+} from "../src/domain/index.ts";
 import type { ProjectData } from "../src/domain/types.ts";
 import { DesktopService } from "../src/service/desktop.ts";
 import {
   buildImportMappingPlan,
   confirmImportMappingPlan,
+  type ImportMappingPlan,
   setImportMappingRole,
   setImportMappingSelected,
-  type ImportMappingPlan,
 } from "../src/service/folder_mapping.ts";
 import { scanFolder } from "../src/service/folder_scan.ts";
 import {
   confirmFolderAdoption,
   type FolderAdoptionResult,
 } from "../src/service/folder_adoption.ts";
+import { addLayoutPage, createPagedLayout } from "../app/layout_pages.js";
+import { buildPublicationProjection } from "../app/publication.js";
 
 function assert(condition: unknown, message: string): asserts condition {
   if (!condition) throw new Error(message);
 }
 
-async function fingerprintOriginals(root: string): Promise<Map<string, string>> {
+async function fingerprintOriginals(
+  root: string,
+): Promise<Map<string, string>> {
   const out = new Map<string, string>();
   async function walk(dir: string): Promise<void> {
     for await (const entry of Deno.readDir(dir)) {
-      if (entry.name === "project.json" || entry.name === ".workspace" ||
-        entry.name === "assets")
-      {
+      if (
+        entry.name === "project.json" || entry.name === ".workspace" ||
+        entry.name === "assets"
+      ) {
         continue;
       }
       const path = join(dir, entry.name);
@@ -62,13 +76,19 @@ async function fingerprintOriginals(root: string): Promise<Map<string, string>> 
 async function seedCourseFolder(root: string): Promise<void> {
   await Deno.mkdir(join(root, "01-基础"), { recursive: true });
   await Deno.mkdir(join(root, "02-进阶"), { recursive: true });
-  await Deno.writeTextFile(join(root, "01-基础", "导论.md"), "# 导论\n第一课正文\n");
+  await Deno.writeTextFile(
+    join(root, "01-基础", "导论.md"),
+    "# 导论\n第一课正文\n",
+  );
   await Deno.writeTextFile(join(root, "01-基础", "大纲.docx"), "docx-bytes");
   await Deno.writeFile(
     join(root, "01-基础", "intro.png"),
     new Uint8Array([1, 2, 3, 4]),
   );
-  await Deno.writeTextFile(join(root, "02-进阶", "第二课.md"), "## 二\n进阶内容\n");
+  await Deno.writeTextFile(
+    join(root, "02-进阶", "第二课.md"),
+    "## 二\n进阶内容\n",
+  );
   await Deno.writeFile(
     join(root, "02-进阶", "demo.mp4"),
     new Uint8Array([9, 8, 7]),
@@ -117,15 +137,19 @@ Deno.test("Deno adopt refuses when project.json already exists (matches native)"
   const root = await Deno.makeTempDir({ prefix: "acw-t04-adopt-exists-" });
   try {
     await seedCourseFolder(root);
-    const first = await confirmedPlanFor(root, (p) =>
-      setImportMappingSelected(p, "weird.bin", false));
+    const first = await confirmedPlanFor(
+      root,
+      (p) => setImportMappingSelected(p, "weird.bin", false),
+    );
     await confirmFolderAdoption(first);
     assert(
       await Deno.stat(join(root, "project.json")).then((s) => s.isFile),
       "first adopt writes project.json",
     );
-    const again = await confirmedPlanFor(root, (p) =>
-      setImportMappingSelected(p, "weird.bin", false));
+    const again = await confirmedPlanFor(
+      root,
+      (p) => setImportMappingSelected(p, "weird.bin", false),
+    );
     let threw = false;
     let message = "";
     try {
@@ -149,8 +173,10 @@ Deno.test("Strategy A in-place adoption writes project.json + .workspace; origin
   try {
     await seedCourseFolder(root);
     const before = await fingerprintOriginals(root);
-    const plan = await confirmedPlanFor(root, (p) =>
-      setImportMappingSelected(p, "weird.bin", false));
+    const plan = await confirmedPlanFor(
+      root,
+      (p) => setImportMappingSelected(p, "weird.bin", false),
+    );
     const result = await confirmFolderAdoption(plan);
     const after = await fingerprintOriginals(root);
 
@@ -191,6 +217,94 @@ Deno.test("Strategy A in-place adoption writes project.json + .workspace; origin
   }
 });
 
+Deno.test("adopted folder can page and export while source files stay unchanged (§12.2)", async () => {
+  const root = await Deno.makeTempDir({
+    prefix: "acw-t04-adopt-paged-export-",
+  });
+  try {
+    await seedCourseFolder(root);
+    const before = await fingerprintOriginals(root);
+    const adopted = await confirmFolderAdoption(await confirmedPlanFor(root));
+    const data = adopted.data;
+    const lesson = data.content_items.find((item) => item.type === "lesson");
+    assert(lesson, "folder adoption must create a lesson for pagination");
+
+    const block = appendBlock(
+      data,
+      lesson.id,
+      "paragraph",
+      "接管后分页导出正文",
+    );
+    const layout = createLayoutInstance(data, lesson.id, {
+      name: "接管后分页布局",
+      mode: "grid",
+      grid_definition: { columns: [1], rows: [1] },
+    });
+    const firstPage = createPagedLayout(data, layout.id)[0];
+    assert(firstPage, "paged layout must create its first page");
+    const secondPage = addLayoutPage(data, layout.id, {
+      title: "接管后第二页",
+      grid_definition: { columns: [1], rows: [1] },
+    });
+    const placement = addPlacement(data, layout.id, block.id, {
+      row_start: 0,
+      row_end: 1,
+      column_start: 0,
+      column_end: 1,
+    });
+    movePlacementToPage(data, placement.id, secondPage.id);
+
+    const preset = createExportPreset(data, {
+      name: "接管后分页 HTML",
+      output_type: "html",
+      platform: "网页",
+    });
+    const selection = {
+      content_item_id: lesson.id,
+      layout_instance_id: layout.id,
+    };
+    const projection = buildPublicationProjection(data, selection);
+    const pages = projection.lessons[0]?.layout?.pages;
+    assert(
+      pages?.length === 2 && pages[1]?.items[0]?.block_id === block.id,
+      "shared page mutation must appear in the export projection",
+    );
+    const report = await preflightExport(data, preset, {
+      ...selection,
+      project_root: root,
+      projection,
+    });
+    assert(
+      report.ok && report.blocking.length === 0,
+      "adopted paged HTML preflight must pass",
+    );
+    const exported = await exportProject(data, preset, {
+      ...selection,
+      project_root: root,
+      projection,
+      snapshot_revision: report.snapshot_revision,
+      acknowledged_warnings: [
+        ...new Set(report.warnings.map((issue) => issue.code)),
+      ],
+    });
+    assert(
+      new TextDecoder().decode(exported.files[0]!.bytes).includes(
+        "接管后分页导出正文",
+      ),
+      "HTML export must include the placed block from the adopted project",
+    );
+
+    const after = await fingerprintOriginals(root);
+    assert(
+      JSON.stringify([...before.entries()].sort()) ===
+        JSON.stringify([...after.entries()].sort()),
+      "pagination and export must leave all original folder paths and bytes unchanged",
+    );
+  } finally {
+    await Deno.remove(root, { recursive: true });
+  }
+});
+
 Deno.test("selected+ignore and unselected files are not imported", async () => {
   const root = await Deno.makeTempDir({ prefix: "acw-t04-adopt-ignore-" });
   try {
@@ -224,9 +338,7 @@ Deno.test("selected+ignore and unselected files are not imported", async () => {
       "ignore-mapped txt must not become a Source either",
     );
     assert(
-      !result.data.content_items.some((item) =>
-        /weird|bin/i.test(item.title)
-      ),
+      !result.data.content_items.some((item) => /weird|bin/i.test(item.title)),
       "unsupported/unselected must stay out",
     );
   } finally {
@@ -345,9 +457,7 @@ Deno.test("markdown lesson becomes Canonical blocks; docx/pdf stay Source/Refere
     );
     assert(lesson, "导论.md mapped as lesson must create a ContentItem");
     const blocks = result.data.blocks.filter((block) => {
-      const doc = result.data.documents.find((d) =>
-        d.id === block.document_id
-      );
+      const doc = result.data.documents.find((d) => d.id === block.document_id);
       return doc?.content_item_id === lesson.id;
     });
     assert(blocks.length > 0, "lesson markdown must become Canonical blocks");
@@ -367,10 +477,15 @@ Deno.test("markdown lesson becomes Canonical blocks; docx/pdf stay Source/Refere
 });
 
 Deno.test("promote failure after writeProject keeps staging (matches Rust)", async () => {
-  const root = await Deno.makeTempDir({ prefix: "acw-t04-adopt-promote-fail-" });
+  const root = await Deno.makeTempDir({
+    prefix: "acw-t04-adopt-promote-fail-",
+  });
   try {
     await Deno.mkdir(join(root, "media"), { recursive: true });
-    await Deno.writeFile(join(root, "media", "shot.png"), new Uint8Array([1, 2, 3]));
+    await Deno.writeFile(
+      join(root, "media", "shot.png"),
+      new Uint8Array([1, 2, 3]),
+    );
     await Deno.writeTextFile(join(root, "readme.md"), "# hi\n");
     // Block assets/ so promoteStaging fails after Canonical write.
     await Deno.writeTextFile(join(root, "assets"), "not-a-directory");
@@ -418,9 +533,15 @@ Deno.test("folder.adopt command applies confirmed plan into the chosen folder", 
     const plan = await confirmedPlanFor(root);
     const desktop = new DesktopService(serviceRoot);
     const executed = await desktop.commands.execute("folder.adopt", { plan });
-    assert(!executed.error, `folder.adopt failed: ${JSON.stringify(executed.error)}`);
+    assert(
+      !executed.error,
+      `folder.adopt failed: ${JSON.stringify(executed.error)}`,
+    );
     const value = executed.value as FolderAdoptionResult;
-    assert(value?.data?.project?.id, "folder.adopt must return adopted project");
+    assert(
+      value?.data?.project?.id,
+      "folder.adopt must return adopted project",
+    );
     assert(
       await Deno.stat(join(root, "project.json")).then((s) => s.isFile),
       "command must write project.json in plan.root",
@@ -624,7 +745,7 @@ Deno.test("UI confirm then apply: apply consumes confirmed plan and writes Canon
     html = createViews(store).shellView() as string;
     assert(
       html.includes("写入课程项目") || html.includes("开始接管") ||
-        html.includes("data-action=\"apply-folder-adoption\""),
+        html.includes('data-action="apply-folder-adoption"'),
       "after confirm, UI must expose apply/adoption action",
     );
 

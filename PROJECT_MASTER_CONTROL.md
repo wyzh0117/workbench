@@ -562,21 +562,24 @@ N1
 >
 > 当前版本：**V1（ACTIVE）**
 >
-> 当前任务：**V1-T04 — Workspace Explorer & Existing-Folder Adoption**
+> 当前交接：**V1-T05 / V1-T06 联合验收**（任务保持平级；不新增 combined task 编号）
 >
-> 当前状态：**VERIFIED**
+> V1-T05 — Paged Canvas & Pagination：**DONE，等待联合验收；尚未 VERIFIED**
+> V1-T06 — Layout-aware Export & PPTX：**DONE，等待联合验收；尚未 VERIFIED**
 >
-> 产品状态：**DOGFOOD READY — ROUND 3**
+> 产品状态：**T03/T04 基线为 DOGFOOD READY — ROUND 3；V1-T05/T06 联合验收进行中；V1 未关闭**
 >
 > 分发状态：**PARTIAL / 公开下载已恢复**（正式 Universal DMG、GitHub Release、固定 latest 直链与 SHA-256 已完成；**Latest public release = v0.1.2**，含已 VERIFIED 的 V1-T03 / V1-T04；`v0.1.1` 冻结保留；Developer ID 签名与 Apple 公证仍未完成）
 >
-> 下一步：**PAUSE FEATURE DEVELOPMENT**（不创建 V1-T05）
+> Release 边界：**用户最新指示已授权在联合验收及独立复核完成后发布新版本 `v0.2.0`，覆盖 T05/T06 设计文档的旧“不发布新 Release”条款；目前尚未发布，已发布 tags / assets 继续冻结。**
+>
+> 下一步：**修复并复验桌面 page session 恢复，再完成剩余原生导出阅读器验收、最终重建与独立 review；不创建 V1-T07。**
 >
 > V0 状态保持：**V0 CLOSED；V0-T01 / V0-T02 / V0-T03 / V0-T04 全部 VERIFIED**
 >
 > V1-T01 状态保持：**VERIFIED**（见 **§33**）；V1-T02 状态保持：**VERIFIED**（见 **§29** / **§35** / **§36**）；V1-T03 状态保持：**VERIFIED**（ego-browser §21：26 PASS / 1 N-A / 0 FAIL；§9.3 真鼠 Drag Handle PASS；Tauri WebView 拖拽与原生非法文件夹 picker toast 记 BACKLOG，非 BLOCKER）；V1-T04 状态保持：**VERIFIED**（见 **§37**；ego-browser CourseFolder §41 走查；原生 folder picker N-A；Strategy A 原地接管；自动化 gate 全绿）；
-> 此前 macOS Distribution & Public Release Closure 的完成事实保留在 **§34**（该范围本轮不执行，等用户再次批准后另行编号）。
-> 不发明 `V1-T03+04` / `V1-T05` 编号。
+> T05/T06 完成报告与当前证据见 **§38** 和 `V1-T05_T06_Completion_Report.md`。此前 macOS Distribution & Public Release Closure 的已完成/未完成事实保留在 **§34**；本轮新增的 v0.2.0 授权不改变签名/公证仍缺失的分发边界。
+> 不发明 `V1-T03+04`、`V1-T05+T06` 或 `V1-T07` 编号。
 
 ---
 
@@ -1971,6 +1974,11 @@ YYYY-MM-DD | Task | From → To | Summary
 当前：
 
 ```text
+2026-09-27 | V1-T05 / V1-T06 | AUTHORIZED → DONE（联合验收待完成）
+用户明确授权连续实施 V1-T05 Paged Canvas 与 V1-T06 Layout-aware Export & PPTX；两项仍是平级任务，V1 保持 ACTIVE，不创建 V1-T07。最新授权同时覆盖联合开发文档中旧的“不发布新 Release”非目标，允许验收完成后发布新 v0.2.0；目前没有 commit、push、PR、tag、merge 或 Release。Latest public release 仍为 v0.1.2，历史已发布 tags/assets 不可覆盖。
+实现与 gate：最新 Deno 全套 345 passed / check OK；`native_boot_test` 9/9、`authoring_ui_test.ts` 43/43、`paged_section_export_review_test.ts` 6/6；Rust 78/78 与 `cargo fmt --check`。Independent review 已报告旧 schema migration、复杂 clone、分页 HTML selected scope、旧 Grid preview 与 legacy multi-section 修复 PASS。
+真实 native intermediate app 已转旧版 3 sections 为 3 pages 并保存。page3 session 根因已定位并在 UI 修复；最新 debug bundle 同项目两次 close—restart 均恢复 page3。PDF 在 intermediate app 上以 pypdf / pdftoppm 实测 3 页 960×540 pt、可提取中英文与真实图片原位；Static Web 三页/两图通过，并已记录文件 hashes。旧 PPTX 在 PowerPoint 触发 Repair；Rust 母版 ID/theme 样式矩阵已修、结构测试通过，direct-renderer probe `/tmp/tauri-acceptance/exports/fixed-renderer-probe.pptx` SHA-256 `d8bec3d30fb3c796998eba7081e3a747ccb7e8cfed787321ad6454482fdb26df` 正等 PowerPoint；Universal candidate 仍需最终重建。详细证据/限制见 `V1-T05_T06_Completion_Report.md`。
+
 2026-09-27 | V1-T03 / V1-T04 | 发布 v0.1.2（新 tag / 新 Release；不覆盖 v0.1.1）
 版本提交：da6e3e9 chore(release): bump version to 0.1.2
 （tauri.conf.json / Cargo.toml / Cargo.lock 0.1.1 → 0.1.2）。
@@ -2391,41 +2399,35 @@ PROJECT_MASTER_CONTROL.md
 
 # 29. 当前唯一 NEXT ACTION
 
-> **V0 仍为 CLOSED；V0-T01 / V0-T02 / V0-T03 / V0-T04 全部 VERIFIED。V1 已 ACTIVE。V1-T01 / V1-T02 / V1-T03 / V1-T04 全部 VERIFIED。不创建 V1-T05。下一步唯一动作是暂停功能开发，交给真实使用。**
+> **V0 仍为 CLOSED；V0-T01 / V0-T02 / V0-T03 / V0-T04 全部 VERIFIED。V1 保持 ACTIVE。V1-T01—T04 全部 VERIFIED；V1-T05 与 V1-T06 实现为 DONE，正在联合验收，尚未 VERIFIED。**
 
-V1-T01 / V1-T02 / V1-T03 / V1-T04 的实现、自动化门禁与真实走查证据见 §33 / §35 / §36 / §37 与
-`t03-desktop-acceptance.md` / `t04-desktop-acceptance.md` / `combined-completion-report.md`。
-按 Combined Development Package §2.3，T04 DoD 已达成并 VERIFIED；总控收口为
-**PAUSE FEATURE DEVELOPMENT**（不发明 `V1-T03+04` / `V1-T05`）。
+用户最新授权继续 V1-T05 — Paged Canvas & Pagination 与 V1-T06 — Layout-aware Export & PPTX，并授权在验收与 review 完成后发布一个新的 v0.2.0 Release。这覆盖联合开发文档中旧的“不发布新 Release”条款，但不改写 v0.1.2 或更早已发布 tag / 资产。当前不创建新任务层级，不创建 V1-T07，也不关闭 V1。
 
-此前草拟并已实施完成的 **V1-T02 — macOS Distribution & Public Release Closure** 本轮不再执行，
-也不继续占用该编号；但它已完成的事实与未完成的边界**如实保留**在 §34 与 README「分发状态」中
-（正式 Release 构建、Universal DMG、公开仓库、GitHub Release、固定 latest 直链、SHA-256、安装 smoke
-= 已完成；Developer ID Application 签名与 Apple 公证 = 未完成，`spctl --assess` 判定 rejected）。
-剩余动作（签名 / 公证 / Release 重传 / 安装 smoke）降级为**后续候选任务**，等用户再次明确批准后才编号与启动。
+T05/T06 目前的自动化、review、桌面验收证据及限制见 **§38** 与 `V1-T05_T06_Completion_Report.md`。真实 native PDF 与三页/两图 Static Web 已在中间 candidate 上实测通过；桌面 page3 session restore 仍回到 page1，PPTX 阅读器验收及最终 UI bundle 验证尚未完成。签名 / 公证仍为 PARTIAL 分发边界。
 
 ```text
 V0 CLOSED
 V0-T01 / V0-T02 / V0-T03 / V0-T04  VERIFIED
 V1 ACTIVE
 V1-T01 / V1-T02 / V1-T03 / V1-T04  VERIFIED
-CURRENT TASK    V1-T04 — Workspace Explorer & Existing-Folder Adoption
-CURRENT STATUS  VERIFIED
-PRODUCT STATE   DOGFOOD READY — ROUND 3
-DISTRIBUTION    PARTIAL（Latest public release = v0.1.1 冻结；签名 / 公证为后续候选任务）
-OPEN BLOCKERS   NONE
+V1-T05 Paged Canvas                DONE（联合验收待完成）
+V1-T06 Layout-aware Export & PPTX  DONE（联合验收待完成）
+CURRENT HANDOFF  联合验收 / closeout（不新增编号任务）
+CURRENT STATUS  DONE — 尚未 VERIFIED
+PRODUCT STATE   V1 ACTIVE；T03/T04 基线 DOGFOOD READY — ROUND 3
+DISTRIBUTION    PARTIAL；Latest public release = v0.1.2；v0.2.0 尚未发布
+OPEN BLOCKERS   桌面 session page3 未恢复；PPTX reader；最终构建与 independent review
 BACKLOG         Tauri WebView pointer-reorder；原生 folder picker / invalid-folder toast（Tauri）；
-                Tauri WebView Explorer/Adopt smoke
+                Tauri WebView Explorer/Adopt smoke；不创建 V1-T07
 ```
 
 下一步唯一动作：
 
 ```text
-PAUSE FEATURE DEVELOPMENT
+完成 T05/T06 联合验收：修复 page3 session restore → native 导出/阅读器验收 → 最终 gate 与 Universal 构建 → 独立 review
 ```
 
-纪律：不自动进入分页 / PPT / 搜索 / 模板；不创建 `V1-T05` / `V1-T03+04` / Fix Phase / 新 Milestone。
-**不需要重新开发 Workbench 本体即可回到分发工作**（见 §34 的补做步骤）。
+联合验收通过后把 T05/T06 状态更新为 VERIFIED，再进行已授权的 v0.2.0 发布准备与发布。严格保护 §0.4 规则，不覆盖 `v0.1.2` 等已发布 tag/Release/资产。
 
 注意：Dogfooding 是产品使用状态，不是新的产品阶段；不得创建
 `Dogfood Phase` / `V1-Dogfood` / `V1.1` / `V1-T01A`。
@@ -2448,16 +2450,18 @@ CURRENT VERSION
 V1（ACTIVE）
 
 CURRENT TASK
-V1-T04 — Workspace Explorer & Existing-Folder Adoption
+联合验收 / closeout：V1-T05 与 V1-T06（两个平级任务，不创建 combined task）
 
 CURRENT STATUS
-VERIFIED
-PRODUCT STATE = DOGFOOD READY — ROUND 3
-DISTRIBUTION STATE = PARTIAL（签名 / 公证为后续候选任务，本轮不执行）
+DONE — 联合验收中；尚未 VERIFIED
+PRODUCT STATE = V1 ACTIVE；T03/T04 基线为 DOGFOOD READY — ROUND 3
+DISTRIBUTION STATE = PARTIAL（Latest public release = v0.1.2；v0.2.0 尚未发布；签名 / 公证未完成）
 V0 = CLOSED；V0-T01 / V0-T02 / V0-T03 / V0-T04 全部 VERIFIED
 V1-T01 = VERIFIED（§33）；V1-T02 = VERIFIED（§29 / §35 第一次实施 / §36 第二次实施）；
 V1-T03 = VERIFIED（ego-browser §21 26/27 PASS + 1 N-A；§9.3 page.mouse Drag Handle PASS）；
 V1-T04 = VERIFIED（§37；Explorer + Strategy A 原地接管；ego-browser CourseFolder 走查）
+V1-T05 = DONE，等待联合验收（分页 Canvas / 页面操作 / session）
+V1-T06 = DONE，等待联合验收（layout-aware HTML / PDF / Web / PPTX）
 
 DONE / IMPLEMENTED
 - Canonical / Domain / Service 主体
@@ -2514,12 +2518,22 @@ DONE / IMPLEMENTED
   Confirm 后 Strategy A 原地接管（project.json + .workspace + assets/{id}-*；原文件不移动）、
   Source/Asset/Canonical 语义、checksum 复用与同名不同内容不静默覆盖、symlink 边界；
   自动化 gate 全绿（Deno 326 / Rust 68）；ego-browser CourseFolder §41 走查通过（原生 picker N-A）
+- V1-T05：稳定 `layout_page_id`、分页 Grid、页面 CRUD/调序/复制、跨页放置、分页预览和旧 Grid 兼容。
+- V1-T06：共用 Publish Projection；HTML / PDF / Web / PPTX 页面输出；独立 PPTX 文字/图片对象；
+  警告需确认、blocking errors 阻断；混合页面尺寸的 PDF/PPTX 缺少统一目标时返回 `explicit_target_page_size_required`。
+- T05/T06 自动化：Deno 全套 333 passed / check OK；新增 review test 6/6、authoring UI 43/43 / Deno check 通过；
+  Rust 78 tests passed + cargo build。最终集成后仍须重跑全套。
+- T05/T06 独立 review：旧 schema migration、复杂 clone、分页 HTML selected scope、旧 Grid preview、
+  legacy multi-section overlap 修复均已报告 PASS；native PDF intermediate 3页 960×540 pt，文本/真实图片可检出并通过位置渲染检查。
 
 OPEN BLOCKERS
-- NONE（V1-T03 / V1-T04 关闭条件已满足；按 §2.3 收口为 PAUSE FEATURE DEVELOPMENT）
-- 后续候选任务遗留（不是 T04 关闭条件，也不阻塞已 VERIFIED 的 V1-T01…T04）：缺正式 macOS signing / notarization credentials
+- T05/T06 联合验收未结束：page3 关闭后重启回到 page1；已确认 app-data session 记录包含 page3 ID，
+  Rust session 写入原样保留。已确认 CLI launch locator 首次读取只返回 project_dir、会略过持久 reader record，
+  UI 正在实施二阶段 load 与 canonical project-dir 匹配修复；修复后的关闭—重开仍待验收。
+- Native PPTX 阅读器验收与最终 bundle 复核待完成；PDF 与三页/两图 Static Web 已在 intermediate candidate 验收，最终 bundle 需短 smoke。
+- 缺正式 macOS signing / notarization credentials
   （本机 0 valid code-signing identities；无 Developer ID Application 证书，无公证凭据）
-  → 当前已发布的 DMG 为 ad-hoc 签名，`spctl --assess` 判定 rejected；
+  → 当前已发布 DMG 和本地候选 bundle 为 ad-hoc 签名，`spctl --assess` 判定 rejected；
      不得宣称 PUBLIC RELEASE READY / 「普通用户无安全阻碍安装」
 
 BACKLOG
@@ -2530,10 +2544,9 @@ BACKLOG
 - Tauri WebView Explorer / Mapping / Adopt smoke（本轮未在 WKWebView 内复测）
 
 AFTER CURRENT TASK
-T03+T04 已按 Combined Development Package §2.3 收口；**不创建 V1-T05**。
-下一步先真实使用（DOGFOOD READY — ROUND 3）。
-macOS 签名 / 公证 / Release 重传 / 安装 smoke 仍为后续候选任务，等用户再次明确批准后才编号与启动；
-不重新打开 V0。
+T05/T06 实现已 DONE；当前唯一后续是共同完成 session restore、native reader acceptance、最终 gate/build 与 independent review。
+验收前不把二者标 VERIFIED，不创建 V1-T07，不关闭 V1。验收通过后按用户已授权范围准备新 v0.2.0；
+Latest public release 仍为 v0.1.2，旧 tag / assets 冻结。V0 不重新打开。
 
 V1
 ACTIVE
@@ -2542,9 +2555,8 @@ V2
 NOT ACTIVE
 
 NEXT ACTION
-PAUSE FEATURE DEVELOPMENT
-（V1-T01 / V1-T02 / V1-T03 / V1-T04 = VERIFIED；CURRENT STATUS = VERIFIED；
- PRODUCT STATE = DOGFOOD READY — ROUND 3；Latest public release = v0.1.2；V0 保持 CLOSED，四个 V0 任务保持 VERIFIED；不创建 V1-T05。）
+完成 T05/T06 联合验收：修复 page3 session restore → native HTML/PPTX reader → 全量 gate 与最终 Universal build → independent review
+（V1-T05 / V1-T06 当前均 DONE、未 VERIFIED；Latest public release = v0.1.2；V0 CLOSED；不创建 V1-T07。）
 ```
 
 ---
@@ -3489,3 +3501,43 @@ PRODUCT STATE = DOGFOOD READY — ROUND 3
 OPEN BLOCKERS = NONE
 NEXT ACTION = PAUSE FEATURE DEVELOPMENT
 ```
+
+---
+
+# 38. V1-T05 / V1-T06 — Paged Canvas & Layout-aware Export（DONE；最终原生 smoke 待完成）
+
+> 详细状态与证据：`V1-T05_T06_Completion_Report.md`。本节是当前总控摘要；旧 §37 是历史记录。
+
+## 38.1 Current Position
+
+```text
+V1 = ACTIVE
+V1-T05 Paged Canvas & Pagination = DONE（实现完成；最终原生 smoke 待完成）
+V1-T06 Layout-aware Export & PPTX = DONE（实现完成；最终原生 smoke 待完成）
+T05/T06 尚未 VERIFIED；不关闭 V1；不创建 V1-T07
+Latest public release as of 2026-09-27 = v0.1.2
+New release target = v0.2.0; existing published tags/assets stay immutable
+```
+
+用户授权完成验收、独立复核后发布新的 v0.2.0；该授权覆盖需求文档中旧的“不发布新 Release”范围限制，但不覆盖或改写 v0.1.2 及更早的版本。README 使用 latest Release 与 SHA-256 sidecar 动态链接，不把本地构建 hash 当成公开资产。
+
+## 38.2 Implementation and Automated Gates
+
+- `layout_pages` 与稳定 page IDs 已接入现有 Domain、Store、UI 和分页预览，支持页面 CRUD、复制、调序、placement 和跨页移动；旧项目保留迁移与连续布局兼容。
+- UI、service 和 native adapter 消费同一 publication projection。跨课异尺寸 PDF/PPTX 未指定目标页尺寸时以 `explicit_target_page_size_required` 阻断；warning acknowledgment 与 snapshot revision 绑定，blocking issue 不可确认绕过。
+- `deno task test` 346/346、`deno task check` 通过。新增 T04 folder adoption → shared page mutation → projection/preflight/HTML export 串联测试，并核对源文件相对路径和字节不变；`native_boot_test` 9/9、`authoring_ui_test` 43/43、`paged_section_export_review_test.ts` 6/6。
+- Rust `cargo fmt --check`、`cargo test` 78/78 通过，含 PPTX OPC parts/content types/layout ID/theme style matrix 结构回归。独立 review 已报告旧 schema migration、复杂 clone identities/anchors、paged HTML selected scope、legacy Grid preview 与 multi-section ambiguity 修复通过。
+- 本轮运行 `graft build`：74 个 indexed files，2199 nodes / 6881 edges；图谱缓存被 gitignore。
+
+## 38.3 Native Evidence and Final Build
+
+- 隔离真实项目已完成 legacy 3 sections → 3 pages 转换、保存和关闭。修复 CLI 启动首次 `load_session` 只返回 locator 的 session restore 根因后，diagnostic app 对同一项目连续两次 close/restart 恢复 page 3；`layout_page_id`、zoom 和 canonical project path 保持正确。
+- Native UI PPTX 在 PowerPoint 打开无 Repair，显示 3 slides；编辑副本中可修改文字、移动图片并保存。坏的旧 PPTX 原件保持不变。Rust direct-renderer probe 也已由 PowerPoint 无 Repair 打开；最终 Universal UI 导出仍要完成短 smoke。
+- Intermediate app 生成的 3-page PDF 与 3-page / 2-image Static Web 曾通过阅读检查，但不作为 final-bundle 证据。最终 Universal 上的 page restore、单页 PDF、Static Web reader/资产核对仍在进行。
+- 最终本地 Universal build：`src-tauri/target/universal-apple-darwin/release/bundle/macos/AI Course Workbench.app`；`x86_64 arm64`，version `0.2.0`，executable SHA-256 `885fb6b143bf578405ba85db29edb623031d58994d624a12e0aa266d43de3d29`。DMG：`src-tauri/target/universal-apple-darwin/release/bundle/dmg/AI Course Workbench_0.2.0_universal.dmg`，SHA-256 `6800e76ea5717e9cc64403eeba3eb73c525fefd662442c3a6977e82f2ed0ffb2`，大小 10,856,185 bytes；`hdiutil verify` 通过。该本地构建为 ad-hoc signed，未使用 Developer ID，也未公证；它尚不是 GitHub Release。
+
+## 38.4 Release Path
+
+- `.github/release-notes/v0.2.0.md` 保存 T05/T06 正文；tag workflow 在发布时补充实际构建签名状态和 DMG SHA-256。README 指向 Release 自带 `.sha256` sidecar。
+- 唯一公开路径：验收完成后 merge PR 到 main，再推送 `v0.2.0` tag；仅 tag **push** 事件会创建 Release 和上传资产。`workflow_dispatch`（即使选中 tag）只构建、不发布。不要手动 `gh release create/upload`，避免重复发布；workflow 对已发布 tag 拒绝覆盖。
+- 完成最终 Universal reader smoke 与独立复核后，将 T05/T06 标为 VERIFIED；V1 仍 ACTIVE，不创建 T07。发布后核对 `main = origin/main = v0.2.0` tag commit，并匿名下载 DMG 与 `.sha256` 校验一致。所有旧 tag/assets 保持不变。
