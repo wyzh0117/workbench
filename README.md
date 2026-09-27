@@ -112,16 +112,16 @@ BLOCKER            = 缺正式 macOS signing / notarization credentials
 - V1-T02 — Dogfooding Critical Fixes & Authoring UX Refinement：**VERIFIED**
 - V1-T03 — Course Authoring & Project Structure Closure：**VERIFIED**
 - V1-T04 — Workspace Explorer & Existing-Folder Adoption：**VERIFIED**
-- V1-T05 — Paged Canvas & Pagination：**DONE，等待联合验收**
-- V1-T06 — Layout-aware Export & PPTX：**DONE，等待联合验收**
-- 当前交接：在最终 Universal 构建上复核 page 3 恢复、单页 PDF、Static Web 阅读器与导出产物
-- 当前状态：**DONE — 联合验收进行中；尚未 VERIFIED**
+- V1-T05 — Paged Canvas & Pagination：**VERIFIED**
+- V1-T06 — Layout-aware Export & PPTX：**VERIFIED**
+- 当前交接：V1-T05/T06 验收完成；下一步由用户 dogfood
+- 当前状态：**VERIFIED — V1 ACTIVE**
 - 产品状态：**DOGFOOD READY — ROUND 3**
 - 分发状态：**PARTIAL**（DMG / Release / 固定直链已完成；签名与公证未完成）
 - V0 状态：**V0 CLOSED；V0-T01 / V0-T02 / V0-T03 / V0-T04 全部 VERIFIED**
-- NEXT ACTION：完成 V1-T05 / V1-T06 联合验收；不创建 V1-T07，不关闭 V1
+- NEXT ACTION：用户 dogfood；不创建 V1-T07，不关闭 V1
 
-T05/T06 自动化检查为 346/346，静态检查通过。页面恢复修复已在隔离桌面项目上连续两次重启验证；PowerPoint 已打开新的三页 PPTX 且未触发 Repair，并在副本中验证文字与图片可编辑。当前仍需在最终 Universal 构建上复核页面恢复、单页 PDF 与 Static Web 阅读器/资产。验收完成后发布新 `v0.2.0`；旧 Release 保持冻结。签名与公证尚未配置。
+T05/T06 自动化检查为 346/346，Rust 检查 78/78。页面恢复修复已在隔离桌面项目上连续两次重启验证；最终 Universal 构建也已恢复 page 3。最终 Universal native PDF smoke 输出一页 960×540 pt，正确包含第 3 页标题与正文。PowerPoint 已打开新的三页 PPTX 且未触发 Repair，并在副本中验证文字与图片可编辑。三页、两张图片的 Static Web 样例已通过独立 Chrome `file://` 阅读检查。V1-T05/T06 已 VERIFIED；下一步由用户 dogfood。`v0.2.0` 由 tag-triggered workflow 发布，旧 Release 保持冻结。分发包为 ad-hoc signed，未做 Apple Developer ID 签名或公证。
 - 分发剩余工作（后续候选任务，等用户批准后再启动）：签名 / 公证 / 安装 smoke
 
 ---
