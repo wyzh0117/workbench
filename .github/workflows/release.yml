@@ -14,9 +14,9 @@ name: Release macOS DMG
 # 需要的 repository secrets（任何密钥都不得写进本文件）：
 #   APPLE_CERTIFICATE            Developer ID Application 证书的 base64（.p12）
 #   APPLE_CERTIFICATE_PASSWORD   .p12 导出密码
-#   APPLE_SIGNING_IDENTITY       例如 "Developer ID Application: NAME (TEAMID)"
 #   APPLE_ID / APPLE_PASSWORD / APPLE_TEAM_ID          Apple ID 公证凭据
 #   或 APPLE_API_KEY / APPLE_API_ISSUER / APPLE_API_KEY_PATH   App Store Connect API Key 公证凭据
+# Tauri infers the signing identity from the imported certificate when none is configured.
 #
 # 注意：本文件中的 DMG asset 文件名必须永远是 AI-Course-Workbench-macOS.dmg，
 # 因为 README 与用户手里的「固定直链」依赖它：
@@ -45,12 +45,25 @@ jobs:
   macos-dmg:
     name: Build Universal DMG
     runs-on: macos-latest
+    env:
+      HAS_APPLE_SIGNING_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE != '' }}
 
     steps:
       # Actions are pinned to commit SHAs because this job handles an Apple
       # signing certificate. Bump the SHA (and keep the trailing version
       # comment) when you intentionally upgrade an action.
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Verify pushed tag matches app version
+        if: ${{ github.event_name == 'push' && github.ref_type == 'tag' }}
+        run: |
+          set -euo pipefail
+          APP_VERSION="$(python3 -c 'import json; print(json.load(open("src-tauri/tauri.conf.json"))["version"])')"
+          EXPECTED_TAG="v${APP_VERSION}"
+          if [ "$GITHUB_REF_NAME" != "$EXPECTED_TAG" ]; then
+            echo "Refusing release: tag $GITHUB_REF_NAME does not match app version $EXPECTED_TAG." >&2
+            exit 1
+          fi
 
       - name: Add macOS Rust targets
         run: rustup target add aarch64-apple-darwin x86_64-apple-darwin
@@ -66,6 +79,7 @@ jobs:
       # If you use the Apple ID route instead (APPLE_ID + APPLE_PASSWORD +
       # APPLE_TEAM_ID), leave APPLE_API_KEY_P8 unset and this step does nothing.
       - name: Materialize App Store Connect API key (optional)
+        if: ${{ env.HAS_APPLE_SIGNING_CERTIFICATE == 'true' }}
         env:
           APPLE_API_KEY_P8: ${{ secrets.APPLE_API_KEY_P8 }}
         run: |
@@ -80,14 +94,13 @@ jobs:
           echo "APPLE_API_KEY_PATH=$KEY_PATH" >> "$GITHUB_ENV"
           echo "Wrote the App Store Connect API key to a runner-temporary path."
 
-      - name: Build Universal app + DMG
+      - name: Build Universal app + DMG (Developer ID)
+        if: ${{ env.HAS_APPLE_SIGNING_CERTIFICATE == 'true' }}
         uses: tauri-apps/tauri-action@84b9d35b5fc46c1e45415bdb6144030364f7ebc5 # v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          # 有证书就导入并签名；没有就退回 ad-hoc（"-"），让流程依然可以跑通。
           APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
           APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
-          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY || '-' }}
           # Apple ID 公证路线：
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
@@ -96,6 +109,15 @@ jobs:
           # GITHUB_ENV 传进来；不要把它配成 repository secret）：
           APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
           APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+        with:
+          args: --target universal-apple-darwin --bundles app,dmg
+
+      - name: Build Universal app + DMG (ad-hoc)
+        if: ${{ env.HAS_APPLE_SIGNING_CERTIFICATE != 'true' }}
+        uses: tauri-apps/tauri-action@84b9d35b5fc46c1e45415bdb6144030364f7ebc5 # v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          APPLE_SIGNING_IDENTITY: '-'
         with:
           args: --target universal-apple-darwin --bundles app,dmg
 
