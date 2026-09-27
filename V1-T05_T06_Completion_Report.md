@@ -8,7 +8,7 @@ Status: **VERIFIED. V1 remains ACTIVE; next step is user dogfood.**
 
 V0 remains CLOSED and V1-T01 through V1-T06 are VERIFIED. Do not create V1-T07 or close V1 before separately authorized work.
 
-The user authorized a new v0.2.0 release after acceptance and independent review. That authorization supersedes the task spec's earlier “do not publish a new Release” limitation; all previously published tags and assets remain immutable.
+The user authorized a new release after acceptance and independent review, superseding the task spec's earlier “do not publish a new Release” limitation. The `v0.2.0` tag-triggered workflow failed during macOS certificate import before creating a GitHub Release or assets; that tag remains immutable. The workflow fix is being prepared for a new `v0.2.1` release. Existing published tags and assets remain immutable.
 
 ## Delivered
 
@@ -38,10 +38,10 @@ The user authorized a new v0.2.0 release after acceptance and independent review
 - PowerPoint opened the three-page Tauri UI export without Repair. Text and a picture remained independently editable in PowerPoint; changes could be saved. The clean sample is deliverables/v0.2.0/paged-course/full-course-3pages.pptx (SHA-256 fc027d3879642cc113e06fa262f429d3ecb1813f5d07a04127d62edf606ce84e).
 - The final Universal app launched and restored page 3 in the isolated project. Its executable hash matches the built app. Native current-page PDF smoke: /private/tmp/tauri-acceptance/exports/universal-smoke-current-page-p3.pdf (SHA-256 7eec0f3524f3feb696b6e8a45be27bca60dc48020e72ffe3934c493b1914bc73); pypdf confirmed one 960×540 pt page containing the third page's title and body. Together with the independently checked full-course PDF, editable PowerPoint deck and direct file:// Static Web sample, this completes the T05/T06 acceptance set.
 
-## Final local Universal build
+## Verified local Universal build used for T05/T06 acceptance
 
     App: src-tauri/target/universal-apple-darwin/release/bundle/macos/AI Course Workbench.app
-    Version: 0.2.0
+    Version: 0.2.0 (acceptance build; the next release target is 0.2.1)
     Architectures: x86_64 arm64
     Executable SHA-256: 885fb6b143bf578405ba85db29edb623031d58994d624a12e0aa266d43de3d29
 
@@ -51,6 +51,6 @@ The user authorized a new v0.2.0 release after acceptance and independent review
 
 hdiutil verify passed. The app is ad-hoc signed; it has no Apple Developer ID signature and is not notarized. The listed DMG hash identifies this local build. The tag-triggered release workflow supplies the published DMG's own SHA-256 sidecar.
 
-## Release path
+## Release status and next path
 
-The T05/T06 notes are in `.github/release-notes/v0.2.0.md`. Publish `v0.2.0` through the tag-triggered workflow, which attaches the Universal DMG and its `.sha256` sidecar. Verify `main`, `origin/main` and the tag resolve to the same commit, then anonymously download the DMG and sidecar and verify the checksum. The published DMG is ad-hoc signed, without Apple Developer ID signing or notarization; users may see macOS security prompts.
+The v0.2.0 tag-triggered run failed before creating a Release: the workflow passed empty `APPLE_CERTIFICATE` and password values to Tauri, and macOS `security import` rejected the empty certificate. No v0.2.0 Release assets were published; the failed tag is frozen. The next release candidate is v0.2.1, with mutually exclusive Developer ID and ad-hoc build steps so the ad-hoc path receives no certificate or notarization variables. Only a push of the final `v0.2.1` tag may publish; verify `main`, `origin/main` and the tag resolve to one commit, then anonymously download the Universal DMG and `.sha256` sidecar and verify version, architectures and checksum. The ad-hoc distribution has no Apple Developer ID signature or notarization; users may see macOS security prompts.
