@@ -1,6 +1,6 @@
 [package]
 name = "ai-course-workbench"
-version = "0.2.1"
+version = "0.2.2"
 description = "Local-first desktop shell for AI Course Workbench"
 authors = ["AI Course Workbench"]
 edition = "2021"

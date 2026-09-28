@@ -504,6 +504,10 @@ export const AI_FAILURE_CODES = [
   "not_configured",
   /** API Key / Token 缺失 */
   "missing_credential",
+  /** A stored Key needs explicit approval before it can cross origins. */
+  "credential_origin_confirmation_required",
+  /** A request reached the provider, which rejected its authentication. */
+  "authentication_failed",
   "timeout",
   "cancelled",
   "rate_limited",
@@ -530,6 +534,15 @@ const AI_FAILURE_DEFAULTS = {
     message: "这个 Provider 还没有配置 API Key，请求被拒绝了。",
     action:
       "请在「AI 设置」里为这个 Provider 填写 API Key；密钥由本机服务写入 macOS 系统钥匙串，不会写入课程文件。",
+  },
+  credential_origin_confirmation_required: {
+    message: "这个连接的 API Key 尚未授权发送到当前服务域名。",
+    action: "在 AI 设置中核对新域名并保存连接；拒绝时原地址和密钥会保留。",
+  },
+  authentication_failed: {
+    message: "Provider 拒绝了这次认证（HTTP 401）。",
+    action:
+      "请检查 Base URL、认证头、认证方案和已保存凭据是否匹配；确认后再更新密钥并重试。",
   },
   timeout: {
     message: "AI 请求超时了（默认 60 秒内没有响应），课程内容没有改动。",
@@ -594,6 +607,7 @@ const AI_PROJECT_FIRST_CODES = [
 const AI_RECOVERABLE_CODES = [
   "not_configured",
   "missing_credential",
+  "authentication_failed",
   "timeout",
   "cancelled",
   "rate_limited",
@@ -2460,8 +2474,8 @@ function failureForStatus(status, detail) {
   const extra = sanitizeAiText(stringOf(detail)).slice(0, 300);
   if (status === 401) {
     return new AiFailure(
-      "missing_credential",
-      "Provider 拒绝了这次请求（HTTP 401）：API Key 缺失或已失效。请在 AI 设置里重新填写这个 Provider 的密钥，然后重试。",
+      "authentication_failed",
+      "Provider 拒绝了这次认证（HTTP 401）。请检查 Base URL、认证头、认证方案和已保存凭据是否匹配。",
       { status, details: extra || null },
     );
   }

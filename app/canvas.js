@@ -93,36 +93,123 @@ const BYTES_PER_MEGABYTE = 1024 * 1024;
  * Bounded preview cache.
  *
  * Asset bytes are read only for assets the canonical project references, are
- * cached per asset id, and are never written back anywhere.  Webviews cannot
- * load `project/assets/...` directly, so small payloads use a data URL (which
- * the package CSP already allows) and larger media uses an object URL.
+ * cached per project, asset identity, and content checksum, and are never
+ * written back anywhere. Webviews cannot read project paths directly, so
+ * media uses temporary object URLs allowed by the app's narrowly scoped CSP.
  */
 export class AssetPreviewCache {
   constructor(bridge, options = {}) {
     this.bridge = bridge;
-    this.dataUrlLimit = options.dataUrlLimit ?? 2 * BYTES_PER_MEGABYTE;
     this.mediaLimit = options.mediaLimit ?? 64 * BYTES_PER_MEGABYTE;
+    this.maxCacheBytes = options.maxCacheBytes ?? 96 * BYTES_PER_MEGABYTE;
+    this.maxEntries = options.maxEntries ?? 32;
     this.entries = new Map();
     this.pending = new Map();
+    this.assetsByKey = new Map();
+    this.observedElements = new Set();
+    this.intersectionObserver = null;
+    this.cacheBytes = 0;
+    this.generation = 0;
     this.failures = 0;
     this.urls = new Set();
     this.onChange = options.onChange ?? (() => {});
     this.notifyScheduled = false;
   }
 
-  /** @returns {{url?: string, text?: string, failed?: boolean, error?: string}|undefined} */
-  get(assetId) {
+  /** @returns {{url?: string, text?: string, failed?: boolean, error?: string, loading?: boolean, key?: string}|undefined} */
+  get(assetId, assetSnapshot = null) {
     if (!assetId) return undefined;
-    const entry = this.entries.get(assetId);
-    if (!entry) {
-      void this.load(assetId);
-      return undefined;
+    const asset = assetSnapshot || this.findAsset(assetId);
+    if (!asset || asset.archived) return undefined;
+    const key = this.keyFor(asset);
+    const cached = this.entries.get(key);
+    if (cached) {
+      // Map insertion order is the small LRU: recently used previews move to
+      // the end, so scrolling through a large library cannot grow memory.
+      this.entries.delete(key);
+      this.entries.set(key, cached);
+      return cached.value;
     }
-    return entry;
+    this.assetsByKey.set(key, asset);
+    return { loading: true, key };
+  }
+
+  retry(assetId) {
+    const asset = this.findAsset(assetId);
+    if (!asset || asset.archived) return;
+    const key = this.keyFor(asset);
+    const pending = this.pending.get(key);
+    if (pending) return pending;
+    const cached = this.entries.get(key);
+    if (cached && !cached.value.failed) return;
+    if (cached) {
+      this.entries.delete(key);
+      this.cacheBytes = Math.max(0, this.cacheBytes - cached.size);
+      this.releaseEntry(cached.value);
+    }
+    this.assetsByKey.set(key, asset);
+    const task = this.load(asset, key);
+    this.scheduleNotify();
+    return task;
+  }
+
+  observe(root) {
+    if (!root?.querySelectorAll) return;
+    const placeholders = [...root.querySelectorAll(
+      "[data-asset-preview-key]",
+    )];
+    const activeKeys = new Set(placeholders.map((element) =>
+      element.getAttribute("data-asset-preview-key") || ""
+    ).filter(Boolean));
+
+    for (const [key, asset] of this.assetsByKey) {
+      if (!activeKeys.has(key) && !this.pending.has(key)) {
+        this.assetsByKey.delete(key);
+      } else if (activeKeys.has(key)) {
+        const current = this.findAsset(asset.id);
+        if (current) this.assetsByKey.set(key, current);
+      }
+    }
+
+    if (typeof IntersectionObserver !== "function") {
+      for (const key of activeKeys) void this.loadByKey(key);
+      return;
+    }
+    if (!this.intersectionObserver) {
+      this.intersectionObserver = new IntersectionObserver((records) => {
+        for (const record of records) {
+          if (!record.isIntersecting) continue;
+          const key = record.target.getAttribute("data-asset-preview-key");
+          this.intersectionObserver.unobserve(record.target);
+          this.observedElements.delete(record.target);
+          if (key) void this.loadByKey(key);
+        }
+      }, { rootMargin: "160px" });
+    }
+    for (const element of this.observedElements) {
+      if (element.isConnected) continue;
+      this.intersectionObserver.unobserve(element);
+      this.observedElements.delete(element);
+    }
+    for (const element of placeholders) {
+      const key = element.getAttribute("data-asset-preview-key");
+      if (!key || this.entries.has(key) || this.pending.has(key) ||
+        this.observedElements.has(element)) continue;
+      this.observedElements.add(element);
+      this.intersectionObserver.observe(element);
+    }
+  }
+
+  loadByKey(key) {
+    const asset = this.assetsByKey.get(key);
+    if (asset && !this.entries.has(key) && !this.pending.has(key)) {
+      void this.load(asset, key);
+    }
   }
 
   isLoading(assetId) {
-    return this.pending.has(assetId);
+    const asset = this.findAsset(assetId);
+    return Boolean(asset && this.pending.has(this.keyFor(asset)));
   }
 
   setOnChange(listener) {
@@ -140,48 +227,159 @@ export class AssetPreviewCache {
     else setTimeout(flush, 0);
   }
 
-  async load(assetId) {
-    if (this.entries.has(assetId) || this.pending.has(assetId)) return;
-    const asset = this.findAsset(assetId);
+  keyFor(asset) {
+    return JSON.stringify([
+      asset.project_id || "",
+      asset.id,
+      asset.storage_path || "",
+      asset.file_size ?? null,
+      asset.checksum || "",
+      asset.mime_type || "",
+      asset.type || "",
+    ]);
+  }
+
+  async load(assetOrId, knownKey = null) {
+    const asset = typeof assetOrId === "object" && assetOrId
+      ? assetOrId
+      : this.findAsset(assetOrId);
     if (!asset || asset.archived) return;
+    const assetId = asset.id;
+    const key = knownKey || this.keyFor(asset);
+    if (this.entries.has(key) || this.pending.has(key)) return;
+    const current = this.findAsset(assetId);
+    if (!current || current.archived || this.keyFor(current) !== key) return;
+    const generation = this.generation;
     const task = (async () => {
+      let entry;
+      const ownedUrls = [];
+      const keepUrl = (url) => {
+        this.trackUrl({ url });
+        if (url) ownedUrls.push(url);
+        return url;
+      };
       try {
         const bytes = await this.bridge.readAssetBytes(assetId);
+        // Project switches and content edits invalidate reads already in
+        // flight. Never let their late response repopulate the new cache.
+        const current = this.findAsset(assetId);
+        if (generation !== this.generation || !current ||
+          this.keyFor(current) !== key) return;
         if (!bytes || bytes.length === 0) {
-          this.entries.set(assetId, {
+          entry = {
             failed: true,
             error: "素材文件为空",
-          });
+          };
         } else if (bytes.length > this.mediaLimit) {
-          this.entries.set(assetId, {
+          entry = {
             failed: true,
             error: "素材过大，无法在工作台内预览",
-          });
+          };
         } else if (isTextAsset(asset)) {
           const text = new TextDecoder().decode(bytes);
-          this.entries.set(assetId, { text, url: urlForBytes(bytes, asset) });
+          entry = { text, loaded: true };
+        } else if (asset.type === "image" || asset.type === "gif") {
+          if (!String(asset.mime_type || "").toLowerCase().startsWith("image/")) {
+            throw new Error("素材类型与图片文件格式不匹配");
+          }
+          const url = keepUrl(urlForBytes(bytes, asset));
+          const image = await loadImage(url);
+          const thumbnailUrl = await posterFromImage(image).catch(() => null);
+          if (thumbnailUrl) keepUrl(thumbnailUrl);
+          entry = {
+            url,
+            thumbnailUrl,
+            width: image.naturalWidth,
+            height: image.naturalHeight,
+            loaded: true,
+          };
+        } else if (asset.type === "video") {
+          if (!String(asset.mime_type || "").toLowerCase().startsWith("video/")) {
+            throw new Error("素材类型与视频文件格式不匹配");
+          }
+          const url = keepUrl(urlForBytes(bytes, asset));
+          const frame = await decodeVideoFrame(url);
+          if (frame.posterUrl) keepUrl(frame.posterUrl);
+          entry = { url, ...frame, loaded: true };
+        } else if (asset.type === "audio") {
+          if (!String(asset.mime_type || "").toLowerCase().startsWith("audio/")) {
+            throw new Error("素材类型与音频文件格式不匹配");
+          }
+          const url = keepUrl(urlForBytes(bytes, asset));
+          const metadata = await decodeAudioMetadata(url);
+          entry = { url, ...metadata, loaded: true };
+        } else if (isPdfAsset(asset)) {
+          if (!looksLikePdf(bytes)) {
+            throw new Error("PDF 文件内容无效或不完整，无法显示第一页");
+          }
+          const url = keepUrl(urlForBytes(bytes, {
+            ...asset,
+            mime_type: "application/pdf",
+          }));
+          entry = { url, pdf: true, loaded: true };
         } else {
-          this.entries.set(assetId, { url: urlForBytes(bytes, asset) });
+          // Documents such as DOCX remain reference attachments unless a
+          // native thumbnail provider is available. Do not decode them as
+          // editable body text.
+          entry = { loaded: true };
         }
-        this.trackUrl(this.entries.get(assetId));
+        const latest = this.findAsset(assetId);
+        if (generation !== this.generation || !latest ||
+          this.keyFor(latest) !== key) {
+          this.releaseEntry(entry);
+          return;
+        }
+        this.cache(key, entry, bytes?.byteLength || 0);
       } catch (error) {
+        for (const url of ownedUrls) this.releaseEntry({ url });
+        if (generation !== this.generation) return;
         this.failures += 1;
-        this.entries.set(assetId, {
+        entry = {
           failed: true,
           error: error?.message || "素材不可读",
-        });
+        };
+        this.cache(key, entry, 0);
       } finally {
-        this.pending.delete(assetId);
-        this.scheduleNotify();
+        if (generation === this.generation) {
+          this.pending.delete(key);
+          this.assetsByKey.delete(key);
+          this.scheduleNotify();
+        }
       }
     })();
-    this.pending.set(assetId, task);
+    this.pending.set(key, task);
     await task;
+  }
+
+  cache(key, value, size) {
+    this.entries.set(key, { value, size });
+    this.cacheBytes += size;
+    while (this.entries.size > this.maxEntries ||
+      this.cacheBytes > this.maxCacheBytes) {
+      const oldestKey = this.entries.keys().next().value;
+      if (oldestKey === undefined) break;
+      const oldest = this.entries.get(oldestKey);
+      this.entries.delete(oldestKey);
+      this.cacheBytes -= oldest.size;
+      this.releaseEntry(oldest.value);
+    }
   }
 
   trackUrl(entry) {
     if (entry && typeof entry.url === "string" && entry.url.startsWith("blob:")) {
       this.urls.add(entry.url);
+    }
+  }
+
+  releaseEntry(entry) {
+    for (const url of [entry?.url, entry?.posterUrl, entry?.thumbnailUrl]) {
+      if (typeof url !== "string" || !url.startsWith("blob:")) continue;
+      this.urls.delete(url);
+      try {
+        URL.revokeObjectURL(url);
+      } catch {
+        // Revoking an already-released URL must never break the workbench.
+      }
     }
   }
 
@@ -192,6 +390,7 @@ export class AssetPreviewCache {
   }
 
   clear() {
+    this.generation += 1;
     for (const url of this.urls) {
       try {
         URL.revokeObjectURL(url);
@@ -200,8 +399,13 @@ export class AssetPreviewCache {
       }
     }
     this.urls.clear();
+    this.intersectionObserver?.disconnect();
+    this.intersectionObserver = null;
+    this.observedElements.clear();
     this.entries.clear();
     this.pending.clear();
+    this.assetsByKey.clear();
+    this.cacheBytes = 0;
   }
 }
 
@@ -212,12 +416,188 @@ function isTextAsset(asset) {
   );
 }
 
+function isPdfAsset(asset) {
+  return String(asset.mime_type || "").toLowerCase() === "application/pdf" ||
+    /\.pdf$/i.test(String(asset.filename || ""));
+}
+
+function looksLikePdf(bytes) {
+  if (bytes.length < 16) return false;
+  const decoder = new TextDecoder("ascii");
+  const header = decoder.decode(bytes.subarray(0, Math.min(bytes.length, 1024)));
+  const tail = decoder.decode(bytes.subarray(Math.max(0, bytes.length - 1024)));
+  return header.includes("%PDF-") && tail.includes("%%EOF");
+}
+
+function loadImage(url) {
+  return new Promise((resolve, reject) => {
+    if (typeof Image !== "function") {
+      reject(new Error("当前 WebView 无法解码图片"));
+      return;
+    }
+    const image = new Image();
+    image.onload = () => image.naturalWidth && image.naturalHeight
+      ? resolve(image)
+      : reject(new Error("图片没有可显示的画面"));
+    image.onerror = () => reject(new Error("图片解码失败，文件可能已损坏"));
+    image.src = url;
+    if (typeof image.decode === "function") {
+      image.decode().then(() => {
+        if (image.naturalWidth && image.naturalHeight) resolve(image);
+      }).catch(() => reject(new Error("图片解码失败，文件可能已损坏")));
+    }
+  });
+}
+
+function canvasBlob(canvas, mime = "image/png") {
+  return new Promise((resolve, reject) => {
+    try {
+      canvas.toBlob((blob) => blob
+        ? resolve(blob)
+        : reject(new Error("无法生成预览缩略图")), mime);
+    } catch {
+      reject(new Error("无法生成预览缩略图"));
+    }
+  });
+}
+
+async function posterFromImage(image) {
+  if (typeof document === "undefined" || typeof URL === "undefined" ||
+    typeof URL.createObjectURL !== "function") return null;
+  const scale = Math.min(1, 320 / Math.max(image.naturalWidth, image.naturalHeight));
+  const canvas = document.createElement("canvas");
+  canvas.width = Math.max(1, Math.round(image.naturalWidth * scale));
+  canvas.height = Math.max(1, Math.round(image.naturalHeight * scale));
+  const context = canvas.getContext("2d");
+  if (!context) return null;
+  context.drawImage(image, 0, 0, canvas.width, canvas.height);
+  const blob = await canvasBlob(canvas);
+  return URL.createObjectURL(blob);
+}
+
+async function decodeVideoFrame(url) {
+  if (typeof document === "undefined") {
+    throw new Error("当前 WebView 无法解码视频");
+  }
+  const video = document.createElement("video");
+  video.muted = true;
+  video.playsInline = true;
+  video.preload = "metadata";
+  return await new Promise((resolve, reject) => {
+    let settled = false;
+    const timeout = setTimeout(() => finish(
+      new Error("视频解码超时，未取得可显示画面"),
+    ), 15000);
+    const cleanup = () => {
+      clearTimeout(timeout);
+      video.removeEventListener("loadedmetadata", onMetadata);
+      video.removeEventListener("loadeddata", onFrame);
+      video.removeEventListener("seeked", onFrame);
+      video.removeEventListener("error", onError);
+      video.pause();
+      video.removeAttribute("src");
+      video.load();
+    };
+    const finish = (error, result) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      if (error) reject(error);
+      else resolve(result);
+    };
+    const onError = () => finish(
+      new Error("视频无法解码，格式可能不受支持或文件已损坏"),
+    );
+    const onFrame = async () => {
+      if (!video.videoWidth || !video.videoHeight) {
+        finish(new Error("视频没有可显示画面"));
+        return;
+      }
+      try {
+        const scale = Math.min(
+          1,
+          320 / Math.max(video.videoWidth, video.videoHeight),
+        );
+        const canvas = document.createElement("canvas");
+        canvas.width = Math.max(1, Math.round(video.videoWidth * scale));
+        canvas.height = Math.max(1, Math.round(video.videoHeight * scale));
+        const context = canvas.getContext("2d");
+        if (!context) throw new Error("无法生成视频预览缩略图");
+        context.drawImage(video, 0, 0, canvas.width, canvas.height);
+        const posterUrl = URL.createObjectURL(await canvasBlob(canvas));
+        finish(null, {
+          posterUrl,
+          durationSeconds: Number.isFinite(video.duration)
+            ? video.duration
+            : null,
+        });
+      } catch (error) {
+        finish(error instanceof Error ? error : new Error("无法生成视频预览缩略图"));
+      }
+    };
+    const onMetadata = () => {
+      const seekTo = Number.isFinite(video.duration) && video.duration > 0.1
+        ? Math.min(0.1, video.duration / 2)
+        : 0;
+      if (!seekTo) video.addEventListener("loadeddata", onFrame, { once: true });
+      else video.addEventListener("seeked", onFrame, { once: true });
+      try {
+        video.currentTime = seekTo;
+      } catch {
+        video.addEventListener("loadeddata", onFrame, { once: true });
+      }
+    };
+    video.addEventListener("loadedmetadata", onMetadata, { once: true });
+    video.addEventListener("error", onError, { once: true });
+    video.src = url;
+    video.load();
+  });
+}
+
+async function decodeAudioMetadata(url) {
+  if (typeof document === "undefined") {
+    throw new Error("当前 WebView 无法读取音频信息");
+  }
+  const audio = document.createElement("audio");
+  audio.preload = "metadata";
+  return await new Promise((resolve, reject) => {
+    let settled = false;
+    const timeout = setTimeout(() => finish(
+      new Error("音频信息读取超时"),
+    ), 15000);
+    const cleanup = () => {
+      clearTimeout(timeout);
+      audio.removeEventListener("loadedmetadata", onMetadata);
+      audio.removeEventListener("error", onError);
+      audio.removeAttribute("src");
+      audio.load();
+    };
+    const finish = (error, result) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      if (error) reject(error);
+      else resolve(result);
+    };
+    const onMetadata = () => finish(null, {
+      durationSeconds: Number.isFinite(audio.duration) ? audio.duration : null,
+    });
+    const onError = () => finish(
+      new Error("音频无法解码，格式可能不受支持或文件已损坏"),
+    );
+    audio.addEventListener("loadedmetadata", onMetadata, { once: true });
+    audio.addEventListener("error", onError, { once: true });
+    audio.src = url;
+    audio.load();
+  });
+}
+
 function urlForBytes(bytes, asset) {
   const mime = String(asset.mime_type || "application/octet-stream");
   const canInline = typeof URL !== "undefined" &&
     typeof URL.createObjectURL === "function" &&
     (mime.startsWith("image/") || mime.startsWith("video/") ||
-      mime.startsWith("audio/"));
+      mime.startsWith("audio/") || mime === "application/pdf");
   if (canInline) {
     try {
       return URL.createObjectURL(new Blob([bytes], { type: mime }));

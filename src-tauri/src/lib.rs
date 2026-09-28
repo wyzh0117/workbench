@@ -6224,6 +6224,29 @@ fn ai_normalize_provider_store(value: Value) -> Result<Map<String, Value>, Strin
     Ok(store)
 }
 
+fn ai_url_origin(url: &str) -> Option<String> {
+    let parsed = reqwest::Url::parse(url).ok()?;
+    let origin = parsed.origin().ascii_serialization();
+    (!origin.is_empty() && origin != "null").then_some(origin)
+}
+
+fn ai_credential_origin_error(
+    provider_id: &str,
+    bound_origin: Option<&str>,
+    target_origin: Option<&str>,
+) -> String {
+    structured_ai_error(
+        "credential_origin_confirmation_required",
+        "这个连接的服务域名已更改，需要确认 API Key 将发送到新域名。",
+        Some("确认后保存连接；拒绝时原配置和 API Key 会保留。"),
+        json!({
+            "provider_id": provider_id,
+            "bound_origin": bound_origin,
+            "target_origin": target_origin,
+        }),
+    )
+}
+
 fn ai_read_provider_store(path: &Path) -> Result<Map<String, Value>, String> {
     ai_normalize_provider_store(ai_read_store(path, "AI Provider 配置")?)
 }
@@ -6264,9 +6287,10 @@ fn ai_read_provider_store_secure(base: &Path) -> Result<Map<String, Value>, Stri
             }
         }
     }
+    let original_store = store.clone();
     let has_extra_fields = store
         .keys()
-        .any(|key| key != "providers" && key != "credentials");
+        .any(|key| key != "providers" && key != "credentials" && key != "credential_origins");
     let mut legacy = Map::new();
     if let Some(credentials) = backup
         .as_ref()
@@ -6278,14 +6302,6 @@ fn ai_read_provider_store_secure(base: &Path) -> Result<Map<String, Value>, Stri
     if let Some(credentials) = store.get("credentials").and_then(Value::as_object) {
         legacy.extend(credentials.clone());
     }
-    let needs_cleanup = !legacy.is_empty()
-        || backup_exists
-        || store.get("credentials").is_some()
-        || has_extra_fields;
-    if !needs_cleanup {
-        return Ok(store);
-    }
-
     let credential_store = ai_credential_store(base);
     for (provider_id, raw_value) in &legacy {
         let value = raw_value
@@ -6306,15 +6322,58 @@ fn ai_read_provider_store_secure(base: &Path) -> Result<Map<String, Value>, Stri
         }
     }
     store.remove("credentials");
-    store.retain(|key, _| key == "providers");
-    ai_write_provider_store(
-        &paths.providers,
-        &Value::Object(store.clone()),
-        "AI Provider 配置",
-    )
-    .map_err(|_| ai_migration_failure("metadata-write"))?;
-    if backup_exists {
-        fs::remove_file(&backup_path).map_err(|_| ai_migration_failure("backup-cleanup"))?;
+    store.retain(|key, _| key == "providers" || key == "credential_origins");
+
+    // Keep only an explicit credential origin. A missing or malformed binding
+    // stays untrusted until the user confirms a connection save or enters a key.
+    let mut origins = store
+        .get("credential_origins")
+        .and_then(Value::as_object)
+        .cloned()
+        .unwrap_or_default();
+    let providers = ai_provider_records(&store);
+    let mut configured_ids = std::collections::HashSet::new();
+    for provider in providers {
+        let Some(provider_id) = provider.get("id").and_then(Value::as_str) else {
+            continue;
+        };
+        configured_ids.insert(provider_id.to_owned());
+        if credential_store.get(provider_id)?.is_none() {
+            origins.remove(provider_id);
+            continue;
+        }
+        let current = origins
+            .get(provider_id)
+            .and_then(Value::as_str)
+            .and_then(ai_url_origin);
+        match current {
+            Some(origin) => {
+                origins.insert(provider_id.to_owned(), json!(origin));
+            }
+            None => {
+                origins.remove(provider_id);
+            }
+        }
+    }
+    origins.retain(|provider_id, _| configured_ids.contains(provider_id));
+    if !origins.is_empty() || store.contains_key("credential_origins") {
+        store.insert("credential_origins".into(), Value::Object(origins));
+    } else {
+        store.remove("credential_origins");
+    }
+
+    let needs_cleanup =
+        !legacy.is_empty() || backup_exists || original_store != store || has_extra_fields;
+    if needs_cleanup {
+        ai_write_provider_store(
+            &paths.providers,
+            &Value::Object(store.clone()),
+            "AI Provider 配置",
+        )
+        .map_err(|_| ai_migration_failure("metadata-write"))?;
+        if backup_exists {
+            fs::remove_file(&backup_path).map_err(|_| ai_migration_failure("backup-cleanup"))?;
+        }
     }
     Ok(store)
 }
@@ -7155,7 +7214,15 @@ fn ai_provider_records(store: &Map<String, Value>) -> Vec<Value> {
 /// Provider 列表 + `configured` 布尔表；**永远不含凭据本身**。
 fn ai_connection_view(store: &Map<String, Value>, configured: Map<String, Value>) -> Value {
     let providers = ai_provider_records(store);
-    json!({ "providers": providers, "configured": Value::Object(configured) })
+    let credential_origins = store
+        .get("credential_origins")
+        .cloned()
+        .unwrap_or_else(|| json!({}));
+    json!({
+        "providers": providers,
+        "configured": Value::Object(configured),
+        "credential_origins": credential_origins,
+    })
 }
 
 fn ai_connection_list_at(base: &Path) -> Result<Value, String> {
@@ -7172,6 +7239,14 @@ fn ai_connection_list_at(base: &Path) -> Result<Value, String> {
 }
 
 fn ai_connection_save_at(base: &Path, provider: &Value) -> Result<Value, String> {
+    ai_connection_save_with_confirmation_at(base, provider, false)
+}
+
+fn ai_connection_save_with_confirmation_at(
+    base: &Path,
+    provider: &Value,
+    confirm_credential_origin: bool,
+) -> Result<Value, String> {
     let object = provider
         .as_object()
         .ok_or_else(|| ai_invalid_request("Provider 配置必须是 JSON 对象。"))?;
@@ -7210,10 +7285,46 @@ fn ai_connection_save_at(base: &Path, provider: &Value) -> Result<Value, String>
         _ => return Err(ai_invalid_request("Provider 配置必须是 JSON 对象。")),
     };
     record.insert("id".into(), json!(provider_id));
-    let record = Value::Object(record);
+    let mut record = Value::Object(record);
 
     let paths = ai_store_paths(base);
     let mut store = ai_read_provider_store_secure(base)?;
+    if let Some(existing) = store
+        .get("providers")
+        .and_then(Value::as_array)
+        .and_then(|providers| {
+            providers
+                .iter()
+                .find(|entry| entry.get("id").and_then(Value::as_str) == Some(provider_id.as_str()))
+        })
+        .and_then(Value::as_object)
+    {
+        let mut merged = existing.clone();
+        if let Some(updates) = record.as_object() {
+            merged.extend(updates.clone());
+        }
+        record = Value::Object(merged);
+    }
+    let credential_present = ai_credential_store(base).get(&provider_id)?.is_some();
+    let previous_origin = store
+        .get("credential_origins")
+        .and_then(Value::as_object)
+        .and_then(|origins| origins.get(&provider_id))
+        .and_then(Value::as_str)
+        .and_then(ai_url_origin);
+    let target_origin = record
+        .get("base_url")
+        .and_then(Value::as_str)
+        .and_then(ai_url_origin);
+    let origin_changed = credential_present && previous_origin != target_origin;
+    if origin_changed && !confirm_credential_origin {
+        return Err(ai_credential_origin_error(
+            &provider_id,
+            previous_origin.as_deref(),
+            target_origin.as_deref(),
+        ));
+    }
+
     let providers = store
         .get_mut("providers")
         .and_then(Value::as_array_mut)
@@ -7224,6 +7335,25 @@ fn ai_connection_save_at(base: &Path, provider: &Value) -> Result<Value, String>
         Some(index) => providers[index] = record.clone(),
         None => providers.push(record.clone()),
     }
+
+    let mut origins = store
+        .get("credential_origins")
+        .and_then(Value::as_object)
+        .cloned()
+        .unwrap_or_default();
+    if credential_present {
+        match target_origin {
+            Some(origin) => {
+                origins.insert(provider_id.clone(), json!(origin));
+            }
+            None => {
+                origins.remove(&provider_id);
+            }
+        }
+    } else {
+        origins.remove(&provider_id);
+    }
+    store.insert("credential_origins".into(), Value::Object(origins));
     ai_write_provider_store(&paths.providers, &Value::Object(store), "AI Provider 配置")?;
     Ok(json!({ "provider": record }))
 }
@@ -7247,6 +7377,12 @@ fn ai_connection_delete_at(base: &Path, provider_id: &str) -> Result<Value, Stri
     }
     let removed = removed_provider || removed_credential;
     if removed {
+        if let Some(origins) = store
+            .get_mut("credential_origins")
+            .and_then(Value::as_object_mut)
+        {
+            origins.remove(provider_id);
+        }
         ai_write_provider_store(&paths.providers, &Value::Object(store), "AI Provider 配置")?;
     }
     Ok(json!({ "provider_id": provider_id, "removed": removed }))
@@ -7264,8 +7400,31 @@ fn ai_secret_set_at(base: &Path, provider_id: &str, value: &str) -> Result<Value
             "API Key 过长，请确认粘贴的内容是否正确。",
         ));
     }
-    let store = ai_read_provider_store_secure(base)?;
+    let mut store = ai_read_provider_store_secure(base)?;
     ai_credential_store(base).set(&provider_id, value)?;
+    let origin = ai_provider_records(&store)
+        .into_iter()
+        .find(|provider| provider.get("id").and_then(Value::as_str) == Some(provider_id.as_str()))
+        .and_then(|provider| {
+            provider
+                .get("base_url")
+                .and_then(Value::as_str)
+                .and_then(ai_url_origin)
+        });
+    let mut origins = store
+        .get("credential_origins")
+        .and_then(Value::as_object)
+        .cloned()
+        .unwrap_or_default();
+    match origin {
+        Some(origin) => {
+            origins.insert(provider_id.clone(), json!(origin));
+        }
+        None => {
+            origins.remove(&provider_id);
+        }
+    }
+    store.insert("credential_origins".into(), Value::Object(origins));
     // Only metadata is persisted. A failed write leaves the Keychain value
     // available and never creates a plaintext fallback.
     let paths = ai_store_paths(base);
@@ -7275,9 +7434,15 @@ fn ai_secret_set_at(base: &Path, provider_id: &str, value: &str) -> Result<Value
 
 fn ai_secret_delete_at(base: &Path, provider_id: &str) -> Result<Value, String> {
     ai_validate_provider_id(provider_id)?;
-    let store = ai_read_provider_store_secure(base)?;
+    let mut store = ai_read_provider_store_secure(base)?;
     let removed = ai_credential_store(base).delete(provider_id)?;
     if removed {
+        if let Some(origins) = store
+            .get_mut("credential_origins")
+            .and_then(Value::as_object_mut)
+        {
+            origins.remove(provider_id);
+        }
         let paths = ai_store_paths(base);
         ai_write_provider_store(&paths.providers, &Value::Object(store), "AI Provider 配置")?;
     }
@@ -7483,13 +7648,97 @@ fn ai_request_spec(base: &Path, input: &Value) -> Result<AiRequestSpec, String> 
         .map(str::trim)
         .unwrap_or("")
         .to_owned();
-    // 地址统一走校验（含空值）：任何不被允许的形状都是 invalid_request。
-    let url = field(&payload, &["url"])
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .unwrap_or("")
-        .to_owned();
-    ai_validate_request_url(&url)?;
+    let auth = ai_normalize_auth(field(&payload, &["auth"]))?;
+    let mut stored_credential = None;
+    // Credentials only go to the endpoint built from the saved provider
+    // record. An authenticated renderer URL is ignored, even if it names a
+    // different (otherwise allowed) origin.
+    let url = if auth.is_some() {
+        if provider_id.is_empty() {
+            return Err(structured_ai_error(
+                "not_configured",
+                "尚未选择 AI 服务商，无法取出密钥。",
+                Some("在 AI 面板中选择并保存一个服务商后重试。"),
+                json!({}),
+            ));
+        }
+        let store = ai_read_provider_store_secure(base)?;
+        let provider = ai_provider_records(&store)
+            .into_iter()
+            .find(|entry| entry.get("id").and_then(Value::as_str) == Some(provider_id.as_str()))
+            .ok_or_else(|| {
+                structured_ai_error(
+                    "not_configured",
+                    &format!("找不到服务商「{provider_id}」的配置。"),
+                    Some("先在 AI 面板里保存这个服务商，再重试。"),
+                    json!({ "provider_id": provider_id }),
+                )
+            })?;
+        let base_url = provider
+            .get("base_url")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .ok_or_else(|| {
+                structured_ai_error(
+                    "invalid_request",
+                    "还没有填写 Base URL，无法发送 AI 请求。",
+                    Some("在服务商设置里填写 Base URL 后重试。"),
+                    json!({ "provider_id": provider_id }),
+                )
+            })?;
+        let chat_path = provider
+            .get("chat_path")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .unwrap_or("/chat/completions");
+        let endpoint = format!(
+            "{}{}",
+            base_url.trim_end_matches('/'),
+            if chat_path.starts_with('/') {
+                chat_path.to_owned()
+            } else {
+                format!("/{chat_path}")
+            }
+        );
+        ai_validate_request_url(&endpoint)?;
+        stored_credential = Some(
+            ai_keychain_credential(base, &provider_id)?
+                .filter(|value| !value.trim().is_empty())
+                .ok_or_else(|| {
+                    structured_ai_error(
+                        "missing_credential",
+                        &format!("AI 服务商「{provider_id}」还没有配置 API Key。"),
+                        Some("在 AI 面板点击该服务商的「保存密钥」，填入 API Key 后重试。"),
+                        json!({ "provider_id": provider_id }),
+                    )
+                })?,
+        );
+        let target_origin = ai_url_origin(&endpoint);
+        let bound_origin = store
+            .get("credential_origins")
+            .and_then(Value::as_object)
+            .and_then(|origins| origins.get(&provider_id))
+            .and_then(Value::as_str)
+            .and_then(ai_url_origin);
+        if bound_origin.as_deref() != target_origin.as_deref() {
+            return Err(ai_credential_origin_error(
+                &provider_id,
+                bound_origin.as_deref(),
+                target_origin.as_deref(),
+            ));
+        }
+        endpoint
+    } else {
+        let raw = field(&payload, &["url"])
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .unwrap_or("")
+            .to_owned();
+        ai_validate_request_url(&raw)?;
+        raw
+    };
     let timeout_ms = match field(&payload, &["timeout_ms", "timeoutMs"]) {
         None | Some(Value::Null) => AI_DEFAULT_TIMEOUT_MS,
         Some(value) => {
@@ -7499,31 +7748,9 @@ fn ai_request_spec(base: &Path, input: &Value) -> Result<AiRequestSpec, String> 
             raw.clamp(1, AI_MAX_TIMEOUT_MS)
         }
     };
-    let auth = ai_normalize_auth(field(&payload, &["auth"]))?;
     let headers = ai_normalize_headers(field(&payload, &["headers"]))?;
     let body = ai_serialize_body(field(&payload, &["body"]))?;
-    let credential = match &auth {
-        None => None,
-        Some(_) => {
-            if provider_id.is_empty() {
-                return Err(structured_ai_error(
-                    "not_configured",
-                    "尚未选择 AI 服务商，无法取出密钥。",
-                    Some("在 AI 面板中选择并保存一个服务商后重试。"),
-                    json!({}),
-                ));
-            }
-            ai_read_provider_store_secure(base)?;
-            Some(ai_keychain_credential(base, &provider_id)?.ok_or_else(|| {
-                structured_ai_error(
-                    "missing_credential",
-                    &format!("AI 服务商「{provider_id}」还没有配置 API Key。"),
-                    Some("在 AI 面板点击该服务商的「保存密钥」，填入 API Key 后重试。"),
-                    json!({ "provider_id": provider_id.clone() }),
-                )
-            })?)
-        }
-    };
+    let credential = stored_credential;
     let auth_header = match (auth, credential.clone()) {
         (Some((header, scheme)), Some(credential)) => {
             let value = if scheme.is_empty() {
@@ -7586,9 +7813,9 @@ fn ai_status_error(
     }
     match status {
         401 => structured_ai_error(
-            "missing_credential",
-            "服务商拒绝了本次请求（401）：API Key 可能不正确、已过期或未授权。",
-            Some("在 AI 面板重新保存该服务商的 API Key 后重试。"),
+            "authentication_failed",
+            "服务商拒绝了本次认证（401）。请检查连接地址、认证头/方案与已保存凭据是否匹配。",
+            Some("确认 API Key 与 Base URL、认证头和认证方案属于同一服务商；确认后再更新密钥并重试。"),
             details,
         ),
         403 => structured_ai_error(
@@ -7793,6 +8020,36 @@ async fn ai_models_list_at(base: &Path, input: &Value) -> Result<Value, String> 
             ))
         }
     };
+    let base_url = provider
+        .get("base_url")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned)
+        .ok_or_else(|| {
+            structured_ai_error(
+                "invalid_request",
+                "还没有填写 Base URL，无法读取模型列表。",
+                Some("在服务商设置里填写 Base URL 后重试。"),
+                json!({ "provider_id": provider_id }),
+            )
+        })?;
+    let endpoint = format!("{}/models", base_url.trim_end_matches('/'));
+    ai_validate_request_url(&endpoint)?;
+    let target_origin = ai_url_origin(&endpoint);
+    let bound_origin = state
+        .get("credential_origins")
+        .and_then(Value::as_object)
+        .and_then(|origins| origins.get(&provider_id))
+        .and_then(Value::as_str)
+        .and_then(ai_url_origin);
+    if bound_origin.as_deref() != target_origin.as_deref() {
+        return Err(ai_credential_origin_error(
+            &provider_id,
+            bound_origin.as_deref(),
+            target_origin.as_deref(),
+        ));
+    }
     let credential = match ai_keychain_credential(base, &provider_id)? {
         Some(value) if !value.trim().is_empty() => value,
         _ => {
@@ -7804,29 +8061,6 @@ async fn ai_models_list_at(base: &Path, input: &Value) -> Result<Value, String> 
             ))
         }
     };
-    let base_url = field(&payload, &["base_url", "baseUrl"])
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(ToOwned::to_owned)
-        .or_else(|| {
-            provider
-                .get("base_url")
-                .and_then(Value::as_str)
-                .map(str::trim)
-                .filter(|value| !value.is_empty())
-                .map(ToOwned::to_owned)
-        })
-        .ok_or_else(|| {
-            structured_ai_error(
-                "invalid_request",
-                "还没有填写 Base URL，无法读取模型列表。",
-                Some("在服务商设置里填写 Base URL 后重试。"),
-                json!({ "provider_id": provider_id }),
-            )
-        })?;
-    let endpoint = format!("{}/models", base_url.trim_end_matches('/'));
-    ai_validate_request_url(&endpoint)?;
     let header = provider
         .get("auth_header")
         .and_then(Value::as_str)
@@ -8127,7 +8361,15 @@ fn ai_connection_save(app: AppHandle, request: tauri::ipc::Request<'_>) -> Resul
     let provider = field(&payload, &["provider"])
         .cloned()
         .unwrap_or_else(|| Value::Object(payload.clone()));
-    ai_connection_save_at(&ai_store_dir(&app)?, &provider)
+    let confirm_credential_origin = field(&payload, &["confirm_credential_origin"])
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    let base = ai_store_dir(&app)?;
+    if confirm_credential_origin {
+        ai_connection_save_with_confirmation_at(&base, &provider, true)
+    } else {
+        ai_connection_save_at(&base, &provider)
+    }
 }
 
 #[tauri::command]

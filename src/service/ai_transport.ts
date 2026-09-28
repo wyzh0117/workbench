@@ -44,6 +44,8 @@ export interface AiConnectionList {
   providers: AiProviderConfig[];
   /** Presence only (`{ provider_id: true }`); a credential value is never returned. */
   configured: Record<string, boolean>;
+  /** Normalized origins allowed to receive each stored credential. */
+  credential_origins: Record<string, string>;
 }
 
 /** Design §3 transport result. */
@@ -613,6 +615,7 @@ function coerceProviderEntry(value: unknown): AiProviderConfig | null {
 
 interface AiProvidersState {
   providers: AiProviderConfig[];
+  credential_origins: Record<string, string>;
 }
 
 interface ParsedAiProvidersState extends AiProvidersState {
@@ -629,10 +632,12 @@ function normalizeProvidersState(value: unknown): ParsedAiProvidersState | null 
   const rawProviders = value.providers;
   if (rawProviders !== undefined && !Array.isArray(rawProviders)) return null;
   const hasExtraFields = Object.keys(value).some((key) =>
-    key !== "providers" && key !== "credentials"
+    key !== "providers" && key !== "credentials" && key !== "credential_origins"
   );
   const rawCredentials = value.credentials;
   if (rawCredentials !== undefined && !isPlainRecord(rawCredentials)) return null;
+  const rawOrigins = value.credential_origins;
+  if (rawOrigins !== undefined && !isPlainRecord(rawOrigins)) return null;
   const providers: AiProviderConfig[] = [];
   for (const entry of rawProviders ?? []) {
     const provider = coerceProviderEntry(entry);
@@ -646,7 +651,56 @@ function normalizeProvidersState(value: unknown): ParsedAiProvidersState | null 
     if (!isSafeProviderId(key)) continue;
     if (typeof child === "string" && child.length > 0) credentials[key] = child;
   }
-  return { providers, credentials, hasExtraFields, providerMetadataChanged };
+  const credential_origins: Record<string, string> = {};
+  for (const [key, child] of Object.entries(rawOrigins ?? {})) {
+    const origin = normalizedOrigin(child);
+    if (isSafeProviderId(key) && origin && origin === child) {
+      credential_origins[key] = origin;
+    }
+  }
+  return {
+    providers,
+    credentials,
+    credential_origins,
+    hasExtraFields,
+    providerMetadataChanged,
+  };
+}
+
+function normalizedOrigin(value: unknown): string | null {
+  if (typeof value !== "string" || !value.trim()) return null;
+  try {
+    const url = new URL(value.trim());
+    if (!(["https:", "http:"].includes(url.protocol)) || url.username || url.password) {
+      return null;
+    }
+    return url.origin;
+  } catch {
+    return null;
+  }
+}
+
+function providerOriginConfirmationError(
+  providerId: string,
+  previousOrigin: string | null,
+  targetOrigin: string | null,
+) {
+  return error(
+    "credential_origin_confirmation_required",
+    targetOrigin
+      ? `连接「${providerId}」的 API Key 尚未授权给目标域 ${targetOrigin}。`
+      : `连接「${providerId}」的目标地址没有可授权的来源域。`,
+    `Credential origin confirmation required for ${providerId}`,
+    {
+      recoverable: true,
+      recommended_action: "在连接设置中确认旧 API Key 是否可以用于显示的目标域；确认前不会发送密钥。",
+      details: {
+        provider_id: providerId,
+        previous_origin: previousOrigin,
+        target_origin: targetOrigin,
+      },
+    },
+  );
 }
 
 function responseHeaders(response: Response): Record<string, string> {
@@ -832,6 +886,7 @@ export class AiTransport {
     return {
       providers: state.providers.map((provider) => structuredClone(provider)),
       configured,
+      credential_origins: { ...state.credential_origins },
     };
   }
 
@@ -839,15 +894,36 @@ export class AiTransport {
   async saveConnection(
     input: unknown,
   ): Promise<{ provider: AiProviderConfig }> {
-    const candidate = isPlainRecord(input) && "provider" in input
-      ? input.provider
-      : input;
-    const provider = normalizeProviderConfig(candidate);
+    const wrapped = isPlainRecord(input) && "provider" in input;
+    const candidate = wrapped ? input.provider : input;
+    const confirmCredentialOrigin = wrapped && input.confirm_credential_origin === true;
+    const normalized = normalizeProviderConfig(candidate);
     this.assertWritable();
     const state = await this.readProviders();
     const index = state.providers.findIndex((entry) =>
-      entry.id === provider.id
+      entry.id === normalized.id
     );
+    const existing = index >= 0 ? state.providers[index] : null;
+    const provider = { ...(existing || {}), ...normalized };
+    const targetOrigin = normalizedOrigin(provider.base_url);
+    const credential = await this.credentialStore.get(provider.id);
+    const previousOrigin = state.credential_origins[provider.id] || null;
+    if (credential) {
+      if (!targetOrigin || !previousOrigin || targetOrigin !== previousOrigin) {
+        if (!confirmCredentialOrigin || !targetOrigin) {
+          throw providerOriginConfirmationError(
+            provider.id,
+            previousOrigin,
+            targetOrigin,
+          );
+        }
+        state.credential_origins[provider.id] = targetOrigin;
+      } else {
+        state.credential_origins[provider.id] = previousOrigin;
+      }
+    } else {
+      delete state.credential_origins[provider.id];
+    }
     if (index >= 0) state.providers.splice(index, 1, provider);
     else state.providers.push(provider);
     if (state.providers.length > MAX_PROVIDERS) {
@@ -870,6 +946,7 @@ export class AiTransport {
     const state = await this.readProviders();
     const before = state.providers.length;
     state.providers = state.providers.filter((entry) => entry.id !== key);
+    delete state.credential_origins[key];
     const hadCredential = (await this.credentialStore.get(key)) !== null;
     if (hadCredential) await this.credentialStore.delete(key);
     const removed = state.providers.length !== before || hadCredential;
@@ -899,9 +976,13 @@ export class AiTransport {
       );
     }
     const state = await this.readProviders();
+    const provider = state.providers.find((entry) => entry.id === key);
+    const origin = normalizedOrigin(provider?.base_url);
     // Keychain write happens before metadata only-write. If metadata fails,
     // the key remains recoverable and no plaintext fallback is created.
     await this.credentialStore.set(key, trimmed);
+    if (origin) state.credential_origins[key] = origin;
+    else delete state.credential_origins[key];
     await this.writeProviders(state);
     return { provider_id: key };
   }
@@ -911,9 +992,11 @@ export class AiTransport {
   ): Promise<{ provider_id: string; removed: boolean }> {
     const key = assertProviderId(providerId);
     this.assertWritable();
-    await this.readProviders();
+    const state = await this.readProviders();
     const removed = (await this.credentialStore.get(key)) !== null;
     if (removed) await this.credentialStore.delete(key);
+    delete state.credential_origins[key];
+    await this.writeProviders(state);
     return { provider_id: key, removed };
   }
 
@@ -951,6 +1034,14 @@ export class AiTransport {
         "ai.models.list requires a saved provider",
       );
     }
+    const baseUrl = String(provider.base_url || "").trim();
+    if (!baseUrl) {
+      throw invalidRequest(
+        "还没有填写 Base URL，无法读取模型列表。",
+        "ai.models.list has no base_url to query",
+      );
+    }
+    const url = assertTransportUrl(modelListUrl(baseUrl));
     const credential = await this.credentialStore.get(providerId);
     if (!credential) {
       throw error(
@@ -964,16 +1055,10 @@ export class AiTransport {
         },
       );
     }
-    const baseUrl = typeof candidate.base_url === "string" && candidate.base_url.trim()
-      ? candidate.base_url.trim()
-      : String(provider.base_url || "").trim();
-    if (!baseUrl) {
-      throw invalidRequest(
-        "还没有填写 Base URL，无法读取模型列表。",
-        "ai.models.list has no base_url to query",
-      );
+    const boundOrigin = state.credential_origins[providerId] || null;
+    if (!boundOrigin || boundOrigin !== url.origin) {
+      throw providerOriginConfirmationError(providerId, boundOrigin, url.origin);
     }
-    const url = assertTransportUrl(modelListUrl(baseUrl));
     const header = typeof provider.auth_header === "string" && provider.auth_header.trim()
       ? provider.auth_header.trim()
       : "authorization";
@@ -1038,9 +1123,14 @@ export class AiTransport {
       ? await this.credentialStore.get(providerId)
       : null;
     const storedCredentials = await this.credentialsForProviders(state.providers);
-    const url = assertTransportUrl(this.resolveRequestUrl(candidate, state));
     const headers = normalizeHeaders(candidate.headers);
     const auth = normalizeAuth(candidate.auth);
+    // Authenticated requests are pinned to the saved provider endpoint. The
+    // renderer URL is only accepted for unauthenticated transport calls.
+    const rawUrl = auth
+      ? this.resolveRequestUrl({ ...candidate, url: "" }, state)
+      : this.resolveRequestUrl(candidate, state);
+    const url = assertTransportUrl(rawUrl);
     // Scrub from the system-stored credential, not only from the injected
     // header: a saved base_url can carry a key in its query string.
     const scheme = auth?.scheme ||
@@ -1072,6 +1162,10 @@ export class AiTransport {
             details: { provider_id: providerId },
           },
         );
+      }
+      const boundOrigin = state.credential_origins[providerId] || null;
+      if (!boundOrigin || boundOrigin !== url.origin) {
+        throw providerOriginConfirmationError(providerId, boundOrigin, url.origin);
       }
       headers[auth.header] = auth.scheme
         ? `${auth.scheme} ${storedCredential}`
@@ -1460,12 +1554,12 @@ export class AiTransport {
     };
     if (status === 401) {
       return error(
-        "missing_credential",
-        "服务商拒绝了本次请求（401）：API Key 可能不正确、已过期或未授权。",
+        "authentication_failed",
+        "服务商拒绝了本次认证（401）。请检查连接地址、认证头/方案与已保存凭据是否匹配。",
         `AI provider returned 401`,
         {
           recoverable: true,
-          recommended_action: "在 AI 面板重新保存该服务商的 API Key 后重试。",
+          recommended_action: "确认 API Key 与 Base URL、认证头和认证方案属于同一服务商；确认后再更新密钥并重试。",
           details,
         },
       );
@@ -1633,7 +1727,7 @@ export class AiTransport {
     const backupPath = join(this.home, "providers.bak");
     const backup = await this.readLegacyDocument(backupPath);
     const state = primary ?? backup;
-    if (!state) return { providers: [] };
+    if (!state) return { providers: [], credential_origins: {} };
 
     const credentials = {
       ...(backup?.credentials ?? {}),
@@ -1658,16 +1752,34 @@ export class AiTransport {
           throw this.migrationFailure("keychain-write");
         }
       }
+    }
+    if (hasLegacyShape) {
       try {
-        await this.writeProviders({ providers: state.providers });
-        if (backup !== null) await Deno.remove(backupPath);
+        await this.writeProviders({
+          providers: state.providers,
+          credential_origins: state.credential_origins,
+        });
+        if (hasLegacyShape && backup !== null) await Deno.remove(backupPath);
       } catch {
         // Metadata write/removal failures leave the old plaintext source intact
         // so a retry cannot lose the user's credential.
-        throw this.migrationFailure("metadata-cleanup");
+        if (hasLegacyShape) throw this.migrationFailure("metadata-cleanup");
+        throw error(
+          "ai_connection_write_failed",
+          "AI 服务商配置未能保存，请检查项目目录是否可写。",
+          `Failed to persist credential origin migration for ${this.providersPath}`,
+          {
+            recoverable: true,
+            recommended_action: "检查 AI 配置目录权限后重试；未确认来源域的密钥不会被发送。",
+            details: { path: ".workspace/ai/providers.json" },
+          },
+        );
       }
     }
-    return { providers: state.providers };
+    return {
+      providers: state.providers,
+      credential_origins: state.credential_origins,
+    };
   }
 
   private unreadable(caught: unknown): ServiceError {
@@ -1689,7 +1801,10 @@ export class AiTransport {
   private async writeProviders(state: AiProvidersState): Promise<void> {
     // Provider metadata is deliberately the only JSON content. Credentials
     // belong to the system Keychain, never to providers.json or its backups.
-    const contents = `${JSON.stringify({ providers: state.providers }, null, 2)}\n`;
+    const contents = `${JSON.stringify({
+      providers: state.providers,
+      credential_origins: state.credential_origins,
+    }, null, 2)}\n`;
     try {
       await this.writeFile(this.providersPath, contents);
     } catch (caught) {

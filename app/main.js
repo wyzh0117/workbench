@@ -76,6 +76,7 @@ import {
 } from "./ai.js";
 
 const SESSION_KEY = "ai-course-workbench.session";
+let cancelActivePointerDrag = null;
 const SESSION_READER_KEYS = [
   "active_content_item_id",
   "mode",
@@ -87,8 +88,10 @@ const SESSION_READER_KEYS = [
   "ai_scope",
   "ai_provider_id",
   "ai_model",
+  "ai_settings_open",
   "left_collapsed",
   "right_collapsed",
+  "collapsed_stage_ids",
   "tabs",
   // V1-T04 Explorer chrome (§39) — workspace/session only, never Canonical.
   "explorer_filter",
@@ -1055,20 +1058,24 @@ class WorkbenchStore {
       boardDimension: "content",
       activeId: null,
       selectedBlockId: null,
+      propertyTarget: null,
       focusRequirementId: null,
       leftCollapsed: false,
       rightCollapsed: false,
+      collapsedStageIds: [],
       rightPanel: "requirements",
       palette: false,
       paletteIndex: 0,
       capture: false,
       preflight: false,
+      preflightPending: false,
       preflightReport: null,
       preflightRevision: null,
       preflightFormat: null,
       preflightOptions: null,
       acknowledgedWarnings: [],
       publishScope: "lesson",
+      publishReturnContext: null,
       publishFormat: "markdown",
       lastExport: null,
       snapshot: false,
@@ -1085,6 +1092,7 @@ class WorkbenchStore {
       publishTargetPageSize: null,
       publishCapabilities: null,
       assetPicker: null,
+      assetImagePreviewId: null,
       assetUsageId: null,
       editingRequirementId: null,
       assetQuery: "",
@@ -1102,6 +1110,7 @@ class WorkbenchStore {
       aiInstruction: "",
       aiProviderId: "fake",
       aiModel: "",
+      aiSettingsOpen: false,
       aiInclude: { requirements: true, assets: true, completion: true, nearby: true },
       aiContext: null,
       aiContextOpen: false,
@@ -1125,6 +1134,10 @@ class WorkbenchStore {
       focusField: "",
       /** Inline editors: the course title in the topbar, one layout section, asset title. */
       editingProjectTitle: false,
+      editingProjectTitleSurface: "topbar",
+      editingStageTitleId: null,
+      editingLessonTitleId: null,
+      editingLessonTitleSurface: "map",
       editingSectionId: null,
       editingAssetId: null,
       /** "你现在有什么？": which course-input source is being pasted. */
@@ -1148,6 +1161,8 @@ class WorkbenchStore {
     this.future = [];
     this.listeners = new Set();
     this.saveTimer = 0;
+    this.activeFlushPromise = null;
+    this.preflightDeferredSave = false;
     this.sessionTimer = 0;
     this.flushQueue = createSerialQueue();
     this.recoveryWarning = "";
@@ -1172,7 +1187,13 @@ class WorkbenchStore {
     this.assetPreview = new AssetPreviewCache(bridge);
   }
   subscribe(listener) { this.listeners.add(listener); return () => this.listeners.delete(listener); }
-  notify() { this.listeners.forEach((listener) => listener("full")); }
+  notify() {
+    if (this.preflightDeferredSave && this.ui.route !== "publish") {
+      this.preflightDeferredSave = false;
+      this.scheduleSave();
+    }
+    this.listeners.forEach((listener) => listener("full"));
+  }
   /**
    * A change that only touches the chrome around the editor — the save state,
    * the status bar counters, the toast.  Autosave, typing and toasts all use
@@ -1225,8 +1246,10 @@ class WorkbenchStore {
       ai_scope: this.ui.aiScope,
       ai_provider_id: this.ui.aiProviderId,
       ai_model: this.ui.aiModel,
+      ai_settings_open: this.ui.aiSettingsOpen === true,
       left_collapsed: this.ui.leftCollapsed,
       right_collapsed: this.ui.rightCollapsed,
+      collapsed_stage_ids: [...this.ui.collapsedStageIds],
       tabs: clone(this.tabs),
       explorer_filter: String(this.ui.explorerFilter || ""),
       explorer_expanded: normalizeExplorerPathList(this.ui.explorerExpanded),
@@ -1251,8 +1274,10 @@ class WorkbenchStore {
       ai_scope: "lesson",
       ai_provider_id: "fake",
       ai_model: "",
+      ai_settings_open: false,
       left_collapsed: false,
       right_collapsed: false,
+      collapsed_stage_ids: [],
       tabs: activeId
         ? [{ content_item_id: activeId, mode: "writing", pinned: false, scroll_top: 0 }]
         : [],
@@ -1318,8 +1343,17 @@ class WorkbenchStore {
         ? value.ai_provider_id.trim()
         : defaults.ai_provider_id,
       ai_model: typeof value.ai_model === "string" ? value.ai_model.trim() : defaults.ai_model,
+      ai_settings_open: typeof value.ai_settings_open === "boolean"
+        ? value.ai_settings_open
+        : defaults.ai_settings_open,
       left_collapsed: Boolean(value.left_collapsed),
       right_collapsed: Boolean(value.right_collapsed),
+      collapsed_stage_ids: Array.isArray(value.collapsed_stage_ids)
+        ? [...new Set(value.collapsed_stage_ids.filter((id) =>
+          typeof id === "string" &&
+          (project.stages || []).some((stage) => stage.id === id && !stage.archived)
+        ))]
+        : [],
       tabs,
       explorer_filter: typeof value.explorer_filter === "string"
         ? value.explorer_filter.slice(0, 256)
@@ -1340,8 +1374,12 @@ class WorkbenchStore {
     this.ui.aiScope = value.ai_scope || "lesson";
     this.ui.aiProviderId = value.ai_provider_id || "fake";
     this.ui.aiModel = value.ai_model || "";
+    this.ui.aiSettingsOpen = Boolean(value.ai_settings_open);
     this.ui.leftCollapsed = Boolean(value.left_collapsed);
     this.ui.rightCollapsed = Boolean(value.right_collapsed);
+    this.ui.collapsedStageIds = Array.isArray(value.collapsed_stage_ids)
+      ? [...value.collapsed_stage_ids]
+      : [];
     this.tabs = clone(value.tabs || []);
     this.ui.explorerFilter = typeof value.explorer_filter === "string" ? value.explorer_filter : "";
     this.ui.explorerExpanded = normalizeExplorerPathList(value.explorer_expanded);
@@ -1557,6 +1595,17 @@ class WorkbenchStore {
     if (!item || !this.ui.selectedBlockId) return null;
     return blocksFor(this.data, item.id).find((block) => block.id === this.ui.selectedBlockId) ?? null;
   }
+  selectPropertyTarget(kind, id = null) {
+    if (kind === "stage" && !this.data.stages.some((stage) =>
+      stage.id === id && !stage.archived
+    )) return;
+    if (kind !== "project" && kind !== "stage") return;
+    this.ui.propertyTarget = kind === "project" ? { kind } : { kind, id };
+    this.ui.selectedBlockId = null;
+    this.ui.rightPanel = "properties";
+    this.ui.rightCollapsed = false;
+    this.notify();
+  }
   selectBlock(id, options = {}) {
     const item = this.currentItem();
     if (!item) return;
@@ -1569,6 +1618,7 @@ class WorkbenchStore {
       this.ui.layoutPageId = placement.page_id;
     }
     this.ui.selectedBlockId = this.ui.selectedBlockId === id && !options.force ? null : id;
+    this.ui.propertyTarget = null;
     if (options.mode && this.ui.mode !== options.mode) this.setMode(options.mode, { silent: true });
     // Placeholder selection surfaces 状态 unless the caller opts out (e.g. a
     // control click inside the card). Soft callers skip a rebuild when the
@@ -1694,8 +1744,8 @@ class WorkbenchStore {
    * provider id that is not in the shipped catalog still gets readable
    * defaults instead of an empty form.
    */
-  aiDescriptor() {
-    const id = String(this.ui.aiProviderId || "fake").trim() || "fake";
+  aiDescriptor(providerId = this.ui.aiProviderId) {
+    const id = String(providerId || "fake").trim() || "fake";
     const custom = aiProviderPreset("custom") || {
       id: "custom",
       label: "自定义（OpenAI 兼容）",
@@ -2272,6 +2322,10 @@ class WorkbenchStore {
       this.ui.aiConfigured = value.configured && typeof value.configured === "object"
         ? value.configured
         : {};
+      this.ui.aiCredentialOrigins = value.credential_origins &&
+          typeof value.credential_origins === "object"
+        ? value.credential_origins
+        : {};
       this.notify();
       return this.ui.aiProviders;
     } catch (error) {
@@ -2282,10 +2336,11 @@ class WorkbenchStore {
       return [];
     }
   }
-  aiEditProvider(id) {
+  aiEditProvider(id, { preserveSelection = false } = {}) {
     const providerId = String(id || this.ui.aiProviderId || "").trim();
-    if (providerId && providerId !== this.ui.aiProviderId) this.aiSetProvider(providerId);
-    const descriptor = this.aiDescriptor();
+    if (!providerId) return;
+    if (!preserveSelection && providerId !== this.ui.aiProviderId) this.aiSetProvider(providerId);
+    const descriptor = this.aiDescriptor(providerId);
     this.ui.aiProviderForm = {
       id: descriptor.id,
       label: descriptor.label,
@@ -2293,12 +2348,75 @@ class WorkbenchStore {
       chat_path: descriptor.chat_path,
       default_model: descriptor.default_model,
       models: Array.isArray(descriptor.models) ? descriptor.models : [],
+      isNew: false,
     };
+    this.ui.aiChosenModel = descriptor.default_model || descriptor.models?.[0] || "";
+    this.ui.aiManualModel = "";
+    this.ui.aiModelOptions = Array.isArray(descriptor.models) ? [...descriptor.models] : [];
+    this.ui.aiModelSource = this.ui.aiModelOptions.length ? "saved" : "";
+    this.ui.aiModelsError = "";
+    this.ui.aiSettingsOpen = true;
     // 设置 always opens (or refreshes) the form.  It used to toggle shut on a
     // second click, which closed the address/key fields exactly when the user
     // was looking for them.
     this.ui.focusField = this.ui.aiConfigured?.[descriptor.id] ? "" : "ai-secret";
+    this.scheduleSessionSave();
     this.notify();
+  }
+  aiCreateConnection() {
+    const ids = new Set([
+      ...aiProviderDescriptors().map((provider) => provider.id),
+      ...(this.ui.aiProviders || []).map((provider) => provider.id),
+    ]);
+    let id;
+    do { id = `connection-${uid()}`; } while (ids.has(id));
+    this.ui.aiProviderForm = {
+      id,
+      label: "新连接",
+      kind: "openai_compatible",
+      base_url: "",
+      chat_path: "/chat/completions",
+      default_model: "",
+      models: [],
+      isNew: true,
+    };
+    this.ui.aiChosenModel = "";
+    this.ui.aiManualModel = "";
+    this.ui.aiModelOptions = [];
+    this.ui.aiModelSource = "";
+    this.ui.aiModelsError = "";
+    this.ui.aiSettingsOpen = true;
+    this.ui.focusField = "ai-provider-label";
+    this.scheduleSessionSave();
+    this.notify();
+  }
+  aiToggleSettings() {
+    this.ui.aiSettingsOpen = !this.ui.aiSettingsOpen;
+    if (this.ui.aiSettingsOpen && !this.ui.aiProviderForm) {
+      this.aiEditProvider(this.ui.aiProviderId);
+      return;
+    }
+    this.scheduleSessionSave();
+    this.notify();
+  }
+  async aiDeleteConnection(providerId) {
+    const id = String(providerId || "").trim();
+    if (!id || id === "fake") return false;
+    if (globalThis.confirm?.(`删除连接「${this.aiDescriptor(id).label}」及其本机密钥？此操作不会改动课程内容。`) === false) return false;
+    try {
+      await this.bridge.command("ai.connection.delete", { provider_id: id });
+    } catch (error) {
+      this.ui.aiError = this.aiFailureFrom(error);
+      this.ui.toast = `连接没有删除：${this.ui.aiError.message}`;
+      this.notify();
+      return false;
+    }
+    if (this.ui.aiProviderId === id) this.aiSetProvider("fake");
+    if (this.ui.aiProviderForm?.id === id) this.ui.aiProviderForm = null;
+    await this.aiLoadProviders();
+    this.ui.toast = `已删除连接「${id}」及其本机密钥`;
+    this.notify();
+    return true;
   }
   /**
    * P2-1: ask the provider what models it offers, using the credential that is
@@ -2323,6 +2441,15 @@ class WorkbenchStore {
       this.notify();
       return [];
     }
+    const savedProvider = (Array.isArray(this.ui.aiProviders) ? this.ui.aiProviders : [])
+      .find((entry) => entry && entry.id === providerId) || null;
+    if (!savedProvider || String(savedProvider.base_url || "").trim() !== baseUrl) {
+      this.ui.aiModelsError = "请先保存当前服务地址；跨域更改会提示确认 Key 的使用域名";
+      this.ui.aiModelSource = "manual";
+      this.ui.focusField = "ai-base-url";
+      this.notify();
+      return [];
+    }
     if (this.ui.aiConfigured && this.ui.aiConfigured[providerId] === false) {
       this.ui.aiModelsError = "还没有保存 API Key（读取模型需要密钥）";
       this.ui.aiModelSource = "manual";
@@ -2340,7 +2467,6 @@ class WorkbenchStore {
       // key back to the page.
       const result = await this.bridge.command("ai.models.list", {
         provider_id: providerId,
-        base_url: baseUrl,
       });
       models = Array.isArray(result && result.models) ? result.models : [];
     } catch (error) {
@@ -2377,8 +2503,17 @@ class WorkbenchStore {
     this.notify();
   }
   /** Save a provider's address / model names.  Never a credential. */
+  aiOriginForCredential(value) {
+    try {
+      const parsed = new URL(String(value || "").trim());
+      return ["https:", "http:"].includes(parsed.protocol) ? parsed.origin : null;
+    } catch {
+      return null;
+    }
+  }
+
   async aiSaveProvider(input = {}) {
-    const id = String(input.id || this.ui.aiProviderId || "").trim();
+    const id = String(input.id || this.ui.aiProviderForm?.id || this.ui.aiProviderId || "").trim();
     if (!id) {
       this.ui.toast = "请先选择要配置的服务商";
       this.notify();
@@ -2404,8 +2539,29 @@ class WorkbenchStore {
         ? input.models.map((model) => String(model).trim()).filter(Boolean)
         : [],
     };
+    const hasCredential = this.ui.aiConfigured?.[id] === true;
+    const boundOrigin = this.ui.aiCredentialOrigins?.[id] || null;
+    const targetOrigin = this.aiOriginForCredential(provider.base_url);
+    let confirmCredentialOrigin = false;
+    if (hasCredential && boundOrigin !== targetOrigin) {
+      const oldLabel = boundOrigin || "未绑定域名";
+      const newLabel = targetOrigin || "无效或空域名";
+      const prompt = "此连接的 API Key 当前绑定到 " + oldLabel +
+        "。目标域名将改为 " + newLabel +
+        "。确认后，保存的 Key 会发送到新域名。只有信任该域名时继续。";
+      confirmCredentialOrigin = typeof globalThis.confirm === "function" &&
+        globalThis.confirm(prompt) === true;
+      if (!confirmCredentialOrigin) {
+        this.ui.toast = "连接仍绑定到 " + oldLabel + "；未保存更改，也未发送 API Key";
+        this.notify();
+        return false;
+      }
+    }
     try {
-      await this.bridge.command("ai.connection.save", { provider });
+      await this.bridge.command("ai.connection.save", {
+        provider,
+        ...(confirmCredentialOrigin ? { confirm_credential_origin: true } : {}),
+      });
     } catch (error) {
       this.ui.aiError = this.aiFailureFrom(error);
       this.ui.toast = `服务商配置没有保存：${this.ui.aiError.message}`;
@@ -2426,6 +2582,9 @@ class WorkbenchStore {
     // the preview line cannot keep showing a choice that was not saved.
     this.ui.aiChosenModel = provider.default_model;
     this.ui.aiManualModel = "";
+    if (this.ui.aiProviderId === provider.id) {
+      this.ui.aiModel = provider.default_model || provider.models[0] || "";
+    }
     // Keep the form open and move the caret to the key field: 保存配置 is the
     // first half of "configure this provider", the key is the second.
     this.ui.focusField = provider.id === "fake" ? "" : "ai-secret";
@@ -2444,7 +2603,7 @@ class WorkbenchStore {
     const saved = (Array.isArray(this.ui.aiProviders) ? this.ui.aiProviders : [])
       .some((entry) => entry && entry.id === providerId);
     if (saved) return;
-    const descriptor = this.aiDescriptor();
+    const descriptor = this.aiDescriptor(providerId);
     if (!descriptor || descriptor.id !== providerId) return;
     await this.bridge.command("ai.connection.save", {
       provider: {
@@ -2470,8 +2629,8 @@ class WorkbenchStore {
    * "已配置密钥" is only ever claimed from the shell's own read-back
    * (`ai.connection.list`), never from the fact that we called set().
    */
-  async aiSaveSecret(value) {
-    const providerId = String(this.ui.aiProviderId || "").trim();
+  async aiSaveSecret(value, requestedProviderId = null) {
+    const providerId = String(requestedProviderId || this.ui.aiProviderForm?.id || this.ui.aiProviderId || "").trim();
     const secret = String(value ?? "");
     if (!providerId || providerId === "fake") {
       this.ui.toast = "这个服务商不需要密钥";
@@ -2480,6 +2639,24 @@ class WorkbenchStore {
     }
     if (!secret.trim()) {
       this.ui.toast = "请先填写 API Key，再保存";
+      this.notify();
+      return false;
+    }
+    const savedProvider = (Array.isArray(this.ui.aiProviders) ? this.ui.aiProviders : [])
+      .find((entry) => entry && entry.id === providerId) || null;
+    const draftBaseUrl = String(
+      (root.querySelector("[data-ai-base-url]") || {}).value ||
+        this.ui.aiProviderForm?.base_url ||
+        savedProvider?.base_url ||
+        "",
+    ).trim();
+    if (
+      savedProvider &&
+      this.aiOriginForCredential(draftBaseUrl) !==
+        (this.ui.aiCredentialOrigins?.[providerId] ||
+          this.aiOriginForCredential(savedProvider.base_url))
+    ) {
+      this.ui.toast = "请先保存服务地址并确认 API Key 的新使用域名，再保存密钥";
       this.notify();
       return false;
     }
@@ -2501,8 +2678,8 @@ class WorkbenchStore {
     this.notify();
     return configured;
   }
-  async aiDeleteSecret() {
-    const providerId = String(this.ui.aiProviderId || "").trim();
+  async aiDeleteSecret(requestedProviderId = null) {
+    const providerId = String(requestedProviderId || this.ui.aiProviderForm?.id || this.ui.aiProviderId || "").trim();
     if (!providerId || providerId === "fake") return false;
     if (globalThis.confirm?.("删除这个服务商在本机保存的 API Key？（课程内容不受影响）") === false) return false;
     try {
@@ -2577,6 +2754,12 @@ class WorkbenchStore {
   scheduleSave() {
     this.saveStatus = "正在保存…";
     clearTimeout(this.saveTimer);
+    if (this.ui.route === "publish") {
+      this.saveTimer = 0;
+      this.preflightDeferredSave = true;
+      this.notifyChrome();
+      return;
+    }
     this.saveTimer = setTimeout(() => { void this.flush(); }, 350);
     this.notifyChrome();
   }
@@ -2596,7 +2779,16 @@ class WorkbenchStore {
     }
     clearTimeout(this.saveTimer);
     this.saveTimer = 0;
-    return this.flushQueue(() => this.flushNow());
+    return this.queueFlush(() => this.flushNow());
+  }
+  queueFlush(task) {
+    const pending = this.flushQueue(task);
+    this.activeFlushPromise = pending;
+    const clearPending = () => {
+      if (this.activeFlushPromise === pending) this.activeFlushPromise = null;
+    };
+    pending.then(clearPending, clearPending);
+    return pending;
   }
   /**
    * Write pending edits immediately instead of waiting for the autosave
@@ -2606,7 +2798,7 @@ class WorkbenchStore {
   writeThrough() {
     clearTimeout(this.saveTimer);
     this.saveTimer = 0;
-    return this.flushQueue(() => this.flushNow());
+    return this.queueFlush(() => this.flushNow());
   }
   async flushNow() {
     let saved = false;
@@ -2713,7 +2905,7 @@ class WorkbenchStore {
     this.notify();
     if (action === "reload") {
       try {
-        await this.flushQueue(async () => {
+        await this.queueFlush(async () => {
           const reloaded = await this.bridge.reloadExternalProject();
           if (!this.isProjectData(reloaded)) throw new Error("磁盘版本不是可识别的课程项目");
           this.data = migrateUiProject(reloaded);
@@ -2736,7 +2928,7 @@ class WorkbenchStore {
     }
     if (action === "merge") {
       try {
-        await this.flushQueue(async () => {
+        await this.queueFlush(async () => {
           // The service returns a three-way MergeResult: `merged` already
           // carries both the external and the local edits, and `conflicts`
           // lists the paths that could not be combined.
@@ -2763,7 +2955,7 @@ class WorkbenchStore {
     }
     if (action === "keep-local") {
       try {
-        await this.flushQueue(() => this.applyExternalResolution(this.data, "已明确保留本地版本"));
+        await this.queueFlush(() => this.applyExternalResolution(this.data, "已明确保留本地版本"));
       } catch (error) {
         this.ui.toast = userFacingError(error, "保留本地版本没有完成。当前内容没有改变，请重试。");
         this.notify();
@@ -3939,6 +4131,7 @@ class WorkbenchStore {
     this.ui.route = "editor";
     this.ui.focusRequirementId = null;
     this.ui.selectedBlockId = null;
+    this.ui.propertyTarget = null;
     this.ui.gridEditing = false;
     this.ui.assetPicker = null;
     this.ui.editingRequirementId = null;
@@ -3984,6 +4177,7 @@ class WorkbenchStore {
     this.ui.mode = mode;
     this.ui.focusRequirementId = null;
     this.ui.selectedBlockId = null;
+    this.ui.propertyTarget = null;
     this.ui.gridEditing = false;
     this.ui.assetPicker = null;
     this.ui.editingRequirementId = null;
@@ -4268,6 +4462,101 @@ class WorkbenchStore {
       right.order_index = order;
     });
   }
+  moveLessonToPosition(id, targetStageId, beforeId = null) {
+    const item = this.data.content_items.find((candidate) =>
+      candidate.id === id && !candidate.archived
+    );
+    if (!item) return false;
+    const sourceStageId = item.stage_id || null;
+    const destinationStageId = targetStageId || null;
+    if (destinationStageId && !this.data.stages.some((stage) =>
+      stage.id === destinationStageId && !stage.archived
+    )) return false;
+
+    const orderedForStage = (stageId) => this.data.content_items
+      .filter((candidate) =>
+        !candidate.archived && candidate.stage_id === stageId &&
+        candidate.id !== id
+      )
+      .sort((left, right) => left.order_index - right.order_index);
+    const sourceItems = orderedForStage(sourceStageId);
+    const destinationItems = sourceStageId === destinationStageId
+      ? sourceItems
+      : orderedForStage(destinationStageId);
+    const insertionIndex = beforeId
+      ? destinationItems.findIndex((candidate) => candidate.id === beforeId)
+      : destinationItems.length;
+    if (insertionIndex < 0) return false;
+    const nextDestination = [...destinationItems];
+    nextDestination.splice(insertionIndex, 0, item);
+    if (sourceStageId === destinationStageId) {
+      const previous = [...sourceItems, item]
+        .sort((left, right) => left.order_index - right.order_index)
+        .map((candidate) => candidate.id);
+      if (previous.every((candidate, index) => candidate === nextDestination[index]?.id)) {
+        return false;
+      }
+    }
+
+    const sourceRemainingIds = sourceItems.map((candidate) => candidate.id);
+    const destinationIds = nextDestination.map((candidate) => candidate.id);
+    this.commit("移动课程到阶段", (data) => {
+      const moving = data.content_items.find((candidate) => candidate.id === id);
+      if (!moving) return;
+      moving.stage_id = destinationStageId;
+      const writeOrder = (ids, stageId) => {
+        ids.forEach((contentItemId, index) => {
+          const target = data.content_items.find((candidate) =>
+            candidate.id === contentItemId
+          );
+          if (!target) return;
+          target.stage_id = stageId;
+          target.order_index = index;
+          target.updated_at = now();
+        });
+      };
+      if (sourceStageId === destinationStageId) {
+        writeOrder(destinationIds, destinationStageId);
+      } else {
+        writeOrder(sourceRemainingIds, sourceStageId);
+        writeOrder(destinationIds, destinationStageId);
+      }
+      renumberLessonCodes(data, sourceStageId);
+      if (sourceStageId !== destinationStageId) {
+        renumberLessonCodes(data, destinationStageId);
+      }
+    });
+    return true;
+  }
+  toggleStageCollapse(stageId) {
+    if (!this.data.stages.some((stage) => stage.id === stageId && !stage.archived)) {
+      return;
+    }
+    const collapsed = new Set(this.ui.collapsedStageIds);
+    if (collapsed.has(stageId)) collapsed.delete(stageId);
+    else collapsed.add(stageId);
+    this.ui.collapsedStageIds = [...collapsed];
+    this.scheduleSessionSave();
+    this.notify();
+  }
+  locateCurrentLesson() {
+    const item = this.currentItem();
+    if (!item) return;
+    this.ui.route = "map";
+    if (item.stage_id) {
+      this.ui.collapsedStageIds = this.ui.collapsedStageIds.filter((id) =>
+        id !== item.stage_id
+      );
+    }
+    this.scheduleSessionSave();
+    this.notify();
+    setTimeout(() => {
+      root.querySelector(`[data-map-lesson="${item.id}"]`)?.scrollIntoView?.({
+        block: "center",
+        behavior: "smooth",
+      });
+    }, 0);
+  }
   deleteLesson(id) {
     const item = this.data.content_items.find((candidate) => candidate.id === id);
     if (!item) return;
@@ -4402,6 +4691,9 @@ class WorkbenchStore {
       reindexStages(data);
     });
     this.ui.confirmDeleteStage = null;
+    if (this.ui.propertyTarget?.kind === "stage" && this.ui.propertyTarget.id === id) {
+      this.ui.propertyTarget = null;
+    }
     this.ui.toast = `已删除阶段「${stage.title}」`;
     this.ui.route = "map";
     this.notify();
@@ -4849,19 +5141,22 @@ class WorkbenchStore {
   }
   /* ------------------------------------------------------- inline names */
 
-  editProjectTitle() {
+  editProjectTitle(surface = "topbar") {
     this.ui.editingProjectTitle = true;
+    this.ui.editingProjectTitleSurface = surface === "map" ? "map" : "topbar";
     this.ui.focusField = "project-title";
     this.notify();
   }
   cancelProjectTitle() {
     if (!this.ui.editingProjectTitle) return;
     this.ui.editingProjectTitle = false;
+    this.ui.editingProjectTitleSurface = "topbar";
     this.notify();
   }
   commitProjectTitle(value) {
     if (!this.ui.editingProjectTitle) return;
     this.ui.editingProjectTitle = false;
+    this.ui.editingProjectTitleSurface = "topbar";
     const title = String(value ?? "").trim();
     const current = String(this.data.project.title || "");
     if (!title || title === current) {
@@ -4874,6 +5169,53 @@ class WorkbenchStore {
     });
     this.ui.toast = `课程标题已改为「${title}」`;
     this.notify();
+  }
+  startStageTitleEdit(id) {
+    if (!this.data.stages.some((stage) => stage.id === id && !stage.archived)) return;
+    this.ui.editingStageTitleId = id;
+    this.ui.focusField = "stage-title";
+    this.notify();
+  }
+  cancelStageTitleEdit() {
+    if (!this.ui.editingStageTitleId) return;
+    this.ui.editingStageTitleId = null;
+    this.notify();
+  }
+  commitStageTitleEdit(id, value) {
+    if (this.ui.editingStageTitleId !== id) return;
+    this.ui.editingStageTitleId = null;
+    const title = String(value ?? "").trim();
+    const current = this.data.stages.find((stage) => stage.id === id)?.title || "";
+    if (!title || title === current) {
+      this.notify();
+      return;
+    }
+    this.renameStage(id, title);
+  }
+  startLessonTitleEdit(id, surface = "map") {
+    if (!this.data.content_items.some((item) => item.id === id && !item.archived)) return;
+    this.ui.editingLessonTitleId = id;
+    this.ui.editingLessonTitleSurface = surface === "workbench" ? "workbench" : "map";
+    this.ui.focusField = "lesson-title-inline";
+    this.notify();
+  }
+  cancelLessonTitleEdit() {
+    if (!this.ui.editingLessonTitleId) return;
+    this.ui.editingLessonTitleId = null;
+    this.ui.editingLessonTitleSurface = "map";
+    this.notify();
+  }
+  commitLessonTitleEdit(id, value) {
+    if (this.ui.editingLessonTitleId !== id) return;
+    this.ui.editingLessonTitleId = null;
+    this.ui.editingLessonTitleSurface = "map";
+    const title = String(value ?? "").trim();
+    const current = this.data.content_items.find((item) => item.id === id)?.title || "";
+    if (!title || title === current) {
+      this.notify();
+      return;
+    }
+    this.renameLesson(id, title);
   }
   addSection() {
     const layout = this.layout();
@@ -5542,9 +5884,11 @@ class WorkbenchStore {
     const unsupported = ["unavailable", "unsupported"].includes(capability.status);
     const unplaced = projection?.lessons.reduce((sum, lesson) =>
       sum + (lesson.layout?.unplaced_block_ids?.length || 0), 0) || 0;
-    const blocking = overflow + missingAssets + Number(Boolean(projectionError)) + Number(unsupported);
+    const missingLesson = this.ui.publishScope !== "course" && !this.currentItem();
+    const blocking = overflow + missingAssets + Number(Boolean(projectionError)) + Number(unsupported) + Number(missingLesson);
     const warningCount = content + layout + text + fonts + external + mediaDowngrades + unplaced + Number(capability.status === "lossy");
     const issues = [];
+    if (missingLesson) issues.push({ severity: "blocking", code: "missing_content_item", message: "请先在课程地图选择一课，或把输出范围改为整门课程。" });
     if (projectionError) issues.push({ severity: "blocking", code: "invalid_publication_selection", message: projectionError });
     if (unsupported) issues.push({
       severity: "blocking",
@@ -5574,12 +5918,39 @@ class WorkbenchStore {
     };
   }
   async openPreflight() {
-    if (!await this.flush()) {
-      this.ui.preflight = false;
-      this.ui.toast = this.ui.toast || "保存没有完成，尚未检查导出；请修复保存问题后重试。";
-      this.notify();
-      return;
+    const activeFlush = this.activeFlushPromise;
+    if (this.saveTimer) {
+      clearTimeout(this.saveTimer);
+      this.saveTimer = 0;
+      this.preflightDeferredSave = true;
     }
+    // A save already in progress may finish, but opening preflight never starts
+    // one. The report below is built from the current in-memory project.
+    if (activeFlush) await activeFlush.catch(() => false);
+    if (this.ui.route !== "publish") {
+      const item = this.currentItem();
+      this.ui.publishReturnContext = {
+        route: this.ui.route,
+        screen: this.ui.screen,
+        activeId: this.ui.activeId,
+        mode: this.ui.mode,
+        layoutPageId: this.ui.layoutPageId,
+        publishScope: this.ui.publishScope,
+        publishPageMode: this.ui.publishPageMode,
+        publishSelectedPageIds: [...this.ui.publishSelectedPageIds],
+      };
+      if (
+        this.ui.route === "editor" && this.ui.mode === "preview" &&
+        item && this.layout(item)?.pagination_mode === "paged"
+      ) {
+        this.ui.publishScope = "lesson";
+        this.ui.publishPageMode = "current";
+        this.ui.publishSelectedPageIds = this.ui.layoutPageId
+          ? [this.ui.layoutPageId]
+          : [];
+      }
+    }
+    this.ui.route = "publish";
     const selection = this.publicationOptions();
     const revision = this.data.project.updated_at;
     let projection = null;
@@ -5600,9 +5971,11 @@ class WorkbenchStore {
       ...(this.bridge.isNative() ? { snapshot_revision: revision } : {}),
     };
     this.ui.acknowledgedWarnings = [];
+    this.ui.preflightPending = Boolean(
+      projection && typeof this.bridge.invoke === "function"
+    );
     this.notify();
-    if (!projection) return;
-    if (typeof this.bridge.invoke !== "function") return;
+    if (!this.ui.preflightPending) return;
     try {
       const options = this.ui.preflightOptions;
       const checkedRevision = this.ui.preflightRevision;
@@ -5619,6 +5992,7 @@ class WorkbenchStore {
             message: "课程在检查期间发生变化，请重新运行导出前检查。",
           }],
         };
+        this.ui.preflightPending = false;
         this.notify();
         return;
       }
@@ -5668,12 +6042,43 @@ class WorkbenchStore {
     } catch (error) {
       this.ui.preflightReport = { ...this.exportPreflight(), blocking: 1, issues: [{ severity: "blocking", message: userFacingError(error, "导出检查没有完成。请稍后再试。") }] };
     }
+    this.ui.preflightPending = false;
+    this.notify();
+  }
+  returnFromPublish() {
+    const context = this.ui.publishReturnContext;
+    this.ui.preflight = false;
+    this.ui.preflightPending = false;
+    this.ui.preflightReport = null;
+    this.ui.preflightOptions = null;
+    this.ui.acknowledgedWarnings = [];
+    this.ui.publishReturnContext = null;
+    if (context) {
+      this.ui.screen = context.screen;
+      this.ui.route = context.route === "publish" ? "map" : context.route;
+      this.ui.activeId = this.data.content_items.some((item) =>
+        item.id === context.activeId && !item.archived
+      ) ? context.activeId : this.ui.activeId;
+      this.ui.mode = context.mode || this.ui.mode;
+      this.ui.layoutPageId = context.layoutPageId || null;
+      this.ui.publishScope = context.publishScope || "lesson";
+      this.ui.publishPageMode = context.publishPageMode || "all";
+      this.ui.publishSelectedPageIds = [...(context.publishSelectedPageIds || [])];
+    } else {
+      this.ui.route = "map";
+    }
+    this.scheduleSessionSave();
     this.notify();
   }
   async exportCurrent(format = this.ui.publishFormat || "markdown") {
     const item = this.currentItem();
-    if (!item) {
+    if (!item && this.ui.publishScope !== "course") {
       this.ui.toast = "还没有可导出的课程内容。请先在课程地图创建一课，再运行导出。";
+      this.notify();
+      return;
+    }
+    if (this.ui.preflightPending) {
+      this.ui.toast = "导出检查仍在进行，请等待检查结果。";
       this.notify();
       return;
     }
@@ -5728,12 +6133,18 @@ class WorkbenchStore {
     if (this.bridge.isNative()) {
       try {
         const extensions = { markdown: "md", html: "html", web: "zip", wechat: "html", pdf: "pdf", pptx: "pptx", json: "json", asset_package: "zip", full_project: "zip" };
-        const stem = this.ui.publishScope === "lesson" ? `${item.code}-${item.title}` : this.data.project.title;
+        const selectedItem = options.content_item_id
+          ? this.data.content_items.find((candidate) => candidate.id === options.content_item_id)
+          : null;
+        const isCourse = !options.content_item_id;
+        const stem = isCourse || !selectedItem
+          ? this.data.project.title
+          : `${selectedItem.code}-${selectedItem.title}`;
         const outputPath = await this.bridge.selectExportPath(`${stem}.${extensions[format] || format}`, format);
         if (!outputPath) return;
         const result = await this.bridge.exportProject(format, this.data, preset, outputPath, contentItemId, options);
         const files = Array.isArray(result?.files) ? result.files.length : 0;
-        this.ui.lastExport = { format, scope: this.ui.publishScope, path: result?.output_path || outputPath, files };
+        this.ui.lastExport = { format, scope: isCourse ? "course" : "lesson", path: result?.output_path || outputPath, files };
         this.ui.toast = `导出完成：${files || 1} 个文件，可在 ${this.ui.lastExport.path} 打开`;
       } catch (error) {
         this.ui.lastExport = null;
@@ -5759,7 +6170,7 @@ class WorkbenchStore {
         ));
       }
       if (!downloaded) throw new Error("导出文件没有可下载的内容；课程内容没有改变。");
-      this.ui.lastExport = { format, scope: this.ui.publishScope, path: "浏览器下载目录", files: downloaded };
+      this.ui.lastExport = { format, scope: options.content_item_id ? "lesson" : "course", path: "浏览器下载目录", files: downloaded };
       this.ui.toast = `已下载 ${downloaded} 个导出文件`;
     } catch (error) {
       this.ui.toast = userFacingError(error, "导出没有完成。源课程没有修改，请修复提示后重试。");
@@ -6267,6 +6678,9 @@ const SCROLL_KEEP_SELECTORS = [
 let rendering = false;
 let renderQueued = false;
 let composingField = null;
+let closeActiveBlockOverflowMenu = null;
+let activeBlockOverflowMenu = null;
+let pendingBlockOverflowFocus = null;
 
 /** A stable selector for the control that currently has focus. */
 function focusSelector(element) {
@@ -6413,13 +6827,18 @@ function render() {
     }
     composingField = null;
   }
+  const overflowFocus = pendingBlockOverflowFocus;
+  pendingBlockOverflowFocus = null;
   rendering = true;
   let typing = null;
   let scroll = [];
   try {
     typing = captureTypingState();
     scroll = captureScrollState();
+    cancelActivePointerDrag?.();
+    closeActiveBlockOverflowMenu?.();
     root.innerHTML = store.ui.screen === "launcher" ? views.launcherView() : views.shellView();
+    store.assetPreview.observe(root);
   } finally {
     rendering = false;
   }
@@ -6438,6 +6857,16 @@ function render() {
         target.focus?.();
         target.select?.();
       } catch { /* focus is best effort */ }
+    });
+  } else if (overflowFocus) {
+    queueMicrotask(() => {
+      const blocks = Array.from(root.querySelectorAll("article.block[data-block-id]") || []);
+      const target = blocks.find((block) =>
+        block.dataset?.blockId === overflowFocus.blockId
+      ) || blocks[Math.min(overflowFocus.index, blocks.length - 1)];
+      const summary = target?.querySelector?.("details.block-more > summary");
+      const fallback = root.querySelector('[data-action="add-block"]');
+      (summary || fallback)?.focus?.();
     });
   }
   // Only follow the pinned selection when it actually moved: re-centring the
@@ -6561,11 +6990,33 @@ function flushPendingEdit(element) {
 }
 
 function handleAction(action, element, event) {
+  if (element.closest?.(".block-more-menu")) {
+    const source = activeBlockOverflowMenu?.details.closest?.("article.block");
+    const blockId = String(source?.dataset?.blockId || element.dataset.id || "");
+    if (blockId) {
+      const blocks = Array.from(root.querySelectorAll("article.block[data-block-id]") || []);
+      const index = blocks.findIndex((block) => block.dataset?.blockId === blockId);
+      pendingBlockOverflowFocus = { blockId, index: Math.max(0, index) };
+    }
+  }
   switch (action) {
     case "close-overlay":
       store.ui.palette = store.ui.capture = store.ui.preflight = store.ui.snapshot = false;
       store.ui.assetPicker = null;
+      store.ui.assetImagePreviewId = null;
       store.notify();
+      return;
+    case "open-asset-image": {
+      const asset = store.data.assets.find((candidate) =>
+        candidate.id === element.dataset.asset && !candidate.archived
+      );
+      if (!asset) return;
+      store.ui.assetImagePreviewId = asset.id;
+      store.notify();
+      return;
+    }
+    case "retry-asset-preview":
+      void store.assetPreview.retry(element.dataset.asset);
       return;
     case "enter-project": store.enterProject(); return;
     case "return-launcher": store.returnToLauncher(); return;
@@ -6600,23 +7051,21 @@ function handleAction(action, element, event) {
     case "prev-lesson": store.navigateLesson("previous"); return;
     case "next-lesson": store.navigateLesson("next"); return;
     case "rename-lesson": {
-      const item = store.data.content_items.find((candidate) => candidate.id === element.dataset.id);
-      if (!item) return;
-      const next = globalThis.prompt?.("重命名这一课", item.title);
-      if (typeof next === "string") store.renameLesson(item.id, next);
+      store.startLessonTitleEdit(element.dataset.id, element.dataset.titleSurface || "map");
       return;
     }
     case "add-stage": store.addStage(); return;
     case "rename-stage": {
-      const stage = store.data.stages.find((candidate) => candidate.id === element.dataset.id);
-      if (!stage) return;
-      const next = globalThis.prompt?.("重命名阶段", stage.title);
-      if (typeof next === "string") store.renameStage(stage.id, next);
+      store.startStageTitleEdit(element.dataset.id);
       return;
     }
     case "move-stage": store.moveStage(element.dataset.id, element.dataset.direction); return;
     case "delete-stage": store.deleteStage(element.dataset.id); return;
     case "move-lesson": store.moveLesson(element.dataset.id, element.dataset.direction); return;
+    case "toggle-stage-collapse": store.toggleStageCollapse(element.dataset.id); return;
+    case "locate-current-lesson": store.locateCurrentLesson(); return;
+    case "select-project-properties": store.selectPropertyTarget("project"); return;
+    case "select-stage-properties": store.selectPropertyTarget("stage", element.dataset.id); return;
     case "delete-lesson": store.deleteLesson(element.dataset.id); return;
     case "close-tab": {
       event.stopPropagation();
@@ -6745,7 +7194,7 @@ function handleAction(action, element, event) {
     case "grid-add-row": store.changeGrid("row", 1); return;
     case "grid-remove-col": store.changeGrid("column", -1); return;
     case "grid-remove-row": store.changeGrid("row", -1); return;
-    case "edit-project-title": store.editProjectTitle(); return;
+    case "edit-project-title": store.editProjectTitle(element.dataset.titleSurface); return;
     case "grid-new-section": store.addSection(); return;
     case "rename-section": store.startSectionRename(element.dataset.id); return;
     case "delete-section": store.deleteSection(element.dataset.id); return;
@@ -6838,6 +7287,13 @@ function handleAction(action, element, event) {
       return;
     case "ai-refresh-executions": void store.aiLoadExecutions(); return;
     case "ai-edit-provider": store.aiEditProvider(element.dataset.id); return;
+    case "ai-edit-connection":
+      store.aiEditProvider(element.dataset.id, { preserveSelection: true });
+      return;
+    case "ai-use-provider": store.aiSetProvider(element.dataset.id); return;
+    case "ai-create-connection": store.aiCreateConnection(); return;
+    case "ai-delete-connection": void store.aiDeleteConnection(element.dataset.id); return;
+    case "ai-toggle-settings": store.aiToggleSettings(); return;
     case "ai-save-provider": {
       const read = (selector) => root.querySelector(selector)?.value ?? "";
       // The model actually used is the manual Model ID when filled, otherwise
@@ -6852,7 +7308,7 @@ function handleAction(action, element, event) {
         ? discovered
         : [...discovered, chosen];
       void store.aiSaveProvider({
-        id: store.ui.aiProviderId,
+        id: store.ui.aiProviderForm?.id || store.ui.aiProviderId,
         label: read("[data-ai-provider-label]"),
         base_url: read("[data-ai-base-url]"),
         default_model: chosen,
@@ -6866,13 +7322,15 @@ function handleAction(action, element, event) {
     case "ai-save-secret": {
       const input = root.querySelector("[data-ai-secret]");
       const value = input ? input.value : "";
+      const providerId = String(element.dataset.providerId || input?.dataset.providerId || "").trim();
       // The field is cleared immediately: a credential must not stay in the DOM.
       if (input) input.value = "";
-      void store.aiSaveSecret(value);
+      void store.aiSaveSecret(value, providerId);
       return;
     }
-    case "ai-delete-secret": void store.aiDeleteSecret(); return;
+    case "ai-delete-secret": void store.aiDeleteSecret(element.dataset.providerId); return;
     case "preflight": void store.openPreflight(); return;
+    case "return-publish-source": store.returnFromPublish(); return;
     case "publish-scope":
       store.ui.publishScope = element.dataset.scope === "course" ? "course" : "lesson";
       store.ui.preflightReport = null;
@@ -6948,6 +7406,90 @@ function scheduleToastDismissal() {
   }, 6000);
 }
 
+function dismissBlockOverflowMenu(restoreFocus = false) {
+  const active = activeBlockOverflowMenu;
+  if (!active) return;
+  activeBlockOverflowMenu = null;
+  closeActiveBlockOverflowMenu = null;
+  active.doc.removeEventListener("pointerdown", active.onOutside, true);
+  active.doc.removeEventListener("keydown", active.onKeyDown, true);
+  active.doc.removeEventListener("scroll", active.reposition, true);
+  active.win.removeEventListener?.("resize", active.reposition);
+  active.menu.removeEventListener("click", active.onMenuClick);
+  active.menu.classList.remove("block-menu-portal");
+  for (const property of ["position", "left", "right", "top", "max-height", "overflow-y", "width", "visibility"]) {
+    active.menu.style?.removeProperty?.(property);
+  }
+  active.details.open = false;
+  if (active.details.isConnected) active.details.append(active.menu);
+  else active.menu.remove();
+  active.summary.setAttribute("aria-expanded", "false");
+  if (restoreFocus) active.summary.focus();
+}
+
+function showBlockOverflowMenu(details) {
+  dismissBlockOverflowMenu();
+  const doc = globalThis.document;
+  const win = globalThis.window || globalThis;
+  const summary = details.querySelector("summary");
+  const menu = details.querySelector(".block-more-menu");
+  if (!doc?.body || !summary || !menu) return;
+  details.open = true;
+  summary.setAttribute("aria-haspopup", "menu");
+  summary.setAttribute("aria-expanded", "true");
+  menu.setAttribute("role", "menu");
+  menu.querySelectorAll("button").forEach((button) => button.setAttribute("role", "menuitem"));
+  menu.classList.add("block-menu-portal");
+  menu.style.position = "fixed";
+  menu.style.visibility = "hidden";
+  doc.body.append(menu);
+
+  const reposition = () => {
+    const anchor = summary.getBoundingClientRect?.() || { top: 0, right: 0, bottom: 0 };
+    const viewportWidth = win.innerWidth || doc.documentElement?.clientWidth || 1024;
+    const viewportHeight = win.innerHeight || doc.documentElement?.clientHeight || 768;
+    const width = Math.min(220, Math.max(160, viewportWidth - 16));
+    menu.style.width = `${width}px`;
+    menu.style.maxHeight = `${Math.max(80, viewportHeight - 16)}px`;
+    menu.style.overflowY = "auto";
+    const menuHeight = Math.min(menu.getBoundingClientRect?.().height || menu.offsetHeight || 180, viewportHeight - 16);
+    const below = anchor.bottom + menuHeight + 4 <= viewportHeight - 8;
+    const top = below ? anchor.bottom + 4 : Math.max(8, anchor.top - menuHeight - 4);
+    const left = Math.max(8, Math.min(anchor.right - width, viewportWidth - width - 8));
+    menu.style.left = `${left}px`;
+    menu.style.right = "auto";
+    menu.style.top = `${top}px`;
+    menu.style.visibility = "visible";
+  };
+  const onOutside = (event) => {
+    if (menu.contains(event.target) || details.contains(event.target)) return;
+    dismissBlockOverflowMenu();
+  };
+  const onKeyDown = (event) => {
+    if (event.key !== "Escape") return;
+    event.preventDefault();
+    event.stopPropagation();
+    dismissBlockOverflowMenu(true);
+  };
+  const onMenuClick = (event) => {
+    if (!event.target?.closest?.("button[data-action]")) return;
+    const waitForRender = renderQueued || Boolean(composingField);
+    const focusFieldPending = Boolean(String(store.ui.focusField || ""));
+    dismissBlockOverflowMenu(!waitForRender && !focusFieldPending);
+    if (!waitForRender) pendingBlockOverflowFocus = null;
+  };
+  menu.addEventListener("click", onMenuClick);
+  const active = { doc, win, details, summary, menu, reposition, onOutside, onKeyDown, onMenuClick };
+  activeBlockOverflowMenu = active;
+  closeActiveBlockOverflowMenu = () => dismissBlockOverflowMenu();
+  doc.addEventListener("pointerdown", onOutside, true);
+  doc.addEventListener("keydown", onKeyDown, true);
+  doc.addEventListener("scroll", reposition, true);
+  win.addEventListener?.("resize", reposition);
+  reposition();
+  menu.querySelector("button:not(:disabled)")?.focus();
+}
+
 function bindEvents() {
   root.querySelectorAll("[data-action]").forEach((element) => element.addEventListener("click", (event) => {
     if (element.matches?.("select[data-action], input[data-action]")) return;
@@ -6971,6 +7513,16 @@ function bindEvents() {
   root.querySelectorAll("select[data-action], input[data-action]").forEach((element) => {
     element.addEventListener("change", (event) => {
       handleAction(element.dataset.action, element, event);
+    });
+  });
+  root.querySelectorAll("details.block-more > summary").forEach((summary) => {
+    const details = summary.closest("details.block-more");
+    if (!details) return;
+    summary.addEventListener("click", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      if (activeBlockOverflowMenu?.details === details) dismissBlockOverflowMenu();
+      else showBlockOverflowMenu(details);
     });
   });
 
@@ -7092,6 +7644,7 @@ function bindEvents() {
   if (projectTitle) {
     projectTitle.addEventListener("blur", () => store.commitProjectTitle(projectTitle.value));
     projectTitle.addEventListener("keydown", (event) => {
+      if (event.isComposing || event.keyCode === 229) return;
       if (event.key === "Enter") {
         event.preventDefault();
         store.commitProjectTitle(projectTitle.value);
@@ -7101,6 +7654,36 @@ function bindEvents() {
       }
     });
   }
+  root.querySelectorAll("[data-stage-title-inline]").forEach((element) => {
+    element.addEventListener("blur", () =>
+      store.commitStageTitleEdit(element.dataset.id, element.value)
+    );
+    element.addEventListener("keydown", (event) => {
+      if (event.isComposing || event.keyCode === 229) return;
+      if (event.key === "Enter") {
+        event.preventDefault();
+        store.commitStageTitleEdit(element.dataset.id, element.value);
+      } else if (event.key === "Escape") {
+        event.preventDefault();
+        store.cancelStageTitleEdit();
+      }
+    });
+  });
+  root.querySelectorAll("[data-lesson-title-inline]").forEach((element) => {
+    element.addEventListener("blur", () =>
+      store.commitLessonTitleEdit(element.dataset.id, element.value)
+    );
+    element.addEventListener("keydown", (event) => {
+      if (event.isComposing || event.keyCode === 229) return;
+      if (event.key === "Enter") {
+        event.preventDefault();
+        store.commitLessonTitleEdit(element.dataset.id, element.value);
+      } else if (event.key === "Escape") {
+        event.preventDefault();
+        store.cancelLessonTitleEdit();
+      }
+    });
+  });
   const sectionName = root.querySelector("[data-section-name]");
   if (sectionName) {
     sectionName.addEventListener("blur", () => store.renameSection(sectionName.dataset.id, sectionName.value));
@@ -7269,6 +7852,7 @@ function bindEvents() {
 
   bindAssetDropTargets();
   bindBlockDrag();
+  bindCourseMapDrag();
 }
 
 /** Insert or complete content by dropping an asset from the media panel. */
@@ -7393,75 +7977,249 @@ function blockReorderRects() {
   return rects;
 }
 
-/**
- * Reorder正文 by pointer-dragging the block handle.
- *
- * HTML5 DataTransfer proved unreliable with a real mouse in the Tauri
- * WebView, so the gesture is: pointerdown → threshold → setPointerCapture →
- * move (drop indicator) → pointerup → reorderBlockTo.
- */
-function bindBlockDrag() {
+function pointerDragScrollContainer(source) {
+  let node = source?.parentElement || null;
+  while (node && node !== root) {
+    try {
+      const style = globalThis.getComputedStyle?.(node);
+      const scrollable = /auto|scroll|overlay/.test(style?.overflowY || "") &&
+        node.scrollHeight > node.clientHeight + 1;
+      if (scrollable) return node;
+    } catch { /* a detached node will use the workspace fallback */ }
+    node = node.parentElement;
+  }
+  return root.querySelector(".center") || globalThis.document?.scrollingElement || null;
+}
+
+function autoScrollPointerDrag(container, clientY) {
+  if (!container?.getBoundingClientRect) return;
+  const rect = container.getBoundingClientRect();
+  const edge = Math.min(64, Math.max(32, rect.height * 0.12));
+  const amount = clientY < rect.top + edge
+    ? -Math.max(10, (rect.top + edge - clientY) * 0.35)
+    : clientY > rect.bottom - edge
+    ? Math.max(10, (clientY - (rect.bottom - edge)) * 0.35)
+    : 0;
+  if (!amount) return;
+  container.scrollTop = (Number(container.scrollTop) || 0) + amount;
+}
+
+function copyDragPreviewControls(source, preview) {
+  const sourceControls = source.querySelectorAll?.("input, textarea, select") || [];
+  const previewControls = preview.querySelectorAll?.("input, textarea, select") || [];
+  sourceControls.forEach((control, index) => {
+    const target = previewControls[index];
+    if (target && "value" in control) target.value = control.value;
+  });
+}
+
+/** Shared Pointer Events lifecycle for block and lesson ordering. */
+function bindPointerReorder(handle, source, sourceId, {
+  floatClass,
+  sourceClass,
+  clearFeedback,
+  findTarget,
+  showTarget,
+  commit,
+  canCommit,
+} = {}) {
   const doc = globalThis.document;
+  if (!handle || !source || !sourceId) return;
+  handle.addEventListener("pointerdown", (event) => {
+    if (event.button != null && event.button !== 0) return;
+    const pointerId = event.pointerId;
+    const projectId = store.data.project?.id;
+    const route = store.ui.route;
+    const activeId = store.ui.activeId;
+    const scrollContainer = pointerDragScrollContainer(source);
+    const session = createPointerReorderSession({
+      sourceId,
+      startX: event.clientX ?? 0,
+      startY: event.clientY ?? 0,
+      threshold: 5,
+    });
+    let captured = false;
+    let floating = null;
+    let target = null;
+    let finished = false;
+    const clear = () => {
+      if (finished) return;
+      finished = true;
+      doc?.removeEventListener?.("pointermove", onMove, true);
+      doc?.removeEventListener?.("pointerup", onUp, true);
+      doc?.removeEventListener?.("pointercancel", onCancel, true);
+      doc?.removeEventListener?.("keydown", onKeyDown, true);
+      handle.removeEventListener?.("lostpointercapture", onLostCapture);
+      if (captured) {
+        try { handle.releasePointerCapture?.(pointerId); } catch { /* best effort */ }
+      }
+      source.classList.remove(sourceClass);
+      doc?.body?.classList.remove("pointer-reordering");
+      floating?.remove();
+      clearFeedback?.();
+      if (cancelActivePointerDrag === cancel) cancelActivePointerDrag = null;
+    };
+    const cancel = () => clear();
+    const onLostCapture = (lostEvent) => {
+      if (lostEvent.pointerId === pointerId && !finished) clear();
+    };
+    const begin = (x, y) => {
+      if (!floating) {
+        if (typeof source.cloneNode === "function") {
+          floating = source.cloneNode(true);
+          floating.classList.add("reorder-drag-float", floatClass);
+          floating.setAttribute("aria-hidden", "true");
+          floating.removeAttribute("data-block-id");
+          floating.removeAttribute("data-map-lesson");
+          copyDragPreviewControls(source, floating);
+          const rect = source.getBoundingClientRect?.();
+          floating.style.width = `${Math.max(120, rect?.width || 320)}px`;
+          doc?.body?.append(floating);
+        }
+        source.classList.add(sourceClass);
+        doc?.body?.classList.add("pointer-reordering");
+        try {
+          handle.setPointerCapture?.(pointerId);
+          captured = true;
+        } catch { /* document listeners remain the fallback */ }
+        handle.addEventListener?.("lostpointercapture", onLostCapture);
+      }
+      if (floating) {
+        floating.style.left = `${x + 12}px`;
+        floating.style.top = `${y + 12}px`;
+      }
+    };
+    const updateTarget = (x, y) => {
+      autoScrollPointerDrag(scrollContainer, y);
+      target = findTarget?.(x, y) || null;
+      showTarget?.(target);
+    };
+    const onMove = (moveEvent) => {
+      if (moveEvent.pointerId !== pointerId || finished) return;
+      const next = session.move(moveEvent.clientX ?? 0, moveEvent.clientY ?? 0, []);
+      if (!next.active) return;
+      moveEvent.preventDefault?.();
+      begin(moveEvent.clientX ?? 0, moveEvent.clientY ?? 0);
+      updateTarget(moveEvent.clientX ?? 0, moveEvent.clientY ?? 0);
+    };
+    const onUp = (upEvent) => {
+      if (upEvent.pointerId !== pointerId || finished) return;
+      const next = session.move(upEvent.clientX ?? 0, upEvent.clientY ?? 0, []);
+      if (next.active) {
+        begin(upEvent.clientX ?? 0, upEvent.clientY ?? 0);
+        updateTarget(upEvent.clientX ?? 0, upEvent.clientY ?? 0);
+      }
+      const drop = target;
+      const valid = session.active && drop && store.data.project?.id === projectId &&
+        store.ui.route === route && store.ui.activeId === activeId &&
+        (typeof canCommit !== "function" || canCommit(drop));
+      clear();
+      if (valid) commit?.(drop);
+    };
+    const onCancel = (cancelEvent) => {
+      if (cancelEvent.pointerId === pointerId) clear();
+    };
+    const onKeyDown = (keyEvent) => {
+      if (keyEvent.key === "Escape") {
+        keyEvent.preventDefault();
+        clear();
+      }
+    };
+    cancelActivePointerDrag?.();
+    cancelActivePointerDrag = cancel;
+    doc?.addEventListener?.("pointermove", onMove, true);
+    doc?.addEventListener?.("pointerup", onUp, true);
+    doc?.addEventListener?.("pointercancel", onCancel, true);
+    doc?.addEventListener?.("keydown", onKeyDown, true);
+  });
+}
+
+/** Reorder正文 by dragging its dedicated handle; cancellation never commits. */
+function bindBlockDrag() {
   for (const element of root.querySelectorAll("article.block[data-block-id]")) {
     const blockId = element.dataset.blockId;
     const handle = element.querySelector(".block-handle");
-    if (!handle || !blockId) continue;
-    handle.addEventListener("pointerdown", (event) => {
-      if (event.button != null && event.button !== 0) return;
-      const pointerId = event.pointerId;
-      const session = createPointerReorderSession({
-        sourceId: blockId,
-        startX: event.clientX ?? 0,
-        startY: event.clientY ?? 0,
-        threshold: 5,
-      });
-      let captured = false;
-
-      const onMove = (moveEvent) => {
-        if (moveEvent.pointerId !== pointerId) return;
-        const wasActive = session.active;
-        const next = session.move(
-          moveEvent.clientX ?? 0,
-          moveEvent.clientY ?? 0,
-          blockReorderRects(),
-        );
-        if (next.active && !wasActive && !captured) {
-          captured = true;
-          try {
-            handle.setPointerCapture?.(pointerId);
-          } catch { /* capture is best effort */ }
-          element.classList.add("is-dragging");
-        }
-        if (!next.active) return;
-        moveEvent.preventDefault?.();
+    if (!blockId || !handle) continue;
+    bindPointerReorder(handle, element, blockId, {
+      floatClass: "block-drag-float",
+      sourceClass: "is-dragging",
+      clearFeedback: clearBlockDropIndicators,
+      findTarget: (_x, y) => findBlockReorderTarget(blockReorderRects(), blockId, y),
+      showTarget: (targetId) => {
         clearBlockDropIndicators();
-        if (next.targetId) {
-          root
-            .querySelector(`article.block[data-block-id="${next.targetId}"]`)
-            ?.classList.add("drop-before");
-        }
-      };
+        if (!targetId) return;
+        root.querySelector(`article.block[data-block-id="${targetId}"]`)?.classList.add("drop-before");
+      },
+      canCommit: (targetId) => typeof targetId === "string" && targetId !== blockId,
+      commit: (targetId) => store.reorderBlockTo(blockId, targetId),
+    });
+  }
+}
 
-      const onUp = (upEvent) => {
-        if (upEvent.pointerId !== pointerId) return;
-        doc?.removeEventListener?.("pointermove", onMove, true);
-        doc?.removeEventListener?.("pointerup", onUp, true);
-        doc?.removeEventListener?.("pointercancel", onUp, true);
-        if (captured) {
-          try {
-            handle.releasePointerCapture?.(pointerId);
-          } catch { /* release is best effort */ }
-        }
-        element.classList.remove("is-dragging");
-        clearBlockDropIndicators();
-        session.commit((source, target) => store.reorderBlockTo(source, target));
-      };
+function clearCourseMapDropFeedback() {
+  if (!root) return;
+  root.querySelectorAll(".map-item.lesson-drop-before").forEach((element) => {
+    element.classList.remove("lesson-drop-before");
+  });
+  root.querySelectorAll(".stage-card.lesson-drop-at-end").forEach((element) => {
+    element.classList.remove("lesson-drop-at-end");
+  });
+  root.querySelectorAll(".lesson-drop-end.active").forEach((element) => {
+    element.classList.remove("active");
+  });
+}
 
-      // Listen on document until the threshold arms capture, so the pointer can
-      // leave the handle before the gesture is considered a drag.
-      doc?.addEventListener?.("pointermove", onMove, true);
-      doc?.addEventListener?.("pointerup", onUp, true);
-      doc?.addEventListener?.("pointercancel", onUp, true);
+function courseMapDropTarget(clientX, clientY, sourceId) {
+  const stages = [...root.querySelectorAll(".stage-card[data-stage-id]")];
+  const stage = stages.find((candidate) => {
+    const rect = candidate.getBoundingClientRect?.();
+    return rect && clientX >= rect.left && clientX <= rect.right &&
+      clientY >= rect.top && clientY <= rect.bottom;
+  });
+  if (!stage) return null;
+  const stageId = stage.dataset.stageId || null;
+  if (stage.dataset.collapsed === "true") {
+    return { stage, marker: stage.querySelector(".lesson-drop-end"), stageId, beforeId: null };
+  }
+  const items = [...stage.querySelectorAll(".map-item[data-map-lesson]")]
+    .filter((candidate) => candidate.dataset.mapLesson !== sourceId);
+  for (const item of items) {
+    const rect = item.getBoundingClientRect?.();
+    if (rect && clientY < rect.top + rect.height / 2) {
+      return {
+        stage,
+        anchor: item,
+        marker: null,
+        stageId,
+        beforeId: item.dataset.mapLesson,
+      };
+    }
+  }
+  return { stage, marker: stage.querySelector(".lesson-drop-end"), stageId, beforeId: null };
+}
+
+/** Course map pointer sorting shares the block handle threshold and cancel semantics. */
+function bindCourseMapDrag() {
+  for (const handle of root.querySelectorAll("[data-lesson-drag-handle]")) {
+    const sourceId = handle.dataset.lessonDragHandle;
+    const source = root.querySelector(`[data-map-lesson="${sourceId}"]`);
+    if (!sourceId || !source) continue;
+    bindPointerReorder(handle, source, sourceId, {
+      floatClass: "lesson-drag-float",
+      sourceClass: "is-dragging-source",
+      clearFeedback: clearCourseMapDropFeedback,
+      findTarget: (x, y) => courseMapDropTarget(x, y, sourceId),
+      showTarget: (target) => {
+        clearCourseMapDropFeedback();
+        if (!target) return;
+        if (target.anchor) target.anchor.classList.add("lesson-drop-before");
+        else {
+          target.stage.classList.add("lesson-drop-at-end");
+          target.marker?.classList.add("active");
+        }
+      },
+      canCommit: (target) => store.ui.route === "map" && Boolean(target.stage),
+      commit: (target) => store.moveLessonToPosition(sourceId, target.stageId, target.beforeId),
     });
   }
 }

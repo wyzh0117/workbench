@@ -17,8 +17,10 @@ const READER_KEYS = [
   "ai_scope",
   "ai_provider_id",
   "ai_model",
+  "ai_settings_open",
   "left_collapsed",
   "right_collapsed",
+  "collapsed_stage_ids",
   "tabs",
   // V1-T04 Explorer chrome (§39) — .workspace session only.
   "explorer_filter",
@@ -28,10 +30,12 @@ const READER_KEYS = [
 const EXPLORER_PATH_LIST_KEYS = new Set([
   "explorer_expanded",
   "explorer_recent",
+  "collapsed_stage_ids",
 ]);
 const EXPLORER_PATH_LIST_LIMIT: Record<string, number> = {
   explorer_expanded: 64,
   explorer_recent: 8,
+  collapsed_stage_ids: 1024,
 };
 const SESSION_KEYS = new Set<string>(["project_id", ...READER_KEYS]);
 
@@ -253,7 +257,7 @@ function normalizeSession(value: unknown, projectId: string): BrowserReaderSessi
       output[key] = child;
       continue;
     }
-    if (["left_collapsed", "right_collapsed"].includes(key)) {
+    if (["left_collapsed", "right_collapsed", "ai_settings_open"].includes(key)) {
       if (typeof child !== "boolean") return null;
     } else if (
       key === "active_content_item_id" || key === "selected_block_id" ||

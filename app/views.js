@@ -89,7 +89,10 @@ export function createViews(store) {
       '"': "&quot;",
       "'": "&#39;",
     }[char]));
-  const assetPreview = (asset) => store.assetPreview.get(asset && asset.id);
+  const assetPreview = (asset) =>
+    store.assetPreview.get(asset && asset.id, asset);
+  const retryAssetPreviewButton = (asset, compact = false) =>
+    `<button type="button" class="${compact ? "icon-button" : "text-button"}" data-action="retry-asset-preview" data-asset="${esc(asset.id)}" aria-label="重试预览：${esc(asset.title || asset.filename)}" title="重试预览">${compact ? "↻" : "重试预览"}</button>`;
   const previewUrl = (asset) => {
     const preview = assetPreview(asset);
     return preview && preview.url ? preview.url : "";
@@ -97,6 +100,15 @@ export function createViews(store) {
   const previewText = (asset) => {
     const preview = assetPreview(asset);
     return preview && typeof preview.text === "string" ? preview.text : "";
+  };
+  const mediaDuration = (seconds) => {
+    if (!Number.isFinite(seconds) || seconds < 0) return "";
+    const total = Math.floor(seconds);
+    const minutes = Math.floor(total / 60);
+    const rest = String(total % 60).padStart(2, "0");
+    return minutes >= 60
+      ? `${Math.floor(minutes / 60)}:${String(minutes % 60).padStart(2, "0")}:${rest}`
+      : `${minutes}:${rest}`;
   };
   const isImageLike = (asset) =>
     asset && (asset.type === "image" || asset.type === "gif");
@@ -146,23 +158,27 @@ export function createViews(store) {
     const preview = assetPreview(asset);
     const label = asset.title || asset.filename || "素材";
     if (preview && preview.failed) {
-      return `<span class="asset-thumb" role="img" aria-label="${esc(label)}预览失败" title="预览失败；请打开媒体库查看，或重新导入文件">⚠</span>`;
+      return `<span class="asset-thumb" role="img" aria-label="${esc(label)}预览失败">⚠<small>预览失败</small><small>${esc(preview.error || "素材不可读")}</small><small>请检查文件或重新导入</small></span>`;
     }
-    const url = previewUrl(asset);
+    if (!preview || preview.loading) {
+      const key = preview?.key
+        ? ` data-asset-preview-key="${esc(preview.key)}"`
+        : "";
+      return `<span class="asset-thumb"${key} title="靠近素材时加载预览">${preview?.loading ? "正在读取" : "预览未加载"}</span>`;
+    }
+    const url = preview.url || "";
     if (url && isImageLike(asset)) {
-      return `<img class="asset-image" src="${esc(url)}" alt="${
+      return `<img class="asset-image" src="${esc(preview.thumbnailUrl || url)}" alt="${
         esc(label)
       }" loading="lazy" />`;
     }
     if (url && asset.type === "video") {
-      return `<video class="asset-image asset-video" src="${
-        esc(url)
-      }" preload="metadata" muted playsinline aria-label="${
-        esc(label)
-      }"></video>`;
+      return `<img class="asset-image asset-video" src="${
+        esc(preview.posterUrl)
+      }" alt="${esc(label)} · 视频封面" loading="lazy" />`;
     }
-    const text = previewText(asset);
-    if (text) {
+    const text = preview.text;
+    if (typeof text === "string") {
       return `<span class="asset-doc" title="打开媒体库查看完整内容">${
         esc(text.replace(/\s+/g, " ").trim().slice(0, 60) || "空文档")
       }</span>`;
@@ -175,9 +191,41 @@ export function createViews(store) {
         esc(label)
       }"><span class="asset-attachment-icon">📎</span><small>${
         esc(String(ext).toUpperCase())
-      }</small><span>${esc(label)}</span></span>`;
+      }</small><span>${esc(label)}</span>${
+        isAttachmentAsset(asset)
+          ? "<small>参考文件 · 当前环境没有内嵌缩略图</small>"
+          : asset.type === "other"
+          ? "<small>当前格式不支持内嵌预览</small>"
+          : ""
+      }</span>`;
     }
-    return `<span class="asset-thumb" title="正在读取素材预览">${assetLabel(asset.type).slice(0, 1)}</span>`;
+    return `<span class="asset-thumb" title="当前格式暂不支持预览">${assetLabel(asset.type)} · 暂无预览</span>`;
+  };
+
+  const mediaLibraryPreview = (asset) => {
+    const preview = assetPreview(asset);
+    const label = asset.title || asset.filename || "素材";
+    const url = preview?.url || "";
+    if (preview?.failed) {
+      return `<div class="asset-thumb asset-preview-error" role="group" aria-label="${esc(label)} · ${esc(assetLabel(asset.type))} 预览失败" style="flex-direction:column;gap:3px;padding:6px"><b>${esc(label)} · ${esc(assetLabel(asset.type))} 预览失败</b><small>${esc(preview.error || "素材不可读")}</small>${retryAssetPreviewButton(asset)}</div>`;
+    }
+    if (isImageLike(asset) && url) {
+      return `<button type="button" class="asset-image-zoom" data-action="open-asset-image" data-asset="${esc(asset.id)}" aria-label="放大查看 ${esc(label)}" title="点击查看大图" style="align-items:center;background:transparent;border:0;cursor:zoom-in;display:flex;height:100%;justify-content:center;padding:0;width:100%"><img class="asset-image" src="${esc(preview.thumbnailUrl || url)}" alt="${esc(label)}" loading="lazy" style="height:100%;max-height:none;max-width:none;object-fit:cover;width:100%" /></button>`;
+    }
+    if (preview?.pdf && url) {
+      return `<iframe class="asset-pdf-preview" src="${esc(url)}" title="${esc(label)} · PDF 第一页预览" loading="lazy" referrerpolicy="no-referrer" style="display:block;width:100%;height:180px;border:0;background:#f4f4f4"></iframe>`;
+    }
+    if (asset.type === "video" && url) {
+      const player = `<video class="asset-image asset-video" src="${esc(url)}" poster="${esc(preview.posterUrl || "")}" controls preload="none" playsinline aria-label="${esc(label)}"></video>`;
+      const duration = mediaDuration(preview.durationSeconds);
+      return duration ? `<div>${player}<small class="muted">${duration}</small></div>` : player;
+    }
+    if (asset.type === "audio" && url) {
+      const player = `<audio class="asset-audio" src="${esc(url)}" controls preload="metadata" aria-label="${esc(label)}"></audio>`;
+      const duration = mediaDuration(preview.durationSeconds);
+      return duration ? `<div>${player}<small class="muted">${duration}</small></div>` : player;
+    }
+    return assetThumb(asset);
   };
 
   /* ---------------------------------------------------------------- shell */
@@ -259,8 +307,11 @@ export function createViews(store) {
 
   function topbarView(item) {
     const map = courseMap(store.data, item ? item.id : null);
+    const editLessonInWorkbench = item &&
+      store.ui.editingLessonTitleId === item.id &&
+      store.ui.editingLessonTitleSurface === "workbench";
     return `<header class="topbar"><div class="brand"><button class="secondary launcher-return" data-action="return-launcher" title="返回项目选择；当前项目不会关闭">⌂ <span>项目选择</span></button><span class="brand-mark">✦</span><span>AI Course Workbench</span></div>${
-      store.ui.editingProjectTitle
+      store.ui.editingProjectTitle && store.ui.editingProjectTitleSurface === "topbar"
         ? `<div class="project-name editing"><span class="dot"></span><input class="project-title-input" data-project-title data-focus-key="project-title" value="${
           esc(store.data.project.title)
         }" aria-label="课程标题" /><span class="project-title-hint">Enter 保存 · Esc 取消</span></div>`
@@ -271,9 +322,10 @@ export function createViews(store) {
       item
         ? `<button class="icon-button" data-action="prev-lesson" title="打开上一课" ${
           map.previous_id ? "" : "disabled"
-        }>‹</button><span class="lesson-pill" title="当前课程：${esc(item.title)}">${
-          esc(item.code)
-        }｜${esc(item.title)}</span><button class="icon-button" data-action="next-lesson" title="打开下一课" ${
+        }>‹</button>${editLessonInWorkbench
+          ? `<input class="lesson-title-inline" data-lesson-title-inline data-id="${item.id}" data-focus-key="lesson-title-inline" aria-label="课程标题" value="${esc(item.title)}" />`
+          : `<button class="lesson-pill" data-action="rename-lesson" data-title-surface="workbench" data-id="${item.id}" title="点击修改当前课程标题">${esc(item.code)}｜${esc(item.title)}</button>`
+        }<button class="icon-button" data-action="next-lesson" title="打开下一课" ${
           map.next_id ? "" : "disabled"
         }>›</button>`
         : ""
@@ -448,13 +500,17 @@ export function createViews(store) {
       : "";
     const map = courseMap(store.data, store.ui.activeId);
     const realStages = map.stages.filter((stage) => stage.id);
+    const mapProjectTitle = store.ui.editingProjectTitle &&
+        store.ui.editingProjectTitleSurface === "map"
+      ? `<input class="project-title-input map-project-title-input" data-project-title data-focus-key="project-title" value="${esc(store.data.project.title)}" aria-label="课程标题" />`
+      : `<button class="inline-title-button map-project-title" data-action="edit-project-title" data-title-surface="map" title="点击修改课程标题">${esc(map.project_title)}</button>`;
     if (map.lesson_count === 0 && realStages.length === 0 && !draft) {
-      return `<section class="page"><div class="page-head"><div><span class="eyebrow">课程地图</span><h1>课程结构</h1><p class="muted">课程还没有内容。可以先建第一课或新阶段，也可以把手上已有的材料变成课程地图。</p></div><div class="map-actions"><button class="secondary" data-action="add-stage">＋ 新阶段</button><button class="primary" data-action="add-map-item">＋ 新建课程内容</button></div></div>${
+      return `<section class="page"><div class="page-head"><div><span class="eyebrow">课程地图</span><h1>${mapProjectTitle}</h1><p class="muted">课程还没有内容。可以先建第一课或新阶段，也可以把手上已有的材料变成课程地图。</p></div><div class="map-actions"><button class="secondary" data-action="select-project-properties">项目属性</button><button class="secondary" data-action="add-stage">＋ 新阶段</button><button class="primary" data-action="add-map-item">＋ 新建课程内容</button></div></div>${
         seedCard()
       }<div class="empty-state"><div class="empty-icon">▦</div><h2>还没有课程内容</h2><p class="muted">现在可以新建第一课，或先加一个阶段；课程地图会保留你的后续编辑。</p><div class="modal-actions"><button class="secondary" data-action="add-stage">＋ 新阶段</button><button class="primary" data-action="add-map-item">新建第一课</button></div></div></section>`;
     }
     return `<section class="page"><div class="page-head"><div><span class="eyebrow">课程地图</span><h1>${
-      esc(map.project_title)
+      mapProjectTitle
     }</h1><p class="muted">${
       map.lesson_count
         ? `共 ${map.lesson_count} 课 · 已完成 ${map.complete_count} 课 · 待补 ${map.open_requirements} 项 · 缺素材 ${map.missing_media} 处`
@@ -463,7 +519,7 @@ export function createViews(store) {
       map.lesson_count
         ? `<div class="progress-track wide"><span style="width:${map.progress}%"></span></div>`
         : ""
-    }</div><div class="map-actions"><button class="secondary" data-action="add-stage">＋ 新阶段</button><button class="secondary" data-action="add-map-item">＋ 新建课程内容</button>${
+    }</div><div class="map-actions"><button class="secondary" data-action="select-project-properties">项目属性</button>${store.currentItem() ? `<button class="secondary" data-action="locate-current-lesson">定位当前课</button>` : ""}<button class="secondary" data-action="add-stage">＋ 新阶段</button><button class="secondary" data-action="add-map-item">＋ 新建课程内容</button>${
       map.next_lesson_id
         ? `<button class="primary" data-action="open-item" data-id="${map.next_lesson_id}">继续下一处未完成 →</button>`
         : ""
@@ -476,8 +532,12 @@ export function createViews(store) {
 
   function stageCard(stage, stageIndex, stageCount) {
     const manageable = Boolean(stage.id);
+    const collapsed = manageable && store.ui.collapsedStageIds.includes(stage.id);
+    const editing = manageable && store.ui.editingStageTitleId === stage.id;
     const tools = manageable
-      ? `<div class="stage-tools"><button class="icon-button" data-action="rename-stage" data-id="${
+      ? `<div class="stage-tools"><button class="icon-button stage-collapse-toggle" data-action="toggle-stage-collapse" data-id="${
+        stage.id
+      }" aria-expanded="${!collapsed}" title="${collapsed ? "展开阶段" : "折叠阶段"}">${collapsed ? "▸" : "⌄"}</button><button class="icon-button" data-action="rename-stage" data-id="${
         stage.id
       }" title="重命名阶段">✎</button><button class="icon-button" data-action="move-stage" data-id="${
         stage.id
@@ -493,17 +553,22 @@ export function createViews(store) {
         stage.id
       }" title="删除阶段（空阶段需确认；有课时会先提示移动）">${TRASH_ICON} 删除阶段</button></div></details></div>`
       : "";
-    return `<div class="stage-card ${stage.current ? "current" : ""}"><div class="stage-head"><span class="stage-code">${
+    const selectedPropertyStage = store.ui.propertyTarget?.kind === "stage" &&
+      store.ui.propertyTarget.id === stage.id;
+    return `<div class="stage-card ${stage.current ? "current" : ""}${collapsed ? " collapsed" : ""}" data-stage-id="${esc(stage.id)}" data-collapsed="${collapsed}"><div class="stage-head"><button type="button" class="stage-code stage-property-target ${selectedPropertyStage ? "selected" : ""}" data-action="select-stage-properties" data-id="${esc(stage.id)}" aria-pressed="${selectedPropertyStage}" title="查看阶段属性">${
       esc(stage.code)
-    }</span><h2>${esc(stage.title)}</h2><span class="stage-count">${
+    }</span><h2>${editing
+      ? `<input class="stage-title-inline" data-stage-title-inline data-id="${stage.id}" data-focus-key="stage-title" aria-label="阶段名称" value="${esc(stage.title)}" />`
+      : `<button class="inline-title-button stage-title-button" data-action="rename-stage" data-id="${stage.id}" title="点击修改阶段名称">${esc(stage.title)}</button>`
+    }</h2><span class="stage-count">${
       stage.lessons.length
     } 课 · 完成 ${stage.complete_count}${
       stage.open_requirements ? ` · 待补 ${stage.open_requirements}` : ""
     }</span>${tools}</div><div class="map-items">${
       stage.lessons.length
         ? stage.lessons.map(mapItem).join("")
-        : `<div class="side-empty">这个阶段还没有内容，可以先新建一课。</div>`
-    }</div></div>`;
+        : `<div class="side-empty map-empty-drop">这个阶段还没有内容；可以新建一课，或把课时拖到这里。</div>`
+    }<div class="lesson-drop-end" aria-hidden="true">放入${esc(stage.title)}末尾</div></div></div>`;
   }
 
   /**
@@ -525,31 +590,12 @@ export function createViews(store) {
   function mapItem(lesson) {
     const progress = lesson.progress;
     const nextStep = nextStepLabel(lesson);
-    return `<div class="map-item ${
-      lesson.current ? "current" : ""
-    }" data-map-lesson="${lesson.id}"><button class="map-open" data-action="open-item" data-id="${
-      lesson.id
-    }"><span class="map-item-code">${esc(lesson.code)}</span><span class="map-item-body"><b>${
-      esc(lesson.title)
-    }</b><small>${esc(lesson.summary)}</small></span><span class="map-item-meta"><span class="badge ${
-      progress.complete ? "done" : "open"
-    }">${lessonGapLabel(lesson)}</span><span class="map-item-state">${
-      lesson.current
-        ? "正在编辑"
-        : progress.complete
-        ? "已完成"
-        : esc(progress.reasons[0] || nextStep)
-    }</span></span><span class="map-arrow">›</span></button><div class="map-item-tools"><button class="icon-button" data-action="rename-lesson" data-id="${
-      lesson.id
-    }" title="重命名这一课">✎</button><button class="icon-button" data-action="move-lesson" data-id="${
-      lesson.id
-    }" data-direction="up" title="上移这一课" ${
-      lesson.order_index === 0 ? "disabled" : ""
-    }>↑</button><button class="icon-button" data-action="move-lesson" data-id="${
-      lesson.id
-    }" data-direction="down" title="下移这一课">↓</button><button class="icon-button danger" data-action="delete-lesson" data-id="${
-      lesson.id
-    }" title="删除这一课（会先确认；可以用撤销恢复）">${TRASH_ICON}</button></div></div>`;
+    const editing = store.ui.editingLessonTitleId === lesson.id &&
+      store.ui.editingLessonTitleSurface === "map";
+    const content = editing
+      ? `<div class="map-open map-open-editing"><span class="map-item-code">${esc(lesson.code)}</span><span class="map-item-body"><input class="lesson-title-inline" data-lesson-title-inline data-id="${lesson.id}" data-focus-key="lesson-title-inline" aria-label="课程标题" value="${esc(lesson.title)}" /><small>${esc(lesson.summary)}</small></span><span class="map-item-meta"><span class="badge ${progress.complete ? "done" : "open"}">${lessonGapLabel(lesson)}</span><span class="map-item-state">${lesson.current ? "正在编辑" : progress.complete ? "已完成" : esc(progress.reasons[0] || nextStep)}</span></span><span class="map-arrow">›</span></div>`
+      : `<button class="map-open" data-action="open-item" data-id="${lesson.id}"><span class="map-item-code">${esc(lesson.code)}</span><span class="map-item-body"><b>${esc(lesson.title)}</b><small>${esc(lesson.summary)}</small></span><span class="map-item-meta"><span class="badge ${progress.complete ? "done" : "open"}">${lessonGapLabel(lesson)}</span><span class="map-item-state">${lesson.current ? "正在编辑" : progress.complete ? "已完成" : esc(progress.reasons[0] || nextStep)}</span></span><span class="map-arrow">›</span></button>`;
+    return `<div class="map-item ${lesson.current ? "current" : ""}" data-map-lesson="${lesson.id}"><button type="button" class="lesson-drag-handle" data-lesson-drag-handle="${lesson.id}" aria-label="拖动${esc(lesson.title)}">⠿</button>${content}<div class="map-item-tools"><button class="icon-button" data-action="rename-lesson" data-title-surface="map" data-id="${lesson.id}" title="重命名这一课">✎</button><button class="icon-button" data-action="move-lesson" data-id="${lesson.id}" data-direction="up" title="上移这一课" ${lesson.order_index === 0 ? "disabled" : ""}>↑</button><button class="icon-button" data-action="move-lesson" data-id="${lesson.id}" data-direction="down" title="下移这一课">↓</button><button class="icon-button danger" data-action="delete-lesson" data-id="${lesson.id}" title="删除这一课（会先确认；可以用撤销恢复）">${TRASH_ICON}</button></div></div>`;
   }
 
   /* ------------------------------------------------------ lesson editor */
@@ -756,38 +802,44 @@ export function createViews(store) {
         block.id
       }">选择素材</button></div>`;
     }
-    const url = previewUrl(asset);
     const preview = assetPreview(asset);
-    const text = previewText(asset);
+    const url = preview?.url || "";
+    const text = preview?.text;
     const body = (() => {
-      if (block.type === "video" && url) {
-        return `<video class="asset-image" src="${esc(url)}" controls preload="metadata"></video>`;
+      if (asset.type === "video" && url) {
+        return `<video class="asset-image" src="${esc(url)}" poster="${esc(preview.posterUrl || "")}" controls preload="metadata" playsinline></video>`;
       }
-      if (block.type === "audio" && url) {
+      if (asset.type === "audio" && url) {
         return `<audio class="asset-audio" src="${esc(url)}" controls preload="metadata"></audio>`;
       }
-      if ((block.type === "image" || block.type === "gif") && url) {
+      if ((asset.type === "image" || asset.type === "gif") && url) {
         return `<img class="asset-image" src="${esc(url)}" alt="${
           esc(asset.title || asset.filename)
         }" />`;
       }
+      if (preview?.pdf && url) {
+        return `<iframe class="media-pdf-preview" src="${esc(url)}" title="${esc(asset.title || asset.filename)} · PDF 第一页预览" loading="lazy" referrerpolicy="no-referrer" style="display:block;width:100%;height:420px;border:0;background:#f4f4f4"></iframe>`;
+      }
       // Markdown and other text bundles are material too: show the beginning
       // of the real file instead of an empty slot.
-      if (text) {
+      if (typeof text === "string") {
         return `<pre class="media-document">${
-          esc(text.slice(0, 1200))
+          esc(text.slice(0, 1200) || "（空文档）")
         }</pre>`;
       }
       if (preview && preview.failed) {
-        return `<div class="media-slot failed"><b>这个素材暂时无法预览。</b><small>课程内容仍可继续；请重新导入文件，或到媒体库查看。</small></div>`;
+        return `<div class="media-slot failed"><b>${esc(asset.filename)} · ${esc(assetLabel(asset.type))} 预览失败</b><small>${esc(preview.error || "素材不可读")}</small><small>请检查文件内容，或在媒体库替换为可读取的文件。</small>${retryAssetPreviewButton(asset)}</div>`;
       }
-      if (preview && preview.url) {
-        // Bytes are available but this type has no in-editor renderer.
+      if (preview?.loaded) {
+        // This file is readable, but the current WebView has no renderer.
         return `<div class="media-slot attachment">📎 ${
           esc(asset.title || asset.filename)
-        }（${esc(assetLabel(asset.type))}）</div>`;
+        }（${esc(assetLabel(asset.type))} · ${esc(asset.type === "other" ? "当前格式不支持内嵌预览" : "参考文件，当前没有正文解析")})</div>`;
       }
-      return `<div class="media-slot loading">正在读取素材预览…</div>`;
+      if (preview?.loading) {
+        return `<div class="media-slot loading" data-asset-preview-key="${esc(preview.key || "")}">正在读取素材预览…</div>`;
+      }
+      return `<div class="media-slot failed"><b>${esc(asset.filename)} 暂不可用</b><small>${asset.archived ? "素材已归档" : "找不到可读取的素材预览"}；请在媒体库检查或重新添加。</small></div>`;
     })();
     return `<div class="media-slot" data-block-id="${block.id}">${body}<div class="media-meta"><span class="badge">${
       assetLabel(asset.type)
@@ -1368,33 +1420,44 @@ export function createViews(store) {
     }
     // Markdown and other text bundles render their real content, which is the
     // whole point of importing them as material.
-    const url = previewUrl(asset);
-    if ((block.type === "image" || block.type === "gif") && url) {
+    const preview = assetPreview(asset);
+    const url = preview?.url || "";
+    if (preview?.failed) {
+      return `<div class="preview-media-failed"><b>${esc(asset.filename)} · ${esc(assetLabel(asset.type))} 预览失败</b><p>${esc(preview.error || "素材不可读")}</p><p class="muted">请检查文件内容，或在媒体库替换为可读取的文件。</p>${retryAssetPreviewButton(asset)}</div>`;
+    }
+    if (preview?.loading) {
+      return `<div class="preview-placeholder" data-asset-preview-key="${esc(preview.key || "")}">正在读取 ${esc(asset.filename)}…</div>`;
+    }
+    if ((asset.type === "image" || asset.type === "gif") && url) {
       return `<figure><img src="${esc(url)}" alt="${
         esc(asset.title || asset.filename)
       }" /><figcaption>${esc(asset.title || asset.filename)}</figcaption></figure>`;
     }
-    if (block.type === "video" && url) {
-      return `<figure><video src="${esc(url)}" controls></video><figcaption>${
+    if (asset.type === "video" && url) {
+      return `<figure><video src="${esc(url)}" poster="${esc(preview.posterUrl || "")}" controls preload="metadata" playsinline></video><figcaption>${
         esc(asset.title || asset.filename)
       }</figcaption></figure>`;
     }
-    if (block.type === "audio" && url) {
-      return `<figure><audio src="${esc(url)}" controls></audio><figcaption>${
+    if (asset.type === "audio" && url) {
+      return `<figure><audio src="${esc(url)}" controls preload="metadata"></audio><figcaption>${
         esc(asset.title || asset.filename)
       }</figcaption></figure>`;
     }
-    const text = previewText(asset);
-    if (text) {
+    if (preview?.pdf && url) {
+      return `<figure class="preview-pdf"><iframe src="${esc(url)}" title="${esc(asset.title || asset.filename)} · PDF 第一页预览" loading="lazy" referrerpolicy="no-referrer" style="display:block;width:100%;height:560px;border:0;background:#f4f4f4"></iframe><figcaption>${esc(asset.title || asset.filename)} · PDF 第一页</figcaption></figure>`;
+    }
+    const text = preview?.text;
+    if (typeof text === "string") {
       return `<figure class="preview-document"><figcaption>${
         esc(asset.title || asset.filename)
       } · Markdown</figcaption><pre class="preview-markdown">${
-        esc(text.slice(0, 4000))
+        esc(text.slice(0, 4000) || "（空文档）")
       }</pre></figure>`;
     }
-    return `<p class="preview-attachment">📎 ${
+    if (preview?.loaded) return `<p class="preview-attachment">📎 ${
       esc(asset.title || asset.filename)
-    }（${esc(assetLabel(asset.type))}）</p>`;
+    }（${esc(assetLabel(asset.type))} · ${esc(asset.type === "other" ? "当前格式不支持内嵌预览" : "参考文件，当前没有正文解析")})</p>`;
+    return `<div class="preview-media-failed"><b>${esc(asset.filename)} 暂不可用</b><p>${asset.archived ? "素材已归档" : "找不到可读取的素材预览"}；请在媒体库检查或重新添加。</p></div>`;
   }
 
   /* ------------------------------------------------------------ backlog */
@@ -1766,7 +1829,7 @@ export function createViews(store) {
           const renaming = store.ui.editingAssetId === asset.id;
           return `<article class="asset-card" data-asset-id="${
             asset.id
-          }"><div class="asset-thumb-wrap">${assetThumb(asset)}</div><div class="asset-info">${
+          }"><div class="asset-thumb-wrap">${mediaLibraryPreview(asset)}</div><div class="asset-info">${
             renaming
               ? `<label class="field-label">显示名称<input class="select" data-asset-title data-focus-key="asset-title" data-id="${asset.id}" value="${
                 esc(displayName)
@@ -1890,12 +1953,43 @@ export function createViews(store) {
       ? `<div class="publish-fit-preview">不同课程可保留各自页面尺寸；选择统一目标尺寸后会显示等比缩放与居中预览，不会裁切。</div>`
       : "";
     const last = store.ui.lastExport;
-    return `<section class="page"><div class="page-head"><div><span class="eyebrow">OUTPUT & PUBLISH</span><h1>发布与导出</h1><p class="muted">从同一份课程内容生成可搬走的结果；导出不会改写正文、排版或素材引用。</p></div><button class="primary" data-action="preflight">运行导出前检查</button></div>
+    return `<section class="page"><div class="page-head"><div><span class="eyebrow">OUTPUT & PUBLISH</span><h1>发布与导出</h1><p class="muted">从同一份课程内容生成可搬走的结果；导出不会改写正文、排版或素材引用。</p></div><div class="page-head-actions">${store.ui.publishReturnContext ? `<button class="secondary" data-action="return-publish-source">返回来源页面</button>` : ""}<button class="primary" data-action="preflight">运行导出前检查</button></div></div>
       <div class="card publish-card"><h2>1. 选择输出范围</h2><div class="segmented"><button class="${courseScope ? "" : "active"}" data-action="publish-scope" data-scope="lesson">当前课${item ? ` · ${esc(item.code)}` : ""}</button><button class="${courseScope ? "active" : ""}" data-action="publish-scope" data-scope="course">整门课程</button></div><p class="muted">${courseScope ? `整门课程 · ${store.data.content_items.filter((candidate) => !candidate.archived).length} 课` : view ? `${esc(item.title)} · 完成 ${view.progress.percentage}% · 待补 ${view.progress.open_requirements} 项` : "尚未选择课程"}</p></div>
       ${showLayoutControls ? `<div class="card publish-card"><h2>2. 输出布局与页面</h2><div class="publish-layout-controls">${pageRange}${layout?.pagination_mode === "paged" && !supportsLayout ? `<p class="muted">当前格式不会保留页面布局，因此无法按页筛选。</p>` : ""}<div class="page-action-row">${targetSizeControl}</div>${targetSizeNotice}${fitPreview}</div><p class="muted">页面筛选与目标尺寸仅影响本次导出；尺寸不同的课时会按同一比例居中适配，不裁掉页面内容。</p></div>` : ""}
-      <div class="card publish-card"><h2>3. 选择格式</h2><div class="format-grid">${formats.map(([key, label, detail]) => { let capability = { status: "unavailable" }; try { capability = store.publicationCapability(key); } catch { /* selection validation is shown in preflight */ } const unavailable = ["unavailable", "unsupported"].includes(capability.status); const capabilityLabel = capability.code === "explicit_target_page_size_required" ? "请先选择统一尺寸" : capability.status === "available" ? (adapters[key]?.layout ? "页面布局保留" : "可用") : capability.status === "lossy" ? "页面布局会线性化" : capability.status === "unsupported" ? "当前排版不支持" : "此环境不可用"; return `<button class="format-card ${store.ui.publishFormat === key ? "active" : ""}" data-action="publish-format" data-format="${key}" ${unavailable ? "disabled" : ""}><b>${label}</b><small>${detail}</small><small class="format-capability">${capabilityLabel}</small></button>`; }).join("")}</div><div class="modal-actions"><button class="primary" data-action="preflight">检查并导出 ${esc(formats.find(([key]) => key === store.ui.publishFormat)?.[1] || "输出")}</button></div></div>
+      <div class="card publish-card"><h2>3. 选择格式</h2><div class="format-grid">${formats.map(([key, label, detail]) => { let capability = { status: "unavailable" }; try { capability = store.publicationCapability(key); } catch { /* selection validation is shown in preflight */ } const unavailable = ["unavailable", "unsupported"].includes(capability.status); const capabilityLabel = capability.code === "explicit_target_page_size_required" ? "请先选择统一尺寸" : capability.status === "available" ? (adapters[key]?.layout ? "页面布局保留" : "可用") : capability.status === "lossy" ? "页面布局会线性化" : capability.status === "unsupported" ? "当前排版不支持" : "此环境不可用"; return `<button class="format-card ${store.ui.publishFormat === key ? "active" : ""}" data-action="publish-format" data-format="${key}" ${unavailable ? "disabled" : ""}><b>${label}</b><small>${detail}</small><small class="format-capability">${capabilityLabel}</small></button>`; }).join("")}</div><div class="modal-actions"><button class="secondary" data-action="preflight">运行导出前检查</button></div></div>
+      ${store.ui.preflight ? publishPreflightView() : ""}
       ${last ? `<div class="card publish-card success-card"><h2>最近一次导出</h2><p><b>${esc(last.format)}</b> · ${last.scope === "course" ? "整门课程" : "当前课"} · ${last.files} 个文件</p><p class="muted">实际位置：<code>${esc(last.path)}</code></p><p class="muted">输出不依赖 Workbench 运行。</p>${store.bridge.isNative() ? `<button class="secondary" data-action="reveal-export">在 Finder 中显示</button>` : ""}</div>` : ""}
       <div class="card publish-card"><h2>发布记录</h2><p class="muted">发布记录只记录你确认过的发布节点，不会改变课程内容。</p><button class="secondary" data-action="record-publication">记录已发布</button></div><div class="version-list">${publications.map((publication) => `<article class="version-card"><span class="version-icon">↗</span><div><b>${esc(publication.version_label)}</b><p>${esc(publication.platform)} · ${esc(publication.status)}</p><small>${esc(publication.published_at || "")}</small></div></article>`).join("") || `<div class="empty-state"><h2>还没有发布记录</h2><p class="muted">导出并实际迁移后，可以记录这个发布节点；课程内容不会因此改变。</p></div>`}</div></section>`;
+  }
+
+  function publishPreflightView() {
+    const report = store.ui.preflightReport || store.exportPreflight();
+    const issues = Array.isArray(report.issues) ? report.issues : [];
+    const warningIssues = issues.filter((issue) => issue.severity === "warning" && issue.code);
+    const requiredCodes = new Set(warningIssues.map((issue) => issue.code));
+    const acknowledged = new Set(store.ui.acknowledgedWarnings || []);
+    const allWarningsAcknowledged = [...requiredCodes].every((code) => acknowledged.has(code)) &&
+      !(report.warnings > 0 && !requiredCodes.size);
+    const selection = store.publicationOptions();
+    const frozen = store.ui.preflightOptions;
+    const sameSelection = frozen && ["content_item_id", "layout_instance_id", "page_ids", "target_page_size"].every((key) =>
+      JSON.stringify(frozen[key] ?? null) === JSON.stringify(selection[key] ?? null)
+    );
+    const current = Boolean(
+      sameSelection &&
+      store.ui.preflightRevision === store.data.project.updated_at &&
+      store.ui.preflightFormat === store.ui.publishFormat
+    );
+    return `<div class="card publish-card publish-preflight" aria-live="polite"><h2>4. 导出前检查</h2><p class="muted">先检查课程内容与素材。必须修复的问题会阻止导出；逐项确认提示后才会生成文件。此检查不会修改课程，也不会调用 AI。</p>${store.ui.preflightPending ? `<p class="preflight-pending" role="status">正在检查当前课程快照…</p>` : ""}<div class="check-list">${[
+      ["内容级待补", report.content, false],
+      ["当前排版待补", report.layout, false],
+      ["缺失素材文件", report.missingAssets, true],
+      ["超出画布", report.overflow, true],
+      ["空正文 / 文字提醒", report.text, false],
+      ["未加载字体", report.fonts, false],
+      ["外部引用", report.external, false],
+      ["媒体降级", report.mediaDowngrades || 0, false],
+    ].map(([label, count, blocking]) => `<div><span class="check ${count ? blocking ? "danger" : "warning" : "ok"}">${count || "✓"}</span><span>${label}</span><b>${count}</b></div>`).join("")}</div>${issues.length ? `<div class="issue-list">${issues.map((issue) => `<article class="${issue.severity === "blocking" ? "issue-blocking" : "issue-warning"}"><b>${issue.severity === "blocking" ? "必须修复" : "提示"}</b><span>${esc(issueMessage(issue))}</span>${issueDiagnostics(issue)}</article>`).join("")}</div>` : ""}${warningIssues.length ? `<div class="warning-ack-list"><b>逐项确认本次输出提示</b>${warningIssues.map((issue) => `<label><input type="checkbox" data-action="acknowledge-export-warning" data-code="${esc(issue.code)}" ${acknowledged.has(issue.code) ? "checked" : ""}/><span>${esc(issueMessage(issue))}${issue.count > 1 ? `（${issue.count} 项）` : ""}</span></label>`).join("")}</div>` : ""}<div class="preflight-total">必须修复 <strong>${report.blocking}</strong> · 提示 <strong>${report.warnings}</strong></div>${!current && !store.ui.preflightPending ? `<p class="warning-text">课程或输出范围在检查后发生变化，请重新运行检查后再导出。</p>` : ""}${report.blocking ? `<p class="error-text">当前不能导出：请先修复上面标为“必须修复”的问题。不会生成半成品，也不会修改源课程。</p>` : report.warnings ? `<p class="muted">未放置正文、线性化或媒体降级会按上方说明处理；确认提示后才会继续生成。</p>` : `<p class="success-text">检查通过，可以生成输出；源课程不会被修改。</p>`}<div class="modal-actions"><button class="secondary" data-action="preflight" ${store.ui.preflightPending ? "disabled" : ""}>重新运行检查</button><button class="primary" data-action="export-format" data-format="${esc(store.ui.publishFormat)}" ${!current || store.ui.preflightPending || report.blocking || !allWarningsAcknowledged ? "disabled" : ""}>${report.warnings ? "确认提示并导出" : "开始导出"}</button></div></div>`;
   }
 
   function simplePage(title, description, icon) {
@@ -1922,9 +2016,45 @@ export function createViews(store) {
 
   /* --------------------------------------------------------- right rail */
 
+  function propertyTargetInfo() {
+    const target = store.ui.propertyTarget;
+    if (target?.kind === "project") {
+      return { kind: "project", project: store.data.project };
+    }
+    if (target?.kind === "stage") {
+      const stage = store.data.stages.find((candidate) =>
+        candidate.id === target.id && !candidate.archived
+      );
+      if (stage) return { kind: "stage", stage };
+    }
+    const item = store.ui.activeId
+      ? store.data.content_items.find((candidate) =>
+        candidate.id === store.ui.activeId && !candidate.archived
+      ) || null
+      : null;
+    return item
+      ? { kind: "lesson", item }
+      : { kind: "project", project: store.data.project };
+  }
+
   function rightPanelView() {
     const item = store.currentItem();
     const view = item ? lessonView(store.data, item.id) : null;
+    const target = propertyTargetInfo();
+    const selectedBlock = view && store.ui.selectedBlockId
+      ? view.blocks.find((block) => block.id === store.ui.selectedBlockId)
+      : null;
+    const scope = store.ui.rightPanel === "properties"
+      ? selectedBlock
+        ? `区块 · ${selectedBlock.label}`
+        : target.kind === "stage"
+        ? `阶段 · ${target.stage.code} ${target.stage.title}`
+        : target.kind === "project"
+        ? `项目 · ${target.project.title}`
+        : `课时 · ${target.item.code} ${target.item.title}`
+      : item
+      ? `${item.code}｜${item.title}`
+      : "未选择课程";
     return `<aside class="right-panel panel"><div class="right-tabs">${
       RIGHT_PANELS.map(([key, label]) =>
         `<button class="right-tab ${
@@ -1936,10 +2066,8 @@ export function createViews(store) {
         }</button>`
       ).join("")
     }<button class="icon-button collapse-right" data-action="toggle-right" title="${store.ui.rightCollapsed ? "展开右栏" : "收起右栏"}">${store.ui.rightCollapsed ? "☰" : "›"}</button></div><div class="right-content" data-panel-scope="${
-      item ? esc(item.code) : "未选择课程"
-    }"><div class="scope-banner">作用对象：<b>${
-      item ? `${esc(item.code)}｜${esc(item.title)}` : "未选择课程"
-    }</b></div>${
+      esc(scope)
+    }"><div class="scope-banner">作用对象：<b>${esc(scope)}</b></div>${
       store.ui.rightPanel === "media"
         ? mediaPanel(view)
         : store.ui.rightPanel === "requirements"
@@ -1973,13 +2101,14 @@ export function createViews(store) {
         ? visibleAssets.map((asset) => {
           const usages = usagesForAsset(store.data, asset.id);
           const displayName = asset.title || asset.filename;
+          const preview = assetPreview(asset);
           return `<div class="side-item asset-row" data-asset-id="${
             asset.id
           }"><span class="side-thumb-wrap">${assetThumb(asset)}</span><span class="side-item-body"><b>${
             esc(displayName)
           }</b><small>${esc(assetLabel(asset.type))} · ${
             usages.length ? `已使用 ${usages.length} 处` : "还没有被引用"
-          }</small></span><span class="side-item-tools"><button class="icon-button" data-action="insert-asset" data-id="${
+          }</small></span><span class="side-item-tools">${preview?.failed ? retryAssetPreviewButton(asset, true) : ""}<button class="icon-button" data-action="insert-asset" data-id="${
             asset.id
           }" title="插入到当前位置">＋</button><button class="icon-button" data-action="rename-asset" data-id="${
             asset.id
@@ -2318,6 +2447,33 @@ export function createViews(store) {
     </div>`;
   }
 
+  function aiConnectionManagerView(choices, configured) {
+    const savedIds = new Set(
+      (Array.isArray(store.ui.aiProviders) ? store.ui.aiProviders : [])
+        .map((provider) => String(provider?.id || "").trim())
+        .filter(Boolean),
+    );
+    const connections = choices.filter((choice) => choice.id !== "fake");
+    return `<section class="ai-connection-manager" id="ai-connection-manager">
+      <div class="ai-block-head"><div><b>连接与模型</b><small>API Key 只显示是否已保存，不会回显。</small></div><button class="secondary" data-action="ai-create-connection">新建连接</button></div>
+      <div class="ai-connection-list">${connections.length
+        ? connections.map((choice) => {
+          const id = String(choice.id || "");
+          const active = id === String(store.ui.aiProviderId || "");
+          const configuredKey = configured[id] === true;
+          const saved = savedIds.has(id);
+          const model = String(choice.default_model || choice.models?.[0] || "未设置模型");
+          return `<article class="ai-connection-row${active ? " active" : ""}">
+            <div class="ai-connection-info"><b>${esc(choice.label || id)}</b><span class="ai-key-state ${configuredKey ? "set" : "unset"}">${configuredKey ? "已保存 API Key" : "未保存 API Key"}</span>
+              <small>${esc(id)} · ${esc(choice.base_url || "尚未设置 Base URL")}</small><small>默认模型：${esc(model)}</small>
+            </div>
+            <div class="ai-connection-actions"><button class="text-button" data-action="ai-use-provider" data-id="${esc(id)}" ${active ? "disabled" : ""}>${active ? "当前连接" : "使用"}</button><button class="text-button" data-action="ai-edit-connection" data-id="${esc(id)}">管理</button>${saved ? `<button class="text-button danger" data-action="ai-delete-connection" data-id="${esc(id)}">删除</button>` : ""}</div>
+          </article>`;
+        }).join("")
+        : `<p class="ai-hint">还没有可管理的连接。</p>`}</div>
+    </section>`;
+  }
+
   /**
    * Provider/base-url/model form.  It never renders a credential value: the
    * key field is a masked, unbound `<input type="password">` whose text lives
@@ -2329,7 +2485,8 @@ export function createViews(store) {
   function aiProviderFormView(descriptor, configured) {
     const form = store.ui.aiProviderForm;
     if (!form) return "";
-    const isFake = descriptor.id === "fake";
+    const providerId = String(form.id || descriptor.id || "").trim();
+    const isFake = providerId === "fake";
     const discovered = Array.isArray(store.ui.aiModelOptions)
       ? store.ui.aiModelOptions
       : [];
@@ -2400,17 +2557,17 @@ export function createViews(store) {
       <p class="ai-hint">当前状态：${
       isFake
         ? "不需要密钥（离线连接器）。"
-        : configured[descriptor.id]
+        : configured[providerId]
         ? "已配置密钥。"
         : "未配置密钥；运行时会以「缺少密钥」提示，不会伪造回答。"
     }</p>
       ${
       isFake ? "" : `<div class="ai-run-row">
-        <input class="select" type="password" data-ai-secret data-focus-key="ai-secret" autocomplete="off" placeholder="粘贴 API Key（不会回显）" />
-        <button class="secondary" data-action="ai-save-secret">保存密钥</button>
+        <input class="select" type="password" data-ai-secret data-provider-id="${esc(providerId)}" data-focus-key="ai-secret" autocomplete="off" placeholder="${configured[providerId] ? "粘贴新 API Key 以替换本机密钥" : "粘贴 API Key（不会回显）"}" />
+        <button class="secondary" data-action="ai-save-secret" data-provider-id="${esc(providerId)}">保存密钥</button>
       </div>
-      <div class="ai-run-row"><button class="text-button danger" data-action="ai-delete-secret" ${
-        configured[descriptor.id] ? "" : "disabled"
+      <div class="ai-run-row"><button class="text-button danger" data-action="ai-delete-secret" data-provider-id="${esc(providerId)}" ${
+        configured[providerId] ? "" : "disabled"
       }>删除本机保存的密钥</button></div>`
     }
     </div>`;
@@ -2581,8 +2738,22 @@ export function createViews(store) {
     const model = store.ui.aiModel || (descriptor ? descriptor.default_model : "") || models[0] || "";
     const status = String(store.ui.aiStatus || "idle");
     const error = store.ui.aiError;
+    const errorCode = String(error?.code || "");
+    const errorTitle = errorCode === "authentication_failed"
+      ? "服务商认证失败（401）"
+      : errorCode === "missing_credential"
+      ? "本机尚未保存 API Key"
+      : "这次 AI 没有完成";
+    const errorHint = errorCode === "authentication_failed"
+      ? "本机已取到这条连接的凭据，但服务商拒绝了认证。请检查 Base URL、认证头和方案，确认后再更新密钥。"
+      : errorCode === "missing_credential"
+      ? "本机没有这条连接的凭据。请在连接管理中单独保存 API Key。"
+      : "课程内容没有改动，你可以检查设置后重试。";
     const running = status === "running";
     const form = store.ui.aiProviderForm;
+    const formDescriptor = form
+      ? choices.find((choice) => choice.id === form.id) || store.aiDescriptor(form.id)
+      : descriptor;
 
     // Block scope is only offered when the editor has a block to point at;
     // when both exist the live selection wins, and `aiBlockId` is the fallback
@@ -2671,11 +2842,11 @@ export function createViews(store) {
         ? "已配置密钥"
         : "未配置密钥"
     }</span>
-        <button class="text-button" data-action="ai-edit-provider" data-id="${esc(providerId)}">${
-      form ? "收起设置" : "设置"
+        <button class="text-button" data-action="ai-toggle-settings" aria-expanded="${store.ui.aiSettingsOpen === true}" aria-controls="ai-connection-manager">${
+      store.ui.aiSettingsOpen ? "收起连接管理" : "管理连接与模型"
     }</button>
       </div>
-      ${descriptor ? aiProviderFormView(descriptor, configured) : ""}
+      ${store.ui.aiSettingsOpen ? `${aiConnectionManagerView(choices, configured)}${formDescriptor ? aiProviderFormView(formDescriptor, configured) : ""}` : ""}
       <p class="side-note" data-ai-storage="${
       store.bridge.isNative() ? "native" : "browser"
     }">API Key 只由本机服务写入${
@@ -2723,9 +2894,9 @@ export function createViews(store) {
     }">${esc(AI_STATUS_LABELS[status] || status)}</span></div>
       ${
       error
-        ? `<div class="ai-error"><b>这次 AI 没有完成</b><p>${
+        ? `<div class="ai-error"><b>${esc(errorTitle)}</b><p>${
           esc(error.message || "这次请求没有成功。")
-        }</p><p>课程内容没有改动，你可以检查设置后重试。</p>${
+        }</p><p>${esc(errorHint)} 课程内容没有改动。</p>${
           error.recommended_action
             ? `<p class="muted">下一步：${esc(error.recommended_action)}</p>`
             : ""
@@ -2744,7 +2915,21 @@ export function createViews(store) {
   }
 
   function propertiesPanel(view) {
-    if (!view) return `<div class="side-empty">还没有选中课程。先在左侧选择一课，就可以继续。</div>`;
+    const target = propertyTargetInfo();
+    if (target.kind === "project") {
+      const project = target.project;
+      const activeStages = store.data.stages.filter((stage) => !stage.archived);
+      const activeLessons = store.data.content_items.filter((lesson) => !lesson.archived);
+      return `<div class="side-head"><div><span class="eyebrow">当前选择</span><h2>${esc(project.title || "课程项目")}</h2></div></div><dl class="properties"><dt>对象</dt><dd>课程项目</dd><dt>阶段</dt><dd>${activeStages.length}</dd><dt>课程内容</dt><dd>${activeLessons.length}</dd></dl><p class="side-note">选择一个课时或正文区块后，可以查看它的详细属性。</p>`;
+    }
+    if (target.kind === "stage") {
+      const stage = target.stage;
+      const lessons = store.data.content_items.filter((lesson) =>
+        !lesson.archived && lesson.stage_id === stage.id
+      );
+      return `<div class="side-head"><div><span class="eyebrow">当前阶段</span><h2>${esc(stage.code)}｜${esc(stage.title)}</h2></div></div><dl class="properties"><dt>对象</dt><dd>阶段</dd><dt>编号</dt><dd>${esc(stage.code)}</dd><dt>标题</dt><dd>${esc(stage.title)}</dd><dt>课程内容</dt><dd>${lessons.length}</dd></dl><p class="side-note">在课程地图中可以重命名阶段，或把课时拖入此阶段。</p>`;
+    }
+    if (!view) return "";
     const lesson = view.lesson;
     const item = store.currentItem();
     const stage = store.data.stages.find((candidate) =>
@@ -2758,9 +2943,9 @@ export function createViews(store) {
         candidate.id === selected.requirement_id
       ) || null
       : null;
-    return `<div class="side-head"><div><span class="eyebrow">当前选择</span><h2>${
-      selected ? esc(selected.label) : "这一课"
-    }</h2></div></div>${
+    return `<div class="side-head"><div><span class="eyebrow">${selected ? "当前区块" : "当前课时"}</span><h2>${
+      selected ? esc(selected.label) : `${esc(lesson.code)}｜${esc(lesson.title)}`
+    }</h2>${selected ? `<p class="side-note">所属课时：<b>${esc(lesson.code)}｜${esc(lesson.title)}</b></p>` : ""}</div></div>${
       selected
         ? `<div class="properties-box"><label class="field-label">内容<input class="select" data-block-text data-block-id="${
           selected.id
@@ -2913,6 +3098,25 @@ export function createViews(store) {
         : "未知时间";
       return `<div class="overlay"><div class="conflict-modal modal" data-stop-click="true"><div class="modal-head"><div><span class="eyebrow">恢复</span><h2>发现未完成的保存</h2></div></div><p class="muted">上次保存没有完成，磁盘版本没有改变。暂存内容来自 ${esc(savedAt)}，包含 ${recoveredBlocks} 个正文区块。请选择恢复暂存内容，或保留磁盘版本继续工作。</p><div class="modal-actions"><button class="secondary" data-action="recovery-discard">保留磁盘版本</button><button class="primary" data-action="recovery-restore">恢复暂存内容</button></div></div></div>`;
     }
+    if (store.ui.assetImagePreviewId) {
+      const asset = store.data.assets.find((candidate) =>
+        candidate.id === store.ui.assetImagePreviewId
+      );
+      const preview = asset && !asset.archived && isImageLike(asset)
+        ? assetPreview(asset)
+        : null;
+      const label = asset?.title || asset?.filename || "图片";
+      const content = !asset || asset.archived || !isImageLike(asset)
+        ? `<p class="preview-media-failed">图片素材当前不可用。</p>`
+        : preview?.failed
+        ? `<div class="preview-media-failed"><b>${esc(asset.filename)} · ${esc(assetLabel(asset.type))} 预览失败</b><p>${esc(preview.error || "素材不可读")}</p>${retryAssetPreviewButton(asset)}</div>`
+        : preview?.loading
+        ? `<div class="preview-placeholder" data-asset-preview-key="${esc(preview.key || "")}">正在读取 ${esc(label)}…</div>`
+        : preview?.url
+        ? `<img class="asset-image" src="${esc(preview.url)}" alt="${esc(label)}" style="display:block;margin:12px auto;max-height:72vh;max-width:100%;object-fit:contain" />`
+        : `<p class="preview-media-failed">${esc(label)} 暂无可显示的预览。</p>`;
+      return `<div class="overlay" data-action="close-overlay"><div class="image-preview-modal modal" role="dialog" aria-modal="true" aria-label="图片预览：${esc(label)}" data-stop-click="true" style="max-height:84vh;overflow:auto;padding:18px;width:min(92vw,1200px)"><div class="modal-head"><div><span class="eyebrow">图片预览</span><h2>${esc(label)}</h2></div><button type="button" class="icon-button" data-action="close-overlay" aria-label="关闭图片预览" title="关闭图片预览">×</button></div>${content}${preview?.width && preview?.height ? `<small class="muted" style="text-align:center">${preview.width} × ${preview.height}</small>` : ""}</div></div>`;
+    }
     if (store.ui.assetPicker) {
       const target = store.ui.assetPicker;
       const assets = store.data.assets.filter((asset) => !asset.archived);
@@ -2947,7 +3151,7 @@ export function createViews(store) {
         esc(store.data.project.title)
       }</option></select></label><div class="modal-actions"><button class="secondary" data-action="close-overlay">取消</button><button class="primary" data-action="submit-capture">放入收件箱</button></div></div></div>`;
     }
-    if (store.ui.preflight) {
+    if (store.ui.preflight && store.ui.route !== "publish") {
       const report = store.ui.preflightReport || store.exportPreflight();
       const issues = Array.isArray(report.issues) ? report.issues : [];
       const formatNames = { markdown: "Markdown", html: "Semantic HTML", web: "Static Web Package", pdf: "PDF", pptx: "PowerPoint", wechat: "微信 / 富文本", json: "Project JSON", asset_package: "素材包", full_project: "完整项目包" };
