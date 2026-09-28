@@ -3972,17 +3972,11 @@ class WorkbenchStore {
       for (const sourcePath of selected) {
         const filename = filenameFromPath(sourcePath);
         const mimeType = mimeForFilename(filename);
-        const context = this.assetContext();
         const result = await this.bridge.command("asset.import", {
           source_path: sourcePath,
           filename,
           mime_type: mimeType,
           type: assetTypeForFile(filename, mimeType),
-          context,
-          content_item_id: context.content_item_id,
-          block_id: context.block_id,
-          layout_instance_id: context.layout_instance_id,
-          role: context.role,
         });
         const beforeAssets = this.data.assets.length;
         await this.mergeImportedResult(result);
@@ -4038,17 +4032,11 @@ class WorkbenchStore {
     })();
     if (isAssetFile(name, file.type)) {
       try {
-        const context = this.assetContext();
         const asset = await this.bridge.command("asset.import", {
           filename: name,
           mime_type: file.type || mimeForFilename(name),
           type: assetTypeForFile(name, file.type),
           bytes_base64: base64,
-          context,
-          content_item_id: context.content_item_id,
-          block_id: context.block_id,
-          layout_instance_id: context.layout_instance_id,
-          role: context.role,
         });
         await this.mergeImportedResult(asset);
         this.ui.toast = this.recoveryWarning
