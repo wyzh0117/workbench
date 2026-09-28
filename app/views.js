@@ -164,7 +164,8 @@ export function createViews(store) {
       const key = preview?.key
         ? ` data-asset-preview-key="${esc(preview.key)}"`
         : "";
-      return `<span class="asset-thumb"${key} title="靠近素材时加载预览">${preview?.loading ? "正在读取" : "预览未加载"}</span>`;
+      const pending = Boolean(preview?.pending);
+      return `<span class="asset-thumb"${key} title="${pending ? "正在读取素材预览" : "靠近素材时加载预览"}">${preview?.loading ? pending ? "正在读取" : "等待加载" : "预览未加载"}</span>`;
     }
     const url = preview.url || "";
     if (url && isImageLike(asset)) {
@@ -837,7 +838,7 @@ export function createViews(store) {
         }（${esc(assetLabel(asset.type))} · ${esc(asset.type === "other" ? "当前格式不支持内嵌预览" : "参考文件，当前没有正文解析")})</div>`;
       }
       if (preview?.loading) {
-        return `<div class="media-slot loading" data-asset-preview-key="${esc(preview.key || "")}">正在读取素材预览…</div>`;
+        return `<div class="media-slot loading" data-asset-preview-key="${esc(preview.key || "")}">${preview.pending ? "正在读取素材预览…" : "靠近素材时加载预览…"}</div>`;
       }
       return `<div class="media-slot failed"><b>${esc(asset.filename)} 暂不可用</b><small>${asset.archived ? "素材已归档" : "找不到可读取的素材预览"}；请在媒体库检查或重新添加。</small></div>`;
     })();
@@ -1426,7 +1427,7 @@ export function createViews(store) {
       return `<div class="preview-media-failed"><b>${esc(asset.filename)} · ${esc(assetLabel(asset.type))} 预览失败</b><p>${esc(preview.error || "素材不可读")}</p><p class="muted">请检查文件内容，或在媒体库替换为可读取的文件。</p>${retryAssetPreviewButton(asset)}</div>`;
     }
     if (preview?.loading) {
-      return `<div class="preview-placeholder" data-asset-preview-key="${esc(preview.key || "")}">正在读取 ${esc(asset.filename)}…</div>`;
+      return `<div class="preview-placeholder" data-asset-preview-key="${esc(preview.key || "")}">${preview.pending ? "正在读取" : "等待加载"} ${esc(asset.filename)}…</div>`;
     }
     if ((asset.type === "image" || asset.type === "gif") && url) {
       return `<figure><img src="${esc(url)}" alt="${

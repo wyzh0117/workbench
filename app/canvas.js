@@ -116,7 +116,7 @@ export class AssetPreviewCache {
     this.notifyScheduled = false;
   }
 
-  /** @returns {{url?: string, text?: string, failed?: boolean, error?: string, loading?: boolean, key?: string}|undefined} */
+  /** @returns {{url?: string, text?: string, failed?: boolean, error?: string, loading?: boolean, pending?: boolean, key?: string}|undefined} */
   get(assetId, assetSnapshot = null) {
     if (!assetId) return undefined;
     const asset = assetSnapshot || this.findAsset(assetId);
@@ -131,7 +131,7 @@ export class AssetPreviewCache {
       return cached.value;
     }
     this.assetsByKey.set(key, asset);
-    return { loading: true, key };
+    return { loading: true, pending: this.pending.has(key), key };
   }
 
   retry(assetId) {
