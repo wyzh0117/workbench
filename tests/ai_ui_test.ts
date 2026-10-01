@@ -193,16 +193,23 @@ async function bootStore(options: { executionWritesFail?: boolean } = {}) {
       case "ai.models.list": {
         const providerId = String(input.provider_id || "");
         const provider = state.providers.find((entry) => entry.id === providerId);
+        const ids = [...(state.modelsByProvider[providerId] || [])];
+        // Exactly the payload both real shells return: entries carry the label,
+        // `model_ids` is the plain list.
         return {
           provider_id: providerId,
-          models: [...(state.modelsByProvider[providerId] || [])],
+          models: ids.map((id) => ({ id, label: id })),
+          model_ids: ids,
+          display_names: Object.fromEntries(ids.map((id) => [id, id])),
           endpoint: String(provider?.base_url || "") + "/models",
         };
       }
       case "ai.models.probe":
         return {
           provider_id: String(input.provider?.id || ""),
-          models: ["probe-model"],
+          models: [{ id: "probe-model", label: "probe-model" }],
+          model_ids: ["probe-model"],
+          display_names: { "probe-model": "probe-model" },
           endpoint: String(input.provider?.base_url || "") + "/models",
         };
       case "ai.connection.test": {
@@ -532,6 +539,69 @@ Deno.test("AI URL changes require an origin confirmation before saved Keys move"
     );
   } finally {
     globalThis.confirm = previousConfirm;
+    restore();
+  }
+});
+
+Deno.test("a refused connection save keeps the typed form and names the field", async () => {
+  const { store, state, restore } = await bootStore();
+  const saves = () =>
+    state.calls.filter((call) => call.command === "ai.connection.save").length;
+  const typed = {
+    id: "typed-account",
+    label: "我的连接",
+    base_url: "api.openai.com/v1",
+    api_protocol: "openai-completions",
+    default_model: "gpt-5-mini",
+    models: ["gpt-5-mini"],
+  };
+  try {
+    const savesBefore = saves();
+    assert(
+      (await store.aiSaveProvider(typed)) === false,
+      "an address without a scheme must not be saved",
+    );
+    assert(saves() === savesBefore, "a rejected address must not reach the shell");
+    assert(
+      String(store.ui.toast).includes("Base URL"),
+      `the refusal must name the field: ${String(store.ui.toast)}`,
+    );
+    // §9.4 — the fields render from the form state, so a refusal that clears it
+    // would throw away the whole half-filled connection.
+    assert(store.ui.aiProviderForm.base_url === typed.base_url, "the rejected address stays in its field");
+    assert(store.ui.aiProviderForm.label === "我的连接", "the display name survives the refusal");
+    assert(store.ui.aiProviderForm.default_model === "gpt-5-mini", "the model survives the refusal");
+    assert(store.ui.aiProviderForm.id === "typed-account", "the provider id survives the refusal");
+
+    assert(
+      (await store.aiSaveProvider({ ...typed, base_url: "https://user:sk-secret@example.test/v1" })) ===
+        false,
+      "a credential embedded in the address must not be saved",
+    );
+    assert(
+      !String(store.ui.toast).includes("sk-secret"),
+      `the refusal must not echo the credential: ${String(store.ui.toast)}`,
+    );
+    assert(
+      (await store.aiSaveProvider({ ...typed, base_url: "" })) === false,
+      "an API connection with no address is not usable",
+    );
+    assert(saves() === savesBefore, "none of the refusals asked the shell to save");
+
+    assert(
+      await store.aiSaveProvider({ ...typed, base_url: "https://api.example.test/v1" }),
+      "the same form saves once the address is complete",
+    );
+    assert(
+      state.providers.find((provider) => provider.id === "typed-account")?.base_url ===
+        "https://api.example.test/v1",
+      "the shell receives the address that replaced the rejected one",
+    );
+    assert(
+      store.ui.aiProviderForm.base_url === "https://api.example.test/v1",
+      "the form shows what is now saved",
+    );
+  } finally {
     restore();
   }
 });
@@ -1498,7 +1568,7 @@ Deno.test("AI settings use one topbar modal; close clears a temporary key and pr
     assert(root.innerHTML.includes("还没有可用的模型连接"), "没有模型连接时助手应显示空状态");
     assert(root.innerHTML.includes("data-action=\"ai-toggle-settings\""), "空状态提供配置 AI 入口");
     assert(!root.innerHTML.includes('<select class="select" data-ai-provider>'), "助手不得保留连接选择器");
-    store.aiEditProvider("custom");
+    store.aiCreateConnection();
     assert(root.innerHTML.includes("ai-settings-modal"), "AI 设置必须显示为独立弹窗");
     assert(root.innerHTML.includes("data-ai-api-protocol"), "设置必须支持三种协议");
     assert(root.innerHTML.includes("连接配置尚未保存"), "连接配置保存状态应单独呈现");

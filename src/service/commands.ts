@@ -19,6 +19,7 @@ import {
 /** Only these high-level operations may cross the desktop bridge. */
 export const HIGH_LEVEL_COMMANDS = [
   "project.open",
+  "project.inspect",
   "project.create",
   "project.save",
   "project.external.inspect",
@@ -32,12 +33,14 @@ export const HIGH_LEVEL_COMMANDS = [
   "import.preview",
   "import.confirm",
   "folder.scan",
+  "folder.scan_media",
   "folder.read_preview",
   "folder.read_source",
   "folder.markdown_image_status",
   "folder.adopt",
   "folder.append",
   "asset.import",
+  "asset.rename",
   "inbox.create",
   "inbox.triage",
   "inbox.assetize",

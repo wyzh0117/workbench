@@ -132,7 +132,13 @@ export class AssetPreviewCache {
     this.notifyScheduled = false;
   }
 
-  /** @returns {{url?: string, text?: string, failed?: boolean, error?: string, loading?: boolean, pending?: boolean, key?: string}|undefined} */
+  /**
+   * @returns {{url?: string, thumbnailUrl?: string, posterUrl?: string,
+   *   text?: string, pdf?: boolean, width?: number, height?: number,
+   *   durationSeconds?: number, loaded?: boolean, failed?: boolean,
+   *   error?: string, loading?: boolean, pending?: boolean, key?: string}
+   *   |undefined}
+   */
   get(assetId, assetSnapshot = null) {
     if (!assetId) return undefined;
     const asset = assetSnapshot || this.findAsset(assetId);
@@ -341,14 +347,29 @@ export class AssetPreviewCache {
           const text = new TextDecoder().decode(bytes);
           entry = { text, loaded: true };
         } else if (asset.type === "image" || asset.type === "gif") {
-          if (!String(asset.mime_type || "").toLowerCase().startsWith("image/")) {
+          const mime = String(asset.mime_type || "").toLowerCase();
+          if (!mime.startsWith("image/")) {
             throw new Error("素材类型与图片文件格式不匹配");
           }
           const url = keepUrl(urlForBytes(bytes, asset));
+          // A static image previews as ITSELF (§12.1).  Re-encoding it through
+          // a 2-D canvas used to produce a second PNG that kept the alpha
+          // channel, so a transparent or near-white cover painted as a blank
+          // card with no error state anywhere.  Only an animated GIF needs a
+          // decoded still frame, because the encoded bytes would otherwise
+          // animate inside a thumbnail.
           const image = await loadImage(url);
-          const thumbnailUrl = asset.type === "gif"
-            ? keepUrl(await staticImagePoster(bytes, asset.mime_type))
-            : keepUrl(await posterFromImage(image).catch(() => null));
+          let thumbnailUrl = url;
+          if (asset.type === "gif" || mime === "image/gif") {
+            // The decoded still frame, or the GIF's own bytes if this WebView
+            // cannot hand back a first frame — never a generic placeholder.
+            const poster = await staticImagePoster(bytes, asset.mime_type)
+              .catch(() => null);
+            if (poster) {
+              keepUrl(poster);
+              thumbnailUrl = poster;
+            }
+          }
           entry = {
             url,
             thumbnailUrl,
@@ -433,8 +454,13 @@ export class AssetPreviewCache {
 
   releaseEntry(entry) {
     try { entry?.release?.(); } catch { /* source token may already be gone */ }
-    for (const url of [entry?.url, entry?.posterUrl, entry?.thumbnailUrl]) {
-      if (typeof url !== "string" || !url.startsWith("blob:")) continue;
+    // A static image's thumbnail IS its preview URL (§12.1), so the same blob
+    // can appear twice on one entry: revoke each owned URL exactly once.
+    const owned = new Set(
+      [entry?.url, entry?.posterUrl, entry?.thumbnailUrl].filter((url) =>
+        typeof url === "string" && url.startsWith("blob:")),
+    );
+    for (const url of owned) {
       this.urls.delete(url);
       try {
         URL.revokeObjectURL(url);
@@ -525,21 +551,14 @@ function canvasBlob(canvas, mime = "image/png") {
   });
 }
 
-async function posterFromImage(image) {
-  if (typeof document === "undefined" || typeof URL === "undefined" ||
-    typeof URL.createObjectURL !== "function") return null;
-  const scale = Math.min(1, 320 / Math.max(image.naturalWidth, image.naturalHeight));
-  const canvas = document.createElement("canvas");
-  canvas.width = Math.max(1, Math.round(image.naturalWidth * scale));
-  canvas.height = Math.max(1, Math.round(image.naturalHeight * scale));
-  const context = canvas.getContext("2d");
-  if (!context) return null;
-  context.drawImage(image, 0, 0, canvas.width, canvas.height);
-  const blob = await canvasBlob(canvas);
-  return URL.createObjectURL(blob);
-}
-
-/** Decode the static default/first frame from encoded animated image bytes. */
+/**
+ * Decode the static default/first frame from encoded animated image bytes.
+ *
+ * The canvas re-encode belongs HERE (and in `decodeVideoFrame`) only: it is how
+ * an animated GIF or a not-yet-seeked video becomes a still.  Supported static
+ * images (PNG/JPG/JPEG/WebP) must never pass through it, because the re-encoded
+ * PNG keeps alpha and a transparent image then paints as an empty box.
+ */
 export async function staticImagePoster(bytes, mime = "image/gif") {
   if (typeof document === "undefined" || typeof createImageBitmap !== "function") {
     throw new Error("当前 WebView 无法生成 GIF 首帧缩略图");

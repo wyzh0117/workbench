@@ -84,6 +84,35 @@ const AI_API_PROTOCOLS = [
   "anthropic-messages",
 ] as const;
 
+/**
+ * The three protocols Workbench speaks (§9.4), with the exact display labels
+ * the Settings → Models form renders.  `app/ai.js#AI_API_PROTOCOLS` is the
+ * renderer-side copy of this table; both must stay identical.
+ *
+ * There is no provider template catalog (§9.2): the only provider data that can
+ * produce a request is an explicit connection record.
+ */
+export const AI_PROVIDER_PROTOCOLS: ReadonlyArray<{ id: string; label: string }> = [
+  { id: "openai-completions", label: "OpenAI Chat Completions" },
+  { id: "openai-responses", label: "OpenAI Responses" },
+  { id: "anthropic-messages", label: "Anthropic Messages" },
+];
+
+/** @param protocol candidate API protocol */
+export function aiProviderProtocolLabel(protocol: unknown): string {
+  const value = typeof protocol === "string" ? protocol.trim() : "";
+  return AI_PROVIDER_PROTOCOLS.find((entry) => entry.id === value)?.label ?? "";
+}
+
+/** One discovered model: `id` is what inference sends, `label` is for display. */
+export interface AiModelEntry {
+  id: string;
+  label: string;
+}
+
+/** The Chinese sentence naming the three allowed protocols (single source). */
+const AI_PROTOCOL_HINT = AI_PROVIDER_PROTOCOLS.map((entry) => entry.label).join(" / ");
+
 export type AiFetch = (
   input: string | URL | Request,
   init?: RequestInit,
@@ -598,8 +627,9 @@ export function normalizeProviderConfig(value: unknown): AiProviderConfig {
   const protocol = normalized.api_protocol || "openai-completions";
   if (!AI_API_PROTOCOLS.includes(protocol as typeof AI_API_PROTOCOLS[number])) {
     throw invalidRequest(
-      "服务商 API 协议无效。",
+      `不支持的 API 协议：「${protocol || "（空）"}」。只支持 ${AI_PROTOCOL_HINT}。`,
       `Unsupported AI API protocol: ${protocol}`,
+      "请在「设置 → 模型」里选择上面三种协议之一。",
     );
   }
   normalized.api_protocol = protocol;
@@ -732,6 +762,54 @@ function providerOriginConfirmationError(
         previous_origin: previousOrigin,
         target_origin: targetOrigin,
       },
+    },
+  );
+}
+
+/**
+ * §9.4 — a Provider ID is stable and permanent after creation: editing a
+ * connection may change its display name, base URL, protocol and models, but a
+ * different ID describes a different connection.  `app/ai.js`, this transport
+ * and Rust `ai_validate_provider_id` / `ai_connection_save_guarded_at` all
+ * enforce the same rule with the same wording.
+ */
+function providerIdImmutableError(originalId: string, submittedId: string): ServiceError {
+  return error(
+    "invalid_request",
+    `Provider ID 创建后不可修改：这个连接的原 ID 是「${originalId}」，但提交的是「${submittedId || "（空）"}」。`,
+    `Provider id is immutable after creation (${originalId} -> ${submittedId})`,
+    {
+      recoverable: false,
+      recommended_action: "显示名称可以自由修改；如果要换一个 ID，请新建连接并删除旧连接。",
+      details: { provider_id: originalId, submitted_provider_id: submittedId },
+    },
+  );
+}
+
+/** "+ Add model provider" may not reuse an ID that already exists. */
+function providerIdDuplicateError(providerId: string): ServiceError {
+  return error(
+    "invalid_request",
+    `Provider ID「${providerId}」已经存在。Provider ID 创建后永久固定，不能重复使用。`,
+    `Provider id already exists: ${providerId}`,
+    {
+      recoverable: false,
+      recommended_action: "请换一个 ID；显示名称可以相同，ID 必须唯一。",
+      details: { provider_id: providerId },
+    },
+  );
+}
+
+/** The caller claimed to edit a connection that is not stored. */
+function providerNotFoundForEditError(providerId: string): ServiceError {
+  return error(
+    "invalid_request",
+    `找不到要编辑的 AI 连接「${providerId}」。`,
+    `Edit target is not a stored provider: ${providerId}`,
+    {
+      recoverable: true,
+      recommended_action: "请刷新「设置 → 模型」的连接列表后重试；如果确实要新建，请使用新增按钮。",
+      details: { provider_id: providerId },
     },
   );
 }
@@ -923,22 +1001,43 @@ export class AiTransport {
     };
   }
 
-  /** Insert or replace one provider config (upsert by `provider.id`). */
+  /** Insert or replace one provider config (upsert by `provider.id`).
+   *
+   * Accepts `{ provider, original_id?, require_new?, confirm_credential_origin? }`
+   * or a bare provider record.  `original_id` is the ID the row was created
+   * with: submitting a different ID is rejected (§9.4).  `require_new` declares
+   * "+ Add model provider", so an existing ID is rejected as a duplicate.
+   */
   async saveConnection(
     input: unknown,
   ): Promise<{ provider: AiProviderConfig }> {
     const wrapped = isPlainRecord(input) && "provider" in input;
     const candidate = wrapped ? input.provider : input;
-    const confirmCredentialOrigin = wrapped && input.confirm_credential_origin === true;
+    const source = isPlainRecord(input) ? input : {};
+    const confirmCredentialOrigin = source.confirm_credential_origin === true;
+    // §9.4 immutability inputs are call metadata, never provider metadata: they
+    // must not be persisted onto the connection record.
+    const originalId = typeof source.original_id === "string"
+      ? source.original_id.trim()
+      : "";
+    const requireNew = source.require_new === true;
     const normalized = normalizeProviderConfig(candidate);
     rejectNativeOnlySubscription(normalized);
     this.assertWritable();
     const state = await this.readProviders();
-    const index = state.providers.findIndex((entry) =>
-      entry.id === normalized.id
-    );
+    const index = state.providers.findIndex((entry) => entry.id === normalized.id);
+    if (originalId && originalId !== normalized.id) {
+      throw providerIdImmutableError(originalId, normalized.id);
+    }
+    if (originalId && index < 0) throw providerNotFoundForEditError(originalId);
+    if (requireNew && index >= 0) throw providerIdDuplicateError(normalized.id);
     const existing = index >= 0 ? state.providers[index] : null;
     const provider = { ...(existing || {}), ...normalized };
+    // An edit never rewrites the ID from metadata left over in an older record.
+    provider.id = normalized.id;
+    delete (provider as Record<string, unknown>).original_id;
+    delete (provider as Record<string, unknown>).require_new;
+
     const targetOrigin = normalizedOrigin(provider.base_url);
     const credential = await this.credentialStore.get(provider.id);
     const previousOrigin = state.credential_origins[provider.id] || null;
@@ -1046,7 +1145,9 @@ export class AiTransport {
    */
   async listAiModels(input: unknown): Promise<{
     provider_id: string;
-    models: string[];
+    models: AiModelEntry[];
+    model_ids: string[];
+    display_names: Record<string, string>;
     endpoint: string;
   }> {
     if (!isPlainRecord(input)) {
@@ -1113,34 +1214,72 @@ export class AiTransport {
       secrets: credentialScrubList(credential, schemeOnWire),
       dropProviderExcerpt: credential.trim().length < MIN_EXACT_SECRET_CHARS,
     });
-    const models = modelIdsFromPayload(result.body);
-    if (!models.length) {
-      throw error(
-        "provider_error",
-        "服务商没有返回可识别的模型名。",
-        "ai.models.list response contained no model ids",
-        {
-          recoverable: true,
-          recommended_action: "可以在设置里手动填写 Model ID，不影响保存与运行。",
-          details: { provider_id: providerId, endpoint: url.toString() },
-        },
-      );
-    }
-    return { provider_id: providerId, models, endpoint: url.toString() };
+    const catalog = modelCatalogFromPayload(result.body);
+    return {
+      provider_id: providerId,
+      ...modelDiscoveryResult(catalog, url.toString()),
+    };
   }
 
-  /** One-shot model discovery for an unsaved address and a typed temporary key. */
-  async probeAiModels(input: unknown): Promise<{ models: string[]; endpoint: string }> {
-    if (!isPlainRecord(input) || !isPlainRecord(input.provider)) {
-      throw invalidRequest("临时模型探测参数无效。", "ai.models.probe expects provider and temporary_credential");
+  /**
+   * §9.5 — model discovery for an *unsaved* form: the address, protocol and a
+   * temporary key come from the caller, nothing is persisted, and the key only
+   * lives in this one request.
+   *
+   * Accepted payload (either shape):
+   *   { base_url, api_protocol, temporary_credential, provider_id?, chat_path?, timeout_ms? }
+   *   { provider: { base_url, api_protocol, ... }, temporary_credential }  (legacy)
+   */
+  async probeAiModels(input: unknown): Promise<{
+    models: AiModelEntry[];
+    model_ids: string[];
+    display_names: Record<string, string>;
+    endpoint: string;
+  }> {
+    if (!isPlainRecord(input)) {
+      throw invalidRequest(
+        "临时模型探测参数无效。",
+        "ai.models.probe expects base_url, api_protocol and temporary_credential",
+      );
     }
-    const provider = normalizeProviderConfig({ ...input.provider, id: "temporary-probe" });
+    const nested = isPlainRecord(input.provider) ? input.provider : null;
+    if (!nested && input.provider !== undefined && !isPlainRecord(input.provider)) {
+      throw invalidRequest(
+        "临时模型探测参数无效。",
+        "ai.models.probe provider must be a JSON object",
+      );
+    }
+    const providerId = typeof input.provider_id === "string"
+      ? input.provider_id.trim()
+      : typeof nested?.id === "string" ? nested.id.trim() : "";
+    // A probe is still a provider record for validation purposes: the same
+    // three protocols, the same auth defaults, the same credential rules.
+    const provider = normalizeProviderConfig({
+      ...(nested ?? {}),
+      id: providerId || "temporary-probe",
+      base_url: typeof input.base_url === "string"
+        ? input.base_url
+        : nested?.base_url,
+      api_protocol: input.api_protocol !== undefined
+        ? input.api_protocol
+        : nested?.api_protocol,
+      auth_header: input.auth_header !== undefined
+        ? input.auth_header
+        : nested?.auth_header,
+      auth_scheme: input.auth_scheme !== undefined
+        ? input.auth_scheme
+        : nested?.auth_scheme,
+    });
     const baseUrl = String(provider.base_url || "").trim();
     const credential = typeof input.temporary_credential === "string"
       ? input.temporary_credential.trim()
       : "";
     if (!baseUrl || !credential) {
-      throw invalidRequest("临时模型探测需要 Base URL 和 API Key。", "ai.models.probe missing base_url or key");
+      throw invalidRequest(
+        "临时模型探测需要 Base URL 和 API Key。",
+        "ai.models.probe missing base_url or key",
+        "请填写 Base URL 与临时 API Key；也可以先保存连接，用已保存的密钥读取模型列表。",
+      );
     }
     const url = assertTransportUrl(modelListUrl(baseUrl));
     const scheme = provider.auth_scheme || "";
@@ -1150,7 +1289,7 @@ export class AiTransport {
     }
     const result = await this.send({
       requestId: id(),
-      providerId: "temporary-probe",
+      providerId: provider.id,
       url,
       headers,
       body: "",
@@ -1160,15 +1299,7 @@ export class AiTransport {
       secrets: credentialScrubList(credential, scheme),
       dropProviderExcerpt: credential.length < MIN_EXACT_SECRET_CHARS,
     });
-    const models = modelIdsFromPayload(result.body);
-    if (!models.length) {
-      throw error("provider_error", "服务商没有返回可识别的模型名。", "Temporary model probe returned no model ids", {
-        recoverable: true,
-        recommended_action: "可以直接手动填写 Model ID。",
-        details: { endpoint: url.toString() },
-      });
-    }
-    return { models, endpoint: url.toString() };
+    return modelDiscoveryResult(modelCatalogFromPayload(result.body), url.toString());
   }
 
   /** Send a tiny user-triggered request without creating an execution record. */
@@ -2068,10 +2199,14 @@ function providerAuthHeaders(
 }
 
 /**
- * Model ids out of the shapes OpenAI-compatible providers actually return:
- * `{ data: [{ id }] }`, `{ models: [{ id | name }] }`, or a bare array.
+ * Model catalog out of the shapes providers actually return:
+ * `{ data: [{ id }] }`, `{ models: [{ id | name | slug }] }`, or a bare array.
+ *
+ * §10.3: entries the server explicitly marks as not listable are dropped, and
+ * the server's own slug is what goes into `id` (inference uses it verbatim).
+ * `label` falls back to the id when the server sends no display name.
  */
-export function modelIdsFromPayload(payload: unknown): string[] {
+export function modelCatalogFromPayload(payload: unknown): AiModelEntry[] {
   const entries = (() => {
     if (Array.isArray(payload)) return payload;
     if (!isPlainRecord(payload)) return [];
@@ -2079,14 +2214,69 @@ export function modelIdsFromPayload(payload: unknown): string[] {
     if (Array.isArray(payload.models)) return payload.models;
     return [];
   })();
-  const ids = entries.map((entry) => {
-    if (typeof entry === "string") return entry.trim();
-    if (!isPlainRecord(entry)) return "";
-    const value = entry.id ?? entry.name ?? entry.model ?? entry.slug;
-    return typeof value === "string" ? value.trim() : "";
-  }).filter((value) => value.length > 0);
-  return [...new Set(ids)].sort((left, right) => left.localeCompare(right));
+  const catalog: AiModelEntry[] = [];
+  for (const entry of entries) {
+    let id = "";
+    let label = "";
+    if (typeof entry === "string") {
+      id = entry.trim();
+    } else if (isPlainRecord(entry)) {
+      const value = entry.id ?? entry.name ?? entry.model ?? entry.slug;
+      id = typeof value === "string" ? value.trim() : "";
+      const display = entry.display_name ?? entry.friendly_name ?? entry.alias ??
+        (typeof entry.name === "string" ? entry.name : null);
+      label = typeof display === "string" ? display.trim() : "";
+      if (!isListableModelEntry(entry)) continue;
+    }
+    if (!id) continue;
+    if (catalog.some((existing) => existing.id === id)) continue;
+    catalog.push({ id, label: label || id });
+  }
+  return catalog.sort((left, right) => left.id.localeCompare(right.id));
 }
+
+/**
+ * §10.3 — a server may return entries it does not want listed (`visibility`,
+ * or a disabled flag).  Only models the server marks as listable are offered.
+ */
+function isListableModelEntry(entry: Record<string, unknown>): boolean {
+  const visibility = typeof entry.visibility === "string"
+    ? entry.visibility.trim().toLowerCase()
+    : "";
+  if (visibility && !["list", "public", "visible", "available"].includes(visibility)) {
+    return false;
+  }
+  if (entry.enabled === false || entry.disabled === true) return false;
+  return true;
+}
+
+/** The bare model ids of one catalog response, in the same order. */
+export function modelIdsFromPayload(payload: unknown): string[] {
+  return modelCatalogFromPayload(payload).map((entry) => entry.id);
+}
+
+/** `{ id, label }` catalogue plus the conveniences the UI already reads. */
+function modelDiscoveryResult(catalog: readonly AiModelEntry[], endpoint: string) {
+  if (!catalog.length) {
+    throw error(
+      "provider_error",
+      "服务商没有返回可识别的模型名。",
+      "Model discovery returned no listable model ids",
+      {
+        recoverable: true,
+        recommended_action: "可以直接手动填写 Model ID；模型发现只是便捷功能，不是保存连接的前提。",
+        details: { endpoint },
+      },
+    );
+  }
+  return {
+    models: catalog.map((entry) => ({ ...entry })),
+    model_ids: catalog.map((entry) => entry.id),
+    display_names: Object.fromEntries(catalog.map((entry) => [entry.id, entry.label])),
+    endpoint,
+  };
+}
+
 
 function assertTransportUrl(raw: string): URL {
   let url: URL;

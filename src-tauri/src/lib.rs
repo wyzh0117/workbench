@@ -1364,43 +1364,812 @@ fn touch_project_updated_at(project: &mut Value) -> Result<(), String> {
     Ok(())
 }
 
+/// Canonical root collections whose presence and shape gate a folder opening.
+/// Mirrors `CANONICAL_ARRAYS` in src/domain/store.ts, which stays authoritative.
+const CANONICAL_ARRAY_KEYS: [&str; 30] = [
+    "stages",
+    "content_items",
+    "documents",
+    "blocks",
+    "groups",
+    "requirements",
+    "assets",
+    "asset_usages",
+    "status_dimensions",
+    "status_options",
+    "status_assignments",
+    "layout_templates",
+    "layout_instances",
+    "layout_sections",
+    "layout_pages",
+    "placements",
+    "inbox_items",
+    "export_presets",
+    "course_seeds",
+    "blueprint_drafts",
+    "blueprint_nodes",
+    "conversation_sources",
+    "conversations",
+    "messages",
+    "context_packs",
+    "context_pack_items",
+    "suggestions",
+    "change_drafts",
+    "snapshots",
+    "publications",
+];
+
+const CURRENT_PROJECT_SCHEMA_VERSION: &str = "1.0.0";
+const PROJECT_JSON_LABEL: &str = "project.json";
+
+/// Parent/child id references between the primary collections, in the exact
+/// order `inspect_project_value` reports the first failure in. `src/domain/store.ts`
+/// uses the same messages and codes.
+struct InspectionReferenceRule {
+    collection: &'static str,
+    field: &'static str,
+    target: &'static str,
+    nullable: bool,
+    message: &'static str,
+}
+
+const INSPECTION_REFERENCES: [InspectionReferenceRule; 11] = [
+    InspectionReferenceRule {
+        collection: "stages",
+        field: "parent_stage_id",
+        target: "stages",
+        nullable: true,
+        message: "父阶段不存在",
+    },
+    InspectionReferenceRule {
+        collection: "content_items",
+        field: "stage_id",
+        target: "stages",
+        nullable: true,
+        message: "内容所属阶段不存在",
+    },
+    InspectionReferenceRule {
+        collection: "content_items",
+        field: "document_id",
+        target: "documents",
+        nullable: false,
+        message: "正文文档不存在",
+    },
+    InspectionReferenceRule {
+        collection: "documents",
+        field: "content_item_id",
+        target: "content_items",
+        nullable: false,
+        message: "正文所属内容不存在",
+    },
+    InspectionReferenceRule {
+        collection: "blocks",
+        field: "document_id",
+        target: "documents",
+        nullable: false,
+        message: "正文区块所属文档不存在",
+    },
+    InspectionReferenceRule {
+        collection: "blocks",
+        field: "parent_block_id",
+        target: "blocks",
+        nullable: true,
+        message: "父正文区块不存在",
+    },
+    InspectionReferenceRule {
+        collection: "groups",
+        field: "document_id",
+        target: "documents",
+        nullable: false,
+        message: "分组所属文档不存在",
+    },
+    InspectionReferenceRule {
+        collection: "groups",
+        field: "parent_group_id",
+        target: "groups",
+        nullable: true,
+        message: "父分组不存在",
+    },
+    InspectionReferenceRule {
+        collection: "asset_usages",
+        field: "asset_id",
+        target: "assets",
+        nullable: false,
+        message: "素材引用目标不存在",
+    },
+    InspectionReferenceRule {
+        collection: "asset_usages",
+        field: "content_item_id",
+        target: "content_items",
+        nullable: false,
+        message: "素材引用内容不存在",
+    },
+    InspectionReferenceRule {
+        collection: "status_options",
+        field: "dimension_id",
+        target: "status_dimensions",
+        nullable: false,
+        message: "状态选项所属维度不存在",
+    },
+];
+
+fn json_type_name(value: &Value) -> &'static str {
+    match value {
+        Value::Null => "null",
+        Value::Bool(_) => "boolean",
+        Value::Number(_) => "number",
+        Value::String(_) => "string",
+        Value::Array(_) => "array",
+        Value::Object(_) => "object",
+    }
+}
+
+/// A project.json carries its version either as a semver string or, in
+/// pre-semver and native fixtures, as a bare integer revision counter. Integers
+/// carry no field layout, so they take the additive fill path and are reported
+/// as migratable instead of rejected — the same rule the shell applies.
+fn schema_version_state(value: Option<&Value>) -> &'static str {
+    match value {
+        None | Some(Value::Null) => "absent",
+        Some(Value::Number(number)) => match number.as_f64() {
+            Some(float) if float.fract() == 0.0 && float >= 0.0 => "migratable",
+            _ => "unsupported",
+        },
+        Some(Value::String(text)) => {
+            let trimmed = text.trim();
+            if trimmed.is_empty() {
+                return "absent";
+            }
+            let body = trimmed
+                .strip_prefix('v')
+                .or_else(|| trimmed.strip_prefix('V'))
+                .unwrap_or(trimmed);
+            let parts: Vec<&str> = body.split('.').collect();
+            if parts.is_empty()
+                || parts.len() > 4
+                || parts
+                    .iter()
+                    .any(|part| part.is_empty() || !part.chars().all(|c| c.is_ascii_digit()))
+            {
+                return "unsupported";
+            }
+            let current: Vec<u64> = CURRENT_PROJECT_SCHEMA_VERSION
+                .split('.')
+                .map(|part| part.parse().unwrap_or(0))
+                .collect();
+            let parsed: Vec<u64> = parts
+                .iter()
+                .map(|part| part.parse::<u64>().unwrap_or(0))
+                .collect();
+            let mut diff = 0i64;
+            for index in 0..current.len() {
+                diff = parsed.get(index).copied().unwrap_or(0) as i64 - current[index] as i64;
+                if diff != 0 {
+                    break;
+                }
+            }
+            if diff == 0 {
+                diff = parsed.len() as i64 - current.len() as i64;
+            }
+            match diff.cmp(&0) {
+                std::cmp::Ordering::Equal => "current",
+                std::cmp::Ordering::Less => "migratable",
+                std::cmp::Ordering::Greater => "unsupported",
+            }
+        }
+        _ => "unsupported",
+    }
+}
+
+fn project_file_schema_state(root: Option<&Value>, nested: Option<&Value>) -> &'static str {
+    let states = [schema_version_state(root), schema_version_state(nested)];
+    if states.contains(&"unsupported") {
+        return "unsupported";
+    }
+    if states.iter().all(|state| *state == "current") {
+        return "current";
+    }
+    if states.iter().all(|state| *state == "absent") {
+        return "absent";
+    }
+    "migratable"
+}
+
+fn inspection_problem(
+    code: &str,
+    path: &str,
+    message: &str,
+    expected: &str,
+    actual: &str,
+) -> Value {
+    json!({
+        "code": code,
+        "path": path,
+        "message": message,
+        "expected": expected,
+        "actual": actual,
+    })
+}
+
+fn inspection_result(
+    status: &str,
+    schema_version: Value,
+    problem: Option<Value>,
+    project: Option<Value>,
+) -> Value {
+    json!({
+        "status": status,
+        "schema_version": schema_version,
+        "supported_schema_version": CURRENT_PROJECT_SCHEMA_VERSION,
+        "problem": problem.unwrap_or(Value::Null),
+        "project": project.unwrap_or(Value::Null),
+    })
+}
+
+fn project_unreadable(code: &str, path: &str, message: String, actual: &str) -> Value {
+    inspection_result(
+        "unreadable",
+        Value::Null,
+        Some(inspection_problem(
+            code,
+            path,
+            &message,
+            "可读的项目目录中的 project.json",
+            actual,
+        )),
+        None,
+    )
+}
+
+fn no_project_json_result() -> Value {
+    inspection_result(
+        "no_project_json",
+        Value::Null,
+        Some(inspection_problem(
+            "project_json_missing",
+            PROJECT_JSON_LABEL,
+            "这个文件夹里还没有 project.json，因此它还不是 Workbench 项目。你可以把它作为已有文件夹导入。",
+            "所选文件夹根目录中存在 project.json",
+            "project.json 不存在",
+        )),
+        None,
+    )
+}
+
+fn invalid_json_result(actual: &str) -> Value {
+    inspection_result(
+        "malformed_json",
+        Value::Null,
+        Some(inspection_problem(
+            "malformed_json",
+            PROJECT_JSON_LABEL,
+            "project.json 存在，但内容无法解析，文件可能已损坏。",
+            "可解析的 JSON 对象",
+            actual,
+        )),
+        None,
+    )
+}
+
+/// Focused canonical check used to classify a folder for the launcher.
+///
+/// Deliberate scope boundary: this is NOT the persistence validator. It covers
+/// only what routing needs — root shape, project identity, schema range,
+/// collection shapes, item identity/uniqueness and the parent/child references
+/// between the primary collections. `src/domain/store.ts::validateProjectData`
+/// stays the authoritative validator for saves, and `inspectProjectData` there
+/// mirrors this function code-for-code.
+fn inspect_project_value(parsed: &Value) -> Value {
+    let object = match parsed.as_object() {
+        Some(object) => object,
+        None => {
+            return inspection_result(
+                "invalid",
+                Value::Null,
+                Some(inspection_problem(
+                    "invalid_root",
+                    "",
+                    "project.json 的顶层内容不是课程项目对象。",
+                    "JSON 对象",
+                    &format!("{} 类型", json_type_name(parsed)),
+                )),
+                None,
+            )
+        }
+    };
+    let raw_version = object
+        .get("schema_version")
+        .filter(|value| value.is_string() || value.is_number())
+        .cloned()
+        .unwrap_or(Value::Null);
+    let invalid =
+        |problem: Value| inspection_result("invalid", raw_version.clone(), Some(problem), None);
+    let project = match object.get("project").and_then(Value::as_object) {
+        Some(project) => project.clone(),
+        None => {
+            let actual = match object.get("project") {
+                None => "project 字段不存在".to_string(),
+                Some(value) => format!("project 字段为 {}，不是对象", json_type_name(value)),
+            };
+            return invalid(inspection_problem(
+                "missing_project",
+                "project",
+                "project.json 存在，但其中没有 course 项目对象。",
+                "project 对象，包含非空字符串 id 和 title",
+                &actual,
+            ));
+        }
+    };
+    let project_id = project
+        .get("id")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or("")
+        .to_string();
+    if project_id.is_empty() {
+        let actual = match project.get("id") {
+            None => "project.id 为 undefined".to_string(),
+            Some(value) => format!("project.id 为 {}", json_type_name(value)),
+        };
+        return invalid(inspection_problem(
+            "missing_project",
+            "project.id",
+            "project.json 存在，但项目缺少有效 id。",
+            "project.id 为非空字符串",
+            &actual,
+        ));
+    }
+    let title = match project.get("title") {
+        None | Some(Value::Null) => {
+            return invalid(inspection_problem(
+                "missing_project_title",
+                "project.title",
+                "project.json 存在，但项目缺少标题。",
+                "project.title 为非空字符串",
+                "project.title 字段不存在",
+            ))
+        }
+        Some(Value::String(text)) if text.trim().is_empty() => {
+            return invalid(inspection_problem(
+                "missing_project_title",
+                "project.title",
+                "project.json 存在，但项目缺少标题。",
+                "project.title 为非空字符串",
+                "project.title 为空字符串",
+            ))
+        }
+        Some(Value::String(text)) => text.trim().to_string(),
+        Some(other) => {
+            return invalid(inspection_problem(
+                "invalid_title",
+                "project.title",
+                "project.json 存在，但项目缺少标题。",
+                "project.title 为非空字符串",
+                &format!("project.title 为 {}", json_type_name(other)),
+            ))
+        }
+    };
+
+    let version_state =
+        project_file_schema_state(object.get("schema_version"), project.get("schema_version"));
+    if version_state == "unsupported" {
+        let found = object
+            .get("schema_version")
+            .or_else(|| project.get("schema_version"))
+            .map(|value| value.to_string())
+            .unwrap_or_default();
+        return invalid(inspection_problem(
+            "unsupported_schema",
+            "schema_version",
+            "这个 project.json 的版本比当前工作台更新，打开会损坏内容。请升级工作台后重试。",
+            &format!("不高于 {} 的版本", CURRENT_PROJECT_SCHEMA_VERSION),
+            &found,
+        ));
+    }
+
+    let mut arrays: HashMap<&str, &Vec<Value>> = HashMap::new();
+    for key in CANONICAL_ARRAY_KEYS {
+        let Some(value) = object.get(key) else {
+            continue;
+        };
+        match value.as_array() {
+            Some(items) => {
+                arrays.insert(key, items);
+            }
+            None => {
+                return invalid(inspection_problem(
+                    "invalid_collection",
+                    key,
+                    &format!("项目字段 {key} 无法读取，导入流程已停止。"),
+                    &format!("{key} 为数组"),
+                    &format!("{key} 为 {}", json_type_name(value)),
+                ))
+            }
+        }
+    }
+
+    let mut identities: HashMap<String, &str> = HashMap::new();
+    for key in CANONICAL_ARRAY_KEYS {
+        let Some(items) = arrays.get(key) else {
+            continue;
+        };
+        for (index, item) in items.iter().enumerate() {
+            let Some(item) = item.as_object() else {
+                return invalid(inspection_problem(
+                    "invalid_id",
+                    &format!("{key}[{index}].id"),
+                    &format!("{key} 中有一项不是对象，无法识别身份。"),
+                    "每项必须是包含非空 id 的对象",
+                    &format!("{key}[{index}] 为 {}", json_type_name(item)),
+                ));
+            };
+            let id = match item.get("id").and_then(Value::as_str) {
+                Some(value) => value.trim().to_string(),
+                None => String::new(),
+            };
+            if id.is_empty() {
+                let actual = match item.get("id") {
+                    None => "id 为 undefined".to_string(),
+                    Some(value) => format!("id 为 {}", json_type_name(value)),
+                };
+                return invalid(inspection_problem(
+                    "invalid_id",
+                    &format!("{key}[{index}].id"),
+                    &format!("{key} 中有一项缺少 id。"),
+                    "每项必须有非空字符串 id",
+                    &actual,
+                ));
+            }
+            if let Some(previous) = identities.get(&id) {
+                let code = if *previous == key {
+                    "duplicate_id"
+                } else {
+                    "duplicate_global_id"
+                };
+                return invalid(inspection_problem(
+                    code,
+                    &format!("{key}[{index}].id"),
+                    &format!("{key} 中出现重复 id，导入流程已停止。"),
+                    "每个 id 在项目内唯一",
+                    &format!("id {id} 已在 {previous} 中使用"),
+                ));
+            }
+            identities.insert(id, key);
+        }
+    }
+
+    let mut maps: HashMap<&str, HashMap<String, Map<String, Value>>> = HashMap::new();
+    for key in CANONICAL_ARRAY_KEYS {
+        let Some(items) = arrays.get(key) else {
+            continue;
+        };
+        let mut map: HashMap<String, Map<String, Value>> = HashMap::new();
+        for item in items.iter().filter_map(Value::as_object) {
+            if let Some(id) = item.get("id").and_then(Value::as_str) {
+                let id = id.trim().to_string();
+                if !id.is_empty() {
+                    map.insert(id, item.clone());
+                }
+            }
+        }
+        maps.insert(key, map);
+    }
+    for rule in INSPECTION_REFERENCES {
+        let Some(items) = arrays.get(rule.collection) else {
+            continue;
+        };
+        let Some(target) = maps.get(rule.target) else {
+            continue;
+        };
+        for (index, item) in items.iter().enumerate() {
+            let Some(item) = item.as_object() else {
+                continue;
+            };
+            let path = format!("{}[{}].{}", rule.collection, index, rule.field);
+            let referenced = item.get(rule.field);
+            let item_id = item.get("id").and_then(Value::as_str).unwrap_or("");
+            match referenced {
+                None | Some(Value::Null) if rule.nullable => continue,
+                None | Some(Value::Null) => {
+                    return invalid(inspection_problem(
+                        "invalid_reference",
+                        &path,
+                        &format!(
+                            "{}（{} 第 {} 项）。",
+                            rule.message,
+                            rule.collection,
+                            index + 1
+                        ),
+                        "必填引用指向已存在的对象",
+                        &format!("{} 未设置", rule.field),
+                    ))
+                }
+                Some(value) => {
+                    let referenced_id = value.as_str().map(str::trim).unwrap_or("");
+                    if referenced_id == item_id && !referenced_id.is_empty() {
+                        return invalid(inspection_problem(
+                            "cycle",
+                            &path,
+                            &format!("{} 中存在自引用的父级。", rule.collection),
+                            "父级引用指向其他对象",
+                            &format!("id 与父级引用相同：{referenced_id}"),
+                        ));
+                    }
+                    if referenced_id.is_empty() || !target.contains_key(referenced_id) {
+                        return invalid(inspection_problem(
+                            "invalid_reference",
+                            &path,
+                            &format!(
+                                "{}（{} 第 {} 项）。",
+                                rule.message,
+                                rule.collection,
+                                index + 1
+                            ),
+                            "引用指向已存在的对象 id",
+                            &format!("引用值为 {}，目标集合中不存在", json_type_name(value)),
+                        ));
+                    }
+                }
+            }
+        }
+    }
+
+    inspection_result(
+        if version_state == "current" {
+            "valid"
+        } else {
+            "migratable"
+        },
+        raw_version,
+        None,
+        Some(json!({ "id": project_id, "title": title })),
+    )
+}
+
+/// Pure, side-effect-free classification of a candidate project folder. Never
+/// takes the project lock, never creates project.json, never mutates the folder.
+fn inspect_project_directory(directory: &Path) -> Value {
+    let shown = directory.to_string_lossy().to_string();
+    let meta = match fs::symlink_metadata(directory) {
+        Ok(meta) => meta,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return project_unreadable(
+                "missing_directory",
+                "",
+                "项目目录不存在，可能已被移动或删除。".into(),
+                &format!("{shown} 不存在"),
+            )
+        }
+        Err(error) => {
+            return project_unreadable(
+                "io_error",
+                "",
+                format!("无法检查项目目录：{error}"),
+                &error.to_string(),
+            )
+        }
+    };
+    if meta.file_type().is_symlink() {
+        return project_unreadable(
+            "symlink_path",
+            "",
+            "为避免越过目录边界，项目目录不能是符号链接。".into(),
+            &format!("{shown} 是符号链接"),
+        );
+    }
+    if !meta.is_dir() {
+        return project_unreadable(
+            "not_a_directory",
+            "",
+            "打开项目需要选择一个文件夹，而不是单个文件。".into(),
+            &format!("{shown} 不是目录"),
+        );
+    }
+    let path = directory.join(PROJECT_JSON_LABEL);
+    match fs::symlink_metadata(&path) {
+        Ok(meta) if meta.file_type().is_symlink() => {
+            return project_unreadable(
+                "symlink_path",
+                PROJECT_JSON_LABEL,
+                "为避免越过目录边界，project.json 不能是符号链接。".into(),
+                "project.json 是符号链接",
+            )
+        }
+        Ok(meta) if !meta.is_file() => {
+            return project_unreadable(
+                "not_a_file",
+                PROJECT_JSON_LABEL,
+                "project.json 不是一个普通文件。".into(),
+                "project.json 不是文件",
+            )
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return no_project_json_result()
+        }
+        Err(error) => {
+            return project_unreadable(
+                "io_error",
+                PROJECT_JSON_LABEL,
+                format!("无法读取 project.json：{error}"),
+                &error.to_string(),
+            )
+        }
+        Ok(_) => {}
+    }
+    let contents = match fs::read(&path) {
+        Ok(contents) => contents,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return no_project_json_result()
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::PermissionDenied => {
+            return project_unreadable(
+                "permission_denied",
+                PROJECT_JSON_LABEL,
+                format!("无法读取 project.json：{error}"),
+                &error.to_string(),
+            )
+        }
+        Err(error) => {
+            return project_unreadable(
+                "io_error",
+                PROJECT_JSON_LABEL,
+                format!("无法读取 project.json：{error}"),
+                &error.to_string(),
+            )
+        }
+    };
+    match serde_json::from_slice::<Value>(&contents) {
+        Ok(parsed) => inspect_project_value(&parsed),
+        Err(error) => invalid_json_result(&error.to_string()),
+    }
+}
+
+/// Problems that stop a folder from opening at all. The remaining `invalid`
+/// codes stay openable on purpose: the shell's own migration repairs them, so
+/// refusing to open would lock users out of recoverable data. Corrupt JSON has
+/// its own `malformed_json` status and is blocked directly, not listed here.
+const PROJECT_OPEN_BLOCKING_CODES: [&str; 5] = [
+    "invalid_root",
+    "missing_project",
+    "missing_project_title",
+    "invalid_title",
+    "unsupported_schema",
+];
+
+fn project_open_legacy_failure(error: &str) -> Option<Value> {
+    let message = error.to_string();
+    if message.starts_with("项目 JSON 无效") {
+        return Some(invalid_json_result(&message));
+    }
+    if message == "项目数据必须是 JSON 对象" {
+        return Some(inspection_result(
+            "invalid",
+            Value::Null,
+            Some(inspection_problem(
+                "invalid_root",
+                "",
+                "project.json 的顶层内容不是课程项目对象。",
+                "JSON 对象",
+                &message,
+            )),
+            None,
+        ));
+    }
+    if message == "项目目录中没有 project.json" {
+        return Some(no_project_json_result());
+    }
+    if message.starts_with("无法读取项目文件") {
+        let code = if message.contains("PermissionDenied") || message.contains("permission denied")
+        {
+            "permission_denied"
+        } else {
+            "io_error"
+        };
+        return Some(project_unreadable(
+            code,
+            PROJECT_JSON_LABEL,
+            message.clone(),
+            &message,
+        ));
+    }
+    if message == "项目文件不能是符号链接" {
+        return Some(project_unreadable(
+            "symlink_path",
+            PROJECT_JSON_LABEL,
+            message.clone(),
+            &message,
+        ));
+    }
+    if message == "项目数据不得包含凭据或本机私有字段" {
+        return Some(inspection_result(
+            "invalid",
+            Value::Null,
+            Some(inspection_problem(
+                "sensitive_fields",
+                "",
+                &message,
+                "不含凭据或本机私有字段的项目数据",
+                &message,
+            )),
+            None,
+        ));
+    }
+    None
+}
+
+#[tauri::command]
+fn project_inspect(path: String) -> Result<Value, String> {
+    let raw = path.trim();
+    if raw.is_empty() || !Path::new(raw).is_absolute() {
+        return Err("项目目录必须是用户明确选择的绝对路径".into());
+    }
+    Ok(inspect_project_directory(Path::new(raw)))
+}
+
 #[tauri::command]
 fn project_open(project_dir: String) -> Result<Option<Value>, String> {
-    let project_dir = explicit_project_dir(&project_dir, false)?;
+    let requested = project_dir.trim().to_string();
+    let project_dir = match explicit_project_dir(&project_dir, false) {
+        Ok(dir) => dir,
+        // A folder that is simply gone is a classification, not an opaque error.
+        Err(error) if error == "项目目录不存在" => {
+            return Ok(Some(inspect_project_directory(Path::new(&requested))))
+        }
+        Err(error) => return Err(error),
+    };
     let already_open = project_lock_registered(&project_dir, current_app_instance_id());
     acquire_project_lock(&project_dir)?;
+    let release_if_new = || {
+        if !already_open {
+            let _ = release_project_lock(&project_dir);
+        }
+    };
+    let inspection = inspect_project_directory(&project_dir);
+    let blocking = match inspection.get("status").and_then(Value::as_str) {
+        Some("no_project_json") | Some("unreadable") | Some("malformed_json") => true,
+        Some("invalid") => {
+            let code = inspection
+                .get("problem")
+                .and_then(|problem| problem.get("code"))
+                .and_then(Value::as_str)
+                .unwrap_or("");
+            PROJECT_OPEN_BLOCKING_CODES.contains(&code)
+        }
+        _ => false,
+    };
+    if blocking {
+        release_if_new();
+        return Ok(Some(inspection));
+    }
     let path = match project_file(&project_dir, "project.json") {
         Ok(path) => path,
         Err(error) => {
-            if !already_open {
-                let _ = release_project_lock(&project_dir);
-            }
+            release_if_new();
             return Err(error);
         }
     };
     if !path.exists() {
-        if !already_open {
-            let _ = release_project_lock(&project_dir);
-        }
-        return Ok(None);
+        release_if_new();
+        return Ok(Some(no_project_json_result()));
     }
     match read_project_state(&project_dir) {
         Ok((project, fingerprint)) => {
             if let Err(error) =
                 store_project_baseline(&project_dir, fingerprint, Some(project.clone()))
             {
-                if !already_open {
-                    let _ = release_project_lock(&project_dir);
-                }
+                release_if_new();
                 return Err(error);
             }
             Ok(Some(project))
         }
         Err(error) => {
-            if !already_open {
-                let _ = release_project_lock(&project_dir);
+            release_if_new();
+            match project_open_legacy_failure(&error) {
+                Some(failure) => Ok(Some(failure)),
+                // Genuinely unexpected failures keep the 无法打开项目 fallback.
+                None => Err(error),
             }
-            Err(error)
         }
     }
 }
@@ -2162,25 +2931,7 @@ fn import_preview(source: Value) -> Result<Value, String> {
 
 fn scan_mime_for(name: &str) -> Option<&'static str> {
     let mime = mime_for_filename(name);
-    if mime == "application/octet-stream" {
-        match Path::new(name)
-            .extension()
-            .and_then(|value| value.to_str())
-            .unwrap_or_default()
-            .to_ascii_lowercase()
-            .as_str()
-        {
-            "pdf" => Some("application/pdf"),
-            "docx" => {
-                Some("application/vnd.openxmlformats-officedocument.wordprocessingml.document")
-            }
-            "doc" => Some("application/msword"),
-            "text" => Some("text/plain"),
-            _ => None,
-        }
-    } else {
-        Some(mime)
-    }
+    (mime != "application/octet-stream").then_some(mime)
 }
 
 fn scan_suggested_role(path: &Path, kind: &str, relative: &str) -> &'static str {
@@ -2511,6 +3262,333 @@ fn folder_scan(
         "warnings": warnings,
         "errors": errors,
     }))
+}
+
+/// Visual-media classifier for one file name: image or video only. Documents,
+/// text and audio stay out, so a directory sweep can never disagree with
+/// `folder_scan`'s own classification.
+fn media_descendant_kind(name: &str) -> Option<&'static str> {
+    match folder_preview_kind(name, Some(mime_for_filename(name))) {
+        "image" => Some("image"),
+        "video" => Some("video"),
+        _ => None,
+    }
+}
+
+/// Recursively collect visual media under `dir`. Only reached for a directory
+/// the user selected explicitly; the Mapping Preview listing stays flat.
+fn walk_media_descendants(
+    root: &Path,
+    dir: &Path,
+    relative_dir: &str,
+    entries: &mut Vec<Value>,
+    warnings: &mut Vec<String>,
+    errors: &mut Vec<String>,
+    visited: &mut HashSet<PathBuf>,
+) {
+    let reader = match fs::read_dir(dir) {
+        Ok(reader) => reader,
+        Err(error) => {
+            let label = if relative_dir.is_empty() {
+                "."
+            } else {
+                relative_dir
+            };
+            errors.push(format!("{label}: 无法读取目录：{error}"));
+            return;
+        }
+    };
+    let mut children: Vec<fs::DirEntry> = reader.filter_map(Result::ok).collect();
+    children.sort_by_key(|entry| entry.file_name());
+    for child in children {
+        let name = child.file_name();
+        let name = name.to_string_lossy().to_string();
+        let rel = if relative_dir.is_empty() {
+            name.clone()
+        } else {
+            format!("{relative_dir}/{name}")
+        };
+        if managed_import_name(&name) {
+            warnings.push(format!("{rel}: 已跳过工作台管理文件或构建目录"));
+            continue;
+        }
+        if name.starts_with('.') {
+            continue;
+        }
+        let path = child.path();
+        let meta = match fs::symlink_metadata(&path) {
+            Ok(meta) => meta,
+            Err(error) => {
+                errors.push(format!("{rel}: 无法读取：{error}"));
+                continue;
+            }
+        };
+        if meta.file_type().is_symlink() {
+            warnings.push(format!("{rel}: 已跳过符号链接，避免越过所选文件夹"));
+            continue;
+        }
+        if meta.is_dir() {
+            let identity = fs::canonicalize(&path).unwrap_or_else(|_| path.clone());
+            if !visited.insert(identity.clone()) {
+                warnings.push(format!("{rel}: 已跳过重复目录"));
+                continue;
+            }
+            if !identity.starts_with(root) {
+                warnings.push(format!("{rel}: 已跳过超出所选文件夹的目录"));
+                continue;
+            }
+            walk_media_descendants(root, &path, &rel, entries, warnings, errors, visited);
+            continue;
+        }
+        if !meta.is_file() {
+            warnings.push(format!("{rel}: 已跳过非普通文件"));
+            continue;
+        }
+        let Some(kind) = media_descendant_kind(&name) else {
+            continue;
+        };
+        // One unreadable descendant must not fail the batch.
+        if let Err(error) = fs::File::open(&path) {
+            errors.push(format!("{rel}: 无法读取文件：{error}"));
+            continue;
+        }
+        let mime = scan_mime_for(&name).unwrap_or(if kind == "image" {
+            "image/*"
+        } else {
+            "video/*"
+        });
+        entries.push(json!({
+            "relative_path": rel,
+            "filename": name,
+            "mime": mime,
+            "kind": kind,
+            "size": meta.len(),
+        }));
+    }
+}
+
+/// Recursive visual-media discovery for one SELECTED directory row. Read-only:
+/// never writes project.json and never mutates the source files.
+#[tauri::command]
+fn folder_scan_media(
+    root: Option<String>,
+    folder_path: Option<String>,
+    path: Option<String>,
+    relative_dir: Option<String>,
+    relative_path: Option<String>,
+) -> Result<Value, String> {
+    let raw = root.or(folder_path).or(path).unwrap_or_default();
+    let trimmed = raw.trim();
+    let candidate = PathBuf::from(trimmed);
+    if trimmed.is_empty() || !candidate.is_absolute() {
+        return Err("导入文件夹必须是用户明确选择的绝对路径".into());
+    }
+    reject_symlink(&candidate, "导入文件夹")?;
+    let metadata =
+        fs::symlink_metadata(&candidate).map_err(|error| format!("无法打开所选文件夹：{error}"))?;
+    if metadata.file_type().is_symlink() {
+        return Err("为避免越过目录边界，导入不支持以符号链接作为根目录".into());
+    }
+    if !metadata.is_dir() {
+        return Err("导入已有文件夹需要选择一个文件夹，而不是单个文件".into());
+    }
+    let resolved_root = fs::canonicalize(&candidate).unwrap_or_else(|_| candidate.clone());
+    reject_symlink(&resolved_root, "导入文件夹")?;
+
+    let rel = relative_dir
+        .or(relative_path)
+        .unwrap_or_default()
+        .trim()
+        .replace('\\', "/");
+    let rel = rel.trim_matches('/').to_string();
+    let parts: Vec<&str> = rel.split('/').filter(|part| !part.is_empty()).collect();
+    if rel.contains('\0')
+        || Path::new(&rel).is_absolute()
+        || parts.iter().any(|part| *part == ".." || *part == ".")
+    {
+        return Err("扫描路径无效".into());
+    }
+    if !parts.is_empty() && path_has_symlink_component(&resolved_root, &rel)? {
+        return Err("已跳过符号链接，避免越过所选文件夹".into());
+    }
+    let mut target = resolved_root.clone();
+    for part in &parts {
+        target.push(part);
+        reject_symlink(&target, "所选文件夹")?;
+    }
+    let _ = scan_relative(&resolved_root, &target)?;
+    let target_meta =
+        fs::symlink_metadata(&target).map_err(|error| format!("无法读取所选文件夹：{error}"))?;
+    if target_meta.file_type().is_symlink() {
+        return Err("已跳过符号链接，避免越过所选文件夹".into());
+    }
+    if !target_meta.is_dir() {
+        return Err("选择媒体目录需要选择一个文件夹，而不是单个文件".into());
+    }
+
+    let mut entries = Vec::new();
+    let mut warnings = Vec::new();
+    let mut errors = Vec::new();
+    let mut visited: HashSet<PathBuf> = HashSet::new();
+    if let Ok(identity) = fs::canonicalize(&target) {
+        visited.insert(identity);
+    }
+    walk_media_descendants(
+        &resolved_root,
+        &target,
+        &rel,
+        &mut entries,
+        &mut warnings,
+        &mut errors,
+        &mut visited,
+    );
+    entries.sort_by(|left, right| {
+        let left_rel = left
+            .get("relative_path")
+            .and_then(Value::as_str)
+            .unwrap_or("");
+        let right_rel = right
+            .get("relative_path")
+            .and_then(Value::as_str)
+            .unwrap_or("");
+        left_rel.cmp(right_rel)
+    });
+
+    // Range/byte serving for a folder video is gated by SCANNED_FOLDER_VIDEOS,
+    // keyed (canonical root, relative path). folder_scan replaces that set with
+    // its direct children only, so descendants found here must be merged in or
+    // their previews would be refused after the scan.
+    {
+        let mut granted = SCANNED_FOLDER_VIDEOS
+            .get_or_init(|| Mutex::new(HashSet::new()))
+            .lock()
+            .unwrap();
+        for entry in &entries {
+            if entry.get("kind").and_then(Value::as_str) == Some("video") {
+                if let Some(relative) = entry.get("relative_path").and_then(Value::as_str) {
+                    granted.insert((resolved_root.clone(), relative.to_string()));
+                }
+            }
+        }
+    }
+
+    Ok(json!({
+        "root": resolved_root.to_string_lossy(),
+        "relative_dir": rel,
+        "entries": entries,
+        "warnings": warnings,
+        "errors": errors,
+    }))
+}
+
+/// §4.2/§4.3: a directory row the user selected contributes the visual media
+/// found anywhere beneath it, as asset candidates. The Mapping Preview listing
+/// stays flat (§4.1), so this runs when the confirmed plan is applied rather
+/// than when the table is built. A descendant becomes an Asset only — never a
+/// Lesson, and never an `AssetUsage` created merely because the folder was
+/// selected. Paths the preview already lists keep the user's own mapping.
+fn expand_selected_directory_media(
+    source_root: &Path,
+    items: &mut Vec<Value>,
+    warnings: &mut Vec<String>,
+) {
+    let mut claimed: HashSet<String> = HashSet::new();
+    for item in items.iter() {
+        if let Some(rel) = item.get("relative_path").and_then(Value::as_str) {
+            claimed.insert(rel.replace('\\', "/"));
+        }
+    }
+    let selected_dirs: Vec<String> = items
+        .iter()
+        .filter(|item| adopt_item_included(item))
+        .filter(|item| item.get("kind").and_then(Value::as_str) == Some("directory"))
+        .filter_map(|item| item.get("relative_path").and_then(Value::as_str))
+        .map(|rel| rel.replace('\\', "/").trim_matches('/').to_string())
+        .filter(|rel| !rel.is_empty())
+        .collect();
+
+    let mut synthesized = Vec::new();
+    for rel in selected_dirs {
+        if rel.contains('\0')
+            || Path::new(&rel).is_absolute()
+            || rel.split('/').any(|part| part == ".." || part == ".")
+        {
+            warnings.push(format!("{rel}: 非法路径已跳过"));
+            continue;
+        }
+        let mut target = source_root.to_path_buf();
+        let mut unusable = false;
+        for part in rel.split('/').filter(|part| !part.is_empty()) {
+            target.push(part);
+            match fs::symlink_metadata(&target) {
+                Ok(meta) if meta.file_type().is_symlink() => {
+                    warnings.push(format!("{rel}: 已跳过符号链接，避免越过所选文件夹"));
+                    unusable = true;
+                }
+                Ok(_) => {}
+                Err(error) => {
+                    warnings.push(format!("{rel}: 无法读取目录（{error}）"));
+                    unusable = true;
+                }
+            }
+        }
+        if unusable || !target.is_dir() {
+            continue;
+        }
+        let mut found = Vec::new();
+        let mut scanned_warnings = Vec::new();
+        let mut scanned_errors = Vec::new();
+        let mut visited: HashSet<PathBuf> = HashSet::new();
+        if let Ok(identity) = fs::canonicalize(&target) {
+            visited.insert(identity);
+        }
+        walk_media_descendants(
+            source_root,
+            &target,
+            &rel,
+            &mut found,
+            &mut scanned_warnings,
+            &mut scanned_errors,
+            &mut visited,
+        );
+        warnings.extend(scanned_warnings);
+        // One unreadable descendant degrades to a warning, like everywhere else
+        // in the apply path: the rest of the folder still imports.
+        warnings.extend(scanned_errors);
+        for entry in found {
+            let candidate = entry
+                .get("relative_path")
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .to_string();
+            if candidate.is_empty() || !claimed.insert(candidate.clone()) {
+                continue;
+            }
+            let kind = entry
+                .get("kind")
+                .and_then(Value::as_str)
+                .unwrap_or("image")
+                .to_string();
+            synthesized.push(json!({
+                "relative_path": candidate,
+                "filename": entry.get("filename").cloned().unwrap_or(Value::Null),
+                "kind": kind,
+                "mime": entry.get("mime").cloned().unwrap_or(Value::Null),
+                "size": entry.get("size").cloned().unwrap_or(json!(0)),
+                "suggested": "asset",
+                "mapping": "asset",
+                "selected": true,
+                "is_suggestion": true,
+            }));
+        }
+    }
+    let count = synthesized.len();
+    if count > 0 {
+        items.extend(synthesized);
+        warnings.push(format!(
+            "已从所选文件夹递归收录 {count} 个图片/视频素材，仅作为素材入库，没有写入课时正文。"
+        ));
+    }
 }
 
 fn folder_preview_kind(name: &str, mime: Option<&str>) -> &'static str {
@@ -2894,16 +3972,27 @@ fn folder_markdown_image_status(
 /// Writes project.json + .workspace into the chosen folder; copies media into
 /// assets/. Never moves/renames/deletes original user files.
 ///
-/// Flat `{ plan, duplicate_choice?, project_title? }` payload — same pattern as
-/// `folder_scan` / `folder_read_preview`. Do **not** require `{ input: ... }`
-/// nesting; adoption runs before an open projectDir exists.
+/// Flat `{ plan, duplicate_choice?, project_title?, replace_invalid_project? }`
+/// payload — same pattern as `folder_scan` / `folder_read_preview`. Do **not**
+/// require `{ input: ... }` nesting; adoption runs before an open projectDir exists.
+///
+/// `replace_invalid_project` is §3.2 Case C: the user confirmed that the folder's
+/// existing `project.json` is unusable and chose to re-import it. It never
+/// licenses overwriting a readable project.
 #[tauri::command]
 fn folder_adopt(
     plan: Value,
     duplicate_choice: Option<String>,
     project_title: Option<String>,
+    replace_invalid_project: Option<bool>,
 ) -> Result<Value, String> {
-    folder_apply_import(plan, duplicate_choice, project_title, None)
+    folder_apply_import(
+        plan,
+        duplicate_choice,
+        project_title,
+        None,
+        replace_invalid_project.unwrap_or(false),
+    )
 }
 
 /// Append an explicitly confirmed mapping into the already open Canonical project.
@@ -2918,7 +4007,13 @@ fn folder_append(
     let _lease_guard = require_active_project_lock(&project_dir)?;
     let current = read_project_value(&project_dir)?;
     validate_project(&current)?;
-    folder_apply_import(plan, duplicate_choice, None, Some((project_dir, current)))
+    folder_apply_import(
+        plan,
+        duplicate_choice,
+        None,
+        Some((project_dir, current)),
+        false,
+    )
 }
 
 fn local_markdown_image_href(href: &str) -> bool {
@@ -3588,11 +4683,18 @@ fn record_markdown_import_source(
     Ok(())
 }
 
+/// Item kinds `folder_apply_import` treats as files. `image` / `video` come from
+/// the recursive media scan under a directory the user selected and follow the
+/// exact same asset path as `file`; directories never enter here. Mirrors
+/// `ADOPTABLE_FILE_KINDS` in src/service/folder_scan.ts.
+const ADOPTABLE_FILE_KINDS: [&str; 3] = ["file", "image", "video"];
+
 fn folder_apply_import(
     plan: Value,
     duplicate_choice: Option<String>,
     project_title: Option<String>,
     append_target: Option<(PathBuf, Value)>,
+    allow_invalid_replacement: bool,
 ) -> Result<Value, String> {
     let plan_obj = plan
         .as_object()
@@ -3631,8 +4733,44 @@ fn folder_apply_import(
         .unwrap_or_else(|| resolved_source_root.clone());
 
     // Refuse to clobber an existing Canonical project silently on first adoption.
-    if append_target.is_none() && resolved_root.join("project.json").exists() {
-        return Err("该文件夹已有 project.json，不能重复原地接管。请先打开现有项目。".into());
+    let existing_manifest = resolved_root.join("project.json");
+    let mut quarantine_manifest = false;
+    if append_target.is_none() && existing_manifest.exists() {
+        if !allow_invalid_replacement {
+            return Err("该文件夹已有 project.json，不能重复原地接管。请先打开现有项目。".into());
+        }
+        // The confirmation says "the file here is broken", not "overwrite whatever
+        // is here": a readable or migratable project must still be opened, and a
+        // file we cannot even read is never ours to move.
+        let diagnosis = inspect_project_directory(&resolved_root);
+        match diagnosis["status"].as_str().unwrap_or("unreadable") {
+            "invalid" | "malformed_json" => {
+                let code = diagnosis["problem"]["code"].as_str().unwrap_or("");
+                if code == "unsupported_schema" {
+                    // A newer project is not a broken one: the fix is to upgrade,
+                    // not to let an older build rearrange someone's course.
+                    return Err(
+                        "这个项目由更高版本的 Workbench 创建，当前版本不会改写它。请升级后再打开；若确实要把它当作资料文件夹导入，请先自行改名或移除其中的 project.json。"
+                            .into(),
+                    );
+                }
+                quarantine_manifest = true;
+            }
+            "valid" | "migratable" => {
+                return Err(
+                    "这个文件夹里的 project.json 是一个可用的课程项目。请直接「打开现有项目」，不要重新导入。"
+                        .into(),
+                )
+            }
+            _ => {
+                return Err(format!(
+                    "无法确认这个文件夹里的 project.json：{}",
+                    diagnosis["problem"]["message"]
+                        .as_str()
+                        .unwrap_or("文件不可读")
+                ))
+            }
+        }
     }
 
     let duplicate_choice = duplicate_choice
@@ -3665,18 +4803,19 @@ fn folder_apply_import(
         .unwrap_or("")
         .to_string();
 
-    let items = plan_obj
+    let mut warnings = Vec::new();
+    let mut items = plan_obj
         .get("items")
         .and_then(Value::as_array)
         .cloned()
         .unwrap_or_default();
+    expand_selected_directory_media(&resolved_source_root, &mut items, &mut warnings);
 
     let mut stage_ids = Vec::new();
     let mut content_item_ids = Vec::new();
     let mut asset_ids = Vec::new();
     let mut source_ids = Vec::new();
     let mut reused_asset_ids = Vec::new();
-    let mut warnings = Vec::new();
     let mut copied_files = Vec::new();
     let mut staged_pairs: Vec<(String, String)> = Vec::new();
     let mut stage_by_rel: std::collections::HashMap<String, String> =
@@ -3745,7 +4884,9 @@ fn folder_apply_import(
         .map_err(|error| format!("无法创建素材暂存目录：{error}"))?;
     let staging_cleanup = AdoptStagingGuard(staging_absolute_root);
 
-    // Pass 2: files
+    // Pass 2: files, including the image/video rows `expand_selected_directory_media`
+    // appended for directories the user selected. Directories stay in pass 1 as
+    // stages and are never swept in as documents here.
     for item in &items {
         if !adopt_item_included(item) {
             continue;
@@ -3760,7 +4901,7 @@ fn folder_apply_import(
             .and_then(Value::as_str)
             .unwrap_or("")
             .replace('\\', "/");
-        if kind != "file" || rel.is_empty() {
+        if !ADOPTABLE_FILE_KINDS.contains(&kind) || rel.is_empty() {
             continue;
         }
         if Path::new(&rel).is_absolute() || rel.split('/').any(|part| part == ".." || part == ".") {
@@ -4196,6 +5337,38 @@ fn folder_apply_import(
     if let Some(project_object) = project.get_mut("project").and_then(Value::as_object_mut) {
         project_object.insert("updated_at".into(), json!(rfc3339_now()));
     }
+    // Case C: the unusable manifest is moved aside — never deleted — under a
+    // name the folder scan already ignores, and only now, after every earlier
+    // step succeeded. An aborted import leaves the folder exactly as it was.
+    let mut quarantined: Option<PathBuf> = None;
+    if quarantine_manifest {
+        let stamp: String = rfc3339_now()
+            .chars()
+            .filter(|character| character.is_ascii_alphanumeric())
+            .collect();
+        let mut backup = resolved_root.join(format!("project.json.{stamp}.invalid.backup"));
+        let mut attempt = 1_u32;
+        while backup.exists() {
+            backup = resolved_root.join(format!("project.json.{stamp}-{attempt}.invalid.backup"));
+            attempt += 1;
+            if attempt > 99 {
+                return Err("无法为原有的 project.json 找到可用的备份文件名，导入已中止。".into());
+            }
+        }
+        if let Err(error) = fs::rename(&existing_manifest, &backup) {
+            for path in &promoted {
+                let _ = fs::remove_file(path);
+            }
+            for (staging, _) in &staged_pairs {
+                let _ = fs::remove_file(resolved_root.join(staging));
+            }
+            return Err(format!(
+                "无法把原有的 project.json 移到「{}」，导入已中止，原文件保持不动：{error}",
+                backup.display()
+            ));
+        }
+        quarantined = Some(backup);
+    }
     let commit = if append_target.is_some() {
         write_project_value_unlocked(&resolved_root, &project)
     } else {
@@ -4208,7 +5381,19 @@ fn folder_apply_import(
         for (staging, _) in &staged_pairs {
             let _ = fs::remove_file(resolved_root.join(staging));
         }
+        if let Some(backup) = &quarantined {
+            let _ = fs::rename(backup, &existing_manifest);
+        }
         return Err(error);
+    }
+    if let Some(backup) = &quarantined {
+        warnings.push(format!(
+            "原有的 project.json 已完整保留为「{}」，没有删除任何文件。",
+            backup
+                .file_name()
+                .and_then(|name| name.to_str())
+                .unwrap_or("备份文件")
+        ));
     }
     let staging_parent = resolved_root.join(".workspace/adopt-staging");
     drop(staging_cleanup);
@@ -6976,12 +8161,24 @@ fn mime_for_filename(filename: &str) -> &'static str {
         "gif" => "image/gif",
         "webp" => "image/webp",
         "svg" => "image/svg+xml",
+        "avif" => "image/avif",
         "mp4" => "video/mp4",
         "mov" => "video/quicktime",
         "webm" => "video/webm",
+        "m4v" => "video/mp4",
         "mp3" => "audio/mpeg",
         "wav" => "audio/wav",
         "m4a" => "audio/mp4",
+        "ogg" => "audio/ogg",
+        // Kept in lockstep with ASSET_EXTENSIONS / mimeFor in
+        // src/service/folder_scan.ts: the two stacks must classify the same
+        // file name identically, or a folder imported through Deno and reopened
+        // in Rust would disagree with itself.
+        "html" | "htm" => "text/html",
+        "text" => "text/plain",
+        "pdf" => "application/pdf",
+        "docx" => "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        "doc" => "application/msword",
         _ => "application/octet-stream",
     }
 }
@@ -6995,14 +8192,21 @@ fn normalize_asset_type(raw: Option<&str>, filename: &str, mime_type: &str) -> S
     if extension == "gif" {
         return "gif".into();
     }
-    if mime_type.starts_with("video/") || matches!(extension.as_str(), "mp4" | "mov" | "webm") {
+    if mime_type.starts_with("video/")
+        || matches!(extension.as_str(), "mp4" | "mov" | "webm" | "m4v")
+    {
         return "video".into();
     }
-    if mime_type.starts_with("audio/") || matches!(extension.as_str(), "mp3" | "wav" | "m4a") {
+    if mime_type.starts_with("audio/")
+        || matches!(extension.as_str(), "mp3" | "wav" | "m4a" | "ogg")
+    {
         return "audio".into();
     }
     if mime_type.starts_with("image/")
-        || matches!(extension.as_str(), "png" | "jpg" | "jpeg" | "webp" | "svg")
+        || matches!(
+            extension.as_str(),
+            "png" | "jpg" | "jpeg" | "webp" | "svg" | "avif"
+        )
     {
         return "image".into();
     }
@@ -7709,8 +8913,51 @@ fn ai_provider_api_protocol(provider: &Value) -> Result<&'static str, String> {
         None | Some("openai-completions") => Ok("openai-completions"),
         Some("openai-responses") => Ok("openai-responses"),
         Some("anthropic-messages") => Ok("anthropic-messages"),
-        Some(_) => Err(ai_invalid_request("Provider API 协议无效。")),
+        Some(value) if value.trim().is_empty() => Ok("openai-completions"),
+        Some(value) => Err(structured_ai_error(
+            "invalid_request",
+            &format!(
+                "不支持的 API 协议：「{value}」。只支持 {}。",
+                ai_protocol_hint()
+            ),
+            Some("请在「设置 → 模型」里选择上面三种协议之一。"),
+            json!({ "api_protocol": value }),
+        )),
     }
+}
+
+/// §9.4 — the only three API protocols, with the exact display labels the
+/// Settings → Models form renders.  `app/ai.js#AI_API_PROTOCOLS` and
+/// `src/service/ai_transport.ts#AI_PROVIDER_PROTOCOLS` carry the same table for
+/// the other two layers.
+const AI_PROTOCOL_CHOICES: [(&str, &str); 3] = [
+    ("openai-completions", "OpenAI Chat Completions"),
+    ("openai-responses", "OpenAI Responses"),
+    ("anthropic-messages", "Anthropic Messages"),
+];
+
+fn ai_protocol_label(protocol: &str) -> &'static str {
+    AI_PROTOCOL_CHOICES
+        .iter()
+        .find(|(id, _)| *id == protocol)
+        .map(|(_, label)| *label)
+        .unwrap_or("")
+}
+
+/// "OpenAI Chat Completions / OpenAI Responses / Anthropic Messages"
+fn ai_protocol_hint() -> String {
+    AI_PROTOCOL_CHOICES
+        .iter()
+        .map(|(_, label)| *label)
+        .collect::<Vec<_>>()
+        .join(" / ")
+}
+
+/// 模型发现端点：两种 OpenAI 协议与 Anthropic 都是 `{base}/models`，
+/// 区别在鉴权头（Anthropic 用 `x-api-key` + `anthropic-version`）。
+/// 浏览器壳 `modelListUrl()` 与 `ai.js#aiModelDiscoveryPlan` 走同一推导。
+fn ai_model_list_endpoint(base_url: &str) -> String {
+    format!("{}/models", base_url.trim_end_matches('/'))
 }
 
 fn ai_provider_completion_endpoint(provider: &Value) -> Result<String, String> {
@@ -8721,6 +9968,18 @@ fn ai_provider_records(store: &Map<String, Value>) -> Vec<Value> {
         .unwrap_or_default()
 }
 
+/// 存储中该 Provider ID 的下标（§9.4 ID 不变性 / 重复 ID 检查用）。
+fn ai_provider_index(store: &Map<String, Value>, provider_id: &str) -> Option<usize> {
+    store
+        .get("providers")
+        .and_then(Value::as_array)
+        .and_then(|providers| {
+            providers
+                .iter()
+                .position(|entry| entry.get("id").and_then(Value::as_str) == Some(provider_id))
+        })
+}
+
 /// Provider 列表 + `configured` 布尔表；**永远不含凭据本身**。
 fn ai_connection_view(store: &Map<String, Value>, configured: Map<String, Value>) -> Value {
     let providers = ai_provider_records(store);
@@ -8749,13 +10008,30 @@ fn ai_connection_list_at(base: &Path) -> Result<Value, String> {
 }
 
 fn ai_connection_save_at(base: &Path, provider: &Value) -> Result<Value, String> {
-    ai_connection_save_with_confirmation_at(base, provider, false)
+    ai_connection_save_guarded_at(base, provider, false, None, false)
 }
 
 fn ai_connection_save_with_confirmation_at(
     base: &Path,
     provider: &Value,
     confirm_credential_origin: bool,
+) -> Result<Value, String> {
+    ai_connection_save_guarded_at(base, provider, confirm_credential_origin, None, false)
+}
+
+/// §9.4 — Provider ID 永久固定：编辑时必须提交与原 ID 相同的连接。
+///
+/// * `original_id` — the ID the row was created with.  Submitting a different
+///   ID is rejected (the display name stays editable); the message names both
+///   IDs so the UI can say which connection is affected.
+/// * `require_new` — "+ Add model provider": an ID that already exists is
+///   rejected as a duplicate instead of silently replacing that connection.
+fn ai_connection_save_guarded_at(
+    base: &Path,
+    provider: &Value,
+    confirm_credential_origin: bool,
+    original_id: Option<&str>,
+    require_new: bool,
 ) -> Result<Value, String> {
     let object = provider
         .as_object()
@@ -8766,6 +10042,7 @@ fn ai_connection_save_with_confirmation_at(
     let provider_id = ai_validate_provider_id(raw_id)?;
     let protocol = match provider.get("api_protocol") {
         None => "openai-completions",
+        Some(Value::String(value)) if value.trim().is_empty() => "openai-completions",
         Some(Value::String(value)) => value.as_str(),
         Some(_) => {
             return Err(ai_invalid_request(
@@ -8777,7 +10054,16 @@ fn ai_connection_save_with_confirmation_at(
         protocol,
         "openai-completions" | "openai-responses" | "anthropic-messages"
     ) {
-        return Err(ai_invalid_request("Provider API 协议无效。"));
+        return Err(structured_ai_error(
+            "invalid_request",
+            &format!(
+                "不支持的 API 协议：「{}」。只支持 {}。",
+                ai_error_text_limit(protocol, 40),
+                ai_protocol_hint()
+            ),
+            Some("请在「设置 → 模型」里选择上面三种协议之一。"),
+            json!({ "api_protocol": protocol }),
+        ));
     }
     // 与浏览器壳一致：密钥形状的字段一律拒绝（而不是静默丢弃），
     // 这样同一份配置在两个壳里的行为完全相同。
@@ -8811,6 +10097,14 @@ fn ai_connection_save_with_confirmation_at(
     };
     record.insert("id".into(), json!(provider_id));
     record.insert("api_protocol".into(), json!(protocol));
+    // 调用元数据不是连接元数据：不能落到 providers.json 里。
+    for call_only in ["original_id", "require_new", "confirm_credential_origin"] {
+        record.remove(call_only);
+    }
+    // 编辑永远不能由残留字段改写 ID。
+    for alias in ["provider_id", "providerId"] {
+        record.remove(alias);
+    }
     if !record.get("auth_header").is_some_and(Value::is_string) {
         record.insert(
             "auth_header".into(),
@@ -8835,6 +10129,38 @@ fn ai_connection_save_with_confirmation_at(
 
     let paths = ai_store_paths(base);
     let mut store = ai_read_provider_store_secure(base)?;
+    let stored_index = ai_provider_index(&store, &provider_id);
+    if let Some(previous_id) = original_id.map(str::trim).filter(|value| !value.is_empty()) {
+        if previous_id != provider_id {
+            return Err(structured_ai_error(
+                "invalid_request",
+                &format!(
+                    "Provider ID 创建后不可修改：这个连接的原 ID 是「{previous_id}」，但提交的是「{}」。",
+                    if provider_id.is_empty() { "（空）" } else { provider_id.as_str() }
+                ),
+                Some("显示名称可以自由修改；如果要换一个 ID，请新建连接并删除旧连接。"),
+                json!({ "provider_id": previous_id, "submitted_provider_id": provider_id }),
+            ));
+        }
+        if stored_index.is_none() {
+            return Err(structured_ai_error(
+                "invalid_request",
+                &format!("找不到要编辑的 AI 连接「{previous_id}」。"),
+                Some("请刷新「设置 → 模型」的连接列表后重试；如果确实要新建，请使用新增按钮。"),
+                json!({ "provider_id": previous_id }),
+            ));
+        }
+    }
+    if require_new && stored_index.is_some() {
+        return Err(structured_ai_error(
+            "invalid_request",
+            &format!(
+                "Provider ID「{provider_id}」已经存在。Provider ID 创建后永久固定，不能重复使用。"
+            ),
+            Some("请换一个 ID；显示名称可以相同，ID 必须唯一。"),
+            json!({ "provider_id": provider_id }),
+        ));
+    }
     if let Some(existing) = store
         .get("providers")
         .and_then(Value::as_array)
@@ -9086,12 +10412,260 @@ static SIWC_ATTEMPTS: OnceLock<Mutex<HashMap<String, Arc<Mutex<SiwcAttempt>>>>> 
 static SIWC_REFRESH_LOCKS: OnceLock<Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>> =
     OnceLock::new();
 
+/// §10.2–10.5 / §19 — 订阅链路的每一步都有自己独立的错误状态。
+///
+/// 链路顺序：`login` → `plan_usage` → `models` → `model` → `inference` →
+/// `refresh`。UI 依据 `code` 与 `details.stage` 说明**是哪一步**失败，
+/// 绝不合并成「AI 配置失败」。`app/ai.js#AI_SUBSCRIPTION_STAGES` 是渲染层
+/// 的同一张表（code / stage / 文案必须一致）。
+#[derive(Debug)]
+struct SiwcStage {
+    code: &'static str,
+    stage: &'static str,
+    label: &'static str,
+    message: &'static str,
+    action: &'static str,
+}
+
+const SIWC_STAGES: [SiwcStage; 15] = [
+    // ---- 登录（系统浏览器 + 本机回调） ----
+    SiwcStage {
+        code: "subscription_cancelled",
+        stage: "login",
+        label: "登录",
+        message: "ChatGPT 登录已取消。",
+        action: "可以点击「使用 ChatGPT 继续」重新登录；未完成的登录不会保存任何凭据。",
+    },
+    SiwcStage {
+        code: "subscription_callback_failed",
+        stage: "login",
+        label: "登录",
+        message: "没有收到 ChatGPT 的授权回调。",
+        action: "请确认系统浏览器已打开并完成了授权；然后重新发起登录。",
+    },
+    SiwcStage {
+        code: "subscription_state_unavailable",
+        stage: "login",
+        label: "登录",
+        message: "ChatGPT 登录状态暂不可用。",
+        action: "请重新发起登录；如果持续失败，请重启工作台。",
+    },
+    SiwcStage {
+        code: "subscription_config_invalid",
+        stage: "login",
+        label: "登录",
+        message: "ChatGPT 授权服务地址无效。",
+        action: "请检查本机网络与代理设置后重新登录。",
+    },
+    SiwcStage {
+        code: "subscription_random_failed",
+        stage: "login",
+        label: "登录",
+        message: "无法生成 ChatGPT 登录所需的安全随机值。",
+        action: "请重新发起登录；这一步与账户和密钥无关，是本机随机数生成失败。",
+    },
+    SiwcStage {
+        code: "subscription_session_unavailable",
+        stage: "login",
+        label: "登录",
+        message: "ChatGPT 订阅会话无法读取；请重新登录。",
+        action: "请在「设置 → 模型」的订阅分组里重新连接 ChatGPT 账户。",
+    },
+    SiwcStage {
+        code: "subscription_storage_failed",
+        stage: "login",
+        label: "保存账户",
+        message: "无法在本机保存 ChatGPT 订阅会话。",
+        action: "请确认 macOS 钥匙串可用，然后重新登录。",
+    },
+    SiwcStage {
+        code: "subscription_native_only",
+        stage: "login",
+        label: "登录",
+        message: "ChatGPT 订阅登录需要 macOS 桌面版的系统浏览器回调和系统钥匙串。",
+        action: "请在 macOS 桌面版 Workbench 的「设置 → 模型」中管理订阅账户。",
+    },
+    // ---- 套餐用量授权（§10.2：已登录 ≠ 有推理权限） ----
+    SiwcStage {
+        code: "subscription_scope_missing",
+        stage: "plan_usage",
+        label: "套餐用量授权",
+        message: "ChatGPT 已登录，但没有授权套餐用量。",
+        action: "请重新授权并允许 ChatGPT plan usage。",
+    },
+    // ---- 模型列表（§10.3） ----
+    SiwcStage {
+        code: "subscription_models_request_failed",
+        stage: "models",
+        label: "模型列表",
+        message: "ChatGPT 模型列表请求失败。",
+        action: "请稍后重试；也可以直接手动填写 Model ID。",
+    },
+    SiwcStage {
+        code: "subscription_models_empty",
+        stage: "models",
+        label: "模型列表",
+        message: "当前 ChatGPT 账户没有可用模型。",
+        action: "请换一个已订阅账户重新登录；模型列表按账户返回。",
+    },
+    // ---- 选择模型（§10.3：推理必须用列表返回的 slug） ----
+    SiwcStage {
+        code: "subscription_model_not_selected",
+        stage: "model",
+        label: "选择模型",
+        message: "还没有从当前 ChatGPT 账户的模型列表中选择模型。",
+        action: "请在「设置 → 模型」里选择一个由账户返回的模型；模型 id 以列表返回值为准。",
+    },
+    // ---- 真实推理（§10.4） ----
+    SiwcStage {
+        code: "subscription_inference_failed",
+        stage: "inference",
+        label: "推理",
+        message: "模型可选，但 ChatGPT 推理请求失败。",
+        action: "请稍后重试，或换一个账户返回的模型；本次没有改动课程内容。",
+    },
+    // ---- 令牌刷新（§10.5） ----
+    SiwcStage {
+        code: "subscription_refresh_required",
+        stage: "refresh",
+        label: "令牌刷新",
+        message: "ChatGPT 访问令牌已到刷新时间，正在刷新。",
+        action: "请重试这一次请求；工作台会用保存的 client_id 与最新 refresh_token 刷新后重发。",
+    },
+    SiwcStage {
+        code: "subscription_refresh_failed",
+        stage: "refresh",
+        label: "令牌刷新",
+        message: "ChatGPT token 已失效且刷新失败。",
+        action: "请重新登录 ChatGPT 订阅账户；旧的一次性 refresh_token 不会被重复使用。",
+    },
+];
+
+/// 纯查表：错误码 → 阶段。可用于离线单元测试（不需要网络）。
+fn siwc_stage_for_code(code: &str) -> Option<&'static SiwcStage> {
+    SIWC_STAGES.iter().find(|stage| stage.code == code)
+}
+
+/// 该阶段的可读中文文案；未知码返回 `None`，调用方保留自己原本的措辞。
+fn siwc_stage_message(code: &str) -> Option<&'static str> {
+    siwc_stage_for_code(code).map(|stage| stage.message)
+}
+
+/// 带阶段信息的订阅错误：`details.stage` / `details.stage_label` 让 UI 能说清
+/// 是哪一步失败（§19），`reason` 只在包装底层错误时出现。
+fn siwc_stage_error(code: &str, details: Value) -> String {
+    let stage = siwc_stage_for_code(code);
+    let message = siwc_stage_message(code).unwrap_or("ChatGPT 订阅步骤失败。");
+    let action = stage
+        .map(|stage| stage.action)
+        .or(Some("请在「设置 → 模型」的订阅分组里重试或重新登录。"));
+    let mut object = match details {
+        Value::Object(map) => map,
+        _ => Map::new(),
+    };
+    if let Some(stage) = stage {
+        object
+            .entry("stage".to_owned())
+            .or_insert(json!(stage.stage));
+        object
+            .entry("stage_label".to_owned())
+            .or_insert(json!(stage.label));
+    }
+    structured_ai_error(code, message, action, Value::Object(object))
+}
+
+/// 这些码本身已经说清是哪一步（或就是「没登录」），原样上抛、不再改写阶段。
+fn siwc_stage_passthrough_code(code: &str) -> bool {
+    matches!(
+        code,
+        "credential_origin_confirmation_required"
+            | "cancelled"
+            | "timeout"
+            | "rate_limited"
+            | "missing_credential"
+    ) || code.starts_with("subscription_")
+}
+
+/// 推理阶段包装结果码：已经自带阶段语义的码保持不变，其余归到「推理」（§10.4）。
+fn siwc_inference_stage_code(reason_code: &str) -> String {
+    if siwc_stage_passthrough_code(reason_code) {
+        return reason_code.to_owned();
+    }
+    "subscription_inference_failed".to_owned()
+}
+
+/// 模型列表阶段包装结果码：底层传输/状态失败归到「模型列表」（§19）。
+fn siwc_models_stage_code(reason_code: &str) -> String {
+    if siwc_stage_passthrough_code(reason_code) {
+        return reason_code.to_owned();
+    }
+    "subscription_models_request_failed".to_owned()
+}
+
+/// 从 `structured_ai_error` 的字符串里取 `error.code`（纯函数，可离线测试）。
+fn siwc_error_code(raw: &str) -> String {
+    siwc_error_field(raw, "code").unwrap_or_else(|| "subscription_inference_failed".to_owned())
+}
+
+/// 从 `structured_ai_error` 的字符串里取 `error.user_message`（纯解析）。
+fn siwc_error_user_message(raw: &str) -> String {
+    siwc_error_field(raw, "user_message").unwrap_or_default()
+}
+
+fn siwc_error_field(raw: &str, field_name: &str) -> Option<String> {
+    serde_json::from_str::<Value>(raw).ok().and_then(|value| {
+        value
+            .get("error")?
+            .get(field_name)?
+            .as_str()
+            .map(str::to_owned)
+    })
+}
+
+/// 把某一步的底层失败包装成该步骤的独立错误（§19：不许塌成通用错误）。
+/// 原始码留在 `details.reason_code`，原文案留在 `details.reason_message`。
+fn siwc_stage_wrap_error(raw: String, provider_id: &str, stage_for: fn(&str) -> String) -> String {
+    let reason_code = siwc_error_code(&raw);
+    let stage_code = stage_for(&reason_code);
+    if stage_code == reason_code {
+        return raw;
+    }
+    let mut details = json!({
+        "provider_id": provider_id,
+        "reason_code": reason_code,
+    });
+    if let Some(object) = details.as_object_mut() {
+        let user_message = siwc_error_user_message(&raw);
+        if !user_message.is_empty() {
+            object.insert("reason_message".to_owned(), json!(user_message));
+        }
+    }
+    siwc_stage_error(&stage_code, details)
+}
+
+/// §10.4：模型可选，但推理请求失败。
+fn siwc_inference_stage_error(raw: String, provider_id: &str) -> String {
+    siwc_stage_wrap_error(raw, provider_id, siwc_inference_stage_code)
+}
+
+/// §19：ChatGPT 模型列表请求失败。
+fn siwc_models_stage_error(raw: String, provider_id: &str) -> String {
+    siwc_stage_wrap_error(raw, provider_id, siwc_models_stage_code)
+}
+
 fn siwc_error(code: &'static str, message: &'static str) -> String {
+    let mut details = Map::new();
+    if let Some(stage) = siwc_stage_for_code(code) {
+        details.insert("stage".to_owned(), json!(stage.stage));
+        details.insert("stage_label".to_owned(), json!(stage.label));
+    }
     structured_ai_error(
         code,
         message,
-        Some("请在设置中重新连接 ChatGPT 订阅账户。"),
-        json!({}),
+        siwc_stage_for_code(code)
+            .map(|stage| stage.action)
+            .or(Some("请在设置中重新连接 ChatGPT 订阅账户。")),
+        Value::Object(details),
     )
 }
 
@@ -9139,15 +10713,17 @@ fn siwc_cached_access_token_at(base: &Path, provider_id: &str) -> Result<String,
         .ok_or_else(|| siwc_error("missing_credential", "ChatGPT 订阅账户已退出登录。"))?;
     let credential = siwc_parse_credential(&raw)?;
     if !siwc_has_usage_scope(&credential.scopes) {
-        return Err(siwc_error(
+        // §10.2：已登录 ≠ 有套餐用量授权；必须说明是「授权」这一步失败，
+        // 而不是给出一个空的模型选择器。
+        return Err(siwc_stage_error(
             "subscription_scope_missing",
-            "ChatGPT 账户没有可用的模型调用授权。",
+            json!({ "provider_id": provider_id, "granted_scopes": credential.scopes }),
         ));
     }
     if credential.expires_at <= unix_seconds().saturating_add(5) {
-        return Err(siwc_error(
+        return Err(siwc_stage_error(
             "subscription_refresh_required",
-            "ChatGPT 订阅会话需要刷新，请重试。",
+            json!({ "provider_id": provider_id }),
         ));
     }
     Ok(credential.access_token)
@@ -9946,9 +11522,9 @@ async fn siwc_access_token_with_endpoint(
         .ok_or_else(|| siwc_error("missing_credential", "ChatGPT 订阅账户已退出登录。"))?;
     let mut credential = siwc_parse_credential(&raw)?;
     if !siwc_has_usage_scope(&credential.scopes) {
-        return Err(siwc_error(
+        return Err(siwc_stage_error(
             "subscription_scope_missing",
-            "ChatGPT 账户没有可用的模型调用授权。",
+            json!({ "provider_id": provider_id, "granted_scopes": credential.scopes }),
         ));
     }
     if credential.expires_at > unix_seconds().saturating_add(60) {
@@ -9966,21 +11542,26 @@ async fn siwc_access_token_with_endpoint(
         .send()
         .await
         .map_err(|_| {
-            siwc_error(
+            siwc_stage_error(
                 "subscription_refresh_failed",
-                "刷新 ChatGPT 订阅会话失败。请重新登录。",
+                json!({ "provider_id": provider_id, "reason": "network" }),
             )
         })?;
     if !response.status().is_success() {
-        return Err(siwc_error(
+        // 一次性 refresh_token 已被拒绝：不能重复使用，只能重新登录（§10.5）。
+        return Err(siwc_stage_error(
             "subscription_refresh_failed",
-            "ChatGPT 订阅会话已过期或撤销。请重新登录。",
+            json!({
+                "provider_id": provider_id,
+                "reason": "token_endpoint_rejected",
+                "status": response.status().as_u16(),
+            }),
         ));
     }
     let refreshed = response.json::<SiwcTokenResponse>().await.map_err(|_| {
-        siwc_error(
+        siwc_stage_error(
             "subscription_refresh_failed",
-            "ChatGPT 没有返回有效的刷新会话。请重新登录。",
+            json!({ "provider_id": provider_id, "reason": "malformed_token_response" }),
         )
     })?;
     if refreshed.access_token.is_empty()
@@ -9989,17 +11570,21 @@ async fn siwc_access_token_with_endpoint(
             .as_deref()
             .is_some_and(|value| !value.eq_ignore_ascii_case("bearer"))
     {
-        return Err(siwc_error(
+        return Err(siwc_stage_error(
             "subscription_refresh_failed",
-            "ChatGPT 没有返回有效的刷新会话。请重新登录。",
+            json!({ "provider_id": provider_id, "reason": "invalid_token_set" }),
         ));
     }
     if let Some(scope) = &refreshed.scope {
         let scopes = siwc_scopes(scope);
         if !siwc_has_usage_scope(&scopes) {
-            return Err(siwc_error(
+            return Err(siwc_stage_error(
                 "subscription_scope_missing",
-                "ChatGPT 刷新后未保留模型调用授权。请重新登录。",
+                json!({
+                    "provider_id": provider_id,
+                    "reason": "scope_dropped_on_refresh",
+                    "granted_scopes": scopes,
+                }),
             ));
         }
         credential.scopes = scopes;
@@ -10449,6 +12034,19 @@ fn ai_request_spec(base: &Path, input: &Value) -> Result<AiRequestSpec, String> 
         let object = parsed
             .as_object_mut()
             .ok_or_else(|| ai_invalid_request("ChatGPT Responses 请求必须是 JSON 对象。"))?;
+        // §10.3：推理必须发送账户模型列表返回的 slug。没有 model 就说明停在
+        // 「选择模型」这一步，不能把空 slug 发给服务器再报通用错误。
+        let has_selected_model = object
+            .get("model")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .is_some_and(|value| !value.is_empty());
+        if !has_selected_model {
+            return Err(siwc_stage_error(
+                "subscription_model_not_selected",
+                json!({ "provider_id": provider_id }),
+            ));
+        }
         object.insert("store".into(), json!(false));
         object.insert("stream".into(), json!(true));
         body = serde_json::to_vec(&parsed)
@@ -10750,10 +12348,11 @@ async fn ai_models_list_at(base: &Path, input: &Value) -> Result<Value, String> 
             )
         })?;
     let is_siwc = provider.get("kind").and_then(Value::as_str) == Some(SIWC_KIND);
+    // §9.4：模型发现端点按协议派生，两套壳都只用 `{base_url}/models`。
     let endpoint = if is_siwc {
         SIWC_API_MODELS_ENDPOINT.to_owned()
     } else {
-        format!("{}/models", base_url.trim_end_matches('/'))
+        ai_model_list_endpoint(&base_url)
     };
     let api_protocol = if is_siwc {
         "openai-responses"
@@ -10831,18 +12430,27 @@ async fn ai_models_list_at(base: &Path, input: &Value) -> Result<Value, String> 
     } else {
         format!("{} {}", scheme.trim(), credential)
     };
+    // §19 / §10.3：订阅账户在「模型列表」这一步的失败保持独立可读，
+    // 底层原码留在 `details.reason_code`，不合并成通用传输错误。
+    let wrap_models_error = |raw: String| -> String {
+        if is_siwc {
+            siwc_models_stage_error(raw, &provider_id)
+        } else {
+            raw
+        }
+    };
     let client = reqwest::Client::builder()
         .timeout(Duration::from_millis(AI_DEFAULT_TIMEOUT_MS))
         // 与对话请求一致：不跟随重定向，避免把自定义鉴权头转发到别的站点。
         .redirect(reqwest::redirect::Policy::none())
         .build()
         .map_err(|error| {
-            structured_ai_error(
+            wrap_models_error(structured_ai_error(
                 "transport_unavailable",
                 "无法初始化 AI 网络客户端。",
                 Some("请重启工作台后重试。"),
                 json!({ "reason": ai_error_text_limit(&error.to_string(), AI_ERROR_TEXT_LIMIT) }),
-            )
+            ))
         })?;
     let mut request = client
         .get(&endpoint)
@@ -10852,13 +12460,13 @@ async fn ai_models_list_at(base: &Path, input: &Value) -> Result<Value, String> 
         request = request.header("anthropic-version", "2023-06-01");
     }
     let response = request.send().await.map_err(|error| {
-        ai_transport_error(
+        wrap_models_error(ai_transport_error(
             error,
             AI_DEFAULT_TIMEOUT_MS,
             &endpoint,
             &secrets,
             &provider_id,
-        )
+        ))
     })?;
     let status = response.status();
     let content_type = response
@@ -10868,45 +12476,57 @@ async fn ai_models_list_at(base: &Path, input: &Value) -> Result<Value, String> 
         .unwrap_or("")
         .to_owned();
     let bytes = response.bytes().await.map_err(|error| {
-        ai_transport_error(
+        wrap_models_error(ai_transport_error(
             error,
             AI_DEFAULT_TIMEOUT_MS,
             &endpoint,
             &secrets,
             &provider_id,
-        )
+        ))
     })?;
     let text = String::from_utf8_lossy(&bytes).into_owned();
     if !status.is_success() {
-        return Err(ai_status_error(
+        return Err(wrap_models_error(ai_status_error(
             status.as_u16(),
             &text,
             &secrets,
             &provider_id,
             &endpoint,
             &content_type,
-        ));
+        )));
     }
     let parsed = serde_json::from_str::<Value>(&text).unwrap_or(Value::Null);
-    let (models, display_names) = if is_siwc {
-        siwc_model_catalog(&parsed)
+    // §9.5 / §10.3：目录项统一成 `{ id, label }`；`id` 是推理要发送的服务端 slug。
+    let catalog = if is_siwc {
+        let (slugs, names) = siwc_model_catalog(&parsed);
+        slugs
+            .into_iter()
+            .map(|slug| {
+                let mut entry = Map::new();
+                entry.insert("id".to_owned(), json!(slug.clone()));
+                entry.insert(
+                    "label".to_owned(),
+                    json!(names.get(&slug).and_then(Value::as_str).unwrap_or(&slug)),
+                );
+                entry
+            })
+            .collect::<Vec<_>>()
     } else {
-        (ai_model_ids_from_payload(&parsed), Map::new())
+        ai_model_catalog_from_payload(&parsed)
     };
-    if models.is_empty() {
-        return Err(structured_ai_error(
-            "provider_error",
-            "服务商没有返回可识别的模型名。",
-            Some("可以在设置里手动填写 Model ID，不影响保存与运行。"),
+    if is_siwc && catalog.is_empty() {
+        return Err(siwc_stage_error(
+            "subscription_models_empty",
             json!({ "provider_id": provider_id, "endpoint": endpoint }),
         ));
     }
-    Ok(json!({
-        "provider_id": provider_id,
-        "models": models,
-        "display_names": display_names,
-        "endpoint": endpoint,
-    }))
+    let mut extra = Map::new();
+    extra.insert("provider_id".to_owned(), json!(provider_id));
+    extra.insert(
+        "protocol_label".to_owned(),
+        json!(ai_protocol_label(api_protocol)),
+    );
+    ai_model_discovery_value(catalog, &endpoint, extra)
 }
 
 fn ai_provider_auth_parts(
@@ -11001,14 +12621,55 @@ async fn ai_secure_http_request(
     Ok((text, content_type))
 }
 
+/// §9.5 — 模型发现用于**尚未保存**的表单：地址、协议与临时密钥都由调用方给出，
+/// 任何内容都不落盘，临时密钥只活在这一次请求里。
+///
+/// 载荷接受两种写法：
+///   `{ base_url, api_protocol, temporary_credential, provider_id?, chat_path?, auth_header?, auth_scheme? }`
+///   `{ provider: { base_url, api_protocol, ... }, temporary_credential }`（旧写法）
 async fn ai_models_probe_at(_base: &Path, input: &Value) -> Result<Value, String> {
     let payload = ai_payload(input, "ai_models_probe")?;
-    let provider = field(&payload, &["provider"])
-        .ok_or_else(|| ai_invalid_request("临时模型探测缺少 Provider 配置。"))?;
-    if !provider.is_object() {
-        return Err(ai_invalid_request("Provider 配置必须是 JSON 对象。"));
-    }
-    if let Some(field_path) = ai_forbidden_field_path(provider, "", ai_credential_field_name) {
+    let provider = match payload.get("provider") {
+        Some(Value::Object(map)) => Value::Object(map.clone()),
+        Some(Value::Null) | None => {
+            let mut flat = Map::new();
+            for key in [
+                "id",
+                "label",
+                "kind",
+                "base_url",
+                "api_protocol",
+                "chat_path",
+                "auth_header",
+                "auth_scheme",
+            ] {
+                if let Some(value) = payload.get(key) {
+                    if !value.is_null() {
+                        flat.insert(key.to_owned(), value.clone());
+                    }
+                }
+            }
+            if let Some(provider_id) = payload
+                .get("provider_id")
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+            {
+                flat.entry("id".to_owned()).or_insert(json!(provider_id));
+            }
+            if !flat.contains_key("base_url") {
+                return Err(structured_ai_error(
+                    "invalid_request",
+                    "临时模型探测缺少 Base URL。",
+                    Some("请填写 Base URL 与 API 协议；也可以先保存连接，再用已保存的密钥读取模型列表。"),
+                    json!({}),
+                ));
+            }
+            Value::Object(flat)
+        }
+        Some(_) => return Err(ai_invalid_request("Provider 配置必须是 JSON 对象。")),
+    };
+    if let Some(field_path) = ai_forbidden_field_path(&provider, "", ai_credential_field_name) {
         return Err(structured_ai_error(
             "invalid_request",
             "Provider 配置含有禁止的凭据字段。",
@@ -11016,7 +12677,7 @@ async fn ai_models_probe_at(_base: &Path, input: &Value) -> Result<Value, String
             json!({ "field": field_path }),
         ));
     }
-    if let Some(field_path) = ai_inline_credential_field(provider, "") {
+    if let Some(field_path) = ai_inline_credential_field(&provider, "") {
         return Err(structured_ai_error(
             "invalid_request",
             "Provider 地址含有禁止的密钥查询参数。",
@@ -11024,13 +12685,20 @@ async fn ai_models_probe_at(_base: &Path, input: &Value) -> Result<Value, String
             json!({ "field": field_path }),
         ));
     }
-    let api_protocol = ai_provider_api_protocol(provider)?;
+    let api_protocol = ai_provider_api_protocol(&provider)?;
     let base_url = provider
         .get("base_url")
         .and_then(Value::as_str)
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .ok_or_else(|| ai_invalid_request("还没有填写 Base URL，无法读取模型列表。"))?;
+    let probe_label = provider
+        .get("id")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or("temporary-probe")
+        .to_owned();
     let credential = field(&payload, &["temporary_credential"])
         .and_then(Value::as_str)
         .map(str::trim)
@@ -11041,9 +12709,9 @@ async fn ai_models_probe_at(_base: &Path, input: &Value) -> Result<Value, String
             "API Key 过长，请确认粘贴的内容是否正确。",
         ));
     }
-    let endpoint = format!("{}/models", base_url.trim_end_matches('/'));
+    let endpoint = ai_model_list_endpoint(base_url);
     ai_validate_request_url(&endpoint)?;
-    let (header, scheme) = ai_provider_auth_parts(provider, api_protocol)?;
+    let (header, scheme) = ai_provider_auth_parts(&provider, api_protocol)?;
     let auth_value = if scheme.is_empty() {
         credential.to_owned()
     } else {
@@ -11062,22 +12730,14 @@ async fn ai_models_probe_at(_base: &Path, input: &Value) -> Result<Value, String
         &headers,
         None,
         AI_DEFAULT_TIMEOUT_MS,
-        "temporary-probe",
+        &probe_label,
         credential,
         &scheme,
     )
     .await?;
     let parsed = serde_json::from_str::<Value>(&text).unwrap_or(Value::Null);
-    let models = ai_model_ids_from_payload(&parsed);
-    if models.is_empty() {
-        return Err(structured_ai_error(
-            "provider_error",
-            "服务商没有返回可识别的模型名。",
-            Some("可以直接手动填写 Model ID。"),
-            json!({ "endpoint": endpoint }),
-        ));
-    }
-    Ok(json!({ "models": models, "endpoint": endpoint }))
+    let catalog = ai_model_catalog_from_payload(&parsed);
+    ai_model_discovery_value(catalog, &endpoint, Map::new())
 }
 
 async fn ai_connection_test_at(base: &Path, input: &Value) -> Result<Value, String> {
@@ -11101,13 +12761,22 @@ async fn ai_connection_test_at(base: &Path, input: &Value) -> Result<Value, Stri
                 json!({ "provider_id": provider_id }),
             )
         })?;
+    let is_siwc = provider.get("kind").and_then(Value::as_str) == Some(SIWC_KIND);
     let model = provider
         .get("default_model")
         .and_then(Value::as_str)
         .map(str::trim)
         .filter(|value| !value.is_empty())
-        .ok_or_else(|| ai_invalid_request("请先设置默认 Model ID。"))?;
-    let is_siwc = provider.get("kind").and_then(Value::as_str) == Some(SIWC_KIND);
+        .ok_or_else(|| {
+            if is_siwc {
+                siwc_stage_error(
+                    "subscription_model_not_selected",
+                    json!({ "provider_id": provider_id }),
+                )
+            } else {
+                ai_invalid_request("请先设置默认 Model ID。")
+            }
+        })?;
     let api_protocol = if is_siwc {
         "openai-responses"
     } else {
@@ -11226,8 +12895,34 @@ fn siwc_model_catalog(payload: &Value) -> (Vec<String>, Map<String, Value>) {
     (models, display_names)
 }
 
-fn ai_model_ids_from_payload(payload: &Value) -> Vec<String> {
-    let entries = match payload {
+/// §10.3 — 服务器标记为不可列出的条目要丢掉：只有被标记为可列出的模型才会
+/// 出现在选择器里，推理用的也是服务器返回的原始 slug。
+fn ai_model_entry_is_listable(entry: &Map<String, Value>) -> bool {
+    match entry.get("visibility").and_then(Value::as_str) {
+        Some(raw) if !raw.trim().is_empty() => {
+            let visibility = raw.trim().to_ascii_lowercase();
+            if !matches!(
+                visibility.as_str(),
+                "list" | "public" | "visible" | "available"
+            ) {
+                return false;
+            }
+        }
+        _ => {}
+    }
+    if entry.get("enabled").and_then(Value::as_bool) == Some(false) {
+        return false;
+    }
+    if entry.get("disabled").and_then(Value::as_bool) == Some(true) {
+        return false;
+    }
+    true
+}
+
+/// 模型目录（§9.5）：`{ id, label }` 列表。`id` 是推理要发送的服务端 slug，
+/// `label` 缺失时回退到 `id`。浏览器壳 `modelCatalogFromPayload()` 同规则。
+fn ai_model_catalog_from_payload(payload: &Value) -> Vec<Map<String, Value>> {
+    let entries: Vec<Value> = match payload {
         Value::Array(entries) => entries.clone(),
         Value::Object(map) => map
             .get("data")
@@ -11237,24 +12932,106 @@ fn ai_model_ids_from_payload(payload: &Value) -> Vec<String> {
             .unwrap_or_default(),
         _ => Vec::new(),
     };
-    let mut ids: Vec<String> = entries
+    let mut catalog: Vec<Map<String, Value>> = Vec::new();
+    for entry in entries {
+        let (id, label) = match &entry {
+            Value::String(text) => (text.trim().to_owned(), String::new()),
+            Value::Object(map) => {
+                if !ai_model_entry_is_listable(map) {
+                    continue;
+                }
+                let id = map
+                    .get("id")
+                    .or_else(|| map.get("name"))
+                    .or_else(|| map.get("model"))
+                    .or_else(|| map.get("slug"))
+                    .and_then(Value::as_str)
+                    .unwrap_or("")
+                    .trim()
+                    .to_owned();
+                let label = ["display_name", "friendly_name", "alias", "name"]
+                    .iter()
+                    .filter_map(|key| map.get(*key).and_then(Value::as_str))
+                    .map(str::trim)
+                    .find(|value| !value.is_empty())
+                    .unwrap_or("")
+                    .to_owned();
+                (id, label)
+            }
+            _ => continue,
+        };
+        if id.is_empty() || catalog.iter().any(|existing| existing["id"] == id.as_str()) {
+            continue;
+        }
+        catalog.push(
+            json!({ "id": id, "label": if label.is_empty() { id.clone() } else { label } })
+                .as_object()
+                .expect("object")
+                .clone(),
+        );
+    }
+    catalog.sort_by(|left, right| {
+        left["id"]
+            .as_str()
+            .unwrap_or("")
+            .cmp(right["id"].as_str().unwrap_or(""))
+    });
+    catalog
+}
+
+/// 目录里的模型 id：推理要发送的原始 slug（§10.3）。
+fn ai_model_ids_from_catalog(catalog: &[Map<String, Value>]) -> Vec<String> {
+    catalog
         .iter()
-        .filter_map(|entry| match entry {
-            Value::String(text) => Some(text.trim().to_owned()),
-            Value::Object(map) => map
-                .get("id")
-                .or_else(|| map.get("name"))
-                .or_else(|| map.get("model"))
-                .or_else(|| map.get("slug"))
-                .and_then(Value::as_str)
-                .map(|value| value.trim().to_owned()),
-            _ => None,
-        })
-        .filter(|value| !value.is_empty())
-        .collect();
-    ids.sort();
-    ids.dedup();
-    ids
+        .filter_map(|entry| entry.get("id").and_then(Value::as_str).map(str::to_owned))
+        .collect()
+}
+
+/// 直接吃服务商原始报文的便捷入口，与浏览器壳 `modelIdsFromPayload()` 同名同派生；
+/// 生产路径统一走 `ai_model_catalog_from_payload` + `ai_model_ids_from_catalog`，
+/// 这里保留给两套壳的对等性与离线回归测试。
+#[cfg_attr(not(test), allow(dead_code))]
+fn ai_model_ids_from_payload(payload: &Value) -> Vec<String> {
+    ai_model_ids_from_catalog(&ai_model_catalog_from_payload(payload))
+}
+
+/// `{ "models": [{id,label}], "model_ids": […], "display_names": {…}, "endpoint": … }`
+/// 的手写返回：模型发现失败时给出「可手动填写 Model ID」的下一步（§9.5）。
+fn ai_model_discovery_value(
+    catalog: Vec<Map<String, Value>>,
+    endpoint: &str,
+    extra: Map<String, Value>,
+) -> Result<Value, String> {
+    if catalog.is_empty() {
+        return Err(structured_ai_error(
+            "provider_error",
+            "服务商没有返回可识别的模型名。",
+            Some("可以直接手动填写 Model ID；模型发现只是便捷功能，不是保存连接的前提。"),
+            json!({ "endpoint": endpoint }),
+        ));
+    }
+    let model_ids: Vec<String> = ai_model_ids_from_catalog(&catalog);
+    let mut display_names = Map::new();
+    for entry in &catalog {
+        if let (Some(id), Some(label)) = (
+            entry.get("id").and_then(Value::as_str),
+            entry.get("label").and_then(Value::as_str),
+        ) {
+            display_names.insert(id.to_owned(), json!(label));
+        }
+    }
+    let mut value = json!({
+        "models": Value::Array(catalog.into_iter().map(Value::Object).collect()),
+        "model_ids": model_ids,
+        "display_names": Value::Object(display_names),
+        "endpoint": endpoint,
+    });
+    if let Some(object) = value.as_object_mut() {
+        for (key, child) in extra {
+            object.insert(key, child);
+        }
+    }
+    Ok(value)
 }
 
 /// 发一次请求并把 `JoinHandle` 登记到 `requests`；取消时由 `ai_cancel_at` 中止。
@@ -11276,6 +13053,9 @@ async fn ai_complete_at(
         }
     }
     let spec = ai_request_spec(base, input)?;
+    // §10.4：订阅账户真正发出推理请求后的失败，归到「推理」这一步，并保留原码。
+    let subscription_inference =
+        !spec.provider_id.is_empty() && siwc_provider_at(base, &spec.provider_id).is_ok();
     let request_id = spec.request_id.clone();
     let (sender, mut receiver) = tauri::async_runtime::channel::<Result<Value, String>>(1);
     let handle = tauri::async_runtime::spawn(async move {
@@ -11286,7 +13066,18 @@ async fn ai_complete_at(
     let outcome = receiver.recv().await;
     requests.lock().unwrap().remove(&request_id);
     match outcome {
-        Some(outcome) => outcome,
+        Some(Ok(value)) => Ok(value),
+        Some(Err(error)) => {
+            if subscription_inference {
+                let provider_id = field(&payload, &["provider_id", "providerId"])
+                    .and_then(Value::as_str)
+                    .unwrap_or("")
+                    .to_owned();
+                Err(siwc_inference_stage_error(error, &provider_id))
+            } else {
+                Err(error)
+            }
+        }
         // 被 abort 的任务连同发送端一起消失：这就是「已取消」。
         None => Err(structured_ai_error(
             "cancelled",
@@ -11466,11 +13257,33 @@ fn ai_connection_save(app: AppHandle, request: tauri::ipc::Request<'_>) -> Resul
     let confirm_credential_origin = field(&payload, &["confirm_credential_origin"])
         .and_then(Value::as_bool)
         .unwrap_or(false);
-    if confirm_credential_origin {
-        ai_connection_save_with_confirmation_at(&base, &provider, true)
-    } else {
-        ai_connection_save_at(&base, &provider)
+    // §9.4：`original_id` = 正在编辑的连接的 ID；`require_new` = 「+ 添加模型服务商」。
+    let original_id = payload
+        .get("original_id")
+        .or_else(|| provider.get("original_id"))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned);
+    let require_new = payload
+        .get("require_new")
+        .or_else(|| provider.get("require_new"))
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    if original_id.is_none() && !require_new {
+        return ai_connection_save_with_confirmation_at(
+            &base,
+            &provider,
+            confirm_credential_origin,
+        );
     }
+    ai_connection_save_guarded_at(
+        &base,
+        &provider,
+        confirm_credential_origin,
+        original_id.as_deref(),
+        require_new,
+    )
 }
 
 #[tauri::command]
@@ -11602,6 +13415,321 @@ fn ai_execution_list(app: AppHandle, request: tauri::ipc::Request<'_>) -> Result
         .map(|value| value as usize)
         .unwrap_or(AI_EXECUTION_DEFAULT_LIMIT);
     ai_execution_list_at(&ai_store_dir(&app)?, limit)
+}
+
+/// Item 13 — rename the managed asset file on disk and synchronise every
+/// canonical reference in one atomic transaction, mirroring
+/// `src/domain/assets.ts` + `src/service/storage.ts::renameManagedAsset`.
+///
+/// Order (spec §14.4): preflight → filesystem rename → canonical rewrite → save.
+/// A save failure rolls the rename back; a failed rollback is surfaced as an
+/// error quoting the exact original/new paths and never claims success.
+
+/// Extension (including the leading dot) of a managed filename, or "".
+fn managed_asset_extension(filename: &str) -> String {
+    match filename.rfind('.') {
+        Some(index) if index > 0 => filename[index..].to_string(),
+        _ => String::new(),
+    }
+}
+
+/// Directory prefix of a managed storage path, ending with `/` (or "" at root).
+fn storage_path_directory(storage_path: &str) -> String {
+    let normalised = storage_path.replace('\\', "/");
+    match normalised.rfind('/') {
+        Some(index) => normalised[..=index].to_string(),
+        None => String::new(),
+    }
+}
+
+/// Validate a requested rename name and derive the new filename / managed path.
+/// Rejects the same inputs as the Deno layer (§14.3): empty, path separators,
+/// `.`/`..`, NUL, control characters. The extension is preserved by default.
+fn plan_asset_rename_name(
+    asset_id: &str,
+    requested: &str,
+    old_filename: &str,
+    old_storage_path: &str,
+) -> Result<(String, String, String, String), String> {
+    if requested.contains('\0') {
+        return Err("文件名不能包含空字节。".into());
+    }
+    let trimmed = requested.trim();
+    if trimmed.is_empty() {
+        return Err("文件名不能为空。".into());
+    }
+    if trimmed.contains('/') || trimmed.contains('\\') || trimmed.contains(':') {
+        return Err("文件名不能包含路径分隔符。".into());
+    }
+    if trimmed == "." || trimmed == ".." {
+        return Err("文件名不能是相对路径片段。".into());
+    }
+    if trimmed.chars().any(|c| {
+        (c as u32) < 0x20
+            || (0x7f..=0x9f).contains(&(c as u32))
+            || c == '\u{2028}'
+            || c == '\u{2029}'
+    }) {
+        return Err("文件名不能包含控制字符。".into());
+    }
+
+    let extension = managed_asset_extension(old_filename);
+    let mut basename = trimmed.to_string();
+    if !extension.is_empty() && trimmed.to_lowercase().ends_with(&extension.to_lowercase()) {
+        let stripped = trimmed[..trimmed.len() - extension.len()]
+            .trim()
+            .to_string();
+        if !stripped.is_empty() {
+            basename = stripped;
+        }
+    }
+    let new_filename = format!("{}{}", basename, extension);
+    let directory = storage_path_directory(old_storage_path);
+    let new_storage_path = format!("{}{}-{}", directory, asset_id, new_filename);
+    let display_title = if basename.is_empty() {
+        new_filename.clone()
+    } else {
+        basename.clone()
+    };
+    Ok((basename, new_filename, new_storage_path, display_title))
+}
+
+/// Replace every occurrence of `old` with `new` in each string leaf of a JSON
+/// tree. A single pass keeps an `old` that is a prefix of `new` from cascading.
+fn replace_path_in_value(node: &mut Value, old: &str, new: &str) {
+    match node {
+        Value::String(text) => {
+            if !old.is_empty() && text.contains(old) {
+                *text = text.split(old).collect::<Vec<&str>>().join(new);
+            }
+        }
+        Value::Array(items) => {
+            for item in items.iter_mut() {
+                replace_path_in_value(item, old, new);
+            }
+        }
+        Value::Object(map) => {
+            for (_key, value) in map.iter_mut() {
+                replace_path_in_value(value, old, new);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// Rewrite the canonical object for a planned asset rename. Same three passes as
+/// `applyAssetRename` in `src/domain/assets.ts`: path replacement across the
+/// whole tree, the asset row's identity fields, and bare old-filename block
+/// references that link this asset by id. `id` and `checksum` stay untouched.
+fn apply_asset_rename(
+    project: &mut Value,
+    asset_id: &str,
+    old_storage: &str,
+    new_storage: &str,
+    old_filename: &str,
+    new_filename: &str,
+    display_title: &str,
+) -> Result<(), String> {
+    // Pass 1 — the unique managed path in every string leaf.
+    replace_path_in_value(project, old_storage, new_storage);
+
+    // Pass 2 — the renamed asset row's non-path identity fields.
+    let assets = project
+        .get_mut("assets")
+        .and_then(Value::as_array_mut)
+        .ok_or("项目缺少素材列表")?;
+    let asset = assets
+        .iter_mut()
+        .find(|candidate| candidate.get("id").and_then(Value::as_str) == Some(asset_id))
+        .ok_or_else(|| format!("找不到素材: {asset_id}"))?;
+    let map = asset.as_object_mut().ok_or("素材数据格式无效")?;
+    map.insert("storage_path".to_string(), json!(new_storage));
+    map.insert("filename".to_string(), json!(new_filename));
+    map.insert("title".to_string(), json!(display_title));
+
+    // Pass 3 — bare old-filename text references, scoped to blocks linking this
+    // asset, so an identical basename on another asset is never rewritten.
+    if let Some(blocks) = project.get_mut("blocks").and_then(Value::as_array_mut) {
+        for block in blocks.iter_mut() {
+            let links = block
+                .get("settings")
+                .and_then(|settings| settings.get("asset_id"))
+                .and_then(Value::as_str)
+                == Some(asset_id);
+            if !links {
+                continue;
+            }
+            let bare_old = block
+                .get("content")
+                .and_then(Value::as_str)
+                .map(|content| content.trim() == old_filename && !content.contains(old_storage))
+                .unwrap_or(false);
+            if bare_old {
+                if let Some(Value::String(content)) = block.get_mut("content") {
+                    *content = new_filename.to_string();
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+#[tauri::command]
+fn asset_rename(input: Value) -> Result<Value, String> {
+    let object = require_object(&input, "asset_rename")?;
+    let project_dir = required_string(object, &["project_dir", "projectDir"], "项目目录")?;
+    let asset_id = required_string(object, &["asset_id", "assetId"], "素材 ID")?;
+    let requested = object
+        .get("new_name")
+        .or_else(|| object.get("newName"))
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .to_string();
+    let project_dir = explicit_project_dir(&project_dir, false)?;
+    let _lease_guard = require_active_project_lock(&project_dir)?;
+    let mut project = read_project_value(&project_dir)?;
+
+    let (old_storage, old_filename, archived) = {
+        let assets = project
+            .get("assets")
+            .and_then(Value::as_array)
+            .ok_or("项目缺少素材列表")?;
+        let asset = assets
+            .iter()
+            .find(|candidate| {
+                candidate.get("id").and_then(Value::as_str) == Some(asset_id.as_str())
+            })
+            .ok_or_else(|| format!("找不到素材: {asset_id}"))?;
+        (
+            asset
+                .get("storage_path")
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .to_string(),
+            asset
+                .get("filename")
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .to_string(),
+            asset
+                .get("archived")
+                .and_then(Value::as_bool)
+                .unwrap_or(false),
+        )
+    };
+    if archived {
+        return Err("已归档素材不能重命名。".into());
+    }
+    if old_storage.is_empty() {
+        return Err("素材缺少存储路径".into());
+    }
+
+    let (_basename, new_filename, new_storage, display_title) =
+        plan_asset_rename_name(&asset_id, &requested, &old_filename, &old_storage)?;
+    if new_storage == old_storage && new_filename == old_filename {
+        return Ok(json!({
+            "status": "noop",
+            "asset_id": asset_id,
+            "rewritten": 0,
+            "old_storage_path": old_storage,
+            "new_storage_path": new_storage,
+            "old_filename": old_filename,
+            "new_filename": new_filename,
+            "project": project,
+        }));
+    }
+
+    // Canonical collision: another live asset already owns the target path.
+    {
+        let assets = project
+            .get("assets")
+            .and_then(Value::as_array)
+            .ok_or("项目缺少素材列表")?;
+        if assets.iter().any(|candidate| {
+            candidate.get("id").and_then(Value::as_str) != Some(asset_id.as_str())
+                && !candidate
+                    .get("archived")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false)
+                && candidate.get("storage_path").and_then(Value::as_str)
+                    == Some(new_storage.as_str())
+        }) {
+            return Err("已有一个素材使用这个文件名，请换一个名字后重试。".into());
+        }
+    }
+
+    // Preflight the physical file. `project_file` already asserts the relative
+    // path stays inside the project root and is free of `..`/NUL.
+    let old_abs = project_file(&project_dir, &old_storage)?;
+    reject_symlink(&old_abs, "素材文件")?;
+    let old_meta = fs::symlink_metadata(&old_abs)
+        .map_err(|_| "找不到要重命名的素材文件，它可能已被移动或删除。".to_string())?;
+    if old_meta.file_type().is_symlink() || !old_meta.is_file() {
+        return Err("素材文件不是可安全重命名的普通文件。".into());
+    }
+    let new_abs = project_file(&project_dir, &new_storage)?;
+    if let Some(base) = new_abs.parent() {
+        fs::create_dir_all(base).map_err(|error| format!("无法准备素材目录：{error}"))?;
+    }
+    match fs::symlink_metadata(&new_abs) {
+        Ok(meta) if meta.file_type().is_symlink() => {
+            return Err("目标名称已存在一个符号链接，为避免越过目录边界已停止重命名。".into())
+        }
+        Ok(_) => return Err("已存在同名文件，请换一个名字后重试。".into()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => return Err(format!("无法检查目标名称：{error}")),
+    }
+
+    // Filesystem rename.
+    fs::rename(&old_abs, &new_abs).map_err(|error| format!("重命名文件失败：{error}"))?;
+
+    // Canonical rewrite + save, with rollback of the physical move on failure.
+    let write_result = (|| -> Result<(), String> {
+        apply_asset_rename(
+            &mut project,
+            &asset_id,
+            &old_storage,
+            &new_storage,
+            &old_filename,
+            &new_filename,
+            &display_title,
+        )?;
+        touch_project_updated_at(&mut project)?;
+        write_project_value_unlocked(&project_dir, &project)
+    })();
+    if let Err(save_error) = write_result {
+        if let Err(rollback_error) = fs::rename(&new_abs, &old_abs) {
+            return Err(format!(
+                "rename_rollback_failed: 重命名未能保存，且文件回滚也失败。文件当前位于新名称「{new_filename}」，原名称「{old_filename}」仍在磁盘上。原路径：{}；新路径：{}。保存错误：{save_error}；回滚错误：{rollback_error}",
+                old_abs.to_string_lossy(),
+                new_abs.to_string_lossy()
+            ));
+        }
+        return Err(save_error);
+    }
+
+    let renamed = project
+        .get("assets")
+        .and_then(Value::as_array)
+        .and_then(|assets| {
+            assets
+                .iter()
+                .find(|candidate| {
+                    candidate.get("id").and_then(Value::as_str) == Some(asset_id.as_str())
+                })
+                .cloned()
+        });
+    Ok(json!({
+        "status": "renamed",
+        "asset_id": asset_id,
+        "asset": renamed,
+        "rewritten": 1,
+        "old_storage_path": old_storage,
+        "new_storage_path": new_storage,
+        "old_filename": old_filename,
+        "new_filename": new_filename,
+        "project": project,
+    }))
 }
 
 #[cfg(test)]
@@ -12063,7 +14191,13 @@ mod tests {
         let directory = test_directory("rollback");
         fs::write(directory.join("project.json"), b"not-json")
             .expect("invalid project should be writable");
-        assert!(project_open(directory.to_string_lossy().into_owned()).is_err());
+        // §3.2: an unusable manifest is answered with the real diagnosis rather
+        // than a generic failure — and the lease still has to roll back.
+        let opened = project_open(directory.to_string_lossy().into_owned())
+            .expect("a diagnosable folder returns its inspection");
+        let payload = opened.expect("inspection payload");
+        assert_eq!(payload["status"], json!("malformed_json"));
+        assert_eq!(payload["problem"]["code"], json!("malformed_json"));
         let lock_path = project_lock_path(&directory).unwrap();
         assert!(!lock_path.exists());
         let empty = test_directory("unopened-save");
@@ -12229,6 +14363,237 @@ mod tests {
         project_save(directory.to_string_lossy().into_owned(), merged)
             .expect("resolved baseline should allow a subsequent save");
         project_close(directory.to_string_lossy().into_owned()).unwrap();
+        let _ = fs::remove_dir_all(directory);
+    }
+
+    /// §14.1 — renaming a library asset moves the managed file itself and rewrites
+    /// the paths that point at it, while id, checksum and AssetUsage rows stay put.
+    #[test]
+    fn asset_rename_moves_the_managed_file_and_rewrites_its_paths() {
+        let directory = test_directory("asset-rename-managed");
+        let project_dir = directory.to_string_lossy().into_owned();
+        project_create(
+            project_dir.clone(),
+            json!({
+                "project": { "id": "p-rename", "title": "改名" },
+                "assets": [{
+                    "id": "asset-1",
+                    "project_id": "p-rename",
+                    "type": "image",
+                    "filename": "封面.png",
+                    "storage_path": "assets/asset-1-封面.png",
+                    "mime_type": "image/png",
+                    "file_size": 3,
+                    "checksum": "hash-1",
+                    "title": "封面.png",
+                    "archived": false,
+                }],
+                "blocks": [{
+                    "id": "block-1",
+                    "content": "封面.png",
+                    "settings": { "asset_id": "asset-1" },
+                }],
+                "asset_usages": [{
+                    "id": "usage-1",
+                    "asset_id": "asset-1",
+                    "content_item_id": "item-1",
+                }],
+            }),
+        )
+        .expect("project");
+        fs::create_dir_all(directory.join("assets")).expect("assets dir");
+        fs::write(directory.join("assets/asset-1-封面.png"), [1_u8, 2, 3]).expect("managed file");
+
+        let renamed = asset_rename(json!({
+            "project_dir": project_dir,
+            "asset_id": "asset-1",
+            "new_name": "课程封面",
+        }))
+        .expect("rename should succeed");
+        assert_eq!(renamed["status"], json!("renamed"));
+        assert_eq!(renamed["asset"]["filename"], json!("课程封面.png"));
+        assert_eq!(
+            renamed["asset"]["storage_path"],
+            json!("assets/asset-1-课程封面.png")
+        );
+        assert_eq!(
+            renamed["asset"]["id"],
+            json!("asset-1"),
+            "asset id is stable"
+        );
+        assert_eq!(
+            renamed["asset"]["checksum"],
+            json!("hash-1"),
+            "content identity is stable"
+        );
+
+        let moved = directory.join("assets/asset-1-课程封面.png");
+        assert!(moved.is_file(), "the managed file carries the new name");
+        assert_eq!(fs::read(&moved).expect("bytes"), vec![1_u8, 2, 3]);
+        assert!(
+            !directory.join("assets/asset-1-封面.png").exists(),
+            "the old name is not left behind as a second copy"
+        );
+
+        let stored = read_project_value(&directory).expect("stored project");
+        assert_eq!(
+            stored["assets"][0]["storage_path"],
+            json!("assets/asset-1-课程封面.png")
+        );
+        assert_eq!(
+            stored["blocks"][0]["content"],
+            json!("课程封面.png"),
+            "the reference text follows the file"
+        );
+        assert_eq!(
+            stored["asset_usages"][0]["asset_id"],
+            json!("asset-1"),
+            "usages keep pointing at the same id"
+        );
+
+        // §14.5 — the same command with the previous name is the Undo step.
+        let back = asset_rename(json!({
+            "project_dir": project_dir,
+            "asset_id": "asset-1",
+            "new_name": "封面.png",
+        }))
+        .expect("renaming back");
+        assert_eq!(back["asset"]["filename"], json!("封面.png"));
+        assert!(directory.join("assets/asset-1-封面.png").is_file());
+        assert!(!moved.exists(), "undo leaves no second copy behind");
+
+        let _ = project_close(project_dir);
+        let _ = fs::remove_dir_all(directory);
+    }
+
+    /// §14.2 — a Markdown source kept as project material renames on disk too, and
+    /// §14.3 the extension is preserved from the basename-only request.
+    #[test]
+    fn asset_rename_moves_a_managed_markdown_source_file() {
+        let directory = test_directory("asset-rename-markdown");
+        let project_dir = directory.to_string_lossy().into_owned();
+        project_create(
+            project_dir.clone(),
+            json!({
+                "project": { "id": "p-md", "title": "讲义" },
+                "assets": [{
+                    "id": "asset-md",
+                    "project_id": "p-md",
+                    "type": "document",
+                    "filename": "讲义.md",
+                    "storage_path": "assets/asset-md-讲义.md",
+                    "mime_type": "text/markdown",
+                    "file_size": 8,
+                    "checksum": "hash-md",
+                    "title": "讲义.md",
+                    "archived": false,
+                }],
+            }),
+        )
+        .expect("project");
+        fs::create_dir_all(directory.join("assets")).expect("assets dir");
+        fs::write(directory.join("assets/asset-md-讲义.md"), "# 讲义\n").expect("md file");
+
+        let renamed = asset_rename(json!({
+            "project_dir": project_dir,
+            "asset_id": "asset-md",
+            "new_name": "第一章讲义.md",
+        }))
+        .expect("markdown rename");
+        assert_eq!(renamed["asset"]["filename"], json!("第一章讲义.md"));
+        assert_eq!(
+            renamed["asset"]["storage_path"],
+            json!("assets/asset-md-第一章讲义.md")
+        );
+        assert_eq!(
+            fs::read_to_string(directory.join("assets/asset-md-第一章讲义.md"))
+                .expect("moved bytes"),
+            "# 讲义\n"
+        );
+        assert!(!directory.join("assets/asset-md-讲义.md").exists());
+
+        let _ = project_close(project_dir);
+        let _ = fs::remove_dir_all(directory);
+    }
+
+    /// §14.3/§14.4 — a rejected name never touches the filesystem, and a name that
+    /// already owns a path is refused instead of overwriting the other file.
+    #[test]
+    fn asset_rename_refuses_unsafe_names_and_collisions() {
+        let directory = test_directory("asset-rename-refusals");
+        let project_dir = directory.to_string_lossy().into_owned();
+        project_create(
+            project_dir.clone(),
+            json!({
+                "project": { "id": "p-refuse", "title": "拒绝" },
+                "assets": [{
+                    "id": "asset-1",
+                    "project_id": "p-refuse",
+                    "type": "image",
+                    "filename": "封面.png",
+                    "storage_path": "assets/asset-1-封面.png",
+                    "mime_type": "image/png",
+                    "file_size": 3,
+                    "checksum": "hash-1",
+                    "title": "封面.png",
+                    "archived": false,
+                }],
+            }),
+        )
+        .expect("project");
+        fs::create_dir_all(directory.join("assets")).expect("assets dir");
+        let managed = directory.join("assets/asset-1-封面.png");
+        fs::write(&managed, [1_u8, 2, 3]).expect("managed file");
+
+        for (requested, needle) in [
+            ("", "不能为空"),
+            ("   ", "不能为空"),
+            ("../逃逸", "路径分隔符"),
+            ("assets/改名", "路径分隔符"),
+            ("..", "相对路径片段"),
+            (".", "相对路径片段"),
+            ("改名\u{0}", "空字节"),
+            ("控\u{1}制", "控制字符"),
+        ] {
+            let error = asset_rename(json!({
+                "project_dir": project_dir,
+                "asset_id": "asset-1",
+                "new_name": requested,
+            }))
+            .expect_err("{requested} must be refused");
+            assert!(error.contains(needle), "{requested}: got {error}");
+            assert!(managed.is_file(), "{requested} must not move the file");
+        }
+
+        // The name is taken on disk by something Workbench does not own.
+        let taken = directory.join("assets/asset-1-占用.png");
+        fs::write(&taken, [9_u8]).expect("occupying file");
+        let collision = asset_rename(json!({
+            "project_dir": project_dir,
+            "asset_id": "asset-1",
+            "new_name": "占用",
+        }))
+        .expect_err("an existing path must not be overwritten");
+        assert!(collision.contains("同名"), "got: {collision}");
+        assert!(managed.is_file());
+        assert_eq!(fs::read(&taken).expect("occupant"), vec![9_u8]);
+
+        // The same name is a no-op, not a rewrite of project.json.
+        let before = fs::read_to_string(directory.join("project.json")).expect("manifest");
+        let noop = asset_rename(json!({
+            "project_dir": project_dir,
+            "asset_id": "asset-1",
+            "new_name": "封面.png",
+        }))
+        .expect("renaming to the same name");
+        assert_eq!(noop["status"], json!("noop"));
+        assert_eq!(
+            fs::read_to_string(directory.join("project.json")).expect("manifest"),
+            before
+        );
+        assert!(managed.is_file());
+
+        let _ = project_close(project_dir);
         let _ = fs::remove_dir_all(directory);
     }
 
@@ -15081,7 +17446,17 @@ mod tests {
                 "temporary_credential": temporary_key,
             }),
         )).expect("temporary model probe should succeed");
-        assert_eq!(probe["models"], json!(["gpt-test"]));
+        // §9.5：发现结果统一是 `{ id, label }` 形状，另带派生的 `model_ids` 便捷列表。
+        assert_eq!(
+            probe["models"],
+            json!([{ "id": "gpt-test", "label": "gpt-test" }])
+        );
+        assert_eq!(probe["model_ids"], json!(["gpt-test"]));
+        assert_eq!(probe["display_names"], json!({ "gpt-test": "gpt-test" }));
+        assert_eq!(
+            probe["endpoint"],
+            json!(format!("http://127.0.0.1:{port}/v1/models"))
+        );
         let request = receiver
             .recv_timeout(Duration::from_secs(5))
             .expect("probe should reach loopback");
@@ -15666,7 +18041,7 @@ mod tests {
                 }
             ]
         });
-        let result = folder_adopt(plan, None, None).expect("adopt");
+        let result = folder_adopt(plan, None, None, None).expect("adopt");
         assert!(root.join("project.json").exists());
         assert!(root.join(".workspace").exists());
         assert_eq!(
@@ -15755,8 +18130,8 @@ mod tests {
             }]
         });
 
-        let result =
-            folder_adopt(plan, None, None).expect("missing refs should not reject the lesson");
+        let result = folder_adopt(plan, None, None, None)
+            .expect("missing refs should not reject the lesson");
         let data = &result["data"];
         assert_eq!(data["assets"].as_array().unwrap().len(), 1);
         assert_eq!(data["asset_usages"].as_array().unwrap().len(), 1);
@@ -15829,8 +18204,8 @@ mod tests {
             }]
         });
 
-        let error =
-            folder_adopt(plan, None, None).expect_err("path escape must fail the transaction");
+        let error = folder_adopt(plan, None, None, None)
+            .expect_err("path escape must fail the transaction");
         assert!(error.contains("超出所选目录"), "got: {error}");
         assert!(
             !root.join("project.json").exists(),
@@ -15875,7 +18250,7 @@ mod tests {
                 { "relative_path": "old.png", "kind": "file", "mapping": "asset", "selected": true }
             ]
         });
-        let created = folder_adopt(initial, None, None).expect("initial project");
+        let created = folder_adopt(initial, None, None, None).expect("initial project");
         let project_id = created["data"]["project"]["id"]
             .as_str()
             .unwrap()
@@ -16558,10 +18933,376 @@ mod tests {
             }),
             None,
             None,
+            None,
         )
         .expect_err("unconfirmed must fail");
         assert!(err.contains("已确认") || err.contains("确认"), "got: {err}");
         assert!(!root.join("project.json").exists());
+        let _ = fs::remove_dir_all(root);
+    }
+
+    /// A confirmed single-image plan: asset mapping needs no shared Markdown
+    /// payload, so these Case C tests stay about the manifest, not the parser.
+    fn adoption_plan(root: &Path, relative: &str) -> Value {
+        json!({
+            "root": root.to_string_lossy(),
+            "confirmed": true,
+            "confirmed_at": "2026-01-01T00:00:00.000Z",
+            "items": [{
+                "relative_path": relative,
+                "kind": "file",
+                "mime": "image/png",
+                "size": 3,
+                "suggested": "asset",
+                "mapping": "asset",
+                "selected": true,
+                "is_suggestion": true
+            }]
+        })
+    }
+
+    /// A confirmed Case C re-import keeps the unusable manifest as a backup file
+    /// instead of letting the new project overwrite it, and an unconfirmed call
+    /// changes nothing at all.
+    #[test]
+    fn folder_adopt_case_c_keeps_unusable_manifest_as_backup() {
+        let root = test_directory("folder-adopt-quarantine");
+        fs::write(root.join("shot.png"), [1_u8, 2, 3]).expect("png");
+        fs::write(root.join("project.json"), b"{broken").expect("broken manifest");
+        let plan = || adoption_plan(&root, "shot.png");
+        let refused = folder_adopt(plan(), None, None, Some(false))
+            .expect_err("an existing manifest needs explicit confirmation");
+        assert!(refused.contains("project.json"), "got: {refused}");
+        assert_eq!(fs::read(root.join("project.json")).unwrap(), b"{broken");
+
+        let result = folder_adopt(plan(), None, None, Some(true)).expect("confirmed re-import");
+        let backups: Vec<PathBuf> = fs::read_dir(&root)
+            .expect("read dir")
+            .filter_map(|entry| entry.ok())
+            .map(|entry| entry.path())
+            .filter(|path| {
+                path.file_name()
+                    .and_then(|name| name.to_str())
+                    .map(|name| {
+                        name.starts_with("project.json.") && name.ends_with(".invalid.backup")
+                    })
+                    .unwrap_or(false)
+            })
+            .collect();
+        assert_eq!(backups.len(), 1, "exactly one quarantined manifest");
+        assert_eq!(
+            fs::read(&backups[0]).unwrap(),
+            b"{broken",
+            "bytes preserved"
+        );
+        let written = fs::read_to_string(root.join("project.json")).expect("new manifest");
+        assert!(
+            written.contains("content_items"),
+            "a usable project was written"
+        );
+        let warnings = result["warnings"].as_array().cloned().unwrap_or_default();
+        assert!(
+            warnings
+                .iter()
+                .any(|warning| warning.as_str().unwrap_or("").contains("project.json")),
+            "the backup is reported to the user"
+        );
+        let _ = project_close(root.to_string_lossy().into_owned());
+        let _ = fs::remove_dir_all(root);
+    }
+
+    /// The confirmation means "this file is broken", never "overwrite whatever is
+    /// here": a readable project keeps refusing adoption, backup file included.
+    #[test]
+    fn folder_adopt_case_c_never_replaces_a_usable_project() {
+        let root = test_directory("folder-adopt-quarantine-valid");
+        fs::write(root.join("shot.png"), [1_u8, 2, 3]).expect("png");
+        let plan = adoption_plan(&root, "shot.png");
+        folder_adopt(plan.clone(), None, None, None).expect("initial project");
+        let before = fs::read_to_string(root.join("project.json")).expect("manifest");
+        let second = folder_adopt(plan, None, None, Some(true))
+            .expect_err("a readable project must be opened, not replaced");
+        assert!(second.contains("可用"), "got: {second}");
+        assert_eq!(
+            fs::read_to_string(root.join("project.json")).expect("manifest"),
+            before
+        );
+        assert!(
+            fs::read_dir(&root)
+                .expect("read dir")
+                .filter_map(|entry| entry.ok())
+                .all(|entry| !entry
+                    .file_name()
+                    .to_string_lossy()
+                    .contains(".invalid.backup")),
+            "a refused adoption moves nothing"
+        );
+        let _ = project_close(root.to_string_lossy().into_owned());
+        let _ = fs::remove_dir_all(root);
+    }
+
+    /// §4.2/§4.3: one selected directory row contributes every image and video
+    /// beneath it as a Media Library asset — documents and audio stay out, no
+    /// Lesson content is inserted, and no AssetUsage is created merely because
+    /// the folder was selected.
+    #[test]
+    fn folder_adopt_selected_directory_imports_descendant_media_only() {
+        let root = test_directory("folder-adopt-descendant-media");
+        fs::create_dir_all(root.join("course/deep")).expect("deep");
+        fs::create_dir_all(root.join("course/a")).expect("a");
+        fs::create_dir_all(root.join("course/b")).expect("b");
+        let shot = vec![7_u8, 8, 9];
+        fs::write(root.join("course/deep/shot.png"), &shot).expect("png");
+        fs::write(root.join("course/deep/clip.mp4"), vec![1_u8, 2, 3, 4]).expect("mp4");
+        fs::write(root.join("course/deep/twin.png"), &shot).expect("duplicate png");
+        fs::write(root.join("course/deep/notes.md"), "# 不要导入\n").expect("md");
+        fs::write(root.join("course/deep/song.mp3"), vec![9_u8]).expect("mp3");
+        // Same file name, different bytes: both must survive as separate assets.
+        fs::write(root.join("course/a/icon.png"), vec![100_u8]).expect("icon a");
+        fs::write(root.join("course/b/icon.png"), vec![200_u8]).expect("icon b");
+
+        let result = folder_adopt(
+            json!({
+                "root": root.to_string_lossy(),
+                "confirmed": true,
+                "confirmed_at": "2026-01-01T00:00:00.000Z",
+                "items": [{
+                    "relative_path": "course",
+                    "kind": "directory",
+                    "suggested": "stage",
+                    "mapping": "stage",
+                    "selected": true,
+                    "is_suggestion": true
+                }]
+            }),
+            None,
+            None,
+            None,
+        )
+        .expect("directory adoption");
+
+        let assets = result["data"]["assets"].as_array().expect("assets");
+        let names: Vec<&str> = assets
+            .iter()
+            .map(|asset| asset["filename"].as_str().unwrap_or(""))
+            .collect();
+        assert_eq!(assets.len(), 4, "got: {names:?}");
+        assert!(names.contains(&"shot.png") && names.contains(&"clip.mp4"));
+        assert!(
+            !names
+                .iter()
+                .any(|name| name.ends_with(".md") || name.ends_with(".mp3")),
+            "got: {names:?}"
+        );
+        assert_eq!(names.iter().filter(|name| **name == "icon.png").count(), 2);
+        // The checksum duplicate reuses the existing asset instead of a second copy.
+        assert_eq!(
+            result["reused_asset_ids"].as_array().expect("reused").len(),
+            1
+        );
+        // §4.3: a folder selection never writes into the course itself.
+        assert!(result["content_item_ids"]
+            .as_array()
+            .expect("lessons")
+            .is_empty());
+        assert!(result["data"]["content_items"]
+            .as_array()
+            .expect("items")
+            .is_empty());
+        assert!(result["data"]["documents"]
+            .as_array()
+            .expect("docs")
+            .is_empty());
+        assert!(result["data"]["blocks"]
+            .as_array()
+            .expect("blocks")
+            .is_empty());
+        assert!(result["data"]["asset_usages"]
+            .as_array()
+            .expect("usages")
+            .is_empty());
+        assert_eq!(result["stage_ids"].as_array().expect("stages").len(), 1);
+
+        let warnings: Vec<&str> = result["warnings"]
+            .as_array()
+            .expect("warnings")
+            .iter()
+            .filter_map(Value::as_str)
+            .collect();
+        assert!(
+            warnings
+                .iter()
+                .any(|warning| warning.contains("递归收录 5")),
+            "got: {warnings:?}"
+        );
+
+        for path in result["copied_files"].as_array().expect("copied") {
+            let relative = path.as_str().expect("copied path");
+            let stored = root.join(relative);
+            assert!(stored.is_file(), "missing managed copy {relative}");
+        }
+        assert_eq!(
+            fs::read(root.join("course/deep/shot.png")).expect("source"),
+            shot,
+            "sources are never mutated"
+        );
+        assert!(root.join("course/deep/notes.md").is_file());
+        let _ = project_close(root.to_string_lossy().into_owned());
+        let _ = fs::remove_dir_all(root);
+    }
+
+    /// The sweep is scoped to what the user actually chose: an unselected or
+    /// ignored directory row contributes nothing.
+    #[test]
+    fn folder_adopt_unselected_directory_imports_no_descendants() {
+        let root = test_directory("folder-adopt-directory-unselected");
+        fs::create_dir_all(root.join("course")).expect("course");
+        fs::write(root.join("course/shot.png"), vec![7_u8]).expect("png");
+        let result = folder_adopt(
+            json!({
+                "root": root.to_string_lossy(),
+                "confirmed": true,
+                "confirmed_at": "2026-01-01T00:00:00.000Z",
+                "items": [{
+                    "relative_path": "course",
+                    "kind": "directory",
+                    "suggested": "stage",
+                    "mapping": "stage",
+                    "selected": false,
+                    "is_suggestion": true
+                }]
+            }),
+            None,
+            None,
+            None,
+        )
+        .expect("adoption with nothing selected");
+        assert!(result["data"]["assets"]
+            .as_array()
+            .expect("assets")
+            .is_empty());
+        assert!(result["copied_files"]
+            .as_array()
+            .expect("copied")
+            .is_empty());
+        let _ = project_close(root.to_string_lossy().into_owned());
+        let _ = fs::remove_dir_all(root);
+    }
+
+    /// §4.4: a symlinked descendant is never read through, so a selected folder
+    /// cannot pull in media that lives outside it.
+    #[test]
+    fn folder_adopt_directory_media_skips_symlink_escape() {
+        let root = test_directory("folder-adopt-directory-media-symlink");
+        let outside = test_directory("folder-adopt-directory-media-outside");
+        fs::create_dir_all(outside.join("pics")).expect("pics");
+        fs::write(outside.join("leak.png"), vec![42_u8]).expect("leak");
+        fs::create_dir_all(root.join("course")).expect("course");
+        fs::write(root.join("course/keep.png"), vec![7_u8]).expect("png");
+        std::os::unix::fs::symlink(outside.join("leak.png"), root.join("course/escape.png"))
+            .expect("symlink");
+        let result = folder_adopt(
+            json!({
+                "root": root.to_string_lossy(),
+                "confirmed": true,
+                "confirmed_at": "2026-01-01T00:00:00.000Z",
+                "items": [{
+                    "relative_path": "course",
+                    "kind": "directory",
+                    "suggested": "stage",
+                    "mapping": "stage",
+                    "selected": true,
+                    "is_suggestion": true
+                }]
+            }),
+            None,
+            None,
+            None,
+        )
+        .expect("adoption next to a symlink");
+        let names: Vec<&str> = result["data"]["assets"]
+            .as_array()
+            .expect("assets")
+            .iter()
+            .map(|asset| asset["filename"].as_str().unwrap_or(""))
+            .collect();
+        assert_eq!(names, vec!["keep.png"]);
+        let warnings: Vec<&str> = result["warnings"]
+            .as_array()
+            .expect("warnings")
+            .iter()
+            .filter_map(Value::as_str)
+            .collect();
+        assert!(
+            warnings.iter().any(|warning| warning.contains("符号链接")),
+            "got: {warnings:?}"
+        );
+        let _ = project_close(root.to_string_lossy().into_owned());
+        let _ = fs::remove_dir_all(root);
+        let _ = fs::remove_dir_all(outside);
+    }
+
+    /// A descendant the confirmed plan already lists keeps its own row: the sweep
+    /// never adds a second decision for the same path.
+    #[test]
+    fn folder_adopt_directory_media_leaves_listed_paths_alone() {
+        let root = test_directory("folder-adopt-directory-media-claimed");
+        fs::create_dir_all(root.join("course/deep")).expect("deep");
+        fs::write(root.join("course/deep/shot.png"), vec![7_u8, 8, 9]).expect("png");
+        fs::write(root.join("course/deep/clip.mp4"), vec![1_u8, 2, 3, 4]).expect("mp4");
+        fs::write(root.join("course/deep/notes.md"), "# 不要导入\n").expect("md");
+        let result = folder_adopt(
+            json!({
+                "root": root.to_string_lossy(),
+                "confirmed": true,
+                "confirmed_at": "2026-01-01T00:00:00.000Z",
+                "items": [
+                    {
+                        "relative_path": "course",
+                        "kind": "directory",
+                        "suggested": "stage",
+                        "mapping": "stage",
+                        "selected": true,
+                        "is_suggestion": true
+                    },
+                    {
+                        "relative_path": "course/deep/clip.mp4",
+                        "kind": "file",
+                        "mime": "video/mp4",
+                        "size": 4,
+                        "suggested": "asset",
+                        "mapping": "asset",
+                        "selected": true,
+                        "is_suggestion": true
+                    }
+                ]
+            }),
+            None,
+            None,
+            None,
+        )
+        .expect("mixed selection");
+        let mut names: Vec<&str> = result["data"]["assets"]
+            .as_array()
+            .expect("assets")
+            .iter()
+            .map(|asset| asset["filename"].as_str().unwrap_or(""))
+            .collect();
+        names.sort_unstable();
+        assert_eq!(names, vec!["clip.mp4", "shot.png"]);
+        let warnings: Vec<&str> = result["warnings"]
+            .as_array()
+            .expect("warnings")
+            .iter()
+            .filter_map(Value::as_str)
+            .collect();
+        assert!(
+            warnings
+                .iter()
+                .any(|warning| warning.contains("递归收录 1")),
+            "got: {warnings:?}"
+        );
+        let _ = project_close(root.to_string_lossy().into_owned());
         let _ = fs::remove_dir_all(root);
     }
 
@@ -16604,7 +19345,7 @@ mod tests {
                 }
             ]
         });
-        let first = folder_adopt(plan, None, None).expect("first adopt");
+        let first = folder_adopt(plan, None, None, None).expect("first adopt");
         let first_asset = first["data"]["assets"].as_array().unwrap()[0].clone();
         let first_id = first_asset["id"].as_str().unwrap().to_string();
         let storage = first_asset["storage_path"].as_str().unwrap().to_string();
@@ -16645,7 +19386,7 @@ mod tests {
                 }
             ]
         });
-        let second = folder_adopt(plan2, None, None).expect("second adopt");
+        let second = folder_adopt(plan2, None, None, None).expect("second adopt");
         let reused = second["reused_asset_ids"]
             .as_array()
             .cloned()
@@ -16716,7 +19457,7 @@ mod tests {
                 }
             ]
         });
-        let result = folder_adopt(plan, None, None).expect("adopt");
+        let result = folder_adopt(plan, None, None, None).expect("adopt");
         let assets = result["data"]["assets"]
             .as_array()
             .cloned()
@@ -16793,7 +19534,7 @@ mod tests {
                 }
             ]
         });
-        let result = folder_adopt(plan, None, None).expect("adopt");
+        let result = folder_adopt(plan, None, None, None).expect("adopt");
         assert_eq!(
             result["content_item_ids"]
                 .as_array()
@@ -16838,6 +19579,7 @@ pub fn run() {
         .manage(BridgeState::new())
         .invoke_handler(tauri::generate_handler![
             project_open,
+            project_inspect,
             project_create,
             project_save,
             project_external_status,
@@ -16862,6 +19604,7 @@ pub fn run() {
             import_preview,
             import_confirm,
             folder_scan,
+            folder_scan_media,
             folder_read_preview,
             folder_preview_source,
             folder_read_source,
@@ -16871,6 +19614,7 @@ pub fn run() {
             course_seed_create,
             blueprint_build,
             asset_import,
+            asset_rename,
             asset_read,
             asset_preview_source,
             select_file,

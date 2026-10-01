@@ -246,7 +246,13 @@ Deno.test("legacy continuous Grid editor preview still shows each section", () =
   const editor = createViews(store).shellView();
   assert(editor.includes(`data-placement="${data.placements[0]?.id}"`), "legacy placements must remain editable");
   assert(editor.includes(`data-placement="${data.placements[1]?.id}"`), "all legacy placements must remain visible to the editor");
-  assert(editor.includes("data-action=\"grid-new-section\""), "legacy section controls must remain available");
+  // Item 7: a continuous grid no longer offers the legacy 输出分区 editor, which
+  // competed with pagination.  The rows above still prove the section data is
+  // maintained and still drives the export projection; the editor only has to
+  // leave a reachable conversion path.
+  assert(!editor.includes("data-action=\"grid-new-section\""), "the output-section editor stays hidden until pagination is enabled");
+  assert(!editor.includes("输出分区</span>"), "the section strip label is not rendered for a continuous grid");
+  assert(editor.includes("data-action=\"pagination-conversion\""), "启用分页 must stay reachable so legacy sections can still convert");
 });
 
 Deno.test("DesktopService exports the selected paged HTML projection end to end", async () => {

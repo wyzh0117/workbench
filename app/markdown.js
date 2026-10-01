@@ -423,6 +423,14 @@ function escapeMarkdownText(text) {
   return String(text ?? "").replace(/[\\`*_{}\[\]()#+\-.!>~|]/g, "\\$&");
 }
 
+/**
+ * Exact inverse of `escapeMarkdownText`: every backslash it writes introduces one
+ * character from that same class, so dropping only those backslashes loses nothing.
+ */
+function unescapeMarkdownText(text) {
+  return String(text ?? "").replace(/\\([\\`*_{}\[\]()#+\-.!>~|])/g, "$1");
+}
+
 function markdownCodeSpan(text) {
   const value = String(text ?? "").replace(/\n/g, " ");
   let ticks = "`";
@@ -477,7 +485,9 @@ function serializeImage(node, alt) {
 
 function serializeInlineNode(node) {
   if (!node) return "";
-  if (node.nodeType === 3) return escapeMarkdownText(node.nodeValue ?? node.textContent ?? "");
+  if (node.nodeType === 3) {
+    return escapeMarkdownText((node.nodeValue ?? node.textContent ?? "").split(CARET_GUARD).join(""));
+  }
   if (node.nodeType !== 1) return "";
   const tag = nodeTag(node);
   if (tag === "BR") return "  \n";
@@ -563,17 +573,49 @@ function serializeBlockNode(node, depth = 0) {
   return inlineChildren(node).trim();
 }
 
+/** Elements that start their own Markdown chunk when they appear as siblings. */
+const BLOCK_LEVEL_TAGS = new Set([
+  "P",
+  "DIV",
+  "H1",
+  "H2",
+  "H3",
+  "H4",
+  "H5",
+  "H6",
+  "LI",
+  "UL",
+  "OL",
+  "BLOCKQUOTE",
+  "PRE",
+  "TABLE",
+  "HR",
+]);
+
 function serializeBlockChildren(node, depth = 0) {
   const chunks = [];
+  // The editor root is a bare DIV: text typed into an empty block has no <p>
+  // wrapper, so its inline children are one paragraph, not one paragraph each.
+  // Only real block elements start a new chunk.
+  let inlineRun = "";
+  const flush = () => {
+    if (inlineRun.trim()) chunks.push(inlineRun.trim());
+    inlineRun = "";
+  };
   for (const child of childNodes(node)) {
     if (child.nodeType === 3) {
-      const text = String(child.nodeValue ?? "");
-      if (text.trim()) chunks.push(escapeMarkdownText(text.trim()));
+      inlineRun += serializeInlineNode(child);
       continue;
     }
     if (child.nodeType !== 1) continue;
-    chunks.push(serializeBlockNode(child, depth));
+    if (BLOCK_LEVEL_TAGS.has(nodeTag(child))) {
+      flush();
+      chunks.push(serializeBlockNode(child, depth));
+      continue;
+    }
+    inlineRun += serializeInlineNode(child);
   }
+  flush();
   return chunks.filter(Boolean).join("\n\n");
 }
 
@@ -581,4 +623,242 @@ function serializeBlockChildren(node, depth = 0) {
 export function markdownFromEditable(root) {
   if (!root) return "";
   return serializeBlockChildren(root).trim();
+}
+
+/** Inline closers the editor compiles as soon as the syntax is complete. */
+const INLINE_COMPILERS = [
+  { closer: "**", opener: "**", tag: "STRONG" },
+  { closer: "~~", opener: "~~", tag: "DEL" },
+  { closer: "*", opener: "*", tag: "EM" },
+  { closer: "`", opener: "`", tag: "CODE" },
+];
+
+/**
+ * Caret guard.  A collapsed caret at the boundary between an inline wrapper and
+ * the text after it is an ambiguous position, and Blink resolves it *inside* the
+ * wrapper, so the next character the user types silently joins the bold run.  A
+ * zero-width character in front of the tail makes the position unambiguous; it
+ * never reaches canonical storage because the serializer drops it and the caret
+ * helpers count text without it.
+ */
+const CARET_GUARD = String.fromCharCode(0x200b);
+
+/**
+ * Block types whose whole body is Markdown text, so a structural conversion is
+ * a type change rather than a content rewrite.  Media, placeholders and tables
+ * hold their content elsewhere and are excluded.
+ */
+const CONVERTIBLE_BLOCK_TYPES = new Set([
+  "paragraph",
+  "heading",
+  "quote",
+  "callout",
+  "exercise",
+]);
+
+/**
+ * Text characters before the caret inside `root`, or null when the caret is
+ * elsewhere (a lost caret must never be guessed back).  Caret guards are
+ * layout, not content, so they are not counted.
+ */
+export function caretTextOffset(root) {
+  const selection = globalThis.getSelection?.();
+  if (!selection || selection.rangeCount === 0) return null;
+  const range = selection.getRangeAt(0);
+  if (!range.collapsed || !root.contains(range.startContainer)) return null;
+  const probe = range.cloneRange();
+  probe.selectNodeContents(root);
+  probe.setEnd(range.startContainer, range.startOffset);
+  return probe.toString().split(CARET_GUARD).join("").length;
+}
+
+/**
+ * Offset inside a text node counted in guard-free characters.
+ */
+function guardedNodeOffset(node, offset) {
+  const value = node.nodeValue ?? "";
+  if (!value.includes(CARET_GUARD)) return Math.max(0, Math.min(offset, value.length));
+  const target = Math.max(0, offset);
+  let seen = 0;
+  for (let cursor = 0; cursor < value.length; cursor += 1) {
+    if (value[cursor] === CARET_GUARD) continue;
+    if (seen === target) return cursor;
+    seen += 1;
+  }
+  return value.length;
+}
+
+/** Put the caret back at `offset` plain-text characters into `root`. */
+export function focusTextOffset(root, offset) {
+  const selection = globalThis.getSelection?.();
+  if (!root || !selection) return false;
+  const range = document.createRange();
+  if (typeof offset !== "number" || !Number.isFinite(offset)) {
+    range.selectNodeContents(root);
+    range.collapse(false);
+  } else {
+    let remaining = Math.max(0, Math.trunc(offset));
+    const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+    let placed = false;
+    for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+      const text = (node.nodeValue ?? "").split(CARET_GUARD).join("");
+      if (remaining <= text.length) {
+        range.setStart(node, guardedNodeOffset(node, remaining));
+        range.collapse(true);
+        placed = true;
+        break;
+      }
+      remaining -= text.length;
+    }
+    if (!placed) {
+      range.selectNodeContents(root);
+      range.collapse(false);
+    }
+  }
+  root.focus?.({ preventScroll: true });
+  selection.removeAllRanges();
+  selection.addRange(range);
+  return true;
+}
+
+/**
+ * Compile one completed Markdown shortcut in place: typing the closing `**` of
+ * `**你好**` replaces that run with real bold instead of leaving the markers on
+ * screen.  Only the finished run is rewritten, so the caret never jumps and an
+ * in-progress IME composition is never touched.
+ *
+ * @param {HTMLElement} element
+ * @returns {boolean} whether the DOM changed
+ */
+export function compileInlineAtCaret(element) {
+  const selection = globalThis.getSelection?.();
+  if (!element || !selection || selection.rangeCount === 0) return false;
+  const range = selection.getRangeAt(0);
+  if (!range.collapsed || !element.contains(range.startContainer)) return false;
+  const node = range.startContainer;
+  if (node.nodeType !== 3) return false;
+  const text = node.nodeValue ?? "";
+  const caret = range.startOffset;
+  // The longest marker wins a run of identical characters: while `**粗**` is
+  // still being typed the trailing `*` of the opening `**` is not an emphasis
+  // opener, and a closer followed by another `*` is a longer run than this
+  // rule.  Without this the live compile turned `**x**` into `*<em>x</em>`.
+  for (const rule of INLINE_COMPILERS) {
+    if (!text.startsWith(rule.closer, caret - rule.closer.length)) continue;
+    const bodyEnd = caret - rule.closer.length;
+    if (text[caret] === rule.closer[0]) continue;
+    const openerAt = text.lastIndexOf(rule.opener, bodyEnd - 1);
+    if (openerAt < 0) continue;
+    if (text[openerAt - 1] === rule.opener[0]) continue;
+    // `a **b** c` must not swallow the space that separates two runs, and an
+    // empty `****` is a literal the user is still typing.
+    const body = text.slice(openerAt + rule.opener.length, bodyEnd);
+    if (!body || body.includes(rule.opener)) continue;
+    const wrapper = document.createElement(rule.tag);
+    wrapper.textContent = body;
+    const before = document.createTextNode(text.slice(0, openerAt));
+    const after = document.createTextNode(CARET_GUARD + text.slice(caret));
+    const parent = node.parentNode;
+    if (!parent) return false;
+    parent.insertBefore(before, node);
+    parent.insertBefore(wrapper, node);
+    parent.insertBefore(after, node);
+    parent.removeChild(node);
+    const next = globalThis.getSelection?.();
+    const restored = document.createRange();
+    // One past the guard: the caret has to sit in real text, not on the
+    // wrapper boundary the engine would resolve back into the bold run.
+    restored.setStart(after, 1);
+    restored.collapse(true);
+    next?.removeAllRanges();
+    next?.addRange(restored);
+    return true;
+  }
+  return false;
+}
+
+/**
+ * Decide whether an entire block body is one unambiguous structural unit, and
+ * what it should become.  Deliberately conservative: mixed content, unfinished
+ * syntax and anything the Domain cannot represent losslessly returns null,
+ * because a wrong conversion costs the user content while a missed conversion
+ * only costs a keystroke.
+ *
+ * @param {string} source raw Canonical block content
+ * @param {{type?:string,level?:number|null}} [current]
+ * @returns {{type:string, level:number|null, content:string, offsetLoss:number}|null}
+ */
+export function structuralConversion(source, current = {}) {
+  const text = String(source ?? "");
+  if (!text.trim()) return null;
+  if (!CONVERTIBLE_BLOCK_TYPES.has(current.type ?? "paragraph")) return null;
+  // Canonical content escapes the literal `#`, `>` and `-` the user just typed, so
+  // block syntax is invisible to the lexer.  The stored form is lexed first because
+  // it is the only view in which a pasted fenced body stays verbatim; only when it
+  // yields nothing does the converter re-lex the characters as they were typed.
+  return convertOnce(text, current) ?? convertOnce(unescapeMarkdownText(text), current);
+}
+
+function convertOnce(text, current) {
+  const meaningful = marked.lexer(text, MARKED_OPTIONS).filter((token) => token.type !== "space");
+  if (meaningful.length !== 1) return null;
+  const [token] = meaningful;
+  if (token.type === "hr") {
+    return { type: "divider", level: null, content: "", offsetLoss: text.length };
+  }
+  if (token.type === "code") {
+    return {
+      type: "code",
+      level: null,
+      content: String(token.text ?? "").replace(/\n$/, ""),
+      offsetLoss: leadingFenceWidth(text),
+    };
+  }
+  if (token.type === "heading") {
+    const level = Math.max(1, Math.min(6, Number(token.depth) || 1));
+    const body = String(token.text ?? "");
+    // A lone `#` is a heading the user is still typing, not an empty heading.
+    if (!body.trim()) return null;
+    if (current.type === "heading" && (current.level ?? 2) === level) return null;
+    const match = /^(\s*#{1,6}\s+)/.exec(text);
+    return {
+      type: "heading",
+      level,
+      content: body,
+      offsetLoss: match ? match[1].length : 0,
+    };
+  }
+  if (token.type === "blockquote" && current.type !== "quote") {
+    const body = String(token.text ?? "").trim();
+    if (!body) return null;
+    const match = /^(\s*(?:>\s?)+)/.exec(text);
+    return {
+      type: "quote",
+      level: null,
+      content: body,
+      offsetLoss: match ? match[1].length : 0,
+    };
+  }
+  if (token.type === "paragraph") {
+    const inline = Array.isArray(token.tokens) ? token.tokens : [];
+    // A lone `` `code` `` is a code block; `code` mixed with prose is not.
+    if (inline.length === 1 && inline[0].type === "codespan") {
+      const body = String(inline[0].text ?? "");
+      if (!body.trim()) return null;
+      return {
+        type: "code",
+        level: null,
+        content: body,
+        offsetLoss: 1,
+      };
+    }
+    if (inline.length === 1 && inline[0].type === "br") return null;
+    return null;
+  }
+  return null;
+}
+
+function leadingFenceWidth(text) {
+  const match = /^\s*(?:```|~~~)[^\n]*\n/.exec(text);
+  return match ? match[0].length : 0;
 }

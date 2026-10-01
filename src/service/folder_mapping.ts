@@ -5,7 +5,12 @@
  * Preview builds an editable plan; Confirm collects it. Neither writes Canonical
  * / project.json — call confirmFolderAdoption (folder.adopt) after confirm.
  */
-import type { ScanKind, ScanResult, SuggestedRole } from "./folder_scan.ts";
+import type {
+  MediaDescendantKind,
+  ScanKind,
+  ScanResult,
+  SuggestedRole,
+} from "./folder_scan.ts";
 
 /** User-editable mapping target for an import entry. */
 export type MappingRole =
@@ -63,7 +68,12 @@ export interface MarkdownSourceMatch {
 
 export interface ImportMappingItem {
   relative_path: string;
-  kind: ScanKind;
+  /**
+   * `directory` rows come from the flat scan; `file` rows are direct children;
+   * `image`/`video` rows come from `scanMediaDescendants` for a directory the
+   * user selected explicitly.
+   */
+  kind: ScanKind | MediaDescendantKind;
   mime: string | null;
   size: number | null;
   /** Original ScanResult suggestion (advice only). */

@@ -88,7 +88,7 @@ DISTRIBUTION STATE = PARTIAL
 BLOCKER            = 缺正式 macOS signing / notarization credentials
 ```
 
-- **已有公开版**：v0.2.2 正式 Release、Universal（Apple Silicon + Intel）DMG、固定 latest 直链与 SHA-256 校验；v0.2.3 Universal DMG 已本地构建，Release 与 sidecar 尚待发布。
+- **已有公开版**：最新正式 Release 为 v0.2.3，Universal（Apple Silicon + Intel）DMG、固定 latest 直链与 SHA-256 sidecar 均已发布并校验；已发布 tag 与资产保持冻结。
 - **当前可见性**：仓库为 **public**，Release 页面与 latest 直链对匿名访问者可用。
 - **未完成**：Developer ID Application 签名与 Apple 公证（notarization / stapling）。
   本机 `security find-identity -v -p codesigning` 返回 0 valid identities，没有可用的
@@ -113,20 +113,24 @@ BLOCKER            = 缺正式 macOS signing / notarization credentials
 - V1-T04 — Workspace Explorer & Existing-Folder Adoption：**VERIFIED**
 - V1-T05 — Paged Canvas & Pagination：**VERIFIED**
 - V1-T06 — Layout-aware Export & PPTX：**VERIFIED**
-- 当前交接：**V1 补充反馈（2026-09-30）/ v0.2.3 已发布**
-- 当前状态：**V1 ACTIVE；v0.2.3 已发布**（T01–T06 的 VERIFIED 为历史任务结论）
-- 产品状态：**PARTIAL**；GIF 动画在本机 WKWebView 未观察到，在线服务及若干精确交互/尺寸仍未验收，不作整体 VERIFIED 或 DOGFOOD READY 结论
+- 当前交接：**v0.2.4 发布中**（收口内容 = Post-v0.2.3 的 15 项实际使用反馈，实现与自测见 §42）
+- 当前状态：**V1 ACTIVE；15 项反馈已全部实现并完成我方自测，用户已授权随 `v0.2.4` 提交、打 tag 并发布**（T01–T06 的 VERIFIED 为历史任务结论）
+- [本轮需求](V1_Post_v0.2.3_Actual_Use_Closure_2026-10-01.md) · [Completion Report](docs/V1_Post_v0.2.3_Actual_Use_Closure_2026-10-01_Completion_Report.md) · [Master Control §42](PROJECT_MASTER_CONTROL.md)：15 项矩阵、自动化 gate、真实 UI 证据与未闭合通道。
+- 公开版与源码态的区别：**v0.2.3 及更早的公开包不含本轮 15 项改动**。本轮改动随 `v0.2.4` 提交并由发布 workflow 产出 Universal DMG；`v0.2.4` 的下载地址、SHA-256 与验证结果以本页上方 `releases/latest` 链接与 `PROJECT_MASTER_CONTROL.md` §43.4 为准（发布验证完成后回填）。已发布版本一律冻结，不会被重建或覆盖。
+- 本轮改动清单（面向用户可见行为）见 [Feature Update Manual / v0.2.4](docs/feature-history/v0.2.4.md)：智能识别项目与普通文件夹、目录递归贡献图片视频素材、编辑区去除 B/I/S 与 Markdown 源码切换并直接编译语义、块工具条默认隐藏、分页控件随状态显示、去掉重复页面标题、PNG 缩略图与素材卡片、多选导入素材、重命名会真的改本地文件、DSH 风格模型设置、Grid 左右键交互恢复。
+- 产品状态：**公开版 v0.2.3 = PARTIAL**（GIF 动画在本机 WKWebView 未观察到，在线服务及若干精确交互/尺寸仍未验收）；**本轮收口 = 11 PASS / 2 PARTIAL（原生文件夹与素材面板手势需用户 GUI 会话）/ 1 BLOCKED（在线真实推理，`api.openai.com` 在本环境 60s 超时）**，不作整体 VERIFIED 或 DOGFOOD READY 结论
 - 分发状态：**PARTIAL / 公开下载可用**（v0.2.3 Universal DMG 与 SHA-256 sidecar 已匿名下载校验；制品为 ad-hoc signed，无 `TeamIdentifier`，`spctl --assess --type execute` 为 `rejected`，未做 Developer ID 签名或公证）
 - V0 状态：**V0 CLOSED；V0-T01 / V0-T02 / V0-T03 / V0-T04 全部 VERIFIED**
 - 最新公开版本为 [`v0.2.3`](https://github.com/wyzh0117/workbench/releases/tag/v0.2.3)（tag/source commit `0ce229ac79b925164e3ea43eae4ac8059d5022e4`，workflow run `36805861906`）；[Universal DMG](https://github.com/wyzh0117/workbench/releases/download/v0.2.3/AI-Course-Workbench-macOS.dmg) 与 [SHA-256 sidecar](https://github.com/wyzh0117/workbench/releases/download/v0.2.3/AI-Course-Workbench-macOS.dmg.sha256) 已匿名下载核验，该 tag 与资产保持冻结。
-- NEXT ACTION：在获得 Apple Developer ID 分发凭据后评估签名/公证；保留下方已说明的验收限制。不创建 V1-T07，不关闭 V1
+- NEXT ACTION：完成 `v0.2.4` 的发布与产物验证并回填 §43.4；随后用户在真实窗口里补做原生验收（Grid 左/右键、原生多选导入、文件夹 vs 项目打开、放大动图播放、真实 IME）；下一次发布仍需单独授权；不创建 V1-T07，不关闭 V1。
+- 发版本身怎么操作（版本字段三处联动、Release Notes 规则、tag 与 workflow、发布后验证与回写、只有用户能做的部分）见 [docs/release-playbook.md](docs/release-playbook.md)。
 
 2026-10-01 v0.2.3 验收与发布：源码提交 `0ce229ac79b925164e3ea43eae4ac8059d5022e4` 已推送，`v0.2.3` tag 触发 workflow `36805861906` 成功，GitHub Release 为 Latest。公开 Universal DMG 与 SHA-256 sidecar 均以匿名 HTTP 200 下载并校验一致；公开 DMG SHA-256 为 `62f8d6a4c00360c27452244aa0de6d2a1fb3dd9d7a9053522494e07d750a2d73`，`hdiutil verify` 通过，版本 0.2.3、架构 x86_64+arm64。preview4 PDF/PPTX 原生检查通过，PPTX 在 PowerPoint 中可打开且文字、图片可编辑。preview6–9 对编辑、追加、分页、设置、窄屏工具栏、Markdown/图片/PDF 预览及视频完成了多项原生走查；最终源码自动化为 Deno 389/389、Rust 95/95，`deno task check` 与 `cargo fmt --check` 通过。QA-only 诊断脚本及 HTML 引用已删除。preview9 验证 GIF Blob 487B、MIME、GIF89a 与 fixture SHA 一致，独立 IMG 从同字节加载为 160×90；但本机 WKWebView 中 modal 与独立 IMG 在 2.65 秒内都只观察到红帧，动画未通过/未闭环，不能归因于源文件损坏。最终无诊断 QA 轻抽检确认正文聚焦行显示自己的 +/⋯ 操作，顶部设置进入 AI 模型管理且课程地图可达。preview8 窄屏工具栏可读；精确 1024/字体缩放、指针拖动取消及在线 SIWC/Provider 请求未验证。原生 GUI 观察来自 QA 快照，未在正式包上重复完整 GUI 套件。正式 DMG 为 ad-hoc signed、无 `TeamIdentifier`，`spctl --assess --type execute` 返回 `rejected`；未做 Developer ID 签名/公证。preview6–9 为隔离 QA 包，不是发布物。详见 [v0.2.3 验收报告](docs/V1_Feedback_Import_Rendering_AI_Settings_2026-09-30_Acceptance_Report.md)。
 
 T05/T06 自动化检查为 346/346，Rust 检查 78/78；这些是 §38 历史验收证据。页面恢复修复已在隔离桌面项目上连续两次重启验证；T05/T06 的 Universal app 恢复了 page 3。原生 PDF smoke 输出一页 960×540 pt，正确包含第 3 页标题与正文。PowerPoint 已打开三页 PPTX 且未触发 Repair，并在副本中验证文字与图片可编辑。三页、两张图片的 Static Web 样例已通过独立 Chrome `file://` 阅读检查。此前 `v0.2.1` 由 tag-triggered run `36325086880` 成功发布；其公开 Universal DMG SHA-256 为 `ca151a578065939f6c2e0dfa4f23955faee5f512c6833ccbe4931a68bf66817c`，匿名下载与 `.sha256` sidecar 校验一致。`v0.2.0` 失败 tag 保持冻结且没有 Release/资产。当前公开版本及 `v0.2.2` 分发状态见上方；DMG 为 ad-hoc signed，未做 Apple Developer ID 签名或公证。
 
 2026-09-29 本地验证属于 v0.2.2 的历史快照，不代表当前 v0.2.3 候选：当时的 Deno 357/357 与 Rust AI 定向 32/32 在后续导入改动前运行；原生 smoke 覆盖 PDF、图片/GIF、音视频、Markdown、课程地图、Undo/Redo 与导入素材副作用。真实在线 Provider 调用未验证。当前候选状态和逐项验收以本节上方摘要及 v0.2.3 验收报告为准。
-- 分发剩余工作：按用户已授权范围发布 v0.2.3；Developer ID 签名、公证与签名版安装 smoke 需在取得 Apple 分发凭据后另行完成
+- 分发边界：v0.2.3 已公开；后续收口如发布，使用新的版本与 tag。Developer ID 签名、公证与签名版安装 smoke 仍需取得 Apple 分发凭据后完成。
 
 ---
 
@@ -218,7 +222,7 @@ PROJECT_ROOT=/path/to/project PORT=4174 deno run --allow-net --allow-read --allo
 - 微信 / 富文本迁移只做到「可复制结构」：本轮用真实 Chromium 打开导出的迁移版 HTML，并用 `contenteditable` 接收页做粘贴结构验证（标题 / 段落 / 图片顺序正确、无脚本、无 Workbench 私有 class）。**未验证真实微信公众号后台**：不做登录、授权、草稿箱 API 或自动发布，也不承诺目标平台保留我们无法控制的样式；
 - Tauri 壳目前只提供受限高层命令骨架；真实平台发布（自动上传 / 登录）仍未支持。macOS 系统钥匙串适配器同时用于桌面壳与本地浏览器审查服务；Windows 是明确的非目标平台；
 - 历史 `providers.json` / `providers.bak` 中的明文 API Key 会在首次读取时迁移到 macOS 系统钥匙串，只有写入并校验成功后才删除明文；迁移失败会保留原文件并给出可读提示，不回显密钥；
-- **尚未完成真实在线 Provider 调用验收**：本轮环境没有为工作台配置任何合法 Provider 凭据，真实 Tauri 窗口内是用离线的「本地确定性连接器」走通完整闭环的。真实 Provider 的请求组装、鉴权注入与错误码映射有自动化测试覆盖（含回环 HTTP 服务器），但没有一次真实在线 smoke，请勿把离线闭环当作「已联网验证」；
+- **尚未完成真实在线 Provider 调用验收**：真实 ChatGPT 订阅凭据确实存在于 macOS 钥匙串（收口轮只读取元数据、未打印任何密钥），但该环境到 `api.openai.com` 的出网请求 60 秒超时，因此真实登录、套餐范围、账户模型清单与一次完成的推理都没有被观察过；本地服务内是用离线连接器与本地桩目录服务走通完整阶段链的。真实 Provider 的请求组装、鉴权注入与错误码映射有自动化测试覆盖（含回环 HTTP 服务器），请勿把离线闭环当作「已联网验证」；
 - AI 面板不做逐字流式渲染：连接器已能归一化 SSE 与非流式响应，界面按完整结果展示；
 - 不做 AI 后台自动执行、多 Agent 调度、RAG / 向量数据库，也不做绕过 ChangeDraft 的直接写入；
 - 原生壳未提供在创作期间打开系统默认应用查看素材；键盘快捷键只保留撤销/重做/保存/搜索与快速收集；

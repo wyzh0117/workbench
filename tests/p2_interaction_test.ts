@@ -182,8 +182,13 @@ Deno.test("P2-1 model discovery reads the provider's own list with the stored ke
       "the stored credential must be injected as the provider's auth header",
     );
     assert(
-      result.models.join(",") === "alpha-model,zeta-model",
-      `duplicates must collapse and the list must be stable, got ${result.models.join(",")}`,
+      result.model_ids.join(",") === "alpha-model,zeta-model",
+      `duplicates must collapse and the list must be stable, got ${result.model_ids.join(",")}`,
+    );
+    assert(
+      result.models.length === 2 &&
+        result.models.every((entry) => entry.id === entry.label && typeof entry.id === "string"),
+      `every discovered model must arrive as an { id, label } entry, got ${JSON.stringify(result.models)}`,
     );
     assert(
       !JSON.stringify(result).includes(CREDENTIAL),

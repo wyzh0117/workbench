@@ -14,4 +14,4 @@
  * implementation.
  */
 export const PROJECT_FILE_PICKER =
-  `<input hidden type="file" data-project-file accept=".json,.md,.markdown,.txt,.png,.jpg,.jpeg,.gif,.webp,.svg,.mp4,.webm,.mov,.m4v,.mp3,.wav,.m4a,.aac,.ogg,.pdf,.doc,.docx,.zip" />`;
+  `<input hidden multiple type="file" data-project-file accept=".json,.md,.markdown,.txt,.png,.jpg,.jpeg,.gif,.webp,.svg,.mp4,.webm,.mov,.m4v,.mp3,.wav,.m4a,.aac,.ogg,.pdf,.doc,.docx,.zip" />`;

@@ -9,7 +9,13 @@
  */
 
 import { PROJECT_FILE_PICKER } from "./constants.js";
-import { markdownFromEditable } from "./markdown.js";
+import {
+  caretTextOffset,
+  compileInlineAtCaret,
+  focusTextOffset,
+  markdownFromEditable,
+  structuralConversion,
+} from "./markdown.js";
 import { parseMarkdown } from "./markdown.js";
 import { createSerialQueue, recoveryWarning } from "./recovery.js";
 import {
@@ -75,8 +81,11 @@ import {
   AiFailure,
   FakeAiConnector,
   HttpAiConnector,
-  aiProviderDescriptors,
-  aiProviderPreset,
+  AI_OFFLINE_PROVIDER_ID,
+  aiApiProtocolChoices,
+  aiDiscoveredModelIds,
+  aiIsKnownApiProtocol,
+  aiIsOfflineConnection,
   applyAiChangeDraft,
   assembleAiContext,
   buildAiExecutionRecord,
@@ -139,6 +148,7 @@ const NATIVE_PROJECT_COMMANDS = new Set([
   "course.seed.create",
   "blueprint.build",
   "asset.import",
+  "asset.rename",
   "asset.read",
   "asset.preview_source",
   "snapshot.create",
@@ -202,50 +212,148 @@ const assetTypeForFile = (filename, mime = "") => {
   return "other";
 };
 const isAssetFile = (filename, mime = "") => mime.startsWith("image/") || mime.startsWith("video/") || mime.startsWith("audio/") || /\.(gif|png|jpe?g|webp|svg|mp4|webm|mov|m4v|mp3|wav|m4a|aac|pdf|docx|md|markdown)$/i.test(filename);
+/**
+ * A batch member counts as imported only when it added a row.  The native
+ * shell answers with an explicit `duplicate`; the browser service can reuse an
+ * asset row without saying so, so fall back to the row count.
+ */
+const batchLandedAsset = (result, rowsGrew) => {
+  const payload = parseNativeValue(result);
+  const flag = payload?.duplicate ?? payload?.value?.duplicate;
+  return typeof flag === "boolean" ? flag === false : rowsGrew;
+};
+/** One toast per batch: what already landed stays visible next to failures. */
+function assetBatchToast(batch, landed, warning = "") {
+  const parts = [`${landed} ${batch.imported} 个素材`];
+  if (batch.duplicate) parts.push(`${batch.duplicate} 个已按 checksum 复用`);
+  if (batch.captured) parts.push(`${batch.captured} 个内容放进收件箱`);
+  if (batch.skipped) parts.push(`${batch.skipped} 个重复或不适用条目已跳过`);
+  if (batch.failed) {
+    const reasons = batch.failures.slice(0, 2).join("；");
+    parts.push(`${batch.failed} 个失败${reasons ? `：${reasons}` : ""}${batch.failures.length > 2 ? `；另有 ${batch.failures.length - 2} 个` : ""}`);
+  }
+  const text = parts.join("；");
+  return warning ? `${text}；${warning}` : text;
+}
 
 /**
- * User-facing copy for a folder that is not a valid Workbench project.
- * Why + what is missing + next steps (package §7.3). Does not require project.bak.
+ * Statuses the shell's folder classifier can return (`project.inspect`, and the
+ * diagnosis payload `project.open` sends instead of course data).
+ */
+const PROJECT_INSPECTION_STATUSES = new Set([
+  "valid",
+  "migratable",
+  "invalid",
+  "no_project_json",
+  "malformed_json",
+  "unreadable",
+]);
+
+/**
+ * A canonical project never carries a top-level `status`, so an open result that
+ * does is the shell's diagnosis of the folder rather than course data.  Reading
+ * that diagnosis is what stops a folder with a broken `project.json` from being
+ * reported as if the file were missing.
+ */
+function projectInspection(value) {
+  if (!value || typeof value !== "object") return null;
+  if (!PROJECT_INSPECTION_STATUSES.has(value.status)) return null;
+  return {
+    status: value.status,
+    schema_version: value.schema_version ?? null,
+    supported_schema_version: value.supported_schema_version ?? null,
+    problem: value.problem && typeof value.problem === "object" ? value.problem : null,
+  };
+}
+
+/** §3.2 Case C copy: the detected category, then the first actionable failure. */
+function projectProblemText(problem) {
+  const detail = String(problem?.message || "").trim();
+  if (problem?.code === "unsupported_schema") {
+    return "检测到 project.json，但它由更高版本的 Workbench 创建，当前版本不会改写它。";
+  }
+  return detail
+    ? `检测到 project.json，但项目数据无法通过校验：${detail}`
+    : "检测到 project.json，但项目数据无法通过校验。";
+}
+
+/**
+ * User-facing copy for a folder that cannot be opened as a project.
+ *
+ * `hints.diagnosis` is the shell's inspection status and wins over the string
+ * matching below: guessing from an error's wording is exactly what used to tell
+ * the user "没有找到有效的 project.json" about a folder that does contain one.
+ * `hints.problemCode` refines that further, because a schema from a newer
+ * Workbench needs "upgrade", not "your data is invalid".  With no diagnosis at
+ * all the copy stays honest about what is unknown (§3.4).
  */
 const describeProjectOpenFailure = (error, hints = {}) => {
   const raw = String(error?.message || error || "").trim();
-  // Already-structured copy from a prior mapping — keep as-is.
-  if (/导入已有文件夹/.test(raw) && /没有找到有效的 project\.json|项目 JSON 无效|可识别的课程项目结构/.test(raw)) {
-    return raw;
-  }
   const context = `${String(error?.code || "")} ${raw}`.toLowerCase();
+  const diagnosis = String(hints.diagnosis || "").trim();
+  const problemCode = String(hints.problemCode || "").trim();
   const invalidJson = Boolean(
-    hints.invalidJson || /项目 json 无效|json 无效/.test(context),
+    diagnosis === "malformed_json" ||
+    (!diagnosis && (hints.invalidJson || /项目 json 无效|json 无效/.test(context))),
   );
-  const notObject = Boolean(
-    hints.notObject ||
-      /必须是 json 对象|可识别的课程|缺少 content_items|缺少 blocks/.test(context),
+  // A newer schema is its own answer: "invalid data" would send the user off to
+  // fix a file that is fine, and "missing" would be flatly wrong.
+  const tooNew = !invalidJson && Boolean(
+    problemCode === "unsupported_schema" ||
+    diagnosis === "unsupported_schema" ||
+    (!diagnosis && /更高版本|unsupported_schema/.test(context)),
   );
-  // hints.missingJson and native "没有 project.json" fall through to the default branch.
+  const notObject = !tooNew && Boolean(
+    diagnosis === "invalid" ||
+    (!diagnosis && (
+      hints.notObject ||
+      /必须是 json 对象|可识别的课程|缺少 content_items|缺少 blocks/.test(context)
+    )),
+  );
+  const missingJson = Boolean(
+    diagnosis === "no_project_json" ||
+    (!diagnosis && hints.missingJson && !invalidJson && !notObject),
+  );
+  const unreadable = Boolean(
+    diagnosis === "unreadable" ||
+    (!diagnosis && /项目目录不存在|无法读取|permission denied/.test(context)),
+  );
 
   let why;
   let missing;
   if (invalidJson) {
-    why = "这个文件夹里的 project.json 已损坏或无效，无法作为 AI Course Workbench 项目打开。";
-    missing = "项目 JSON 无效。";
+    why = "这个文件夹里有 project.json，但它已损坏或无效，无法作为 AI Course Workbench 项目打开。";
+    missing = raw ? `project.json 无法解析：${raw}` : "project.json 无法解析。";
+  } else if (tooNew) {
+    why = "这个 project.json 由更高版本的 Workbench 创建，当前版本还不能安全地打开它。";
+    missing = raw || "文件的 schema_version 超出了当前版本支持的范围。";
   } else if (notObject) {
-    why = "这个文件夹还不是 AI Course Workbench 项目。";
-    missing = "project.json 存在，但不是可识别的课程项目结构（需要 project、content_items、blocks）。";
+    why = "这个文件夹里有 project.json，但其中的课程数据没有通过校验。";
+    missing = raw || "project.json 存在，但不是可识别的课程项目结构（需要 project、content_items、blocks）。";
+  } else if (missingJson) {
+    why = "这个文件夹还没有 project.json，因此它还不是 Workbench 项目；它可以作为资料文件夹导入。";
+    missing = "所选文件夹根目录中没有 project.json。";
+  } else if (unreadable) {
+    why = "无法读取这个文件夹里的项目文件。";
+    missing = raw || "project.json 无法读取（文件夹可能被移动、删除或没有访问权限）。";
   } else {
-    why = "这个文件夹还不是 AI Course Workbench 项目。";
-    missing = "没有找到有效的 project.json。";
+    why = "这次没有打开成功，课程文件没有被修改。";
+    missing = raw || "打开过程被中断，暂时无法确认这个文件夹的内容。";
   }
 
-  return [
-    why,
-    "",
-    missing,
-    "",
-    "你可以：",
-    "• 选择其他 Workbench 项目；",
-    "• 新建课程；",
-    "• 或返回后使用「导入已有文件夹」（该能力由 V1-T04 提供）。",
-  ].join("\n");
+  const actions = missingJson
+    ? [
+        "• 直接把它作为资料文件夹导入（现在就会开始扫描，不会写入任何文件）；",
+        "• 或选择其他 Workbench 项目；",
+        "• 或新建课程。",
+      ]
+    : [
+        "• 查看具体问题后返回；",
+        "• 或把它作为普通资料文件夹重新导入（不会覆盖现有 project.json，除非你确认）；",
+        "• 或选择其他 Workbench 项目、新建课程。",
+      ];
+
+  return [why, "", missing, "", "你可以：", ...actions].join("\n");
 };
 
 /** Keep technical bridge failures out of ordinary toasts. */
@@ -258,10 +366,8 @@ const userFacingError = (error, fallback) => {
   if (/external_modification_conflict|外部修改|外部项目文件|磁盘版本/.test(context)) {
     return "课程文件在其他地方发生了变化，保存已暂停以免覆盖内容。你仍可继续查看，请重新载入、自动合并，或明确保留本地版本。";
   }
-  // Pass through copy that already includes why + next steps.
-  if (/导入已有文件夹/.test(raw) && /没有找到有效的 project\.json|项目 JSON 无效|可识别的课程项目结构|已损坏或无效/.test(raw)) {
-    return raw;
-  }
+  // Pass through copy that already spells out why and what to do next.
+  if (raw.includes("你可以：") && raw.includes("\n")) return raw;
   if (
     /project\.json|可识别的课程|project data|项目文件|项目目录不存在|项目 json 无效|必须是 json 对象|不是可用的课程项目/.test(
       context,
@@ -381,6 +487,7 @@ class DesktopBridge {
       [
         "asset.import",
         "asset.read",
+        "asset.rename",
         "asset.preview_source",
         "publication.record",
         "course.seed.create",
@@ -478,6 +585,7 @@ class DesktopBridge {
   nativeCommand(command) {
     return {
       "project.open": "project_open",
+      "project.inspect": "project_inspect",
       "project.create": "project_create",
       "project.save": "project_save",
       "project.external.inspect": "project_external_status",
@@ -496,6 +604,7 @@ class DesktopBridge {
       "course.seed.create": "course_seed_create",
       "blueprint.build": "blueprint_build",
       "asset.import": "asset_import",
+      "asset.rename": "asset_rename",
       "asset.read": "asset_read",
       "asset.preview_source": "asset_preview_source",
       "snapshot.create": "create_snapshot",
@@ -639,8 +748,13 @@ class DesktopBridge {
   async readProject() {
     return await this.invoke("project.open", {});
   }
-  /** Read one referenced asset's bytes for an in-workbench preview. */
-  async readAssetBytes(assetId) {
+  /**
+   * Read one referenced asset's bytes for an in-workbench preview.
+   * `maxBytes` mirrors the caller's preview ceiling: the native command already
+   * refuses anything past its own 8 MiB limit, and the dev-server route has no
+   * server-side gate at all, so the bound is enforced here instead.
+   */
+  async readAssetBytes(assetId, maxBytes = 0) {
     const invoke = globalThis.__TAURI__?.core?.invoke;
     if (invoke) {
       const result = await this.invoke("asset.read", { asset_id: assetId });
@@ -654,9 +768,9 @@ class DesktopBridge {
       }
       return new Uint8Array();
     }
-    return await this.readAssetBytesFromDevServer(assetId);
+    return await this.readAssetBytesFromDevServer(assetId, maxBytes);
   }
-  async readAssetBytesFromDevServer(assetId) {
+  async readAssetBytesFromDevServer(assetId, maxBytes = 0) {
     // The dev server already owns one project root, so no path is sent: the
     // bridge resolves the asset id against the open project itself.
     const response = await fetch(`${this.apiBase}/asset`, {
@@ -668,7 +782,13 @@ class DesktopBridge {
       const payload = await response.json().catch(() => ({}));
       throw this.bridgeError(payload, "素材不可读");
     }
-    return new Uint8Array(await response.arrayBuffer());
+    const bytes = new Uint8Array(await response.arrayBuffer());
+    if (maxBytes > 0 && bytes.length > maxBytes) {
+      throw new Error(
+        `素材超过单文件预览上限（${Math.max(1, Math.round(maxBytes / (1024 * 1024)))} MiB）`,
+      );
+    }
+    return bytes;
   }
   async previewAssetVideoSource(assetId) {
     if (this.isNative()) {
@@ -1247,6 +1367,10 @@ class WorkbenchStore {
       importMappingError: "",
       importMode: "adopt",
       importingMapping: false,
+      /** §3.2 Case C: a folder whose project.json exists but cannot be used. */
+      projectProblem: null,
+      /** One-shot: the next adoption may move an invalid project.json aside. */
+      replaceInvalidProject: false,
     };
     this.tabs = [];
     this.history = [];
@@ -1831,61 +1955,103 @@ class WorkbenchStore {
   /* ---------------------------------------------------------- AI workflow */
 
   /**
-   * The selected provider, shaped like an `AiProviderPreset`.
+   * Shape a provider entry into the full connection record every transport and
+   * every settings row reads from.  There is no fallback to a built-in default:
+   * Workbench ships no provider templates (§9.2), so an `id` alone is not
+   * configuration and only a record the shell actually holds can be completed.
    *
-   * A saved configuration only overrides the fields it actually carries, so a
-   * provider id that is not in the shipped catalog still gets readable
-   * defaults instead of an empty form.
+   * @param {{ id?: string, label?: string, kind?: string, base_url?: string,
+   *   chat_path?: string, api_protocol?: string, auth_header?: string,
+   *   auth_scheme?: string, default_model?: string, models?: string[] }} entry
+   */
+  connectionRecord(entry) {
+    const id = String(entry?.id || "").trim();
+    const apiProtocol = aiIsKnownApiProtocol(entry?.api_protocol)
+      ? String(entry.api_protocol)
+      : "openai-completions";
+    const anthropic = apiProtocol === "anthropic-messages";
+    const kind = String(entry?.kind || "") || "openai_compatible";
+    return {
+      id,
+      label: String(entry?.label || "").trim() || id,
+      kind,
+      api_protocol: apiProtocol,
+      base_url: String(entry?.base_url || "").trim(),
+      chat_path: String(entry?.chat_path || "").trim() || "/chat/completions",
+      // Auth follows the protocol and nothing else: the form has no scheme
+      // editor and 保存配置 derives the same pair, so what the user reads, what
+      // lands on disk and what the transport sends can never disagree.
+      auth_header: anthropic ? "x-api-key" : "authorization",
+      auth_scheme: anthropic ? "" : "Bearer",
+      default_model: String(entry?.default_model || "").trim(),
+      models: [...new Set((Array.isArray(entry?.models) ? entry.models : [])
+        .map((model) => String(model || "").trim())
+        .filter(Boolean))],
+      requires_credential: !aiIsOfflineConnection({ kind, id }),
+    };
+  }
+  /**
+   * A Provider ID keys both the on-disk record and the local credential, so it
+   * has to stay one safe path segment.  Empty is a problem too: an unsaved form
+   * simply has no id yet.
+   *
+   * @returns {string} a user-facing reason, or `""` when the id is usable
+   */
+  providerIdIssue(id) {
+    const value = String(id || "").trim();
+    if (!value) return "请先填写 Provider ID。";
+    if (value.includes("/") || value.includes("\\") || value.includes(" ") ||
+      value === "." || value === "..") {
+      return "Provider ID 只能使用字母、数字、点、下划线或连字符，且不能包含路径分隔符。";
+    }
+    return "";
+  }
+
+  /**
+   * The connection a run would use, as an explicit record (§9.3/§9.4).
+   *
+   * Exactly three sources exist: a saved connection read back from the shell,
+   * the offline deterministic connector that automated tests drive, and nothing
+   * else.  An unknown id returns `null` so the assistant can say「配置 AI」
+   * instead of silently inventing a Base URL or a model.
    */
   aiDescriptor(providerId = this.ui.aiProviderId) {
-    const id = String(providerId || "fake").trim() || "fake";
-    const custom = aiProviderPreset("custom") || {
-      id: "custom",
-      label: "自定义（OpenAI 兼容）",
-      kind: "openai_compatible",
-      base_url: "",
-      chat_path: "/chat/completions",
-      auth_header: "authorization",
-      auth_scheme: "Bearer",
-      default_model: "",
-      models: [],
-      requires_credential: true,
-    };
-    const known = aiProviderPreset(id);
-    const base = known || {
-      ...custom,
-      id,
-      label: id,
-      base_url: "",
-      default_model: "",
-      models: [],
-    };
+    const id = String(providerId || "").trim();
+    if (!id) return null;
+    if (id === AI_OFFLINE_PROVIDER_ID) {
+      return {
+        id,
+        label: "本地确定性连接器（离线）",
+        kind: "fake",
+        api_protocol: "openai-completions",
+        base_url: "",
+        chat_path: "",
+        auth_header: "",
+        auth_scheme: "",
+        default_model: "fake-deterministic",
+        models: ["fake-deterministic"],
+        requires_credential: false,
+      };
+    }
     const saved = (Array.isArray(this.ui.aiProviders) ? this.ui.aiProviders : [])
       .find((entry) => entry && entry.id === id) || null;
-    const descriptor = { ...base };
-    if (saved) {
-      for (const key of ["label", "base_url", "chat_path", "api_protocol", "auth_header", "auth_scheme", "default_model", "kind"]) {
-        if (typeof saved[key] === "string" && (saved[key] || key === "auth_scheme")) descriptor[key] = saved[key];
-      }
-      descriptor.models = [...new Set([
-        ...(Array.isArray(saved.models)
-          ? saved.models.filter((model) => typeof model === "string" && model)
-          : []),
-        ...(Array.isArray(base.models) ? base.models : []),
-      ])];
+    // The form being edited is not a connection yet — §9.5 forbids persisting
+    // discovery results before Save — but re-opening it must not lose the model
+    // list the user just fetched, so an unsaved form answers only its own edit.
+    if (saved) return this.connectionRecord(saved);
+    const form = this.ui.aiProviderForm;
+    if (form && form.isNew === true && String(form.id || "").trim() === id) {
+      return this.connectionRecord(form);
     }
-    // V0 knows exactly two connector kinds: the offline fake and the
-    // OpenAI-compatible HTTP transport.
-    descriptor.kind = id === "fake" ? "fake" : (saved?.kind || "openai_compatible");
-    descriptor.requires_credential = id !== "fake";
-    if (id !== "fake" && !descriptor.api_protocol) descriptor.api_protocol = "openai-completions";
-    return descriptor;
+    return null;
   }
   /** The model id a run would use, resolved the same way the panel shows it. */
   aiModel() {
     const descriptor = this.aiDescriptor();
-    return String(this.ui.aiModel || "").trim() || descriptor.default_model ||
-      (Array.isArray(descriptor.models) ? descriptor.models[0] : "") || "";
+    const manual = String(this.ui.aiModel || "").trim();
+    if (manual) return manual;
+    if (!descriptor) return "";
+    return descriptor.default_model || descriptor.models[0] || "";
   }
   /**
    * Build the connector for the selected provider.
@@ -1903,7 +2069,7 @@ class WorkbenchStore {
     }
     if (descriptor.id === "fake") return new FakeAiConnector();
     return new HttpAiConnector({
-      preset: descriptor,
+      connection: descriptor,
       model: this.aiModel(),
       base_url: descriptor.base_url,
       transport: (call, options = {}) =>
@@ -1982,9 +2148,9 @@ class WorkbenchStore {
     if (!providerId) return;
     this.ui.aiProviderId = providerId;
     const descriptor = this.aiDescriptor();
-    const models = Array.isArray(descriptor.models) ? descriptor.models : [];
+    const models = Array.isArray(descriptor?.models) ? descriptor.models : [];
     if (!models.includes(this.ui.aiModel)) {
-      this.ui.aiModel = descriptor.default_model || models[0] || "";
+      this.ui.aiModel = descriptor?.default_model || models[0] || "";
     }
     this.ui.aiProviderForm = null;
     this.ui.aiError = null;
@@ -2042,7 +2208,10 @@ class WorkbenchStore {
       this.notify();
       return;
     }
-    const descriptor = this.aiDescriptor();
+    const descriptor = this.aiDescriptor() || {
+      id: String(this.ui.aiProviderId || "").trim(),
+      label: String(this.ui.aiProviderId || "").trim() || "未配置连接",
+    };
     const instruction = String(this.ui.aiInstruction || "");
     this.ui.aiContext = context;
     this.ui.aiContextOpen = true;
@@ -2439,21 +2608,22 @@ class WorkbenchStore {
     if (!providerId) return;
     if (!preserveSelection && providerId !== this.ui.aiProviderId) this.aiSetProvider(providerId);
     const descriptor = this.aiDescriptor(providerId);
+    if (!descriptor) {
+      // §9.2: there is no template to open a form from. Only a connection the
+      // shell actually holds can be edited.
+      this.ui.toast = "这个连接还没有保存，没有可编辑的配置。";
+      this.notify();
+      return;
+    }
     this.ui.aiProviderForm = {
-      id: descriptor.id,
-      label: descriptor.label,
-      base_url: descriptor.base_url,
-      chat_path: descriptor.chat_path,
-      api_protocol: descriptor.api_protocol || "openai-completions",
-      auth_header: descriptor.auth_header,
-      auth_scheme: descriptor.auth_scheme,
-      default_model: descriptor.default_model,
+      ...descriptor,
       models: Array.isArray(descriptor.models) ? descriptor.models : [],
       isNew: false,
     };
     this.ui.aiChosenModel = descriptor.default_model || descriptor.models?.[0] || "";
     this.ui.aiManualModel = "";
     this.ui.aiModelOptions = Array.isArray(descriptor.models) ? [...descriptor.models] : [];
+    this.ui.aiModelSelection = [];
     this.ui.aiModelSource = this.ui.aiModelOptions.length ? "saved" : "";
     this.ui.aiModelsError = "";
     this.ui.aiSettingsOpen = true;
@@ -2463,33 +2633,39 @@ class WorkbenchStore {
     this.ui.focusField = "ai-provider-label";
     this.notify();
   }
+  /**
+   * Open an EMPTY provider form (§9.4).  The Provider ID is a field the user
+   * types: it is pre-filled with a suggestion only so the form is never blank,
+   * and it becomes permanent once the connection is saved.  Nothing here touches
+   * the shell — a created-but-unsaved connection has no credential slot and
+   * cannot be selected for a run.
+   */
   aiCreateConnection() {
-    const ids = new Set([
-      ...aiProviderDescriptors().map((provider) => provider.id),
-      ...(this.ui.aiProviders || []).map((provider) => provider.id),
-    ]);
+    const ids = new Set(
+      (Array.isArray(this.ui.aiProviders) ? this.ui.aiProviders : [])
+        .map((provider) => String(provider?.id || "").trim())
+        .filter(Boolean),
+    );
     let id;
     do { id = `connection-${uid()}`; } while (ids.has(id));
-    this.ui.aiProviderForm = {
+    this.ui.aiProviderForm = this.connectionRecord({
       id,
-      label: "新连接",
-      kind: "openai_compatible",
+      label: "",
       base_url: "",
-      chat_path: "/chat/completions",
       api_protocol: "openai-completions",
-      auth_header: "authorization",
-      auth_scheme: "Bearer",
       default_model: "",
       models: [],
-      isNew: true,
-    };
+    });
+    this.ui.aiProviderForm.isNew = true;
     this.ui.aiChosenModel = "";
     this.ui.aiManualModel = "";
     this.ui.aiModelOptions = [];
+    this.ui.aiModelSelection = [];
     this.ui.aiModelSource = "";
     this.ui.aiModelsError = "";
     this.ui.aiSettingsOpen = true;
-    this.ui.focusField = "ai-provider-label";
+    // The id is the first thing a user must decide, so it gets the caret.
+    this.ui.focusField = "ai-provider-id";
     this.notify();
   }
   aiToggleSettings() {
@@ -2584,7 +2760,10 @@ class WorkbenchStore {
   async aiDeleteConnection(providerId) {
     const id = String(providerId || "").trim();
     if (!id || id === "fake") return false;
-    if (globalThis.confirm?.(`删除连接「${this.aiDescriptor(id).label}」及其本机密钥？此操作不会改动课程内容。`) === false) return false;
+    const saved = (Array.isArray(this.ui.aiProviders) ? this.ui.aiProviders : [])
+      .find((entry) => entry && entry.id === id) || null;
+    const label = String(saved?.label || "").trim() || id;
+    if (globalThis.confirm?.(`删除连接「${label}」及其本机密钥？此操作不会改动课程内容。`) === false) return false;
     try {
       await this.bridge.command("ai.connection.delete", { provider_id: id });
     } catch (error) {
@@ -2593,7 +2772,14 @@ class WorkbenchStore {
       this.notify();
       return false;
     }
-    if (this.ui.aiProviderId === id) this.aiSetProvider("fake");
+    // Deleting the selected connection leaves NO selection: the assistant falls
+    // back to「配置 AI」rather than silently answering from the offline
+    // deterministic connector.
+    if (this.ui.aiProviderId === id) {
+      this.ui.aiProviderId = "";
+      this.ui.aiModel = "";
+      this.scheduleSessionSave();
+    }
     if (this.ui.aiProviderForm?.id === id) this.ui.aiProviderForm = null;
     await this.aiLoadProviders();
     this.ui.toast = `已删除连接「${id}」及其本机密钥`;
@@ -2667,7 +2853,7 @@ class WorkbenchStore {
           },
           temporary_credential: temporaryKey,
         });
-      models = Array.isArray(result && result.models) ? result.models : [];
+      models = aiDiscoveredModelIds(result);
       displayNames = result?.display_names && typeof result.display_names === "object"
         ? Object.fromEntries(Object.entries(result.display_names).filter(([, label]) => typeof label === "string"))
         : {};
@@ -2692,6 +2878,9 @@ class WorkbenchStore {
     this.ui.aiModelLabels = displayNames;
     this.ui.aiModelSource = "remote";
     this.ui.aiModelsError = "";
+    // A fresh catalog replaces the previous tick marks; §9.5 forbids keeping
+    // anything from an older discovery round once the list changed.
+    this.ui.aiModelSelection = [];
     if (!models.includes(this.ui.aiChosenModel)) this.ui.aiChosenModel = models[0];
     this.notify();
     return models;
@@ -2703,6 +2892,76 @@ class WorkbenchStore {
     this.ui.aiChosenModel = model;
     this.ui.aiManualModel = "";
     if (this.ui.aiProviderForm) this.ui.aiProviderForm.default_model = model;
+    this.notify();
+  }
+  /**
+   * The Provider ID is a permanent identity (§9.4): editable only while the
+   * connection is unsaved.  Re-typing it after a save is a different connection,
+   * and the shell refuses it — so the form refuses first and says why.
+   */
+  aiSetProviderId(value) {
+    const form = this.ui.aiProviderForm;
+    if (!form) return;
+    if (form.isNew !== true) {
+      this.ui.toast = "Provider ID 创建后不可修改；需要另一个 id 请点「+ 添加模型服务商」新建连接。";
+      this.notify();
+      return;
+    }
+    const id = String(value || "").trim();
+    const issue = this.providerIdIssue(id);
+    if (issue) {
+      this.ui.toast = issue;
+      this.notify();
+      return;
+    }
+    const taken = (Array.isArray(this.ui.aiProviders) ? this.ui.aiProviders : [])
+      .some((entry) => entry && entry.id === id);
+    if (taken) {
+      this.ui.toast = `已有连接使用 Provider ID「${id}」，请换一个。`;
+      this.notify();
+      return;
+    }
+    form.id = id;
+    this.notify();
+  }
+  /** §9.6: tick or untick one model in the discovered catalog. */
+  aiToggleModelSelection(id) {
+    const model = String(id || "").trim();
+    if (!model) return;
+    const selection = new Set(
+      Array.isArray(this.ui.aiModelSelection) ? this.ui.aiModelSelection : [],
+    );
+    if (selection.has(model)) selection.delete(model);
+    else selection.add(model);
+    this.ui.aiModelSelection = [...selection];
+    this.notify();
+  }
+  /**
+   * Move the ticked catalog entries into the connection's model list.  Still
+   * only a form: nothing reaches the shell until 保存 (§9.5).
+   */
+  aiAddSelectedModels() {
+    const form = this.ui.aiProviderForm;
+    if (!form) return;
+    const chosen = (Array.isArray(this.ui.aiModelSelection) ? this.ui.aiModelSelection : [])
+      .map((model) => String(model || "").trim())
+      .filter(Boolean);
+    if (!chosen.length) {
+      this.ui.toast = "先在模型目录里勾选至少一个模型。";
+      this.notify();
+      return;
+    }
+    const models = [...new Set([
+      ...(Array.isArray(form.models) ? form.models : []),
+      ...chosen,
+    ])];
+    form.models = models;
+    if (!form.default_model) {
+      form.default_model = chosen[0];
+      this.ui.aiChosenModel = chosen[0];
+    }
+    this.ui.aiModelSelection = [];
+    this.ui.toast = `已加入 ${chosen.length} 个模型，保存连接后才会生效。`;
     this.notify();
   }
   async aiTestConnection() {
@@ -2753,8 +3012,57 @@ class WorkbenchStore {
       return null;
     }
   }
+  /**
+   * §9.4 — an address is checked while it is typed, not when the first request
+   * fails on it.  The rules are the ones the credential-origin binding already
+   * uses (`normalizedOrigin` in the service layer): http or https, a real host,
+   * and no user or password embedded in the URL — a key belongs in the API key
+   * field, where it goes to the keychain instead of into project.json.
+   *
+   * The bad value is never echoed back: a pasted URL can itself carry a secret.
+   *
+   * @returns {string} a user-facing reason, or `""` when the address is usable
+   */
+  baseUrlIssue(value) {
+    const raw = String(value || "").trim();
+    if (!raw) return "请填写 Base URL，例如 https://api.example.com/v1。";
+    let parsed = null;
+    try {
+      parsed = new URL(raw);
+    } catch {
+      return "Base URL 不是一个完整地址，需要包含 https:// 或 http:// 和域名。";
+    }
+    if (!["https:", "http:"].includes(parsed.protocol)) {
+      return "Base URL 只支持 https:// 或 http:// 开头的地址。";
+    }
+    if (!parsed.hostname) return "Base URL 缺少域名，例如 https://api.example.com/v1。";
+    if (parsed.username || parsed.password) {
+      return "Base URL 里不能带用户名或密码；API Key 请填写在下面的 API Key 输入框。";
+    }
+    return "";
+  }
+  /**
+   * Keep what the user typed in front of them.  The form fields render from
+   * `ui.aiProviderForm`, so a refusal that only sets a toast and re-renders
+   * silently throws away the whole half-filled connection.
+   */
+  rememberProviderForm(input = {}) {
+    const current = this.ui.aiProviderForm || {};
+    this.ui.aiProviderForm = {
+      ...current,
+      id: String(input.id || current.id || "").trim(),
+      label: String(input.label || "").trim(),
+      base_url: String(input.base_url || "").trim(),
+      api_protocol: String(
+        input.api_protocol || current.api_protocol || "openai-completions",
+      ),
+      default_model: String(input.default_model || "").trim(),
+      models: Array.isArray(input.models) ? input.models : current.models || [],
+    };
+  }
 
   async aiSaveProvider(input = {}) {
+    this.rememberProviderForm(input);
     const id = String(input.id || this.ui.aiProviderForm?.id || this.ui.aiProviderId || "").trim();
     if (!id) {
       this.ui.toast = "请先选择要配置的服务商";
@@ -2766,25 +3074,55 @@ class WorkbenchStore {
       this.notify();
       return false;
     }
+    const idIssue = this.providerIdIssue(id);
+    if (idIssue) {
+      this.ui.toast = idIssue;
+      this.notify();
+      return false;
+    }
     const existing = (Array.isArray(this.ui.aiProviders) ? this.ui.aiProviders : [])
       .find((entry) => entry && entry.id === id) || null;
-    const protocol = ["openai-completions", "openai-responses", "anthropic-messages"]
-      .includes(String(input.api_protocol || this.ui.aiProviderForm?.api_protocol || existing?.api_protocol || "openai-completions"))
-      ? String(input.api_protocol || this.ui.aiProviderForm?.api_protocol || existing?.api_protocol || "openai-completions")
-      : "openai-completions";
+    const requestedProtocol = String(
+      input.api_protocol || this.ui.aiProviderForm?.api_protocol ||
+        existing?.api_protocol || "openai-completions",
+    );
+    // An unknown protocol is a stated failure, not something to quietly coerce
+    // into the first choice (§19: never collapse a failure into a generic one).
+    if (!aiIsKnownApiProtocol(requestedProtocol)) {
+      this.ui.toast = `不支持的 API 协议「${requestedProtocol || "（空）"}」，只支持：${aiApiProtocolChoices()
+        .map((choice) => choice.label)
+        .join(" / ")}。`;
+      this.notify();
+      return false;
+    }
+    const protocol = requestedProtocol;
+    const baseUrl = String(input.base_url || "").trim();
+    // A subscription connection has no address of its own — the native login flow
+    // configures it — so only an API connection is checked here.
+    const baseUrlProblem = existing?.kind === "openai_chatgpt_subscription"
+      ? ""
+      : this.baseUrlIssue(baseUrl);
+    if (baseUrlProblem) {
+      this.ui.toast = `服务商配置没有保存：${baseUrlProblem}`;
+      this.notify();
+      return false;
+    }
+    const chosenModels = Array.isArray(input.models)
+      ? input.models
+      : Array.isArray(this.ui.aiProviderForm?.models)
+      ? this.ui.aiProviderForm.models
+      : [];
     const provider = {
       id,
       label: String(input.label || id).trim() || id,
       kind: existing?.kind || "openai_compatible",
-      base_url: String(input.base_url || "").trim(),
+      base_url: baseUrl,
       chat_path: String(input.chat_path || (existing && existing.chat_path) || "/chat/completions"),
       api_protocol: protocol,
       auth_header: protocol === "anthropic-messages" ? "x-api-key" : "authorization",
       auth_scheme: protocol === "anthropic-messages" ? "" : "Bearer",
       default_model: String(input.default_model || "").trim(),
-      models: Array.isArray(input.models)
-        ? input.models.map((model) => String(model).trim()).filter(Boolean)
-        : [],
+      models: [...new Set(chosenModels.map((model) => String(model || "").trim()).filter(Boolean))],
     };
     const hasCredential = this.ui.aiConfigured?.[id] === true;
     const boundOrigin = this.ui.aiCredentialOrigins?.[id] || null;
@@ -2845,31 +3183,29 @@ class WorkbenchStore {
     return true;
   }
   /**
-   * Make sure a provider has a record on disk before its key is stored.  A key
-   * for a provider the shell does not know reads back as "not configured", so
-   * an unsaved preset would silently lose its key on the next reload.
+   * Make sure a connection has a record on disk before its key is stored.  A key
+   * for a provider the shell does not know reads back as "not configured", so an
+   * unsaved form would silently lose its key on the next reload.
+   *
+   * The record saved here is the one already on screen, put through the same
+   * normalisation the form uses, so switching protocol cannot leave a stored
+   * `auth_scheme` behind that contradicts the new `auth_header`.
    */
   async ensureProviderRecord(providerId) {
+    const id = String(providerId || "").trim();
     const saved = (Array.isArray(this.ui.aiProviders) ? this.ui.aiProviders : [])
-      .some((entry) => entry && entry.id === providerId);
+      .some((entry) => entry && entry.id === id);
     if (saved) return;
-    const descriptor = this.aiDescriptor(providerId);
-    if (!descriptor || descriptor.id !== providerId) return;
-    await this.bridge.command("ai.connection.save", {
-      provider: {
-        id: providerId,
-        label: descriptor.label || providerId,
-        kind: "openai_compatible",
-        base_url: String(descriptor.base_url || "").trim(),
-        chat_path: String(descriptor.chat_path || "/chat/completions"),
-        auth_header: String(descriptor.auth_header || "authorization"),
-        auth_scheme: String(descriptor.auth_scheme || "Bearer"),
-        default_model: String(descriptor.default_model || "").trim(),
-        models: Array.isArray(descriptor.models)
-          ? descriptor.models.map((model) => String(model).trim()).filter(Boolean)
-          : [],
-      },
-    });
+    const form = this.ui.aiProviderForm;
+    const source = form && String(form.id || "").trim() === id
+      ? form
+      : this.aiDescriptor(id);
+    if (!source || String(source.id || "").trim() !== id) return;
+    if (aiIsOfflineConnection(source)) return;
+    const provider = { ...this.connectionRecord(source) };
+    delete provider.requires_credential;
+    if (!provider.base_url) return;
+    await this.bridge.command("ai.connection.save", { provider });
   }
   /**
    * Store one credential through the transport process.  The value lives only
@@ -3997,8 +4333,15 @@ class WorkbenchStore {
         appendBefore = clone(this.data);
         appendSelection = this.ui.selectedBlockId;
       }
+      // One-shot: consumed by the adoption this confirmation started, never by a
+      // later import of a different folder.
+      const replaceInvalidManifest = this.ui.replaceInvalidProject === true;
+      this.ui.replaceInvalidProject = false;
       const result = await this.bridge.command(appending ? "folder.append" : "folder.adopt", {
         plan: executablePlan,
+        // §3.2 Case C only: the user confirmed re-importing a folder whose
+        // project.json exists but cannot be read as a project.
+        replace_invalid_project: !appending && replaceInvalidManifest,
       });
       const adopted = result?.data || result?.value?.data || result;
       if (!adopted || !adopted.project) {
@@ -4416,6 +4759,77 @@ class WorkbenchStore {
     }
   }
   /**
+   * Ask the shell what is actually inside a folder.  Classification is a
+   * read-only, lock-free command, so a failure here means "the shell could not
+   * tell us" rather than "the folder is broken" — the caller keeps its original
+   * error in that case.
+   */
+  async inspectFolder(dir) {
+    const path = String(dir || "").trim();
+    if (!path) return null;
+    try {
+      return projectInspection(await this.bridge.command("project.inspect", { path }));
+    } catch {
+      return null;
+    }
+  }
+  /**
+   * §3.2/§3.3: one folder pick, two outcomes.
+   *
+   * A folder without `project.json` is not an error — it goes straight into the
+   * existing scan + mapping flow, because asking the user to know the difference
+   * between "打开项目文件夹" and "导入已有文件夹" before Workbench can help is the
+   * complaint itself.  A folder whose `project.json` exists but cannot be used
+   * keeps its own overlay, with the first actionable failure already visible.
+   */
+  async routeFolderInspection(dir, inspection) {
+    if (inspection.status === "no_project_json") {
+      this.ui.projectProblem = null;
+      await this.importExistingFolder(dir, "adopt");
+      return;
+    }
+    this.ui.projectProblem = {
+      dir,
+      status: inspection.status,
+      schemaVersion: inspection.schema_version,
+      supportedSchemaVersion: inspection.supported_schema_version,
+      problem: inspection.problem,
+      confirmReimport: false,
+    };
+    this.ui.toast = projectProblemText(inspection.problem);
+    this.notify();
+  }
+  /** 返回: drop the diagnosis and lose nothing — the folder was never touched. */
+  dismissProjectProblem() {
+    this.ui.projectProblem = null;
+    this.ui.toast = "已返回。这个文件夹没有被修改。";
+    this.notify();
+  }
+  /**
+   * §3.2 Case C, second step: re-import an unusable folder as a material folder.
+   * The scan is read-only; the existing `project.json` is only ever moved aside
+   * (never deleted) once the user confirms the import itself.
+   */
+  async reimportProjectProblemFolder({ replaceInvalid = false } = {}) {
+    const problem = this.ui.projectProblem;
+    if (!problem?.dir) return;
+    // Never offer to move aside a project that is only newer than this build.
+    if (problem.problem?.code === "unsupported_schema") {
+      this.ui.toast = "这个项目由更高版本的 Workbench 创建，当前版本不会改写它。";
+      this.notify();
+      return;
+    }
+    if (!replaceInvalid) {
+      this.ui.projectProblem = { ...problem, confirmReimport: true };
+      this.notify();
+      return;
+    }
+    const dir = problem.dir;
+    this.ui.projectProblem = null;
+    this.ui.replaceInvalidProject = true;
+    await this.importExistingFolder(dir, "adopt");
+  }
+  /**
    * Open a project directory.
    *
    * Durable lease invariants: the previous lease is released only after the
@@ -4464,6 +4878,16 @@ class WorkbenchStore {
       this.bridge.setProjectDir(projectDir);
       // `openProject` acquires the target lease and reads its canonical data.
       const opened = await this.bridge.openProject();
+      // A diagnosis payload (or an empty open we can now classify) decides the
+      // route: import the folder, or show its real first failure.  Neither holds
+      // a lease, so the previous project pointer goes back before we continue.
+      const diagnosis = projectInspection(opened) ||
+        (opened == null ? await this.inspectFolder(projectDir) : null);
+      if (diagnosis) {
+        this.bridge.restoreProjectDir(restoreProjectDir, restoreProjectDirFromUrl);
+        await this.routeFolderInspection(projectDir, diagnosis);
+        return;
+      }
       if (opened == null) throw new Error(describeProjectOpenFailure(null, { missingJson: true }));
       targetOpened = true;
       // A non-null open result may have acquired a lease even when validation
@@ -4522,11 +4946,25 @@ class WorkbenchStore {
       if (!await this.flush()) throw new Error("当前项目保存失败，请重试后再打开");
       this.bridge.setProjectDir(projectDir);
       const opened = await this.bridge.openProject();
+      // The lease already belongs to this folder, so a diagnosis here is shown
+      // or imported without touching the pointer it was taken with.
+      const diagnosis = projectInspection(opened) ||
+        (opened == null ? await this.inspectFolder(projectDir) : null);
+      if (diagnosis) {
+        await this.routeFolderInspection(projectDir, diagnosis);
+        return true;
+      }
       if (opened == null) {
         throw new Error(describeProjectOpenFailure(null, { missingJson: true }));
       }
       if (!this.isProjectData(opened)) {
-        throw new Error(describeProjectOpenFailure(null, { notObject: true }));
+        const recheck = await this.inspectFolder(projectDir);
+        throw new Error(
+          describeProjectOpenFailure(null, {
+            diagnosis: recheck?.status || "invalid",
+            problemCode: recheck?.problem?.code || "",
+          }),
+        );
       }
       const targetData = migrateUiProject(opened);
       const targetSession = this.targetSession(targetData, projectDir, "project");
@@ -4739,18 +5177,26 @@ class WorkbenchStore {
     };
     return collect(payload);
   }
-  async mergeImportedResult(result) {
-    const payload = parseNativeValue(result);
-    const warning = recoveryWarning(payload);
-    if (warning) this.noteRecoveryWarning(warning);
+  /**
+   * Some commands answer with the whole canonical project instead of a delta —
+   * only the shell knows how many references it had to rewrite.
+   */
+  replaceProjectFrom(payload) {
     const project = payload?.project && this.isProjectData(payload.project)
       ? payload.project
       : payload?.value?.project && this.isProjectData(payload.value.project)
       ? payload.value.project
       : null;
-    if (project) {
-      this.data = migrateUiProject(project);
-      this.trackProjectIdentity();
+    if (!project) return false;
+    this.data = migrateUiProject(project);
+    this.trackProjectIdentity();
+    return true;
+  }
+  async mergeImportedResult(result) {
+    const payload = parseNativeValue(result);
+    const warning = recoveryWarning(payload);
+    if (warning) this.noteRecoveryWarning(warning);
+    if (this.replaceProjectFrom(payload)) {
       // The shell answered an import with a whole project: treat it exactly
       // like any other project replacement.
       this.resetAiState();
@@ -4772,18 +5218,30 @@ class WorkbenchStore {
       this.notify();
       return;
     }
-    const selected = [...new Set((paths || []).filter((path) => typeof path === "string" && path.trim()))];
+    const requested = (paths || []).filter((path) => typeof path === "string" && path.trim());
+    const selected = [...new Set(requested)];
+    const batch = {
+      imported: 0,
+      duplicate: 0,
+      failed: 0,
+      skipped: requested.length - selected.length,
+      captured: 0,
+      failures: [],
+    };
     if (!selected.length) return;
-    let imported = 0;
+    if (!await this.flush()) {
+      this.ui.toast = this.ui.toast || "素材导入前没有保存成功，素材尚未导入。请先重试保存。";
+      this.notify();
+      return;
+    }
+    const before = clone(this.data);
+    const selection = this.ui.selectedBlockId;
     let receivedAsset = false;
-    try {
-      if (!await this.flush()) {
-        this.ui.toast = this.ui.toast || "素材导入前没有保存成功，素材尚未导入。请先重试保存。";
-        this.notify();
-        return;
-      }
-      for (const sourcePath of selected) {
-        const filename = filenameFromPath(sourcePath);
+    for (const sourcePath of selected) {
+      const filename = filenameFromPath(sourcePath);
+      // Each file owns its try/catch: one unreadable path must never cancel the
+      // rest of the batch or hide the imports that already reached disk.
+      try {
         const mimeType = mimeForFilename(filename);
         const result = await this.bridge.command("asset.import", {
           source_path: sourcePath,
@@ -4791,11 +5249,18 @@ class WorkbenchStore {
           mime_type: mimeType,
           type: assetTypeForFile(filename, mimeType),
         });
-        const beforeAssets = this.data.assets.length;
+        const rowsBefore = this.data.assets.length;
         await this.mergeImportedResult(result);
-        receivedAsset ||= this.data.assets.length > beforeAssets;
-        imported += 1;
+        const grew = this.data.assets.length > rowsBefore;
+        receivedAsset ||= grew;
+        if (batchLandedAsset(result, grew)) batch.imported += 1;
+        else batch.duplicate += 1;
+      } catch (error) {
+        batch.failed += 1;
+        batch.failures.push(`${filename}：${userFacingError(error, "素材导入没有完成")}`);
       }
+    }
+    try {
       if (!receivedAsset && this.bridge.isNative()) {
         const refreshed = await this.bridge.readProject();
         if (this.isProjectData(refreshed)) {
@@ -4805,68 +5270,113 @@ class WorkbenchStore {
           this.resetAiState();
         }
       }
-      this.ui.screen = "project";
-      this.ui.route = "media";
-      this.ui.toast = this.recoveryWarning
-        ? `已导入 ${imported} 个素材；${this.recoveryWarning}`
-        : `已导入 ${imported} 个素材`;
+      if (batch.imported) this.recordExternalCommit("批量导入素材", before, selection);
     } catch (error) {
-      this.ui.toast = userFacingError(error, "素材导入没有完成。课程内容没有改变，请重试。");
+      batch.failed += 1;
+      batch.failures.push(userFacingError(error, "素材导入后的项目刷新没有完成"));
     }
+    this.ui.screen = "project";
+    this.ui.route = "media";
+    this.ui.toast = assetBatchToast(batch, "已导入", this.recoveryWarning || "");
     this.notify();
   }
   async selectAndImportAsset() {
     if (!this.bridge.isNative()) return;
     try {
-      const path = await this.bridge.selectFile();
-      if (path) await this.importNativeFiles([path]);
+      const paths = await this.bridge.selectFiles();
+      if (!Array.isArray(paths) || !paths.length) {
+        // A cancelled pick is fine, an unavailable picker is not: say which
+        // one happened instead of leaving the button looking dead.
+        this.ui.toast = "没有选择素材文件。系统文件框支持一次多选，你可以再点一次「＋ 添加素材」。";
+        this.notifyChrome();
+        return;
+      }
+      await this.importNativeFiles(paths);
     } catch (error) {
       this.ui.toast = userFacingError(error, "没有选中可用的素材文件，请重试。");
       this.notify();
     }
   }
-  async importBrowserFile(file) {
-    const bytes = new Uint8Array(await file.arrayBuffer());
-    const name = file.name || "导入文件";
-    if (/\.json$/i.test(name) || file.type === "application/json") {
-      const parsed = JSON.parse(new TextDecoder().decode(bytes));
-      if (this.isProjectData(parsed)) {
-        this.loadProjectPayload(parsed);
-        await this.bridge.writeProject(this.data);
-        this.ui.toast = "已打开项目文件";
-        this.notify();
-        return;
+  /**
+   * Browser-shell batch import: the drop zone and the hidden multi-picker both
+   * land here so a folder of files reports the same per-file accounting as the
+   * native picker.
+   */
+  async importBrowserFiles(files) {
+    const requested = [...(files || [])].filter((file) => file && typeof file === "object");
+    const batch = {
+      imported: 0,
+      duplicate: 0,
+      failed: 0,
+      skipped: 0,
+      captured: 0,
+      failures: [],
+    };
+    if (!requested.length) return;
+    if (!await this.flush()) {
+      this.ui.toast = this.ui.toast || "素材导入前没有保存成功，素材尚未导入。请先重试保存。";
+      this.notify();
+      return;
+    }
+    const before = clone(this.data);
+    const selection = this.ui.selectedBlockId;
+    let receivedAsset = false;
+    for (const file of requested) {
+      const name = String(file.name || "导入文件");
+      try {
+        const bytes = new Uint8Array(await file.arrayBuffer());
+        if (/\.json$/i.test(name) || file.type === "application/json") {
+          const parsed = JSON.parse(new TextDecoder().decode(bytes));
+          if (this.isProjectData(parsed)) {
+            if (requested.length > 1) {
+              batch.skipped += 1;
+              continue;
+            }
+            this.loadProjectPayload(parsed);
+            await this.bridge.writeProject(this.data);
+            this.ui.toast = "已打开项目文件";
+            this.notify();
+            return;
+          }
+        }
+        if (isAssetFile(name, file.type)) {
+          const base64 = (() => {
+            let binary = "";
+            for (const byte of bytes) binary += String.fromCharCode(byte);
+            return btoa(binary);
+          })();
+          const result = await this.bridge.command("asset.import", {
+            filename: name,
+            mime_type: file.type || mimeForFilename(name),
+            type: assetTypeForFile(name, file.type),
+            bytes_base64: base64,
+          });
+          const rowsBefore = this.data.assets.length;
+          await this.mergeImportedResult(result);
+          const grew = this.data.assets.length > rowsBefore;
+          receivedAsset ||= grew;
+          if (batchLandedAsset(result, grew)) batch.imported += 1;
+          else batch.duplicate += 1;
+        } else {
+          this.captureToInbox(new TextDecoder().decode(bytes), name.replace(/\.[^.]+$/, ""));
+          batch.captured += 1;
+        }
+      } catch (error) {
+        batch.failed += 1;
+        batch.failures.push(`${name}：${userFacingError(error, "文件导入没有完成")}`);
       }
     }
-    const base64 = (() => {
-      let binary = "";
-      for (const byte of bytes) binary += String.fromCharCode(byte);
-      return btoa(binary);
-    })();
-    if (isAssetFile(name, file.type)) {
-      try {
-        const asset = await this.bridge.command("asset.import", {
-          filename: name,
-          mime_type: file.type || mimeForFilename(name),
-          type: assetTypeForFile(name, file.type),
-          bytes_base64: base64,
-        });
-        await this.mergeImportedResult(asset);
-        this.ui.toast = this.recoveryWarning
-          ? `已将文件内容保存到媒体库；${this.recoveryWarning}`
-          : "已将文件内容保存到媒体库";
-      } catch (error) { this.ui.toast = userFacingError(error, "素材导入没有完成。课程内容没有改变，请重试。"); }
-      this.ui.route = "media";
-    } else {
-      this.captureToInbox(new TextDecoder().decode(bytes), name.replace(/\.[^.]+$/, ""));
-      this.ui.route = "inbox";
-    }
+    if (batch.imported) this.recordExternalCommit("批量导入素材", before, selection);
     this.ui.screen = "project";
+    this.ui.route = batch.captured && !batch.imported ? "inbox" : "media";
+    this.ui.toast = assetBatchToast(batch, "已将", this.recoveryWarning || "");
     this.notify();
   }
   undo() {
-    const change = this.history.pop();
+    const change = this.history[this.history.length - 1];
     if (!change) return;
+    if (change.physical_rename) return this.stepPhysicalRename("undo");
+    this.history.pop();
     this.future.push(change);
     this.data = clone(change.before);
     this.ui.selectedBlockId = change.selection ?? null;
@@ -4877,13 +5387,62 @@ class WorkbenchStore {
     this.notify();
   }
   redo() {
-    const change = this.future.pop();
+    const change = this.future[this.future.length - 1];
     if (!change) return;
+    if (change.physical_rename) return this.stepPhysicalRename("redo");
+    this.future.pop();
     this.history.push(change);
     this.data = clone(change.after);
     this.ui.selectedBlockId = change.selection ?? null;
     this.retainUiSelection();
     this.ui.toast = `已恢复：${change.label}`;
+    this.scheduleSave();
+    this.notify();
+  }
+  /**
+   * §14.5 — undo/redo for a step that moved a file on disk.  A snapshot restore
+   * alone would leave the project naming a file that is not there, so the same
+   * command swaps the file back first; the history entry only moves once the
+   * filesystem agrees with it.
+   */
+  async stepPhysicalRename(direction) {
+    const source = direction === "undo" ? this.history : this.future;
+    const target = direction === "undo" ? this.future : this.history;
+    const change = source[source.length - 1];
+    const step = change?.physical_rename;
+    if (!change || !step) return;
+    const moveTo = direction === "undo" ? step.previous_name : step.next_name;
+    if (!await this.flush()) {
+      this.ui.toast = "素材重命名步骤没有保存成功，文件名称保持当前状态。";
+      this.notify();
+      return;
+    }
+    try {
+      const payload = parseNativeValue(await this.bridge.command("asset.rename", {
+        asset_id: step.asset_id,
+        new_name: moveTo,
+      }));
+      if (!this.replaceProjectFrom(payload)) {
+        throw new Error("重命名结果缺少项目数据，请按原文件名重试。");
+      }
+    } catch (error) {
+      this.ui.toast = `素材文件没有换成「${moveTo}」：${userFacingError(error, `${direction === "undo" ? "撤销" : "恢复"}没有完成，文件名称保持当前状态。`)}`;
+      this.notify();
+      return;
+    }
+    source.pop();
+    target.push(change);
+    // The command has just moved the file, so the project it answered with is the
+    // only state that agrees with the disk: a managed name is derived from the
+    // asset id, while the history snapshot still names the path this very rename
+    // invalidated.  Restoring that snapshot left the asset pointing at a file that
+    // no longer existed, so the step takes the command's result and only borrows
+    // the snapshot for the selection.
+    this.ui.selectedBlockId = change.selection ?? null;
+    this.retainUiSelection();
+    this.ui.toast = direction === "undo"
+      ? `已撤销：${change.label}`
+      : `已恢复：${change.label}`;
     this.scheduleSave();
     this.notify();
   }
@@ -5208,7 +5767,7 @@ class WorkbenchStore {
     this.commit("修改标题级别", (data) => {
       const block = data.blocks.find((candidate) => candidate.id === blockId);
       if (!block) return;
-      block.settings.level = Math.max(1, Math.min(4, Number(level) || 2));
+      block.settings.level = Math.max(1, Math.min(6, Number(level) || 2));
       block.updated_at = now();
     });
   }
@@ -5225,11 +5784,11 @@ class WorkbenchStore {
    * caret is never destroyed; the history entry is then created from the value
    * typing started from, which keeps undo meaningful.
    */
-  recordBlockTextEdit(blockId, before, value, { notify = true } = {}) {
+  recordBlockTextEdit(blockId, before, value, { notify = true, retype = null } = {}) {
     const block = this.data.blocks.find((candidate) => candidate.id === blockId);
     if (!block) return;
     const previous = textOf(before);
-    if (previous === value) {
+    if (previous === value && !retype) {
       if (textOf(block.content) !== value) {
         // The DOM is ahead of canonical data (undo/redo during typing).
         block.content = value;
@@ -5237,11 +5796,28 @@ class WorkbenchStore {
       }
       return;
     }
+    // A compiled heading/quote/code keeps the type change and the marker
+    // removal in the same entry, so one Undo returns the block to prose.
+    if (previous === value) {
+      this.commit(`改成${blockLabel(retype.type)}`, (data) => {
+        const target = data.blocks.find((candidate) => candidate.id === blockId);
+        if (!target) return;
+        target.type = retype.type;
+        if (retype.level != null) target.settings.level = retype.level;
+        target.content = retype.content;
+        target.updated_at = now();
+      }, { notify });
+      return;
+    }
     block.content = previous;
     this.commit(`编辑${blockLabel(block.type)}`, (data) => {
       const target = data.blocks.find((candidate) => candidate.id === blockId);
       if (!target) return;
-      target.content = value;
+      target.content = retype ? retype.content : value;
+      if (retype) {
+        target.type = retype.type;
+        if (retype.level != null) target.settings.level = retype.level;
+      }
       target.updated_at = now();
       const document = data.documents.find((candidate) => candidate.id === target.document_id);
       if (document) document.updated_at = now();
@@ -5720,7 +6296,7 @@ class WorkbenchStore {
     this.ui.assetUsageId = null;
     this.ui.toast = "已从项目中删除这个素材（磁盘文件保留在 assets/ 目录）";
   }
-  /** Start inline edit of Asset.title (display name). Never renames disk files. */
+  /** Start inline edit of the managed file name. Committing it moves the file. */
   startAssetRename(assetId) {
     if (!this.data.assets.some((candidate) => candidate.id === assetId && !candidate.archived)) {
       return;
@@ -5736,28 +6312,91 @@ class WorkbenchStore {
     this.notify();
   }
   /**
-   * Update Asset.title metadata only. filename / storage_path stay untouched.
+   * §14.1 — renaming a library asset renames the managed file on disk.
+   *
+   * The command owns the whole transaction (preflight → filesystem rename →
+   * canonical rewrite → save, with rollback), so the shell never edits the
+   * project first: it asks, then replaces its copy from the project the shell
+   * answered with.  A rejected name leaves the file, the project and this
+   * history untouched.  Asset id, checksum and AssetUsage ids stay stable
+   * because only the command rewrites the paths that point at them.
    * @param {string} assetId
-   * @param {string} title
+   * @param {string} requested
    */
-  renameAsset(assetId, title) {
-    const next = String(title ?? "").trim();
+  async renameAsset(assetId, requested) {
+    // Enter commits and then the input loses focus, so blur arrives with the same
+    // value a second time.  Without this guard that follow-up asks the shell to
+    // rename again; the backend re-appends the extension, the name comes back
+    // unchanged, and the real success toast is replaced by 「素材名称没有变化」
+    // plus a no-op undo step.
+    if (this.ui.editingAssetId !== assetId) return;
+    const next = String(requested ?? "").trim();
+    const previous = this.data.assets.find((candidate) => candidate.id === assetId);
     this.ui.editingAssetId = null;
+    if (!previous) {
+      this.notify();
+      return;
+    }
     if (!next) {
+      // §14.3 lists an empty name as a rejection, and a rejection has to be said:
+      // closing the field back to the old name alone leaves the user guessing
+      // whether the rename worked.  A plain blur is not affected — the field is
+      // prefilled with the current name, so that path lands on the branch below.
+      this.ui.toast = "素材名称不能为空，文件名称没有改变。";
       this.notify();
       return;
     }
-    const asset = this.data.assets.find((candidate) => candidate.id === assetId);
-    if (!asset || asset.title === next) {
+    if (next === previous.filename) {
       this.notify();
       return;
     }
-    this.commit("修改素材显示名称", (data) => {
-      const target = data.assets.find((candidate) => candidate.id === assetId);
-      if (!target) return;
-      target.title = next;
-    });
-    this.ui.toast = `已更新显示名称：${next}`;
+    const before = clone(this.data);
+    const selection = this.ui.selectedBlockId;
+    // The shell renames from the file on disk, so any pending edit has to be
+    // saved first or the rename would answer with a project that lost it.
+    if (!await this.flush()) {
+      this.ui.toast = "素材重命名前没有保存成功，文件名称没有改变。请先重试保存。";
+      this.notify();
+      return;
+    }
+    try {
+      const payload = parseNativeValue(await this.bridge.command("asset.rename", {
+        asset_id: assetId,
+        new_name: next,
+      }));
+      if (!this.replaceProjectFrom(payload)) {
+        throw new Error("重命名结果缺少项目数据，请按原文件名重试。");
+      }
+      const renamed = this.data.assets.find((candidate) => candidate.id === assetId);
+      const newFilename = String(renamed?.filename || next);
+      // §14.5: restoring the snapshot alone would leave the canonical project
+      // naming a file that no longer exists, so the step carries both names.
+      this.history.push({
+        label: `重命名素材文件「${previous.filename}」`,
+        before,
+        after: clone(this.data),
+        selection,
+        physical_rename: {
+          asset_id: assetId,
+          previous_name: previous.filename,
+          next_name: newFilename,
+        },
+      });
+      if (this.history.length > 50) this.history.shift();
+      this.future = [];
+      this.ui.toast = newFilename === previous.filename
+        ? "素材名称没有变化"
+        : `已重命名文件：${newFilename}`;
+    } catch (error) {
+      const message = String(error?.message || error || "");
+      this.ui.toast = `素材重命名没有完成：${userFacingError(error, "文件名称没有改变。")}`;
+      if (message.includes("rename_rollback_failed")) {
+        // §14.4: disk and project now disagree, so this stays visible instead of
+        // flashing by in a toast — and success is never claimed.
+        this.recoveryWarning = message;
+      }
+    }
+    this.notify();
   }
   resolveRequirement(id, assetId = null) {
     const requirement = this.data.requirements.find((candidate) => candidate.id === id);
@@ -6170,6 +6809,10 @@ class WorkbenchStore {
     this.ui.layoutPageId = firstPage?.id ?? null;
     this.ui.paginationConversionPreview = false;
     this.ui.pageSizePreview = null;
+    // Converting must land the user in the editing state the new controls need;
+    // landing back in the read-only canvas would make 启用分页 look inert.
+    this.ui.paginationEditing = true;
+    this.ui.gridEditing = false;
     this.scheduleSessionSave();
     this.notify();
   }
@@ -6494,6 +7137,28 @@ class WorkbenchStore {
       data.placements = data.placements.filter((placement) => !(placement.layout_instance_id === layout.id && placement.block_id === blockId));
     });
   }
+  /**
+   * The defined right-click context action on a placed block (§15.1): take this
+   * placement off the Grid and leave move/selection state behind.  It goes
+   * through `commit`, so one Ctrl+Z puts the block back exactly where it was,
+   * and the block's own content is never touched.  No confirmation dialog: the
+   * action is undoable, so a dialog would only hide the result.
+   */
+  removePlacementByContext(placementId) {
+    const placement = (this.data.placements || []).find((candidate) =>
+      candidate.id === placementId
+    );
+    if (!placement) return false;
+    const block = this.data.blocks.find((candidate) =>
+      candidate.id === placement.block_id
+    );
+    this.unplaceBlock(placement.block_id);
+    if (this.ui.movingPlacementId === placementId) this.ui.movingPlacementId = null;
+    if (this.ui.selectedBlockId === placement.block_id) this.ui.selectedBlockId = null;
+    this.ui.toast = `已把「${block ? blockLabel(block.type) : "这块内容"}」移出网格，回到「还没有放进网格的正文」`;
+    this.notify();
+    return true;
+  }
   autofillGrid() {
     const item = this.currentItem();
     const layout = this.layout();
@@ -6597,6 +7262,11 @@ class WorkbenchStore {
       this.notify();
       return false;
     }
+    // `commit` renders synchronously, so the move state has to be dropped before
+    // it: cleared afterwards, the redraw still draws the "正在移动" banner and the
+    // leftover 「放这里」 targets, and a click on one of them moves the block again.
+    this.ui.movingPlacementId = null;
+    this.ui.toast = "已移动这块内容";
     this.commit("移动排版元素", (data) => {
       const target = data.placements.find((candidate) => candidate.id === id);
       if (!target) return;
@@ -6605,8 +7275,6 @@ class WorkbenchStore {
       target.column_start = columnStart;
       target.column_end = columnStart + columnSpan;
     });
-    this.ui.movingPlacementId = null;
-    this.ui.toast = "已移动这块内容";
     return true;
   }
   resizePlacement(id, dw = 0, dh = 0) {
@@ -7502,6 +8170,8 @@ let composingField = null;
 let closeActiveBlockOverflowMenu = null;
 let activeBlockOverflowMenu = null;
 let pendingBlockOverflowFocus = null;
+/** Caret to put back into a block editor after a render that a compile caused. */
+let pendingEditorCaret = null;
 
 /** A stable selector for the control that currently has focus. */
 function focusSelector(element) {
@@ -7516,6 +8186,34 @@ function focusSelector(element) {
   if (dataset.lessonTitle !== undefined) return "[data-lesson-title]";
   if (element.id) return `#${element.id}`;
   return "";
+}
+
+/**
+ * Put the caret back where the user was typing after an auto-compile replaced
+ * the block editor.  A compile that moves the caret is what makes a formatter
+ * feel like it is fighting the user, so the offset is carried across the render
+ * and clamped into the converted body.
+ */
+function restorePendingBlockCaret() {
+  const request = pendingEditorCaret;
+  pendingEditorCaret = null;
+  if (!request) return;
+  queueMicrotask(() => {
+    const editor = root?.querySelector?.(
+      `[data-rich-editor][data-block-id="${request.blockId}"]`,
+    );
+    if (editor) {
+      focusTextOffset(editor, request.offset);
+      return;
+    }
+    const field = root?.querySelector?.(`textarea[data-block-id="${request.blockId}"]`);
+    if (!field) return;
+    try {
+      field.focus?.({ preventScroll: true });
+      const at = Math.max(0, Math.min(request.offset ?? 0, String(field.value ?? "").length));
+      field.setSelectionRange(at, at);
+    } catch { /* focus is best effort: never break a render over it */ }
+  });
 }
 
 function captureTypingState() {
@@ -7668,6 +8366,7 @@ function render() {
   scheduleToastDismissal();
   restoreScrollState(scroll);
   restoreTypingState(typing);
+  restorePendingBlockCaret();
   const fieldRequest = String(store.ui.focusField || "");
   if (fieldRequest) {
     store.ui.focusField = "";
@@ -7778,6 +8477,9 @@ function installEditorGuards() {
 
 const TEXT_FIELD_SELECTOR = "textarea[data-block-id], input[data-block-id]";
 
+/** How long a paused keystroke counts as a finished edit before compiling. */
+const BLOCK_COMPILE_IDLE_MS = 600;
+
 /**
  * P2-2: a block frame is the only size container, so the textarea inside it
  * must grow to its content and let the frame scroll.  Without this the frame
@@ -7810,7 +8512,7 @@ function autosizeBlockFields(scope = root) {
   }
 }
 
-function flushPendingEdit(element, { notify = true } = {}) {
+function flushPendingEdit(element, { notify = true, convert = false, structuralOnly = false } = {}) {
   if (!element) return;
   // A render detaches the field and browsers may report that as a blur.  The
   // pending value is already in canonical data; the history entry is recorded
@@ -7823,13 +8525,35 @@ function flushPendingEdit(element, { notify = true } = {}) {
     // The input listener already wrote the value into canonical data, so the
     // history entry is recorded from the value typing started from.
     const baseline = element.dataset.editBaseline;
+    const value = element.isContentEditable || element.dataset.richEditor === "true"
+      ? markdownFromEditable(element)
+      : element.value;
+    // Structural Markdown becomes a structural block only at a stable edit
+    // boundary, and never while a composition is in flight.
+    const retype = convert && element.dataset.richEditor === "true"
+      ? structuralConversion(value, {
+        type: block.type,
+        level: block.settings?.level ?? null,
+      })
+      : null;
+    // Pausing mid-sentence is not a reason to redraw the block the user is
+    // typing in, so an idle probe commits only when it found a real conversion.
+    if (structuralOnly && !retype) return;
+    const caretBefore = retype ? caretTextOffset(element) : null;
+    if (retype && caretBefore !== null) {
+      // Recording the edit renders synchronously, so the caret has to be queued
+      // before it: a request written after the redraw is only ever read by the
+      // next one, which leaves the user typing into a detached field.
+      pendingEditorCaret = {
+        blockId: element.dataset.blockId,
+        offset: Math.max(0, caretBefore - retype.offsetLoss),
+      };
+    }
     store.recordBlockTextEdit(
       element.dataset.blockId,
       typeof baseline === "string" ? baseline : block.content,
-      element.isContentEditable || element.dataset.richEditor === "true"
-        ? markdownFromEditable(element)
-        : element.value,
-      { notify },
+      value,
+      { notify, retype },
     );
   } else if (scope === "title") {
     store.renameLesson(block.id, element.value);
@@ -7837,6 +8561,17 @@ function flushPendingEdit(element, { notify = true } = {}) {
   delete element.dataset.editBaseline;
 }
 
+/**
+ * Stop and reset the media mounted in the open preview modal, so a GIF or video
+ * cannot keep playing behind a surface that is already gone (§12.4).
+ */
+function stopMediaPreview() {
+  const modal = root.querySelector(".asset-media-preview-modal");
+  stopPreviewMedia(modal);
+  modal?.querySelectorAll?.("img[data-animated-preview]").forEach((image) =>
+    image.removeAttribute("src")
+  );
+}
 function handleAction(action, element, event) {
   if (element.closest?.(".block-more-menu")) {
     const source = activeBlockOverflowMenu?.details.closest?.("article.block");
@@ -7848,46 +8583,8 @@ function handleAction(action, element, event) {
     }
   }
   switch (action) {
-    case "toggle-markdown-source": {
-      const blockId = String(element.dataset.id || "");
-      if (!blockId) return;
-      const editor = [...root.querySelectorAll("[data-rich-editor]")].find((candidate) =>
-        candidate.dataset.blockId === blockId
-      );
-      const source = [...root.querySelectorAll("textarea[data-block-id]")].find((candidate) =>
-        candidate.dataset.blockId === blockId && candidate.classList.contains("markdown-source-field")
-      );
-      if (editor) flushPendingEdit(editor);
-      if (source) flushPendingEdit(source);
-      store.ui.markdownSourceBlockId = store.ui.markdownSourceBlockId === blockId ? null : blockId;
-      store.notify();
-      return;
-    }
-    case "markdown-format": {
-      const blockId = String(element.dataset.id || "");
-      const editor = [...root.querySelectorAll("[data-rich-editor]")].find((candidate) =>
-        candidate.dataset.blockId === blockId
-      );
-      if (!editor) return;
-      const command = {
-        bold: "bold",
-        italic: "italic",
-        strike: "strikeThrough",
-      }[element.dataset.format || ""];
-      if (!command || typeof document.execCommand !== "function") return;
-      if (document.activeElement !== editor) editor.focus();
-      document.execCommand(command, false);
-      editor.dispatchEvent(new Event("input", { bubbles: true }));
-      return;
-    }
     case "close-overlay":
-      {
-        const modal = root.querySelector(".asset-media-preview-modal");
-        stopPreviewMedia(modal);
-        modal?.querySelectorAll?.("img[data-animated-preview]").forEach((image) =>
-          image.removeAttribute("src")
-        );
-      }
+      stopMediaPreview();
       store.ui.palette = store.ui.capture = store.ui.preflight = store.ui.snapshot = false;
       store.ui.assetPicker = null;
       store.ui.assetImagePreviewId = null;
@@ -7947,6 +8644,9 @@ function handleAction(action, element, event) {
     case "open-file": if (store.bridge.isNative()) void store.selectAndImportAsset(); else root.querySelector("[data-project-file]")?.click(); return;
     case "open-project-dir": void store.openProjectFromPicker(); return;
     case "import-folder": void store.importExistingFolderFromPicker(); return;
+    case "dismiss-project-problem": store.dismissProjectProblem(); return;
+    case "reimport-project-folder": void store.reimportProjectProblemFolder(); return;
+    case "confirm-reimport-project-folder": void store.reimportProjectProblemFolder({ replaceInvalid: true }); return;
     case "append-files": void store.importSelectedFilesFromPicker(); return;
     case "append-folder": void store.importExistingFolderFromPicker("append"); return;
     case "explorer-select": void store.selectExplorerEntry(element.dataset.path || ""); return;
@@ -8145,6 +8845,12 @@ function handleAction(action, element, event) {
     case "grid-start-move": store.startMovePlacement(element.dataset.id); return;
     case "grid-cancel-move": store.cancelMovePlacement(); return;
     case "grid-move-to":
+      // The cell the block already sits in is marked `data-current` rather than
+      // `disabled` (a disabled control swallows the pointer, Item 14 §15.3), so
+      // the no-op has to live here: mouse clicks never reach it (CSS
+      // `pointer-events: none` lets them fall through to the block underneath),
+      // but keyboard activation still arrives and must not pretend to move.
+      if (element?.dataset?.current === "true") return;
       store.movePlacementTo(
         element.dataset.id,
         Number(element.dataset.row) || 0,
@@ -8247,14 +8953,19 @@ function handleAction(action, element, event) {
       // neither comes from a hardcoded table in the app.
       const manual = read("[data-ai-model-manual]").trim();
       const chosen = manual || String(store.ui.aiChosenModel || "").trim();
-      const discovered = Array.isArray(store.ui.aiModelOptions)
-        ? store.ui.aiModelOptions
-        : [];
-      const models = discovered.includes(chosen) || !chosen
-        ? discovered
-        : [...discovered, chosen];
+      // §9.6: the connection owns exactly the models the user added to the
+      // catalog, plus whatever they are typing right now.
+      const models = [...new Set([
+        ...((Array.isArray(store.ui.aiProviderForm?.models) ? store.ui.aiProviderForm.models : [])
+          .map((model) => String(model || "").trim())
+          .filter(Boolean)),
+        chosen,
+      ].filter(Boolean))];
       void store.aiSaveProvider({
-        id: store.ui.aiProviderForm?.id || store.ui.aiProviderId,
+        // The typed id wins: a save that lands before the field's change event
+        // would otherwise write the placeholder id the form was opened with.
+        id: read("[data-ai-provider-id]").trim() ||
+          store.ui.aiProviderForm?.id || store.ui.aiProviderId,
         label: read("[data-ai-provider-label]"),
         base_url: read("[data-ai-base-url]"),
         api_protocol: read("[data-ai-api-protocol]") || "openai-completions",
@@ -8265,6 +8976,8 @@ function handleAction(action, element, event) {
     }
     case "ai-discover-models": void store.aiDiscoverModels(); return;
     case "ai-pick-model": store.aiPickModel(element.dataset.id); return;
+    case "ai-toggle-model-selection": store.aiToggleModelSelection(element.dataset.id); return;
+    case "ai-add-selected-models": store.aiAddSelectedModels(); return;
     case "ai-cancel-provider": store.ui.aiProviderForm = null; store.notify(); return;
     case "ai-save-secret": {
       const input = root.querySelector("[data-ai-secret]");
@@ -8439,9 +9152,144 @@ function showBlockOverflowMenu(details) {
   menu.querySelector("button:not(:disabled)")?.focus();
 }
 
+/* ------------------------------------------------------------------ *
+ * Item 14 (§15.3): one delegated pointer/click/contextmenu handler for the
+ * placement Grid.
+ *
+ * `render()` rebuilds every node under `#app`, so a listener attached to a
+ * `.placement` element only ever lived until the next notify(): re-render,
+ * page switch, hover-chrome change.  `#app` is the one surface that survives,
+ * so the grid's three listeners are installed there exactly once and identity
+ * is resolved from the markup contract instead:
+ *
+ *   [data-grid-surface]   the owning surface — "grid" (the canvas) or
+ *                         "unplaced" (the strip of not-yet-placed content)
+ *   [data-placement]      a placed block; carries data-grid-role="placement",
+ *                         data-structure-block, data-page-readonly, data-row,
+ *                         data-col
+ *   [data-action]         a control that owns its click (cell targets, the
+ *                         overlay's resize/✕/✎ buttons, an unplaced block)
+ *
+ * The hover overlay in `.placement-actions` is the reason this had to be
+ * delegated rather than patched per button: the overlay *container* is
+ * `pointer-events: none` and only its buttons are `auto` (see styles.css), so a
+ * visible overlay can no longer swallow the click meant for the block under it,
+ * and the current move-target cell is `pointer-events: none` instead of a
+ * `disabled` button, which used to eat the click completely.
+ * ------------------------------------------------------------------ */
+const gridPointer = { surface: null, press: null };
+
+function gridEventTarget(event) {
+  const target = event?.target;
+  return target && typeof target.closest === "function" ? target : null;
+}
+
+function gridSurfaceOf(event) {
+  const target = gridEventTarget(event);
+  return target ? target.closest("[data-grid-surface]") : null;
+}
+
+function gridPlacementOf(event) {
+  const target = gridEventTarget(event);
+  return target ? target.closest("[data-placement]") : null;
+}
+
+/** The nearest `[data-action]` control that really lives inside `scope`. */
+function gridOwnedControl(event, scope) {
+  const target = gridEventTarget(event);
+  const control = target ? target.closest("[data-action]") : null;
+  if (!control || !control.dataset.action) return null;
+  if (typeof scope?.contains !== "function") return null;
+  return scope.contains(control) ? control : null;
+}
+
+function gridTextSelection() {
+  try {
+    return String(globalThis.getSelection?.()?.toString?.() || "");
+  } catch {
+    return "";
+  }
+}
+
+function bindGridPointerSurface() {
+  if (gridPointer.surface || !root?.addEventListener) return;
+  gridPointer.surface = root;
+  root.addEventListener("pointerdown", onGridPointerDown);
+  root.addEventListener("click", onGridPointerClick);
+  root.addEventListener("contextmenu", onGridContextMenu);
+}
+
+/**
+ * Remember what the pointer actually pressed.  The click that follows is the
+ * command; the press tells it apart from a text-selection drag, which must not
+ * be read as "enter move mode".
+ */
+function onGridPointerDown(event) {
+  const surface = gridSurfaceOf(event);
+  if (!surface) {
+    gridPointer.press = null;
+    return;
+  }
+  const placement = gridPlacementOf(event);
+  gridPointer.press = {
+    surface: surface.dataset.gridSurface || "",
+    placementId: placement?.dataset.placement || null,
+    button: event.button,
+    selection: gridTextSelection(),
+  };
+}
+
+function onGridPointerClick(event) {
+  const surface = gridSurfaceOf(event);
+  if (!surface) return;
+  if (event.button != null && event.button !== 0) return;
+  const placement = gridPlacementOf(event);
+  const control = gridOwnedControl(event, placement || surface);
+  if (control) {
+    // One dispatch path for every grid control, so `data-action` keeps its
+    // app-wide meaning while the grid itself never depends on re-bound nodes.
+    handleAction(control.dataset.action, control, event);
+    return;
+  }
+  if (!placement) {
+    // Pressed the canvas itself with a move armed: put the block down where it
+    // already is rather than stranding the user in move mode.
+    if (surface.dataset.gridSurface === "grid" && store.ui.movingPlacementId) {
+      store.cancelMovePlacement();
+    }
+    return;
+  }
+  if (placement.dataset.pageReadonly === "true") return;
+  const selection = gridTextSelection();
+  if (selection && selection !== gridPointer.press?.selection) return;
+  const placementId = placement.dataset.placement || "";
+  if (!placementId) return;
+  if (store.ui.movingPlacementId === placementId) {
+    store.cancelMovePlacement();
+    return;
+  }
+  store.startMovePlacement(placementId);
+}
+
+/** Right click on a placed block is the defined context action: 移出网格. */
+function onGridContextMenu(event) {
+  const placement = gridPlacementOf(event);
+  const surface = gridSurfaceOf(event);
+  if (!placement || !surface) return;
+  if (placement.dataset.pageReadonly === "true") return;
+  // Only this gesture is claimed; the browser menu stays everywhere else.
+  event.preventDefault();
+  store.removePlacementByContext(placement.dataset.placement || "");
+}
+
 function bindEvents() {
   root.querySelectorAll("[data-action]").forEach((element) => element.addEventListener("click", (event) => {
     if (element.matches?.("select[data-action], input[data-action]")) return;
+    // Controls inside the placement Grid / unplaced strip belong to the single
+    // delegated grid surface (`bindGridPointerSurface`), which survives every
+    // re-render.  Binding them here as well would dispatch each grid click and
+    // each cell commit twice.
+    if (typeof element.closest === "function" && element.closest("[data-grid-surface]")) return;
     if (element.dataset.stopClick === "true") event.stopPropagation();
     // A dialog carries `data-stop-click="true"` so that a click inside it is
     // not a click on the backdrop.  The guard used to sit on the `[data-action]`
@@ -8474,9 +9322,6 @@ function bindEvents() {
       else showBlockOverflowMenu(details);
     });
   });
-  root.querySelectorAll(".markdown-inline-toolbar button").forEach((button) => {
-    button.addEventListener("mousedown", (event) => event.preventDefault());
-  });
 
   // P2-1: the manual Model ID is a first-class choice.  Typing in it updates the
   // "将要使用的模型" line in place — no re-render, so the caret and IME survive —
@@ -8503,6 +9348,14 @@ function bindEvents() {
     manualModel.addEventListener("input", syncModelPreview);
     manualModel.addEventListener("change", syncModelPreview);
   }
+  // The Provider ID is a form field until 保存 (§9.4): editing it writes only
+  // the unsaved form, and the store refuses to re-name a saved connection.
+  const providerIdField = root.querySelector("[data-ai-provider-id]");
+  if (providerIdField) {
+    const commitProviderId = () => store.aiSetProviderId(providerIdField.value);
+    providerIdField.addEventListener("change", commitProviderId);
+    providerIdField.addEventListener("blur", commitProviderId);
+  }
   const modelSearch = root.querySelector("[data-ai-model-search]");
   if (modelSearch) {
     modelSearch.addEventListener("input", () => {
@@ -8513,41 +9366,41 @@ function bindEvents() {
     });
   }
 
-  // P2-4: a grid block is operated with the mouse — left click selects it for
-  // moving, right click takes it off the canvas.  The action buttons inside the
-  // card keep their own behaviour, so clicks on them are ignored here.
-  root.querySelectorAll("[data-placement]").forEach((element) => {
-    const placementId = element.dataset.placement;
-    const blockId = element.dataset.structureBlock;
-    element.addEventListener("click", (event) => {
-      if (element.dataset.pageReadonly === "true") return;
-      if (event.target.closest?.(".placement-actions")) return;
-      if (store.ui.movingPlacementId === placementId) {
-        store.cancelMovePlacement();
-        return;
-      }
-      store.startMovePlacement(placementId);
-    });
-    element.addEventListener("contextmenu", (event) => {
-      if (element.dataset.pageReadonly === "true") return;
-      event.preventDefault();
-      const block = store.data.blocks.find((candidate) => candidate.id === blockId);
-      store.unplaceBlock(blockId);
-      store.ui.movingPlacementId = null;
-      store.ui.selectedBlockId = null;
-      store.ui.toast = `已把「${block ? blockLabel(block.type) : "这块内容"}」移出网格，回到「还没有放进网格的正文」`;
-      store.notify();
-    });
-  });
+  // P2-4 / Item 14 (§15.3): the whole placement Grid — left click to move,
+  // click a cell to commit, right click to take a block off the canvas, Escape
+  // to cancel — runs through ONE delegated pointer/click/contextmenu handler on
+  // the surviving `#app` surface.  The per-node `[data-placement]` listeners
+  // this replaces were re-attached on every notify() and died with the node they
+  // were bound to, which is exactly how "the block is visible but a click does
+  // nothing" survived every earlier button-level fix.  `bindGridPointerSurface`
+  // guards itself, so calling it after each render installs nothing twice.
+  bindGridPointerSurface();
 
   root.querySelectorAll("[data-rich-editor]").forEach((element) => {
+    let compileTimer = 0;
+    const stopCompile = () => {
+      if (compileTimer) clearTimeout(compileTimer);
+      compileTimer = 0;
+    };
+    const scheduleCompile = () => {
+      if (compileTimer) clearTimeout(compileTimer);
+      compileTimer = setTimeout(() => {
+        compileTimer = 0;
+        // A paused keystroke is the stable boundary: convert the finished
+        // structural block without waiting for the user to leave the field.
+        if (document.activeElement !== element || composingField === element) return;
+        flushPendingEdit(element, { convert: true, structuralOnly: true });
+      }, BLOCK_COMPILE_IDLE_MS);
+    };
     const sync = (event) => {
       if (event?.isComposing) return;
       const block = store.data.blocks.find((candidate) => candidate.id === element.dataset.blockId);
       if (!block) return;
+      compileInlineAtCaret(element);
       block.content = markdownFromEditable(element);
       element.dataset.empty = String(!block.content.trim());
       store.markPendingEdit();
+      scheduleCompile();
     };
     element.addEventListener("input", sync);
     element.addEventListener("change", sync);
@@ -8557,7 +9410,10 @@ function bindEvents() {
       if (block) element.dataset.editBaseline = block.content;
       store.selectBlock(element.dataset.blockId, { force: true, soft: true });
     });
-    element.addEventListener("blur", () => flushPendingEdit(element));
+    element.addEventListener("blur", () => {
+      stopCompile();
+      flushPendingEdit(element, { convert: true });
+    });
   });
 
   // Block text: update in place, then record one history entry on blur.
@@ -8733,23 +9589,17 @@ function bindEvents() {
       }
     });
   }
-  // Import every selected file: the picker allows multi-select and users
-  // routinely add a batch of material at once.
+  // Import every selected file as one batch: the picker allows multi-select and
+  // users routinely add a folder of material at once.
   for (const input of root.querySelectorAll("[data-project-file]")) {
     input.addEventListener("change", (event) => {
       const files = [...(event.target.files || [])];
-      if (!files.length) return;
-      void (async () => {
-        for (const file of files) {
-          try {
-            await store.importBrowserFile(file);
-          } catch (error) {
-            store.ui.toast = userFacingError(error, "文件导入没有完成。课程内容没有改变，请重试。");
-            store.notify();
-          }
-        }
-      })();
       event.target.value = "";
+      if (!files.length) return;
+      void store.importBrowserFiles(files).catch((error) => {
+        store.ui.toast = userFacingError(error, "文件导入没有完成。课程内容没有改变，请重试。");
+        store.notify();
+      });
     });
   }
   root.querySelector("[data-palette-input]")?.addEventListener("input", (event) => {
@@ -8838,8 +9688,9 @@ function bindEvents() {
     dropZone.addEventListener("drop", (event) => {
       event.preventDefault();
       dropZone.classList.remove("dragging");
-      const file = event.dataTransfer.files[0];
-      if (file) store.importBrowserFile(file).catch((error) => { store.ui.toast = userFacingError(error, "文件导入没有完成。课程内容没有改变，请重试。"); store.notify(); });
+      const files = [...(event.dataTransfer?.files || [])];
+      if (!files.length) return;
+      void store.importBrowserFiles(files).catch((error) => { store.ui.toast = userFacingError(error, "文件导入没有完成。课程内容没有改变，请重试。"); store.notify(); });
     });
   }
 
@@ -9260,6 +10111,15 @@ document.addEventListener("keydown", (event) => {
     store.ui.palette = false;
     store.ui.focusField = "capture";
     store.notify();
+  }
+  if (event.key === "Escape" && store.ui.assetImagePreviewId) {
+    // The modal is `aria-modal`, so Escape has to win over everything underneath
+    // it — and it has to run the same teardown the × does, or the GIF keeps
+    // playing behind a surface that is already gone.
+    stopMediaPreview();
+    store.ui.assetImagePreviewId = null;
+    store.notify();
+    return;
   }
   if (event.key === "Escape" && store.ui.movingPlacementId) {
     store.cancelMovePlacement();

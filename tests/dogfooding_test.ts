@@ -449,7 +449,10 @@ Deno.test("empty folder open explains missing project.json and next steps", asyn
   try {
     await store.openProjectFromPicker();
     const toast = String(store.ui.toast);
-    assert(/没有找到有效的 project\.json/.test(toast), `toast must say why: ${toast}`);
+    // §3.4: the copy names the actual condition — there is no project.json yet —
+    // and points at the import that can use this folder as material.
+    assert(/还没有 project\.json/.test(toast), `toast must say why: ${toast}`);
+    assert(/资料文件夹导入/.test(toast), `toast must offer the import route: ${toast}`);
     assert(
       /选择其他|新建课程|导入已有文件夹/.test(toast),
       `toast must list next steps: ${toast}`,

@@ -1901,6 +1901,306 @@ export function assertValidProjectData(
 export const validateCanonicalProject = validateProjectData;
 export const assertValidCanonicalProject = assertValidProjectData;
 
+export type ProjectInspectionStatus =
+  | "valid"
+  | "migratable"
+  | "invalid"
+  | "malformed_json"
+  | "unreadable"
+  | "no_project_json";
+
+export interface ProjectInspectionProblem {
+  code: string;
+  path: string;
+  message: string;
+  expected: string;
+  actual: string;
+}
+
+export interface ProjectInspection {
+  status: ProjectInspectionStatus;
+  schema_version: string | number | null;
+  supported_schema_version: string;
+  problem: ProjectInspectionProblem | null;
+  project: { id: string; title: string | null } | null;
+}
+
+export type SchemaVersionState =
+  | "current"
+  | "migratable"
+  | "unsupported"
+  | "absent";
+
+const CURRENT_SCHEMA_RANK = CURRENT_SCHEMA_VERSION.split(".").map(Number);
+
+/**
+ * A project.json file carries its version either as a semver string or, in
+ * pre-semver and native test fixtures, as a bare integer revision counter.
+ * Integers carry no field layout, so they always take the additive fill path
+ * and are reported as migratable rather than rejected.
+ */
+export function schemaVersionState(value: unknown): SchemaVersionState {
+  if (value === undefined || value === null) return "absent";
+  if (typeof value === "number") {
+    return Number.isInteger(value) && value >= 0 ? "migratable" : "unsupported";
+  }
+  if (typeof value !== "string") return "unsupported";
+  const trimmed = value.trim().replace(/^v/i, "");
+  if (!trimmed) return "absent";
+  const parts = trimmed.split(".");
+  if (!parts.length || parts.length > 4 || parts.some((part) => !/^\d+$/.test(part))) {
+    return "unsupported";
+  }
+  let diff = 0;
+  for (let index = 0; index < CURRENT_SCHEMA_RANK.length; index += 1) {
+    diff = (Number(parts[index]) || 0) - (CURRENT_SCHEMA_RANK[index] ?? 0);
+    if (diff !== 0) break;
+  }
+  if (diff === 0) diff = parts.length - CURRENT_SCHEMA_RANK.length;
+  if (diff === 0) return "current";
+  return diff < 0 ? "migratable" : "unsupported";
+}
+
+/** Combined state of the root and `project` level version stamps. */
+export function projectFileSchemaState(
+  root: unknown,
+  nested: unknown,
+): SchemaVersionState {
+  const states = [schemaVersionState(root), schemaVersionState(nested)];
+  if (states.includes("unsupported")) return "unsupported";
+  if (states.every((state) => state === "current")) return "current";
+  if (states.every((state) => state === "absent")) return "absent";
+  return "migratable";
+}
+
+function jsonTypeName(value: unknown): string {
+  if (value === null) return "null";
+  if (Array.isArray(value)) return "array";
+  return typeof value;
+}
+
+function inspectionProblem(
+  code: string,
+  path: string,
+  message: string,
+  expected: string,
+  actual: string,
+): ProjectInspectionProblem {
+  return { code, path, message, expected, actual };
+}
+
+/** Identity-bearing fields a reference must resolve against, in fixed order. */
+const INSPECTION_REFERENCES: Array<
+  { collection: string; field: string; target: string; nullable: boolean; message: string }
+> = [
+  { collection: "stages", field: "parent_stage_id", target: "stages", nullable: true, message: "父阶段不存在" },
+  { collection: "content_items", field: "stage_id", target: "stages", nullable: true, message: "内容所属阶段不存在" },
+  { collection: "content_items", field: "document_id", target: "documents", nullable: false, message: "正文文档不存在" },
+  { collection: "documents", field: "content_item_id", target: "content_items", nullable: false, message: "正文所属内容不存在" },
+  { collection: "blocks", field: "document_id", target: "documents", nullable: false, message: "正文区块所属文档不存在" },
+  { collection: "blocks", field: "parent_block_id", target: "blocks", nullable: true, message: "父正文区块不存在" },
+  { collection: "groups", field: "document_id", target: "documents", nullable: false, message: "分组所属文档不存在" },
+  { collection: "groups", field: "parent_group_id", target: "groups", nullable: true, message: "父分组不存在" },
+  { collection: "asset_usages", field: "asset_id", target: "assets", nullable: false, message: "素材引用目标不存在" },
+  { collection: "asset_usages", field: "content_item_id", target: "content_items", nullable: false, message: "素材引用内容不存在" },
+  { collection: "status_options", field: "dimension_id", target: "status_dimensions", nullable: false, message: "状态选项所属维度不存在" },
+];
+
+/**
+ * Focused canonical check used to classify a folder for the UI.
+ *
+ * Deliberate scope boundary: this is NOT the persistence validator. It covers
+ * only what a launcher needs to route — root shape, project identity, schema
+ * range, collection shapes, item identity/uniqueness and the parent/child
+ * references between the primary collections. `validateProjectData` below
+ * (src/domain/store.ts) stays the authoritative 1400-line validator, and the
+ * native `project_inspect` command in src-tauri/src/lib.rs mirrors this exact
+ * subset and these exact codes so both stacks stay intelligible.
+ */
+export function inspectProjectData(input: unknown): ProjectInspection {
+  const version = (input as Record<string, unknown> | null)?.schema_version;
+  const base: Omit<ProjectInspection, "status" | "problem"> = {
+    schema_version: typeof version === "string" || typeof version === "number"
+      ? version
+      : null,
+    supported_schema_version: CURRENT_SCHEMA_VERSION,
+    project: null,
+  };
+  const invalid = (problem: ProjectInspectionProblem): ProjectInspection => ({
+    status: "invalid",
+    ...base,
+    problem,
+  });
+
+  if (!isRecord(input)) {
+    return invalid(inspectionProblem(
+      "invalid_root",
+      "",
+      "project.json 的顶层内容不是课程项目对象。",
+      "JSON 对象",
+      `${jsonTypeName(input)} 类型`,
+    ));
+  }
+  const project = isRecord(input.project) ? input.project : null;
+  if (!project) {
+    return invalid(inspectionProblem(
+      "missing_project",
+      "project",
+      "project.json 存在，但其中没有 course 项目对象。",
+      "project 对象，包含非空字符串 id 和 title",
+      project === null ? "project 字段类型不是对象" : "project 字段不存在",
+    ));
+  }
+  const projectId = typeof project.id === "string" ? project.id.trim() : "";
+  if (!projectId) {
+    return invalid(inspectionProblem(
+      "missing_project",
+      "project.id",
+      "project.json 存在，但项目缺少有效 id。",
+      "project.id 为非空字符串",
+      `project.id 为 ${jsonTypeName(project.id)}`,
+    ));
+  }
+  const titleState = project.title === undefined || project.title === null
+    ? "absent"
+    : typeof project.title === "string"
+    ? project.title.trim() ? "ok" : "blank"
+    : "wrong-type";
+  if (titleState !== "ok") {
+    return invalid(inspectionProblem(
+      titleState === "wrong-type" ? "invalid_title" : "missing_project_title",
+      "project.title",
+      "project.json 存在，但项目缺少标题。",
+      "project.title 为非空字符串",
+      titleState === "wrong-type"
+        ? `project.title 为 ${jsonTypeName(project.title)}`
+        : titleState === "blank"
+        ? "project.title 为空字符串"
+        : "project.title 字段不存在",
+    ));
+  }
+
+  const versionState = projectFileSchemaState(input.schema_version, project.schema_version);
+  if (versionState === "unsupported") {
+    return invalid(inspectionProblem(
+      "unsupported_schema",
+      "schema_version",
+      `这个 project.json 的版本比当前工作台更新，打开会损坏内容。请升级工作台后重试。`,
+      `不高于 ${CURRENT_SCHEMA_VERSION} 的版本`,
+      String(input.schema_version ?? project.schema_version ?? ""),
+    ));
+  }
+
+  const arrays = new Map<string, unknown[]>();
+  for (const key of CANONICAL_ARRAYS) {
+    if (!(key in input)) continue;
+    const value = input[key];
+    if (!Array.isArray(value)) {
+      return invalid(inspectionProblem(
+        "invalid_collection",
+        key,
+        `项目字段 ${key} 无法读取，导入流程已停止。`,
+        `${key} 为数组`,
+        `${key} 为 ${jsonTypeName(value)}`,
+      ));
+    }
+    arrays.set(key, value);
+  }
+
+  const identities = new Map<string, string>();
+  for (const key of CANONICAL_ARRAYS) {
+    const values = arrays.get(key);
+    if (!values) continue;
+    for (const [index, item] of values.entries()) {
+      if (!isRecord(item)) {
+        return invalid(inspectionProblem(
+          "invalid_id",
+          `${key}[${index}].id`,
+          `${key} 中有一项不是对象，无法识别身份。`,
+          "每项必须是包含非空 id 的对象",
+        `${key}[${index}] 为 ${jsonTypeName(item)}`,
+        ));
+      }
+      const itemId = typeof item.id === "string" ? item.id.trim() : "";
+      if (!itemId) {
+        return invalid(inspectionProblem(
+          "invalid_id",
+          `${key}[${index}].id`,
+          `${key} 中有一项缺少 id。`,
+          "每项必须有非空字符串 id",
+          `id 为 ${jsonTypeName(item.id)}`,
+        ));
+      }
+      if (identities.has(itemId)) {
+        return invalid(inspectionProblem(
+          identities.get(itemId) === key ? "duplicate_id" : "duplicate_global_id",
+          `${key}[${index}].id`,
+          `${key} 中出现重复 id，导入流程已停止。`,
+          "每个 id 在项目内唯一",
+          `id ${itemId} 已在 ${identities.get(itemId)} 中使用`,
+        ));
+      }
+      identities.set(itemId, key);
+    }
+  }
+
+  const maps = new Map<string, Map<string, Record<string, unknown>>>();
+  for (const key of CANONICAL_ARRAYS) {
+    const values = arrays.get(key);
+    if (!values) continue;
+    const map = new Map<string, Record<string, unknown>>();
+    for (const item of values) {
+      if (isRecord(item) && typeof item.id === "string" && item.id) map.set(item.id, item);
+    }
+    maps.set(key, map);
+  }
+  for (const rule of INSPECTION_REFERENCES) {
+    const values = arrays.get(rule.collection);
+    const target = maps.get(rule.target);
+    if (!values || !target) continue;
+    for (const [index, item] of values.entries()) {
+      if (!isRecord(item)) continue;
+      const referenced = item[rule.field];
+      const path = `${rule.collection}[${index}].${rule.field}`;
+      if (referenced === undefined || referenced === null) {
+        if (rule.nullable) continue;
+        return invalid(inspectionProblem(
+          "invalid_reference",
+          path,
+          `${rule.message}（${rule.collection} 第 ${index + 1} 项）。`,
+          "必填引用指向已存在的对象",
+          `${rule.field} 未设置`,
+        ));
+      }
+      if (referenced === item.id && rule.field.endsWith("_id")) {
+        return invalid(inspectionProblem(
+          "cycle",
+          path,
+          `${rule.collection} 中存在自引用的父级。`,
+          "父级引用指向其他对象",
+          `id 与父级引用相同：${String(referenced)}`,
+        ));
+      }
+      if (typeof referenced !== "string" || !target.has(referenced)) {
+        return invalid(inspectionProblem(
+          "invalid_reference",
+          path,
+          `${rule.message}（${rule.collection} 第 ${index + 1} 项）。`,
+          "引用指向已存在的对象 id",
+          `引用值为 ${jsonTypeName(referenced)}，目标集合中不存在`,
+        ));
+      }
+    }
+  }
+
+  return {
+    status: versionState === "current" ? "valid" : "migratable",
+    ...base,
+    project: { id: projectId, title: String(project.title).trim() },
+    problem: null,
+  };
+}
+
 /** Upgrade the open JSON format without requiring users to recreate a project. */
 export function migrateProject(input: unknown): ProjectData {
   assert(input && typeof input === "object", "项目文件必须是 JSON 对象");
@@ -1908,6 +2208,15 @@ export function migrateProject(input: unknown): ProjectData {
   assert(
     candidate.project && typeof candidate.project === "object",
     "项目文件缺少 project",
+  );
+  // Bump detection must happen BEFORE the version is rewritten, otherwise an
+  // unreadably-new file is silently downgraded into the current format.
+  assert(
+    projectFileSchemaState(
+      candidate.schema_version,
+      (candidate.project as Record<string, unknown>).schema_version,
+    ) !== "unsupported",
+    `不支持的项目文件版本：需要不高于 ${CURRENT_SCHEMA_VERSION} 的版本，请升级工作台后重试`,
   );
   fillMissingArrays(candidate);
   fillSchemaVersions(candidate);

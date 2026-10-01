@@ -13,6 +13,11 @@ function elementNode(name: string, children: unknown[] = [], attrs: Record<strin
     nodeType: 1,
     nodeName: name,
     childNodes: children,
+    // A real element reports the plain text inside it, which the serializer
+    // reads for code spans.
+    get textContent(): string {
+      return children.map((child: any) => child?.nodeValue ?? child?.textContent ?? "").join("");
+    },
     children: children.filter((child: any) => child?.nodeType === 1),
     getAttribute(key: string) { return attrs[key] ?? null; },
     querySelector: (_selector?: string): unknown => null,
@@ -82,6 +87,40 @@ Deno.test("rich editor round-trip writes Markdown while keeping inline formattin
   assert(markdown === "前言 **你好** 结束", `unexpected Markdown: ${markdown}`);
   assert(renderMarkdown(markdown).includes("<strong>你好</strong>"), "edited rich text did not survive Markdown round-trip");
   assert(renderMarkdown("## **标题**", { inlineOnly: true }).includes("<strong>标题</strong>"), "heading editor should preserve inline format without adding a heading wrapper");
+});
+
+Deno.test("a block typed into an empty editor stays one paragraph with its formatting", () => {
+  // What the live editor really holds after `**重点**` compiles in a block that
+  // had no <p> wrapper: bare inline siblings, plus the caret guard the compiler
+  // leaves in front of the tail.
+  const guard = String.fromCharCode(0x200b);
+  const root = elementNode("DIV", [
+    textNode("前面"),
+    elementNode("STRONG", [textNode("重点")]),
+    textNode(`${guard}后面`),
+    elementNode("CODE", [textNode("代码")]),
+    textNode(`${guard}尾巴`),
+  ]);
+  const markdown = markdownFromEditable(root);
+  assert(
+    markdown === "前面**重点**后面`代码`尾巴",
+    `inline siblings must stay one paragraph with markers: ${markdown}`,
+  );
+  assert(!markdown.includes(guard), "the caret guard must not reach canonical storage");
+  assert(
+    renderMarkdown(markdown).includes("<strong>重点</strong>"),
+    "the stored source still renders as bold",
+  );
+
+  // Real block siblings still split into their own paragraphs.
+  const two = elementNode("DIV", [
+    elementNode("P", [textNode("第一段")]),
+    elementNode("P", [elementNode("EM", [textNode("第二段")])]),
+  ]);
+  assert(
+    markdownFromEditable(two) === "第一段\n\n*第二段*",
+    `block children must stay separate: ${markdownFromEditable(two)}`,
+  );
 });
 
 Deno.test("edited lists, tables and local image refs round-trip as one Markdown source", () => {

@@ -1,8 +1,12 @@
-import { basename, dirname, join, normalize, relative } from "node:path";
+import { basename, dirname, isAbsolute, join, normalize, relative } from "node:path";
 import {
   addAsset,
   type AddAssetResult,
   type AssetInput,
+  applyAssetRename,
+  type AssetRenamePlan,
+  isAssetRenameNoop,
+  planAssetRename,
 } from "../domain/assets.ts";
 import { createSnapshot as createDomainSnapshot } from "../domain/workflow.ts";
 import {
@@ -12,8 +16,10 @@ import {
 } from "../domain/types.ts";
 import {
   assertValidProjectData,
+  inspectProjectData,
   loadProject,
   migrateProject,
+  type ProjectInspection,
   serializeProject,
 } from "../domain/store.ts";
 import { clone, id, now, sha256Bytes, stableJson } from "../domain/util.ts";
@@ -426,6 +432,149 @@ export async function fileFingerprint(path: string): Promise<FileFingerprint> {
     }
     throw caught;
   }
+}
+
+function unreadableInspection(
+  code: string,
+  path: string,
+  message: string,
+  actual: string,
+): ProjectInspection {
+  return {
+    status: "unreadable",
+    schema_version: null,
+    supported_schema_version: CURRENT_SCHEMA_VERSION,
+    problem: {
+      code,
+      path,
+      message,
+      expected: "可读的项目目录中的 project.json",
+      actual,
+    },
+    project: null,
+  };
+}
+
+/**
+ * Pure, side-effect-free classification of a candidate project folder. Mirrors
+ * the native `project_inspect` command: it never takes the project lock, never
+ * creates project.json and never mutates the folder.
+ */
+export async function inspectProjectDirectory(
+  directory: string,
+): Promise<ProjectInspection> {
+  const trimmed = String(directory || "").trim();
+  const root = normalize(trimmed);
+  const path = join(root, PROJECT_FILE);
+  if (!trimmed || !isAbsolute(root)) {
+    return unreadableInspection(
+      "invalid_path",
+      PROJECT_FILE,
+      "项目目录必须是用户明确选择的绝对路径。",
+      trimmed || "空路径",
+    );
+  }
+  let directoryStat: Deno.FileInfo;
+  try {
+    directoryStat = await Deno.lstat(root);
+  } catch (caught) {
+    if (isNotFound(caught)) {
+      return unreadableInspection(
+        "missing_directory",
+        "",
+        "项目目录不存在，可能已被移动或删除。",
+        `${root} 不存在`,
+      );
+    }
+    return unreadableInspection(
+      "io_error",
+      "",
+      `无法检查项目目录：${caught instanceof Error ? caught.message : String(caught)}`,
+      String(caught),
+    );
+  }
+  if (directoryStat.isSymlink) {
+    return unreadableInspection(
+      "symlink_path",
+      "",
+      "为避免越过目录边界，项目目录不能是符号链接。",
+      `${root} 是符号链接`,
+    );
+  }
+  if (!directoryStat.isDirectory) {
+    return unreadableInspection(
+      "not_a_directory",
+      "",
+      "打开项目需要选择一个文件夹，而不是单个文件。",
+      `${root} 不是目录`,
+    );
+  }
+
+  let bytes: Uint8Array;
+  try {
+    const fileStat = await Deno.lstat(path);
+    if (fileStat.isSymlink) {
+      return unreadableInspection(
+        "symlink_path",
+        PROJECT_FILE,
+        "为避免越过目录边界，project.json 不能是符号链接。",
+        `${PROJECT_FILE} 是符号链接`,
+      );
+    }
+    if (!fileStat.isFile) {
+      return unreadableInspection(
+        "not_a_file",
+        PROJECT_FILE,
+        "project.json 不是一个普通文件。",
+        `${PROJECT_FILE} 不是文件`,
+      );
+    }
+    bytes = await Deno.readFile(path);
+  } catch (caught) {
+    if (isNotFound(caught)) {
+      return {
+        status: "no_project_json",
+        schema_version: null,
+        supported_schema_version: CURRENT_SCHEMA_VERSION,
+        problem: {
+          code: "project_json_missing",
+          path: PROJECT_FILE,
+          message:
+            "这个文件夹里还没有 project.json，因此它还不是 Workbench 项目。你可以把它作为已有文件夹导入。",
+          expected: "所选文件夹根目录中存在 project.json",
+          actual: "project.json 不存在",
+        },
+        project: null,
+      };
+    }
+    const denied = caught instanceof Deno.errors.PermissionDenied;
+    return unreadableInspection(
+      denied ? "permission_denied" : "io_error",
+      PROJECT_FILE,
+      `无法读取 project.json：${caught instanceof Error ? caught.message : String(caught)}`,
+      String(caught),
+    );
+  }
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes));
+  } catch (caught) {
+    return {
+      status: "malformed_json",
+      schema_version: null,
+      supported_schema_version: CURRENT_SCHEMA_VERSION,
+      problem: {
+        code: "malformed_json",
+        path: PROJECT_FILE,
+        message: "project.json 存在，但内容无法解析，文件可能已损坏。",
+        expected: "可解析的 JSON 对象",
+        actual: caught instanceof Error ? caught.message : String(caught),
+      },
+      project: null,
+    };
+  }
+  return inspectProjectData(parsed);
 }
 
 async function readProjectState(
@@ -1392,6 +1541,165 @@ export class ProjectDirectoryStore {
 
   async verifyAssets(data: ProjectData): Promise<AssetIntegrityResult[]> {
     return await verifyProjectAssets(this.directory, data);
+  }
+
+  /**
+   * Item 13 — rename a managed asset by renaming its physical file inside the
+   * project directory, then synchronising every canonical reference, then saving.
+   *
+   * Transaction order (spec §14.4): preflight → filesystem rename → canonical
+   * rewrite → save. A save failure rolls the rename back. A failed rollback is
+   * surfaced as a BLOCKING error quoting the exact original/new paths, and never
+   * claims success. `data` is only mutated after the canonical write succeeds, so
+   * a rejected rename leaves the caller's in-memory project untouched.
+   */
+  async renameManagedAsset(
+    data: ProjectData,
+    assetId: string,
+    requestedName: string,
+  ): Promise<
+    { status: "renamed" | "noop"; plan: AssetRenamePlan; rewritten: number; project: ProjectData }
+  > {
+    const plan = planAssetRename(data, assetId, requestedName);
+    if (isAssetRenameNoop(plan)) {
+      return { status: "noop", plan, rewritten: 0, project: data };
+    }
+
+    // Canonical-level collision: another live asset already owns the target path.
+    const clash = data.assets.find((candidate) =>
+      candidate.id !== assetId && !candidate.archived &&
+      candidate.storage_path === plan.new_storage_path
+    );
+    if (clash) {
+      throw error(
+        "rename_collision",
+        "已有一个素材使用这个文件名，请换一个名字后重试。",
+        `Target managed path already used by asset ${clash.id}`,
+        {
+          severity: "recoverable",
+          recoverable: true,
+          recommended_action: "为文件选择一个未被占用的新名称。",
+          details: {
+            original_path: plan.old_storage_path,
+            target_path: plan.new_storage_path,
+          },
+        },
+      );
+    }
+
+    return await this.withWritableLease(async () => {
+      const oldAbsolute = this.path(plan.old_storage_path);
+      const newAbsolute = this.path(plan.new_storage_path);
+
+      let sourceStat: Deno.FileInfo;
+      try {
+        sourceStat = await Deno.lstat(oldAbsolute);
+      } catch (caught) {
+        if (isNotFound(caught)) {
+          throw error(
+            "rename_source_missing",
+            "找不到要重命名的素材文件，它可能已被移动或删除。",
+            `Managed asset file is missing: ${plan.old_storage_path}`,
+            {
+              recoverable: true,
+              recommended_action: "重新载入项目后确认文件仍然存在。",
+              details: { original_path: plan.old_storage_path },
+            },
+          );
+        }
+        throw caught;
+      }
+      if (sourceStat.isSymlink || !sourceStat.isFile) {
+        throw error(
+          "rename_source_unsafe",
+          "素材文件不是可安全重命名的普通文件。",
+          `Managed asset path is not a regular file: ${plan.old_storage_path}`,
+          {
+            recoverable: false,
+            recommended_action: "检查素材文件后重试。",
+            details: { original_path: plan.old_storage_path },
+          },
+        );
+      }
+
+      let targetExists = false;
+      try {
+        const targetStat = await Deno.lstat(newAbsolute);
+        targetExists = true;
+        if (targetStat.isSymlink) {
+          throw error(
+            "rename_target_symlink",
+            "目标名称已存在一个符号链接，为避免越过目录边界已停止重命名。",
+            `Rename target is a symlink: ${plan.new_storage_path}`,
+            {
+              recoverable: false,
+              recommended_action: "更换文件名后重试。",
+              details: { target_path: plan.new_storage_path },
+            },
+          );
+        }
+      } catch (caught) {
+        if (caught instanceof ServiceError) throw caught;
+        if (!isNotFound(caught)) throw caught;
+      }
+      if (targetExists) {
+        throw error(
+          "rename_collision",
+          "已存在同名文件，请换一个名字后重试。",
+          `Rename target already exists: ${plan.new_storage_path}`,
+          {
+            recoverable: true,
+            recommended_action: "为文件选择一个未被占用的新名称。",
+            details: {
+              original_path: plan.old_storage_path,
+              target_path: plan.new_storage_path,
+            },
+          },
+        );
+      }
+
+      // Step 2 — filesystem rename.
+      await Deno.rename(oldAbsolute, newAbsolute);
+
+      // Steps 3+4 — canonical rewrite + save, with rollback of the fs move.
+      const next = clone(data);
+      try {
+        const rewritten = applyAssetRename(next, plan);
+        await this.writeProjectUnlocked(next);
+        return { status: "renamed", plan, rewritten, project: next };
+      } catch (saveError) {
+        // Roll the physical file back to its original name.
+        try {
+          await Deno.rename(newAbsolute, oldAbsolute);
+        } catch (rollbackError) {
+          const original = saveError instanceof Error ? saveError.message : String(saveError);
+          const rolled = rollbackError instanceof Error
+            ? rollbackError.message
+            : String(rollbackError);
+          throw error(
+            "rename_rollback_failed",
+            `重命名未能保存，且文件回滚也失败了。素材文件当前位于新名称「${plan.new_filename}」，` +
+              `原名称「${plan.old_filename}」的内容仍在磁盘上，请勿手动移动以免数据错乱。`,
+            `Canonical update failed (${original}) and rollback failed (${rolled})`,
+            {
+              severity: "blocking",
+              recoverable: false,
+              recommended_action: "备份项目目录后手动核对 project.json 与 assets/ 的一致性。",
+              details: {
+                original_path: plan.old_storage_path,
+                renamed_path: plan.new_storage_path,
+                original_absolute: oldAbsolute,
+                renamed_absolute: newAbsolute,
+                save_error: original,
+                rollback_error: rolled,
+              },
+            },
+          );
+        }
+        // Rollback succeeded: surface the original save error so the caller reloads.
+        throw saveError;
+      }
+    });
   }
 }
 

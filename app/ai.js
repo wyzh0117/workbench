@@ -153,18 +153,22 @@ import {
  */
 
 /**
- * @typedef {Object} AiProviderPreset
- * @property {string} id
- * @property {string} label
- * @property {"openai_compatible" | "fake"} kind
+ * One explicit model-provider connection (§9.3/§9.4).  This is the only shape
+ * that can produce an AI request: there is no shipped template catalog, so an
+ * id string is not enough.  It never carries a credential value — the
+ * transport process injects the protected key from the system keychain.
+ *
+ * @typedef {Object} AiProviderConnection
+ * @property {string} id stable Provider ID; immutable after creation
+ * @property {string} label display name; editable
+ * @property {string} kind "openai_compatible" | "fake" | "openai_chatgpt_subscription"
+ * @property {string} api_protocol one of `AI_API_PROTOCOLS` ("" for the offline connector)
  * @property {string} base_url
- * @property {string} chat_path
- * @property {string} [api_protocol]
+ * @property {string} chat_path optional override, openai-completions only
  * @property {string} auth_header
- * @property {string} auth_scheme
+ * @property {string} auth_scheme "" means the bare value (Anthropic)
  * @property {string} default_model
  * @property {string[]} models
- * @property {boolean} requires_credential
  */
 
 /**
@@ -518,7 +522,160 @@ export const AI_FAILURE_CODES = [
   "permission_denied",
   "transport_unavailable",
   "invalid_request",
+  /* ---------------------------------------------------------------- *
+   * ChatGPT subscription stages (item 9 / §10.2–10.5, §19).
+   *
+   * Each stage of 登录 → 套餐用量授权 → 模型列表 → 选择模型 → 推理 → 刷新
+   * has its OWN code.  They must never collapse into one generic failure:
+   * the UI switches on these codes to say which stage failed.  The native
+   * shell (`src-tauri/src/lib.rs`) emits them; the renderer preserves them.
+   * ---------------------------------------------------------------- */
+  "subscription_cancelled",
+  "subscription_callback_failed",
+  "subscription_state_unavailable",
+  "subscription_config_invalid",
+  "subscription_random_failed",
+  "subscription_session_unavailable",
+  "subscription_storage_failed",
+  "subscription_native_only",
+  "subscription_scope_missing",
+  "subscription_models_request_failed",
+  "subscription_models_empty",
+  "subscription_model_not_selected",
+  "subscription_inference_failed",
+  "subscription_refresh_required",
+  "subscription_refresh_failed",
 ];
+
+/**
+ * The subscription pipeline, in order, with the exact copy each stage shows
+ * when it fails.  `code` is what both shells emit; `stage` is the stable UI
+ * key for the progress group; `label` names the step in the Settings → Models
+ * subscription section.
+ *
+ * @type {ReadonlyArray<{ code: string, stage: string, label: string, message: string, action: string }>}
+ */
+export const AI_SUBSCRIPTION_STAGES = Object.freeze([
+  Object.freeze({
+    code: "subscription_cancelled",
+    stage: "login",
+    label: "登录",
+    message: "ChatGPT 登录已取消。",
+    action: "可以点击「使用 ChatGPT 继续」重新登录；未完成的登录不会保存任何凭据。",
+  }),
+  Object.freeze({
+    code: "subscription_callback_failed",
+    stage: "login",
+    label: "登录",
+    message: "没有收到 ChatGPT 的授权回调。",
+    action: "请确认系统浏览器已打开并完成了授权；然后重新发起登录。",
+  }),
+  Object.freeze({
+    code: "subscription_state_unavailable",
+    stage: "login",
+    label: "登录",
+    message: "ChatGPT 登录状态暂不可用。",
+    action: "请重新发起登录；如果持续失败，请重启工作台。",
+  }),
+  Object.freeze({
+    code: "subscription_config_invalid",
+    stage: "login",
+    label: "登录",
+    message: "ChatGPT 授权服务地址无效。",
+    action: "请检查本机网络与代理设置后重新登录。",
+  }),
+  Object.freeze({
+    code: "subscription_random_failed",
+    stage: "login",
+    label: "登录",
+    message: "无法生成 ChatGPT 登录所需的安全随机值。",
+    action: "请重新发起登录；这一步与账户和密钥无关，是本机随机数生成失败。",
+  }),
+  Object.freeze({
+    code: "subscription_session_unavailable",
+    stage: "login",
+    label: "登录",
+    message: "ChatGPT 订阅会话无法读取；请重新登录。",
+    action: "请在「设置 → 模型」的订阅分组里重新连接 ChatGPT 账户。",
+  }),
+  Object.freeze({
+    code: "subscription_storage_failed",
+    stage: "login",
+    label: "保存账户",
+    message: "无法在本机保存 ChatGPT 订阅会话。",
+    action: "请确认 macOS 钥匙串可用，然后重新登录。",
+  }),
+  Object.freeze({
+    code: "subscription_native_only",
+    stage: "login",
+    label: "登录",
+    message: "ChatGPT 订阅登录需要 macOS 桌面版的系统浏览器回调和系统钥匙串。",
+    action: "请在 macOS 桌面版 Workbench 的「设置 → 模型」中管理订阅账户。",
+  }),
+  Object.freeze({
+    code: "subscription_scope_missing",
+    stage: "plan_usage",
+    label: "套餐用量授权",
+    message: "ChatGPT 已登录，但没有授权套餐用量。",
+    action: "请重新授权并允许 ChatGPT plan usage。",
+  }),
+  Object.freeze({
+    code: "subscription_models_request_failed",
+    stage: "models",
+    label: "模型列表",
+    message: "ChatGPT 模型列表请求失败。",
+    action: "请稍后重试；也可以直接手动填写 Model ID。",
+  }),
+  Object.freeze({
+    code: "subscription_models_empty",
+    stage: "models",
+    label: "模型列表",
+    message: "当前 ChatGPT 账户没有可用模型。",
+    action: "请换一个已订阅账户重新登录；模型列表按账户返回。",
+  }),
+  Object.freeze({
+    code: "subscription_model_not_selected",
+    stage: "model",
+    label: "选择模型",
+    message: "还没有从当前 ChatGPT 账户的模型列表中选择模型。",
+    action: "请在「设置 → 模型」里选择一个由账户返回的模型；模型 id 以列表返回值为准。",
+  }),
+  Object.freeze({
+    code: "subscription_inference_failed",
+    stage: "inference",
+    label: "推理",
+    message: "模型可选，但 ChatGPT 推理请求失败。",
+    action: "请稍后重试，或换一个账户返回的模型；本次没有改动课程内容。",
+  }),
+  Object.freeze({
+    code: "subscription_refresh_required",
+    stage: "refresh",
+    label: "令牌刷新",
+    message: "ChatGPT 访问令牌已到刷新时间，正在刷新。",
+    action: "请重试这一次请求；工作台会用保存的 client_id 与最新 refresh_token 刷新后重发。",
+  }),
+  Object.freeze({
+    code: "subscription_refresh_failed",
+    stage: "refresh",
+    label: "令牌刷新",
+    message: "ChatGPT token 已失效且刷新失败。",
+    action: "请重新登录 ChatGPT 订阅账户；旧的一次性 refresh_token 不会被重复使用。",
+  }),
+]);
+
+/**
+ * Look up one subscription stage by the code a shell reported.  Unknown codes
+ * return `null` so the caller can fall back to its own transport mapping.
+ *
+ * @param {unknown} code
+ * @returns {{ code: string, stage: string, label: string, message: string, action: string } | null}
+ */
+export function aiSubscriptionStage(code) {
+  const value = stringOf(code);
+  const found = AI_SUBSCRIPTION_STAGES.find((stage) => stage.code === value);
+  return found ? { ...found } : null;
+}
+
 
 /**
  * Per-code defaults: the user-facing sentence and the next step.  They are the
@@ -582,6 +739,17 @@ const AI_FAILURE_DEFAULTS = {
   },
 };
 
+// Every subscription stage keeps its own sentence and next step, so a stage
+// failure never reads as the generic provider/transport message (§19).
+for (const stage of AI_SUBSCRIPTION_STAGES) {
+  if (!AI_FAILURE_DEFAULTS[stage.code]) {
+    AI_FAILURE_DEFAULTS[stage.code] = {
+      message: stage.message,
+      action: stage.action,
+    };
+  }
+}
+
 /**
  * Connection-level codes the two shells report for problems that are not
  * provider failures.  Without this table they would all read as
@@ -616,6 +784,12 @@ const AI_RECOVERABLE_CODES = [
   "malformed_response",
   "permission_denied",
   "transport_unavailable",
+  // Subscription stages the user can act on (re-authorise, re-login, retry).
+  // `subscription_native_only` stays non-recoverable on purpose: it is a
+  // capability of the shell, not something the current session can fix.
+  ...AI_SUBSCRIPTION_STAGES.map((stage) => stage.code).filter(
+    (code) => code !== "subscription_native_only",
+  ),
 ];
 
 /**
@@ -1548,118 +1722,218 @@ export function aiContextPreviewLines(context) {
 }
 
 /* ------------------------------------------------------------------ *
- * Provider catalog
+ * Provider protocol catalog (§9.4) — three protocols, no provider templates
+ *
+ * §9.2 removed the shipped provider templates (DeepSeek / Doubao / OpenAI /
+ * custom).  Nothing in this module may turn a provider *id string* into
+ * built-in defaults any more: the only provider data that can produce a request
+ * is an explicit connection record supplied by the caller (`id`, `base_url`,
+ * `api_protocol`, `model`), which comes from `ai.connection.list`.
  * ------------------------------------------------------------------ */
 
-/** @type {AiProviderPreset[]} */
-export const AI_PROVIDER_PRESETS = [
-  {
-    id: "deepseek",
-    label: "DeepSeek",
-    kind: "openai_compatible",
-    api_protocol: "openai-completions",
-    base_url: "https://api.deepseek.com",
-    chat_path: "/chat/completions",
-    auth_header: "authorization",
-    auth_scheme: "Bearer",
-    default_model: "deepseek-chat",
-    models: ["deepseek-chat", "deepseek-reasoner"],
-    requires_credential: true,
-  },
-  {
-    id: "doubao",
-    label: "火山方舟（豆包）",
-    kind: "openai_compatible",
-    api_protocol: "openai-completions",
-    base_url: "https://ark.cn-beijing.volces.com/api/v3",
-    chat_path: "/chat/completions",
-    auth_header: "authorization",
-    auth_scheme: "Bearer",
-    default_model: "doubao-seed-1-6-250615",
-    models: [
-      "doubao-seed-1-6-250615",
-      "doubao-1-5-pro-32k-250115",
-      "doubao-1-5-lite-32k-250115",
-    ],
-    requires_credential: true,
-  },
-  {
-    id: "openai",
-    label: "OpenAI",
-    kind: "openai_compatible",
-    api_protocol: "openai-completions",
-    base_url: "https://api.openai.com/v1",
-    chat_path: "/chat/completions",
-    auth_header: "authorization",
-    auth_scheme: "Bearer",
-    default_model: "gpt-4o-mini",
-    models: ["gpt-4o-mini", "gpt-4o", "gpt-4.1-mini"],
-    requires_credential: true,
-  },
-  {
-    id: "custom",
-    label: "自定义（OpenAI 兼容）",
-    kind: "openai_compatible",
-    api_protocol: "openai-completions",
-    base_url: "",
-    chat_path: "/chat/completions",
-    auth_header: "authorization",
-    auth_scheme: "Bearer",
-    default_model: "",
-    models: [],
-    requires_credential: true,
-  },
-  {
-    id: "fake",
-    label: "本地确定性连接器（离线）",
-    kind: "fake",
-    base_url: "",
-    chat_path: "",
-    auth_header: "",
-    auth_scheme: "",
-    default_model: "fake-deterministic",
-    models: ["fake-deterministic"],
-    requires_credential: false,
-  },
-];
+/**
+ * The only API protocols Workbench speaks (§9.4), with the exact display labels
+ * the Settings → Models form renders.
+ *
+ * @type {ReadonlyArray<{ id: string, label: string }>}
+ */
+export const AI_API_PROTOCOLS = Object.freeze([
+  Object.freeze({ id: "openai-completions", label: "OpenAI Chat Completions" }),
+  Object.freeze({ id: "openai-responses", label: "OpenAI Responses" }),
+  Object.freeze({ id: "anthropic-messages", label: "Anthropic Messages" }),
+]);
+
+/**
+ * Provider id of the deterministic offline connector used by automated tests.
+ * It is a code path (`FakeAiConnector`), not a template catalog entry, and it
+ * never appears in the Settings → Models list.
+ */
+export const AI_OFFLINE_PROVIDER_ID = "fake";
+
+/**
+ * The single internal descriptor for the offline connector.  Deliberately NOT
+ * exported: exposing it would re-create the template catalog §9.2 removed.  It
+ * exists so `FakeAiConnector` and the "this connection cannot cross the wire"
+ * guards agree on one id/kind instead of scattering string literals.
+ *
+ * @type {AiProviderConnection}
+ */
+const OFFLINE_TEST_CONNECTION = Object.freeze({
+  id: AI_OFFLINE_PROVIDER_ID,
+  label: "本地确定性连接器（离线）",
+  kind: "fake",
+  api_protocol: "openai-completions",
+  base_url: "",
+  chat_path: "",
+  auth_header: "",
+  auth_scheme: "",
+  default_model: "fake-deterministic",
+  models: ["fake-deterministic"],
+});
+
+/** @returns {Array<{ id: string, label: string }>} copies for the UI to render */
+export function aiApiProtocolChoices() {
+  return AI_API_PROTOCOLS.map((choice) => ({ ...choice }));
+}
 
 /**
  * @param {unknown} id
- * @returns {AiProviderPreset | null}
+ * @returns {boolean}
  */
-export function aiProviderPreset(id) {
-  const found = AI_PROVIDER_PRESETS.find((preset) => preset.id === id);
-  return found ? /** @type {AiProviderPreset} */ (structuredClone(found)) : null;
+export function aiIsKnownApiProtocol(id) {
+  const value = stringOf(id);
+  return AI_API_PROTOCOLS.some((choice) => choice.id === value);
 }
 
 /**
- * Catalog for the UI dropdown.  Copies, so a caller cannot mutate the catalog.
+ * @param {unknown} id
+ * @returns {string} the display label, or `""` when the protocol is unknown
+ */
+export function aiApiProtocolLabel(id) {
+  const value = stringOf(id);
+  const found = AI_API_PROTOCOLS.find((choice) => choice.id === value);
+  return found ? found.label : "";
+}
+
+/**
+ * True for the offline test connector, given either its id or a record.  The
+ * UI uses this to hide "Fetch models" / "API key" for that code path; it is a
+ * predicate, not a catalog lookup.
  *
- * @returns {AiProviderPreset[]}
+ * @param {unknown} value provider id or connection record
+ * @returns {boolean}
  */
-export function aiProviderDescriptors() {
-  return AI_PROVIDER_PRESETS.map((preset) =>
-    /** @type {AiProviderPreset} */ (structuredClone(preset))
-  );
+export function aiIsOfflineConnection(value) {
+  if (typeof value === "string") {
+    return value.trim() === AI_OFFLINE_PROVIDER_ID;
+  }
+  const record = recordOf(value);
+  return stringOf(record.kind) === OFFLINE_TEST_CONNECTION.kind ||
+    stringOf(record.id) === AI_OFFLINE_PROVIDER_ID;
 }
 
 /**
- * @param {unknown} value
- * @returns {AiProviderPreset | null}
+ * Validate one *explicit* connection record (§9.3/§9.4).  There is no fallback
+ * to built-in defaults: an id alone is not configuration.  Display name is
+ * editable; `id` is whatever the record carries (immutability is enforced by
+ * the transport, see `src/service/ai_transport.ts` and Rust
+ * `ai_connection_save_with_confirmation_at`).
+ *
+ * @param {unknown} connection
+ * @returns {AiProviderConnection} a defensive copy with normalised strings
  */
-function resolvePreset(value) {
-  if (typeof value === "string") return aiProviderPreset(value);
-  if (value && typeof value === "object") {
-    const record = recordOf(value);
-    if (typeof record.id === "string") {
-      const known = aiProviderPreset(record.id);
-      if (known) return known;
-    }
-    if (typeof record.kind === "string" && typeof record.id === "string") {
-      return /** @type {AiProviderPreset} */ (structuredClone(value));
-    }
+export function normalizeAiConnection(connection) {
+  if (typeof connection === "string") {
+    throw new AiFailure(
+      "not_configured",
+      `Workbench 不再内置服务商模板，无法按 id「${connection.trim() || "（空）"}」取默认配置。请改用已保存的 AI 连接。`,
+      {
+        recoverable: false,
+        recommended_action: "在「设置 → 模型」里新建一个 API 连接（Provider ID、Base URL、协议、模型），保存后再运行。",
+      },
+    );
   }
-  return null;
+  if (!connection || typeof connection !== "object") {
+    throw new AiFailure("not_configured", "还没有选择 AI 连接。请先在「设置 → 模型」里保存一个连接。", {
+      recoverable: false,
+    });
+  }
+  const record = recordOf(connection);
+  const id = stringOf(record.id).trim();
+  if (!id) {
+    throw new AiFailure("invalid_request", "AI 连接缺少 Provider ID。请填写一个稳定的 id。", {
+      recoverable: false,
+    });
+  }
+  const kind = stringOf(record.kind) || "openai_compatible";
+  const apiProtocol = stringOf(record.api_protocol) || "openai-completions";
+  if (!aiIsKnownApiProtocol(apiProtocol)) {
+    throw new AiFailure(
+      "invalid_request",
+      `不支持的 API 协议：${apiProtocol || "（空）"}。只支持 ${AI_API_PROTOCOLS.map((choice) => choice.label).join(" / ")}。`,
+      { recoverable: false },
+    );
+  }
+  const models = Array.isArray(record.models)
+    ? [...new Set(record.models.map((model) => stringOf(model).trim()).filter(Boolean))]
+    : [];
+  const anthropic = apiProtocol === "anthropic-messages";
+  return {
+    id,
+    label: stringOf(record.label).trim() || id,
+    kind,
+    api_protocol: apiProtocol,
+    base_url: stringOf(record.base_url).trim(),
+    chat_path: stringOf(record.chat_path).trim(),
+    auth_header: stringOf(record.auth_header).trim() || (anthropic ? "x-api-key" : "authorization"),
+    auth_scheme: record.auth_scheme === undefined || record.auth_scheme === null
+      ? (anthropic ? "" : "Bearer")
+      : stringOf(record.auth_scheme),
+    default_model: stringOf(record.default_model).trim(),
+    models,
+  };
+}
+
+/**
+ * Model discovery is derived per protocol (§9.5) and is a convenience, never a
+ * prerequisite: a connection with no discovered models still saves.
+ *
+ * The returned headers carry no credential — only the header *name* and scheme
+ * the transport must fill in with the protected (or temporary) key.  Both shells
+ * derive `{base}/models`; Anthropic additionally sends `anthropic-version`.
+ *
+ * @param {unknown} connection explicit connection record
+ * @returns {{ endpoint: string, auth_header: string, auth_scheme: string, headers: Record<string, string>, protocol_label: string }}
+ */
+export function aiModelDiscoveryPlan(connection) {
+  const resolved = normalizeAiConnection(connection);
+  const base = resolved.base_url.replace(/\/+$/, "");
+  if (!base) {
+    throw new AiFailure(
+      "not_configured",
+      "还没有填写 Base URL，无法读取模型列表。",
+      { recommended_action: "请先填写 Base URL，或改为手动填写 Model ID。" },
+    );
+  }
+  const anthropic = resolved.api_protocol === "anthropic-messages";
+  return {
+    endpoint: `${base}/models`,
+    auth_header: resolved.auth_header,
+    auth_scheme: resolved.auth_scheme,
+    headers: {
+      accept: "application/json",
+      ...(anthropic ? { "anthropic-version": "2023-06-01" } : {}),
+    },
+    protocol_label: aiApiProtocolLabel(resolved.api_protocol),
+  };
+}
+
+/**
+ * Model ids out of a `ai.models.list` / `ai.models.probe` response.  Both shells
+ * answer `{ models: [{ id, label }], model_ids: [...] }`; the entry list is read
+ * first because it is the one that carries labels, and `model_ids` covers a
+ * shell that answers with ids only.
+ *
+ * @param {unknown} response
+ * @returns {string[]} deduped ids, in the order the provider returned them
+ */
+export function aiDiscoveredModelIds(response) {
+  const result = recordOf(response);
+  /** @type {string[]} */
+  const ids = [];
+  for (const entry of Array.isArray(result.models) ? result.models : []) {
+    const id = (typeof entry === "object" && entry !== null
+      ? stringOf(recordOf(entry).id)
+      : stringOf(entry)
+    ).trim();
+    if (id && !ids.includes(id)) ids.push(id);
+  }
+  if (ids.length) return ids;
+  for (const entry of Array.isArray(result.model_ids) ? result.model_ids : []) {
+    const id = stringOf(entry).trim();
+    if (id && !ids.includes(id)) ids.push(id);
+  }
+  return ids;
 }
 
 /* ------------------------------------------------------------------ *
@@ -1669,65 +1943,58 @@ function resolvePreset(value) {
 /**
  * Build the one request shape every transport understands.  The returned
  * headers never contain a credential: they only tell the transport process
- * which provider's locally-stored secret to inject.  The API key lives in the
+ * which connection's locally-stored secret to inject.  The API key lives in the
  * transport process (Rust / Deno service), never in the page.
  *
  * The result maps 1:1 onto the `ai.complete` command payload, so nothing has to
- * spread a whole preset (which carries UI-only fields such as
- * `requires_credential`) across the bridge.
+ * spread UI-only metadata across the bridge.
+ *
+ * §9.2: the provider comes from an explicit connection record.  Passing a bare
+ * id string is a hard error — Workbench no longer resolves ids to defaults.
  *
  * @param {{
- *   preset: string | AiProviderPreset,
+ *   connection?: AiProviderConnection | Record<string, unknown>,
+ *   preset?: AiProviderConnection | Record<string, unknown> | string,
  *   model?: string,
  *   context?: AiContext | { system: string, user: string } | null,
  *   instruction?: string,
  *   wants_changes?: boolean,
  *   base_url?: string,
- * }} input
+ * }} input `preset` is a deprecated alias for `connection` and must be a
+ *   record; a bare id string fails with `not_configured`.
  * @returns {{ provider_id: string, api_protocol: string, url: string, headers: Record<string, string>, body: Record<string, any>, response_kind: string, auth: { header: string, scheme: string } }}
  */
 export function buildAiProviderCall(input) {
   const request = recordOf(input);
-  const preset = resolvePreset(request.preset);
-  if (!preset) {
-    throw new AiFailure(
-      "not_configured",
-      `未知的 AI Provider：${String(request.preset ?? "（空）")}。请在 AI 设置里重新选择。`,
-      { recoverable: false },
-    );
-  }
-  if (preset.kind === "fake") {
+  const source = request.connection ?? request.preset;
+  const connection = normalizeAiConnection(source);
+  if (connection.kind === OFFLINE_TEST_CONNECTION.kind) {
     throw new AiFailure(
       "not_configured",
       "「本地确定性连接器」不需要网络请求，请直接使用 FakeAiConnector。",
       { recoverable: false },
     );
   }
-  const baseUrl = String(request.base_url || preset.base_url || "")
+  const baseUrl = String(request.base_url || connection.base_url || "")
     .replace(/\/+$/, "");
   if (!baseUrl) {
     throw new AiFailure(
       "not_configured",
-      "这个 Provider 还没有填写 Base URL。请在 AI 设置里补全后再试。",
+      `连接「${connection.label}」还没有填写 Base URL。请在「设置 → 模型」里补全后再试。`,
+      { recommended_action: "打开「设置 → 模型」，为这个连接填写 https:// 开头的 Base URL。" },
     );
   }
-  const model = String(request.model || preset.default_model || "");
+  const model = String(request.model || connection.default_model || "");
   if (!model) {
     throw new AiFailure(
       "not_configured",
-      "还没有为这个 Provider 选择模型。请在 AI 设置里选择模型后再试。",
+      `还没有为连接「${connection.label}」选择模型。请在「设置 → 模型」里选择模型后再试。`,
+      { recommended_action: "可以点击「获取可用模型」读取模型列表，也可以直接手动填写 Model ID。" },
     );
   }
 
   const payload = promptPayloadFor(request.context, request.instruction);
-  const protocol = String(preset.api_protocol || "openai-completions");
-  if (![
-    "openai-completions",
-    "openai-responses",
-    "anthropic-messages",
-  ].includes(protocol)) {
-    throw new AiFailure("invalid_request", `不支持的 API 协议：${protocol}`, { recoverable: false });
-  }
+  const protocol = connection.api_protocol;
   const endpoint = (/** @type {string} */ path) => {
     const suffix = String(path || "").replace(/^\/+/, "");
     return baseUrl.endsWith(`/${suffix}`) ? baseUrl : `${baseUrl}/${suffix}`;
@@ -1736,16 +2003,17 @@ export function buildAiProviderCall(input) {
   const headers = {
     "content-type": "application/json",
     "accept": protocol === "openai-responses" ? "text/event-stream" : "application/json",
-    "x-workbench-auth": preset.id,
-    "x-workbench-provider": preset.id,
+    "x-workbench-auth": connection.id,
+    "x-workbench-provider": connection.id,
   };
   let url;
   /** @type {Record<string, any>} */
   let body;
   let responseKind;
-  let auth;
+  /** @type {{ header: string, scheme: string }} */
+  const auth = { header: connection.auth_header, scheme: connection.auth_scheme };
   if (protocol === "openai-completions") {
-    url = endpoint(String(preset.chat_path || "/chat/completions"));
+    url = endpoint(connection.chat_path || "/chat/completions");
     body = {
       model,
       messages: [
@@ -1757,10 +2025,6 @@ export function buildAiProviderCall(input) {
     };
     if (request.wants_changes === true) body.response_format = { type: "json_object" };
     responseKind = "chat";
-    auth = {
-      header: preset.auth_header || "authorization",
-      scheme: typeof preset.auth_scheme === "string" ? preset.auth_scheme : "Bearer",
-    };
   } else if (protocol === "openai-responses") {
     url = endpoint("/responses");
     body = {
@@ -1772,10 +2036,6 @@ export function buildAiProviderCall(input) {
     };
     if (request.wants_changes === true) body.text = { format: { type: "json_object" } };
     responseKind = "responses";
-    auth = {
-      header: preset.auth_header || "authorization",
-      scheme: typeof preset.auth_scheme === "string" ? preset.auth_scheme : "Bearer",
-    };
   } else {
     url = endpoint("/messages");
     headers["anthropic-version"] = "2023-06-01";
@@ -1788,15 +2048,11 @@ export function buildAiProviderCall(input) {
       stream: false,
     };
     responseKind = "anthropic";
-    auth = {
-      header: preset.auth_header || "x-api-key",
-      scheme: typeof preset.auth_scheme === "string" ? preset.auth_scheme : "",
-    };
   }
 
   return {
     // Only fields the transport contract needs cross the bridge.
-    provider_id: preset.id,
+    provider_id: connection.id,
     api_protocol: protocol,
     url,
     headers,
@@ -1961,16 +2217,32 @@ function accumulateSse(text, state) {
  * raw_kind }`.  Accepts both a JSON chat completion and an SSE
  * (`text/event-stream`) body, given either as a raw string or as parsed chunks.
  *
- * @param {string | AiProviderPreset | null} preset
+ * @param {unknown} connection explicit connection record (or its protocol id / null)
  * @param {unknown} transportResult
  * @returns {{ text: string, model: string, usage: JsonValue, finish_reason: string, raw_kind: "json" | "stream" }}
  */
-export function normalizeAiProviderResponse(preset, transportResult) {
+export function normalizeAiProviderResponse(connection, transportResult) {
   const result = recordOf(transportResult);
-  const providerLabel = (() => {
-    const resolved = resolvePreset(preset);
-    return resolved ? resolved.label : "Provider";
-  })();
+  const source = typeof connection === "string" && aiIsKnownApiProtocol(connection)
+    ? { id: connection, label: aiApiProtocolLabel(connection), api_protocol: connection }
+    : connection;
+  /** @type {string} */
+  let providerLabel = "Provider";
+  /** @type {string} */
+  let protocol = "openai-completions";
+  if (source && typeof source === "object") {
+    try {
+      const resolved = normalizeAiConnection(source);
+      providerLabel = resolved.label;
+      protocol = resolved.api_protocol;
+    } catch {
+      // Metadata-only helper: a record that is not a full connection still
+      // normalises a response, we just keep the generic label.
+      providerLabel = stringOf(recordOf(source).label).trim() ||
+        stringOf(recordOf(source).id).trim() || "Provider";
+      protocol = stringOf(recordOf(source).api_protocol) || protocol;
+    }
+  }
   if (result.ok === false) {
     const code = AI_FAILURE_CODES.includes(stringOf(result.code))
       ? stringOf(result.code)
@@ -2037,7 +2309,6 @@ export function normalizeAiProviderResponse(preset, transportResult) {
     );
   }
   if (streamHint) {
-    const protocol = resolvePreset(preset)?.api_protocol || "openai-completions";
     if (protocol === "openai-responses" && !state.responsesCompleted) {
       throw new AiFailure(
         "malformed_response",
@@ -2365,18 +2636,18 @@ export class FakeAiConnector {
     this.changes = Array.isArray(options.changes)
       ? /** @type {AiChange[]} */ (structuredClone(options.changes))
       : [];
-    this.model = stringOf(options.model) || "fake-deterministic";
-    this.label = stringOf(options.label) || "本地确定性连接器（离线）";
+    this.model = stringOf(options.model) || OFFLINE_TEST_CONNECTION.default_model;
+    this.label = stringOf(options.label) || OFFLINE_TEST_CONNECTION.label;
   }
 
   /** @returns {AiConnectorDescriptor & { scenario: string }} */
   descriptor() {
     return {
-      provider_id: "fake",
+      provider_id: OFFLINE_TEST_CONNECTION.id,
       label: this.label,
       model: this.model,
-      kind: "fake",
-      base_url: "",
+      kind: OFFLINE_TEST_CONNECTION.kind,
+      base_url: OFFLINE_TEST_CONNECTION.base_url,
       requires_credential: false,
       scenario: this.scenario,
     };
@@ -2516,21 +2787,14 @@ export class FakeAiConnector {
  */
 export class HttpAiConnector {
   /**
-   * @param {{ preset: string | AiProviderPreset, model?: string, base_url?: string, transport?: (call: any, options: { signal?: AbortSignal, timeout_ms: number }) => Promise<unknown>, timeout_ms?: number }} options
+   * @param {{ connection?: AiProviderConnection | Record<string, unknown>, preset?: AiProviderConnection | Record<string, unknown> | string, model?: string, base_url?: string, transport?: (call: any, options: { signal?: AbortSignal, timeout_ms: number }) => Promise<unknown>, timeout_ms?: number }} options
    */
   constructor(options) {
     const request = recordOf(options);
-    const preset = resolvePreset(request.preset);
-    if (!preset) {
-      throw new AiFailure(
-        "not_configured",
-        `未知的 AI Provider：${String(request.preset ?? "（空）")}。请在 AI 设置里重新选择。`,
-        { recoverable: false },
-      );
-    }
-    this.preset = preset;
-    this.model = stringOf(request.model) || preset.default_model;
-    this.base_url = stringOf(request.base_url) || preset.base_url;
+    const connection = normalizeAiConnection(request.connection ?? request.preset);
+    this.connection = connection;
+    this.model = stringOf(request.model) || connection.default_model;
+    this.base_url = stringOf(request.base_url) || connection.base_url;
     this.transport = typeof request.transport === "function"
       ? request.transport
       : null;
@@ -2542,12 +2806,12 @@ export class HttpAiConnector {
   /** @returns {AiConnectorDescriptor} */
   descriptor() {
     return {
-      provider_id: this.preset.id,
-      label: this.preset.label,
+      provider_id: this.connection.id,
+      label: this.connection.label,
       model: this.model,
-      kind: this.preset.kind,
+      kind: this.connection.kind,
       base_url: this.base_url,
-      requires_credential: this.preset.requires_credential,
+      requires_credential: this.connection.kind !== OFFLINE_TEST_CONNECTION.kind,
     };
   }
 
@@ -2559,7 +2823,7 @@ export class HttpAiConnector {
   async complete(request = {}, options = {}) {
     const signal = options.signal;
     if (signal && signal.aborted) throw cancelledFailure();
-    if (this.preset.kind === "fake") {
+    if (this.connection.kind === OFFLINE_TEST_CONNECTION.kind) {
       throw new AiFailure(
         "invalid_request",
         "本地确定性连接器不走网络，请改用 FakeAiConnector。",
@@ -2570,7 +2834,7 @@ export class HttpAiConnector {
       ? Number(request.timeout_ms)
       : this.timeout_ms;
     const call = buildAiProviderCall({
-      preset: this.preset,
+      connection: this.connection,
       model: this.model,
       base_url: this.base_url,
       context: request.context ?? null,
@@ -2594,7 +2858,7 @@ export class HttpAiConnector {
 
     const failure = failureFromTransportResult(result);
     if (failure) throw failure;
-    const normalized = normalizeAiProviderResponse(this.preset, result);
+    const normalized = normalizeAiProviderResponse(this.connection, result);
     const parsed = parseAiAnswer(normalized.text);
     return {
       answer: parsed.answer,

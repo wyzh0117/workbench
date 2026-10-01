@@ -366,6 +366,185 @@ export async function scanFolder(root: string): Promise<FolderScanReport> {
   return { root: resolved, entries, warnings, errors };
 }
 
+/** A visual-media descendant found under a selected directory row. */
+export type MediaDescendantKind = "image" | "video";
+
+/**
+ * Row kinds the confirm step may read as files. `directory` stays out of this
+ * list on purpose: directories become stages in pass 1 and must never be
+ * treated as documents.
+ */
+export const ADOPTABLE_FILE_KINDS: readonly string[] = [
+  "file",
+  "image",
+  "video",
+];
+
+export interface MediaDescendantCandidate {
+  relative_path: string;
+  filename: string;
+  mime: string;
+  kind: MediaDescendantKind;
+  size: number;
+}
+
+export interface MediaDescendantScan {
+  root: string;
+  relative_dir: string;
+  entries: MediaDescendantCandidate[];
+  warnings: string[];
+  errors: string[];
+}
+
+/**
+ * Visual media classifier for one file name. Reuses the existing preview/MIME
+ * tables so a directory sweep can never disagree with `scanFolder`, and stays
+ * deliberately blind to documents, text and audio.
+ */
+export function mediaKindForName(name: string): MediaDescendantKind | null {
+  const kind = previewKindForName(name, mimeFor(name));
+  return kind === "image" || kind === "video" ? kind : null;
+}
+
+/**
+ * Recursively list visual media UNDER one selected directory row.
+ *
+ * The anti-flood rule that keeps the Mapping Preview root listing flat still
+ * holds: only the selected folder's own subtree is walked here, and the caller
+ * must have selected that directory explicitly. Read-only — never creates
+ * project.json and never mutates the source files.
+ */
+export async function scanMediaDescendants(
+  root: string,
+  relativeDir: string,
+): Promise<MediaDescendantScan> {
+  const resolved = await assertScanRoot(root);
+  const rel = String(relativeDir || "").replaceAll("\\", "/").replace(/^\/+|\/+$/g, "");
+  if (rel.includes("\0") || isAbsolute(rel) ||
+    rel.split("/").some((part) => part === ".." || part === ".")) {
+    throw new Error("扫描路径无效");
+  }
+  const parts = rel.split("/").filter(Boolean);
+  const absolute = parts.length ? join(resolved, ...parts) : resolved;
+  toRelative(resolved, absolute);
+
+  if (parts.length && await hasSymlinkComponent(resolved, rel)) {
+    throw new Error("已跳过符号链接，避免越过所选文件夹");
+  }
+
+  let directoryStat: Deno.FileInfo;
+  try {
+    directoryStat = await Deno.lstat(absolute);
+  } catch (caught) {
+    throw new Error(
+      `无法读取所选文件夹：${caught instanceof Error ? caught.message : String(caught)}`,
+    );
+  }
+  if (directoryStat.isSymlink) {
+    throw new Error("已跳过符号链接，避免越过所选文件夹");
+  }
+  if (!directoryStat.isDirectory) {
+    throw new Error("选择媒体目录需要选择一个文件夹，而不是单个文件");
+  }
+
+  const entries: MediaDescendantCandidate[] = [];
+  const warnings: string[] = [];
+  const errors: string[] = [];
+  const visited = new Set<string>();
+
+  async function walk(path: string, relativePath: string): Promise<void> {
+    let children: Deno.DirEntry[];
+    try {
+      children = [];
+      for await (const child of Deno.readDir(path)) children.push(child);
+    } catch (caught) {
+      const message = `无法读取目录：${
+        caught instanceof Error ? caught.message : String(caught)
+      }`;
+      errors.push(`${relativePath || "."}: ${message}`);
+      return;
+    }
+    children.sort((left, right) => left.name.localeCompare(right.name, "zh"));
+
+    for (const child of children) {
+      const childRel = relativePath ? `${relativePath}/${child.name}` : child.name;
+      if (isManagedImportName(child.name)) {
+        warnings.push(`${childRel}: 已跳过工作台管理文件或构建目录`);
+        continue;
+      }
+      if (child.name.startsWith(".")) continue;
+      const childPath = join(path, child.name);
+      let stat: Deno.FileInfo;
+      try {
+        stat = await Deno.lstat(childPath);
+      } catch (caught) {
+        errors.push(
+          `${childRel}: 无法读取：${caught instanceof Error ? caught.message : String(caught)}`,
+        );
+        continue;
+      }
+      if (stat.isSymlink) {
+        warnings.push(`${childRel}: 已跳过符号链接，避免越过所选文件夹`);
+        continue;
+      }
+
+      if (stat.isDirectory) {
+        let identity = normalize(childPath);
+        try {
+          identity = await Deno.realPath(childPath);
+        } catch { /* readDir above reports the useful error */ }
+        if (visited.has(identity)) {
+          warnings.push(`${childRel}: 已跳过重复目录`);
+          continue;
+        }
+        visited.add(identity);
+        await walk(childPath, childRel);
+        continue;
+      }
+      if (!stat.isFile) {
+        warnings.push(`${childRel}: 已跳过非普通文件`);
+        continue;
+      }
+
+      const kind = mediaKindForName(child.name);
+      if (!kind) continue;
+      // Never let one unreadable descendant fail the whole batch.
+      try {
+        const handle = await Deno.open(childPath, { read: true });
+        handle.close();
+      } catch (caught) {
+        errors.push(
+          `${childRel}: 无法读取文件：${
+            caught instanceof Error ? caught.message : String(caught)
+          }`,
+        );
+        continue;
+      }
+      const mime = mimeFor(child.name) ??
+        (kind === "image" ? "image/*" : "video/*");
+      entries.push({
+        relative_path: childRel,
+        filename: child.name,
+        mime,
+        kind,
+        size: Number.isFinite(stat.size) ? Number(stat.size) : 0,
+      });
+    }
+  }
+
+  await walk(absolute, rel);
+  entries.sort((left, right) =>
+    left.relative_path.localeCompare(right.relative_path, "zh")
+  );
+  return {
+    root: resolved,
+    relative_dir: rel,
+    entries,
+    warnings,
+    errors,
+  };
+}
+
 /** Preview kinds returned by readFolderPreview (§28). */
 export type FolderPreviewKind =
   | "text"

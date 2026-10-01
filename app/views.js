@@ -30,9 +30,11 @@ import {
   usagesForAsset,
 } from "./authoring.js";
 import {
+  AI_OFFLINE_PROVIDER_ID,
+  aiApiProtocolChoices,
   aiChangeDraftDiffRows,
   aiContextPreviewLines,
-  aiProviderDescriptors,
+  aiIsOfflineConnection,
 } from "./ai.js";
 import {
   buildExplorerTree,
@@ -124,8 +126,13 @@ export function createViews(store) {
       (asset.type === "document" && !previewText(asset) &&
         !/\.(md|markdown|txt|csv|json)$/i.test(name));
   };
+  /**
+   * The one click-to-enlarge control for every media surface (§12.4).  Its
+   * geometry lives in `styles.css` (`.asset-image-zoom`) so a card can size the
+   * frame it owns instead of fighting an inline `object-fit: cover`.
+   */
   const mediaOpenButton = (asset, src, label, alt = label) =>
-    `<button type="button" class="asset-image-zoom" data-action="open-asset-image" data-asset="${esc(asset.id)}" aria-label="放大查看 ${esc(label)}" title="点击查看大图" style="align-items:center;background:transparent;border:0;cursor:zoom-in;display:flex;height:100%;justify-content:center;padding:0;width:100%"><img class="asset-image" src="${esc(src)}" alt="${esc(alt)}" loading="lazy" style="height:100%;max-height:none;max-width:none;object-fit:cover;width:100%" /></button>`;
+    `<button type="button" class="asset-image-zoom" data-action="open-asset-image" data-asset="${esc(asset.id)}" aria-label="放大查看 ${esc(label)}" title="点击查看大图"><img class="asset-image" src="${esc(src)}" alt="${esc(alt)}" loading="lazy" /></button>`;
   /**
    * A real trash glyph.  The emoji (U+1F5D1) depends on an emoji font being
    * installed and inherited `color`, which is how a delete control could end
@@ -824,7 +831,6 @@ export function createViews(store) {
   }
 
   function markdownEditor(block) {
-    const sourceMode = store.ui.markdownSourceBlockId === block.id;
     const label = block.type === "heading" ? "标题" : block.type === "quote" ? "引用内容" : "正文内容";
     const options = { resolveImage: markdownImageResolver(block) };
     const headingLevel = Math.max(1, Math.min(6, block.level || 2));
@@ -834,11 +840,10 @@ export function createViews(store) {
     const editorClass = block.type === "heading"
       ? `markdown-editor-heading markdown-heading-level-${headingLevel}`
       : `markdown-editor-${block.type}`;
-    if (sourceMode) {
-      return `<div class="markdown-editor-shell source-mode"><div class="markdown-inline-toolbar"><button type="button" class="text-button" data-action="toggle-markdown-source" data-id="${esc(block.id)}" title="切换到格式化编辑">格式化编辑</button><span class="muted small">Markdown 源码 · 保存时保留语义标记</span></div><textarea class="block-text markdown-source-field" data-block-id="${esc(block.id)}" aria-label="${label} Markdown 源码">${esc(block.text)}</textarea></div>`;
-    }
     const placeholder = block.type === "heading" ? "新标题" : block.type === "quote" ? "引用内容" : "开始写点什么…";
-    return `<div class="markdown-editor-shell"><div class="markdown-inline-toolbar" role="toolbar" aria-label="正文格式"><button type="button" class="icon-button markdown-format-button" data-action="markdown-format" data-id="${esc(block.id)}" data-format="bold" title="加粗" aria-label="加粗"><b>B</b></button><button type="button" class="icon-button markdown-format-button" data-action="markdown-format" data-id="${esc(block.id)}" data-format="italic" title="斜体" aria-label="斜体"><i>I</i></button><button type="button" class="icon-button markdown-format-button" data-action="markdown-format" data-id="${esc(block.id)}" data-format="strike" title="删除线" aria-label="删除线"><s>S</s></button><button type="button" class="text-button" data-action="toggle-markdown-source" data-id="${esc(block.id)}" title="编辑 Markdown 源码">Markdown 源码</button></div><div class="markdown-rich-editor ${editorClass}" contenteditable="true" data-rich-editor="true" data-block-id="${esc(block.id)}" data-edit-property="text" data-empty="${!String(block.text || "").trim()}" data-placeholder="${esc(placeholder)}" role="textbox" aria-multiline="true" aria-label="${label}" aria-placeholder="${esc(placeholder)}" spellcheck="true">${editorHtml}</div></div>`;
+    // Markdown syntax is compiled while typing, so there is no source view and
+    // no formatting buttons to reach for: the shortcuts do the work.
+    return `<div class="markdown-editor-shell"><div class="markdown-rich-editor ${editorClass}" contenteditable="true" data-rich-editor="true" data-block-id="${esc(block.id)}" data-edit-property="text" data-empty="${!String(block.text || "").trim()}" data-placeholder="${esc(placeholder)}" role="textbox" aria-multiline="true" aria-label="${label}" aria-placeholder="${esc(placeholder)}" spellcheck="true">${editorHtml}</div></div>`;
   }
 
   function mediaBody(block) {
@@ -1049,11 +1054,15 @@ export function createViews(store) {
       placement
         ? view.blocks.find((block) => block.id === placement.block_id) || null
         : null;
-    return `${toolbar}${meta}${paged ? pageNavigation(view, layout, paginationEditing) : sectionStrip(view.sections, placements)}${store.ui.paginationConversionPreview ? paginationConversionPreview(view, layout) : ""}${store.ui.pageSizePreview && !store.ui.pageSizePreview.conversion ? pageSizePreview(layout) : ""}<div class="grid-wrap ${
+    const activePageIndex = page ? view.pages?.findIndex((candidate) => candidate.id === page.id) ?? -1 : -1;
+    // The legacy `输出分区` editor stays hidden until pagination is enabled:
+    // `view.sections` is still maintained and still drives legacy export, but a
+    // continuous grid must not offer a second, competing grouping control.
+    return `${toolbar}${meta}${paged ? pageNavigation(view, layout, paginationEditing) : ""}${store.ui.paginationConversionPreview ? paginationConversionPreview(view, layout) : ""}${store.ui.pageSizePreview && !store.ui.pageSizePreview.conversion ? pageSizePreview(layout) : ""}<div class="grid-wrap ${
       gridEditing ? "editing" : ""
-    }${paged ? " paged-canvas-wrap" : ""}">${paged && !page ? `<p class="layout-note">当前分页布局还没有页面，请新建页面后继续。</p>` : ""}${pageGeometry ? `<span class="page-canvas-size" data-page-id="${pageGeometry.page_id}" data-width-pt="${pageGeometry.logical_width_pt}" data-height-pt="${pageGeometry.logical_height_pt}">${esc(page.title)} · ${pageGeometry.logical_width_pt} × ${pageGeometry.logical_height_pt} pt · ${store.ui.layoutZoom === "actual" ? "实际尺寸" : "适合窗口"}</span>` : ""}${pageOverflow ? `<div class="page-overflow-warning">${pageOverflow} 块内容超出当前网格范围；页面保留了原放置，请调整网格或位置。</div>` : ""}${
+    }${paged ? " paged-canvas-wrap" : ""}">${paged && !page ? `<p class="layout-note">当前分页布局还没有页面，请新建页面后继续。</p>` : ""}${pageGeometry ? `<span class="page-canvas-size" data-page-id="${pageGeometry.page_id}" data-width-pt="${pageGeometry.logical_width_pt}" data-height-pt="${pageGeometry.logical_height_pt}">${activePageIndex + 1} / ${view.pages?.length || 0} · ${pageGeometry.logical_width_pt} × ${pageGeometry.logical_height_pt} pt · ${store.ui.layoutZoom === "actual" ? "实际尺寸" : "适合窗口"}</span>` : ""}${pageOverflow ? `<div class="page-overflow-warning">${pageOverflow} 块内容超出当前网格范围；页面保留了原放置，请调整网格或位置。</div>` : ""}${
       movingId ? movingBanner(moving, blockOf(moving)) : ""
-    }<div class="grid-canvas${paged ? " paged-grid-canvas" : ""}" ${canvasStyle}>${
+    }<div class="grid-canvas${paged ? " paged-grid-canvas" : ""}" data-grid-surface="grid" ${canvasStyle}>${
       gridEditing ? gridLabels(grid) : ""
     }${
       placements.map((placement) => {
@@ -1067,7 +1076,7 @@ export function createViews(store) {
           store.ui.selectedBlockId === block.id ? " selected" : ""
         }${isMoving ? " moving" : ""}" style="grid-row:${cell.row};grid-column:${
           cell.column
-        };" data-placement="${placement.id}" data-page-readonly="${paged && !paginationEditing ? "true" : "false"}" data-structure-block="${
+        };" data-placement="${placement.id}" data-grid-role="placement" data-page-readonly="${paged && !paginationEditing ? "true" : "false"}" data-structure-block="${
           placement.block_id
         }" data-row="${placement.row_start}" data-col="${
           placement.column_start
@@ -1093,7 +1102,7 @@ export function createViews(store) {
       }).join("")
     }${
       movingId ? moveTargets(view, grid, moving) : ""
-    }</div></div><div class="unplaced-strip"><span class="eyebrow" title="左键点击一块正文，它会落到第一个可用格子">还没有放进网格的正文</span>${
+    }</div></div><div class="unplaced-strip" data-grid-surface="unplaced"><span class="eyebrow" title="左键点击一块正文，它会落到第一个可用格子">还没有放进网格的正文</span>${
       unplaced.length
         ? `<div class="unplaced-list">${
           unplaced.map((block) =>
@@ -1125,7 +1134,7 @@ export function createViews(store) {
     const pageSizeControl = paginationEditing
       ? `<label class="page-size-control">页面尺寸<select class="select" data-action="page-size-preview">${sizeOptions.map(([value, label]) => `<option value="${value}" ${preset === value ? "selected" : ""}>${label}</option>`).join("")}</select></label>`
       : "";
-    return `<div class="paged-page-tools"><div class="page-tabs" role="tablist" aria-label="页面导航">${pages.map((page, index) => `<button role="tab" aria-selected="${page.id === current?.id}" class="page-tab ${page.id === current?.id ? "active" : ""}" data-action="select-layout-page" data-id="${page.id}" title="第 ${index + 1} 页 · ${esc(page.title)}"><span>第 ${index + 1} 页</span><small>${esc(page.title)}</small></button>`).join("")}${paginationEditing ? `<button class="secondary page-add" data-action="page-add">＋ 新建页</button>` : ""}</div><div class="page-action-row"><div class="page-actions">${pageActions}</div><div class="page-view-controls">${pageSizeControl}<button class="secondary ${store.ui.layoutZoom === "fit" ? "active-tool" : ""}" data-action="layout-zoom" data-zoom="fit">适合窗口</button><button class="secondary ${store.ui.layoutZoom === "actual" ? "active-tool" : ""}" data-action="layout-zoom" data-zoom="actual">实际尺寸</button></div></div><div class="pagination-edit-bar"><span>${paginationEditing ? `${current ? `正在编辑：${esc(current.title)}` : "先创建页面"} · 可调整页面与内容位置` : "分页画布处于查看模式；页面结构与内容位置不会被误改。"}</span><button class="secondary ${paginationEditing ? "active-tool" : ""}" data-action="toggle-pagination-edit">${paginationEditing ? "完成分页编辑" : "编辑分页"}</button></div>${paginationEditing && store.ui.movingPlacementTargetPageId ? pageMovePanel(view, layout) : ""}</div>`;
+    return `<div class="paged-page-tools"><div class="page-tabs" role="tablist" aria-label="页面导航">${pages.map((page, index) => `<button role="tab" aria-selected="${page.id === current?.id}" class="page-tab ${page.id === current?.id ? "active" : ""}" data-action="select-layout-page" data-id="${page.id}"><span>${esc(page.title)}</span><small>${index + 1} / ${pages.length}</small></button>`).join("")}${paginationEditing ? `<button class="secondary page-add" data-action="page-add">＋ 新建页</button>` : ""}</div><div class="page-action-row"><div class="page-actions">${pageActions}</div><div class="page-view-controls">${pageSizeControl}<button class="secondary ${store.ui.layoutZoom === "fit" ? "active-tool" : ""}" data-action="layout-zoom" data-zoom="fit">适合窗口</button><button class="secondary ${store.ui.layoutZoom === "actual" ? "active-tool" : ""}" data-action="layout-zoom" data-zoom="actual">实际尺寸</button></div></div><div class="pagination-edit-bar"><span>${paginationEditing ? "正在编辑本页 · 可调整页面与内容位置" : "分页画布处于查看模式；页面结构与内容位置不会被误改。"}</span><button class="secondary ${paginationEditing ? "active-tool" : ""}" data-action="toggle-pagination-edit">${paginationEditing ? "退出分页编辑" : "编辑分页"}</button></div>${paginationEditing && store.ui.movingPlacementTargetPageId ? pageMovePanel(view, layout) : ""}</div>`;
   }
 
   function paginationConversionPreview(view, layout) {
@@ -1163,27 +1172,6 @@ export function createViews(store) {
     return `<div class="page-move-panel"><b>选择「${esc(targetPage.title)}」里的可用位置（跨 ${rowSpan} 行 × ${columnSpan} 列）</b>${targets.length ? targets.map((cell) => `<button class="secondary" data-action="move-placement-page-cell" data-id="${placement.id}" data-page-id="${targetPage.id}" data-row="${cell.row}" data-col="${cell.column}">R${cell.row + 1} · C${cell.column + 1}</button>`).join("") : `<span class="muted small">目标页没有能容纳此内容的空位；原放置保持不变。</span>`}<button class="text-button" data-action="cancel-page-move">取消</button></div>`;
   }
 
-  /** The output-section strip above the canvas (P1-9). */
-  function sectionStrip(sections, placements) {
-    return `<div class="section-strip"><span class="section-strip-label" title="分区把网格里的一组位置归到同一次输出（多页导出时一页 = 一个分区）">输出分区</span>${
-      sections.map((section) =>
-        store.ui.editingSectionId === section.id
-          ? `<span class="section-chip editing"><input class="section-name-input" data-section-name data-focus-key="section-name" data-id="${
-            section.id
-          }" value="${esc(section.name)}" aria-label="分区名称" /><small>Enter 保存 · Esc 取消</small></span>`
-          : `<span class="section-chip"><button class="text-button" data-action="rename-section" data-id="${
-            section.id
-          }" title="重命名这个分区">${esc(section.name)}</button><small>${
-            placements.filter((placement) => placement.section_id === section.id).length
-          } 块 · 第 ${
-            section.page_index + 1
-          } 页</small><button class="icon-button danger" data-action="delete-section" data-id="${
-            section.id
-          }" title="删除这个分区（里面的内容会回到「未分区」，不会被删除）">${TRASH_ICON}</button></span>`
-      ).join("") || `<span class="muted small">还没有分区；所有内容都在「未分区」里</span>`
-    }<button class="secondary" data-action="grid-new-section" title="增加一个输出分区（多页导出时多一页）">＋ 分区</button></div>`;
-  }
-
   /** The banner that names the block currently being moved (P2-4). */
   function movingBanner(placement, block) {
     return `<div class="grid-moving-banner" data-moving-placement="${
@@ -1206,14 +1194,19 @@ export function createViews(store) {
     return allowed.map((cell) => {
       const current = cell.row === placement.row_start &&
         cell.column === placement.column_start;
+      // The cell the block already occupies is NOT a `disabled` button: a
+      // disabled control swallows the pointer entirely, so the block under it
+      // could no longer be clicked (or clicked out of move mode).  It stays
+      // non-interactive through CSS (`pointer-events: none`) and tells the
+      // right thing to assistive tech.
       return `<button class="grid-cell-target${
         current ? " current" : ""
       }" style="grid-row:${cell.row + 1};grid-column:${
         cell.column + 1
-      };" data-action="grid-move-to" data-id="${placement.id}" data-row="${
+      };" data-action="grid-move-to" data-grid-role="move-target" data-id="${placement.id}" data-row="${
         cell.row
-      }" data-col="${cell.column}" ${
-        current ? "disabled" : ""
+      }" data-col="${cell.column}"${
+        current ? ' data-current="true" aria-disabled="true"' : ""
       } title="${
         current ? "这块内容现在就在这里" : "把这块内容放到这里"
       }">${current ? "当前" : "放这里"}</button>`;
@@ -1394,7 +1387,7 @@ export function createViews(store) {
       return `<div class="page-preview-item" data-preview-block="${block.id}" style="${style}">${previewBlockHtml(block, showNotes)}</div>`;
     }).join("");
     const pageIndex = pages.findIndex((candidate) => candidate.id === page.id);
-    const pageNav = `<div class="page-preview-tabs" role="tablist" aria-label="预览页面">${pages.map((candidate, index) => `<button role="tab" aria-selected="${candidate.id === page.id}" class="page-tab ${candidate.id === page.id ? "active" : ""}" data-action="select-layout-page" data-id="${candidate.id}">第 ${index + 1} 页 · ${esc(candidate.title)}</button>`).join("")}</div><div class="page-preview-controls"><span>${pageIndex + 1} / ${pages.length} · ${width} × ${height} pt</span><button class="secondary" data-action="layout-zoom" data-zoom="fit">适合窗口</button><button class="secondary" data-action="layout-zoom" data-zoom="actual">实际尺寸</button></div>`;
+    const pageNav = `<div class="page-preview-tabs" role="tablist" aria-label="预览页面">${pages.map((candidate) => `<button role="tab" aria-selected="${candidate.id === page.id}" class="page-tab ${candidate.id === page.id ? "active" : ""}" data-action="select-layout-page" data-id="${candidate.id}">${esc(candidate.title)}</button>`).join("")}</div><div class="page-preview-controls"><span>${pageIndex + 1} / ${pages.length} · ${width} × ${height} pt</span><button class="secondary" data-action="layout-zoom" data-zoom="fit">适合窗口</button><button class="secondary" data-action="layout-zoom" data-zoom="actual">实际尺寸</button></div>`;
     const unplaced = (projectedLayout.unplaced_block_ids || []).map((blockId) => blockById.get(blockId)).filter(Boolean);
     const unplacedHtml = unplaced.length
       ? `<div class="preview-unplaced"><span class="eyebrow">还没有放在页面上（${unplaced.length} 块）</span>${unplaced.map((block) => `<div class="preview-unplaced-item" data-preview-block="${block.id}">${previewBlockHtml(block, showNotes)}</div>`).join("")}</div>`
@@ -1989,33 +1982,41 @@ export function createViews(store) {
           ).filter(Boolean);
           const displayName = asset.title || asset.filename;
           const renaming = store.ui.editingAssetId === asset.id;
+          const usageLabel = usages.length
+            ? `已使用 ${usages.length} 处`
+            : "尚未引用";
+          const usageTitle = usages.length
+            ? ` title="使用位置：${
+              esc(lessons.map((item) => item.code).join("、"))
+            }"`
+            : "";
+          // §12.3 — picture first, then the name, one meta line
+          // `type · size · usage`, and the three actions on a single row.
           return `<article class="asset-card" data-asset-id="${
             asset.id
-          }"><div class="asset-thumb-wrap">${mediaLibraryPreview(asset)}</div><div class="asset-info">${
+          }"><div class="asset-card-media">${
+            mediaLibraryPreview(asset)
+          }</div><div class="asset-card-body">${
             renaming
-              ? `<label class="field-label">显示名称<input class="select" data-asset-title data-focus-key="asset-title" data-id="${asset.id}" value="${
-                esc(displayName)
+              ? `<label class="field-label">素材文件名<input class="select" data-asset-title data-focus-key="asset-title" data-id="${asset.id}" value="${
+                esc(asset.filename)
               }" /></label>`
-              : `<b>${esc(displayName)}</b>`
-          }<small>${esc(assetLabel(asset.type))} · ${
-            esc(asset.filename)
-          } · ${formatBytes(asset.file_size)}</small><small>${
-            usages.length
-              ? `使用位置：${
-                lessons.map((item) => esc(item.code)).join("、")
-              }`
-              : "还没有被任何内容引用"
-          }</small></div><div class="asset-actions" style="align-items:center;display:flex;flex-direction:row;flex-wrap:nowrap;gap:6px;padding:0 11px 12px;white-space:nowrap">${
+              : `<b class="asset-card-name" title="${esc(displayName)}">${
+                esc(displayName)
+              }</b>`
+          }<small class="asset-card-meta"${usageTitle}>${
+            esc(assetLabel(asset.type))
+          } · ${formatBytes(asset.file_size)} · ${usageLabel}</small></div><div class="asset-card-actions">${
             store.ui.activeId
-              ? `<button class="secondary" data-action="insert-asset" data-id="${asset.id}" aria-label="插入到当前位置" title="插入到当前位置" style="padding:5px 7px;white-space:nowrap">＋ 插入</button>`
+              ? `<button class="secondary" data-action="insert-asset" data-id="${asset.id}" aria-label="插入到当前位置" title="插入到当前位置">＋ 插入</button>`
               : ""
           }${
             renaming
               ? `<button class="secondary" data-action="cancel-rename-asset">取消</button>`
-              : `<button class="text-button" data-action="rename-asset" data-id="${asset.id}" aria-label="重命名素材" title="重命名显示名称" style="padding:5px 7px;white-space:nowrap">✎ 重命名</button>`
+              : `<button class="text-button" data-action="rename-asset" data-id="${asset.id}" aria-label="重命名素材" title="重命名素材文件（磁盘文件同步改名）">✎ 重命名</button>`
           }<button class="text-button danger" data-action="delete-asset" data-id="${
             asset.id
-          }" aria-label="删除素材" title="删除素材" style="padding:5px 7px;white-space:nowrap">${TRASH_ICON} 删除</button></div></article>`;
+          }" aria-label="删除素材" title="删除素材">${TRASH_ICON} 删除</button></div></article>`;
         }).join("")
         : `<div class="empty-state inline"><h2>还没有素材</h2><p class="muted">课程还没有素材。拖入文件，或点击“添加素材”后继续。</p></div>`
     }</div></section>`;
@@ -2499,63 +2500,42 @@ export function createViews(store) {
   ];
 
   /**
-   * Providers the panel can offer: the shipped catalog merged with whatever
-   * `ai.connection.list` returned.  A saved config only overrides the fields it
-   * actually carries, so an unknown provider id still gets readable defaults.
+   * Connections the assistant can offer: exactly what `ai.connection.list`
+   * returned (§9.2).  Workbench ships no provider templates and invents no
+   * defaults, so an id the shell does not hold is not a choice — with no saved
+   * connection the assistant shows「配置 AI」instead of a pretend provider.
+   *
+   * The deterministic offline connector joins only while a session has
+   * explicitly selected it (that is how the automated runs drive it), and it is
+   * never offered as a template card in Settings → Models.
    */
   function aiProviderChoices() {
-    const merged = new Map();
-    for (const preset of aiProviderDescriptors()) merged.set(preset.id, { ...preset });
     const saved = Array.isArray(store.ui.aiProviders) ? store.ui.aiProviders : [];
-    for (const entry of saved) {
-      const id = String(entry && entry.id ? entry.id : "").trim();
-      if (!id) continue;
-      const previous = merged.get(id) || {
-        id,
-        label: id,
-        kind: "openai_compatible",
-        base_url: "",
-        default_model: "",
-        models: [],
-        requires_credential: true,
-      };
-      const models = [...new Set([
-        ...(Array.isArray(entry.models) ? entry.models.filter((model) => typeof model === "string" && model) : []),
-        ...(Array.isArray(previous.models) ? previous.models : []),
-      ])];
-      merged.set(id, {
-        ...previous,
-        label: typeof entry.label === "string" && entry.label ? entry.label : previous.label,
-        kind: typeof entry.kind === "string" && entry.kind ? entry.kind : previous.kind,
-        base_url: typeof entry.base_url === "string" && entry.base_url ? entry.base_url : previous.base_url,
-        api_protocol: typeof entry.api_protocol === "string" && entry.api_protocol ? entry.api_protocol : previous.api_protocol,
-        auth_header: typeof entry.auth_header === "string" ? entry.auth_header : previous.auth_header,
-        auth_scheme: typeof entry.auth_scheme === "string" ? entry.auth_scheme : previous.auth_scheme,
-        default_model: typeof entry.default_model === "string" && entry.default_model
-          ? entry.default_model
-          : previous.default_model,
-        models,
-      });
-    }
-    // A provider id that is no longer in the saved list still has to show up,
-    // otherwise the select would silently display a provider the store is not
-    // actually using.
+    const choices = saved
+      .map((entry) => (typeof store.connectionRecord === "function"
+        ? store.connectionRecord(entry)
+        : { ...entry }))
+      .filter((entry) => String(entry?.id || "").trim());
     const currentId = String(store.ui.aiProviderId || "").trim();
-    if (currentId && !merged.has(currentId)) {
-      merged.set(currentId, {
-        id: currentId,
-        label: `${currentId}（本机已无此配置）`,
-        kind: "openai_compatible",
+    if (currentId === AI_OFFLINE_PROVIDER_ID &&
+      !choices.some((entry) => entry.id === currentId)) {
+      choices.unshift({
+        id: AI_OFFLINE_PROVIDER_ID,
+        label: "本地确定性连接器（离线）",
+        kind: "fake",
+        api_protocol: "openai-completions",
         base_url: "",
-        default_model: "",
-        models: [],
-        requires_credential: true,
+        chat_path: "",
+        auth_header: "",
+        auth_scheme: "",
+        default_model: "fake-deterministic",
+        models: ["fake-deterministic"],
+        requires_credential: false,
       });
     }
-    // The offline connector is the default and the only provider that works
-    // without a credential, so it always heads the list.
-    return [...merged.values()].sort((left, right) =>
-      left.id === "fake" ? -1 : right.id === "fake" ? 1 : 0
+    // Whatever is selected leads, so the selector can never misreport a run.
+    return choices.sort((left, right) =>
+      left.id === currentId ? -1 : right.id === currentId ? 1 : 0
     );
   }
 
@@ -2613,30 +2593,54 @@ export function createViews(store) {
     </div>`;
   }
 
+  /**
+   * §9.3 — the existing-connections list.  Rows come from saved connections
+   * only: no Volcengine/Doubao, OpenAI, Anthropic or DeepSeek template cards
+   * (§9.2).  Each row carries the full field set the spec names — display name,
+   * Provider ID, Base URL, protocol, credential state, configured models and
+   * default model — and never renders a secret value.
+   */
   function aiConnectionManagerView(choices, configured) {
     const savedIds = new Set(
       (Array.isArray(store.ui.aiProviders) ? store.ui.aiProviders : [])
         .map((provider) => String(provider?.id || "").trim())
         .filter(Boolean),
     );
-    const connections = choices.filter((choice) => choice.id !== "fake" && choice.kind !== "openai_chatgpt_subscription");
+    const connections = choices.filter((choice) =>
+      !aiIsOfflineConnection(choice) &&
+      String(choice.kind || "") !== "openai_chatgpt_subscription");
+    const protocolLabels = aiApiProtocolChoices();
     return `<section class="ai-connection-manager" id="ai-connection-manager">
-      <div class="ai-block-head"><div><b>连接与模型</b><small>API Key 只显示是否已保存，不会回显。</small></div><button class="secondary" data-action="ai-create-connection">新建连接</button></div>
+      <div class="ai-block-head"><div><b>已有模型服务商</b><small>只显示你创建的 API 连接与已保存的订阅账户；API Key 只显示是否已配置，不会回显。</small></div><button class="primary" data-action="ai-create-connection">+ 添加模型服务商</button></div>
       <div class="ai-connection-list">${connections.length
         ? connections.map((choice) => {
           const id = String(choice.id || "");
           const active = id === String(store.ui.aiProviderId || "");
           const configuredKey = configured[id] === true;
           const saved = savedIds.has(id);
-          const model = String(choice.default_model || choice.models?.[0] || "未设置模型");
-          return `<article class="ai-connection-row${active ? " active" : ""}">
-            <div class="ai-connection-info"><b>${esc(choice.label || id)}</b><span class="ai-key-state ${configuredKey ? "set" : "unset"}">${configuredKey ? "已保存 API Key" : "未保存 API Key"}</span>
-              <small>${esc(id)} · ${esc(choice.base_url || "尚未设置 Base URL")}</small><small>默认模型：${esc(model)}</small>
+          const models = (Array.isArray(choice.models) ? choice.models : []).filter(Boolean);
+          const protocol = String(choice.api_protocol || "openai-completions");
+          const protocolLabel = protocolLabels.find((entry) => entry.id === protocol)?.label || protocol;
+          const defaultModel = String(choice.default_model || "");
+          return `<article class="ai-connection-row${active ? " active" : ""}" data-provider-id="${esc(id)}">
+            <div class="ai-connection-info">
+              <div class="ai-connection-title"><b>${esc(choice.label || id)}</b>${active
+                ? `<span class="ai-key-state active">当前使用</span>`
+                : ""}<span class="ai-key-state ${configuredKey ? "set" : "unset"}">${
+                  configuredKey ? "凭据已配置" : "未配置凭据"
+                }</span></div>
+              <small>Provider ID：${esc(id)}</small>
+              <small>Base URL：${esc(choice.base_url || "尚未设置")}</small>
+              <small>协议：${esc(protocolLabel)}</small>
+              <small data-ai-connection-models>已配置模型：${
+                models.length ? esc(models.join("、")) : "无（可手动填写 Model ID）"
+              }</small>
+              <small>默认模型：${esc(defaultModel || "未设置")}</small>
             </div>
-            <div class="ai-connection-actions"><button class="text-button" data-action="ai-use-provider" data-id="${esc(id)}" ${active ? "disabled" : ""}>${active ? "当前连接" : "使用"}</button><button class="text-button" data-action="ai-edit-connection" data-id="${esc(id)}">管理</button>${saved ? `<button class="text-button danger" data-action="ai-delete-connection" data-id="${esc(id)}">删除</button>` : ""}</div>
+            <div class="ai-connection-actions"><button class="text-button" data-action="ai-use-provider" data-id="${esc(id)}" ${active ? "disabled" : ""}>${active ? "当前连接" : "使用"}</button><button class="text-button" data-action="ai-edit-connection" data-id="${esc(id)}">编辑</button>${saved ? `<button class="text-button danger" data-action="ai-delete-connection" data-id="${esc(id)}">删除</button>` : ""}</div>
           </article>`;
         }).join("")
-        : `<p class="ai-hint">还没有可管理的连接。</p>`}</div>
+        : `<p class="ai-hint">还没有 API 连接。点「+ 添加模型服务商」新建一个，填写 Provider ID、Base URL、协议与模型即可。</p>`}</div>
     </section>`;
   }
 
@@ -2675,8 +2679,9 @@ export function createViews(store) {
   function aiProviderFormView(descriptor, configured) {
     const form = store.ui.aiProviderForm;
     if (!form) return "";
-    const providerId = String(form.id || descriptor.id || "").trim();
-    const isFake = providerId === "fake";
+    const providerId = String(form.id || descriptor?.id || "").trim();
+    const isFake = aiIsOfflineConnection(providerId);
+    const isNew = form.isNew === true;
     const configSaved = (Array.isArray(store.ui.aiProviders) ? store.ui.aiProviders : []).some((provider) => provider?.id === providerId);
     const discovered = Array.isArray(store.ui.aiModelOptions)
       ? store.ui.aiModelOptions
@@ -2688,18 +2693,38 @@ export function createViews(store) {
     const source = String(store.ui.aiModelSource || "");
     const query = String(store.ui.aiModelQuery || "").trim().toLowerCase();
     const visibleModels = discovered.filter((id) => !query || id.toLowerCase().includes(query));
+    // §9.6: the catalog is multi-select; ticking is only form state until
+    // 「加入所选模型」and nothing at all persists before 保存连接.
+    const ticked = new Set(
+      (Array.isArray(store.ui.aiModelSelection) ? store.ui.aiModelSelection : [])
+        .map((model) => String(model || "")),
+    );
+    const addedModels = (Array.isArray(form.models) ? form.models : [])
+      .map((model) => String(model || "").trim())
+      .filter(Boolean);
+    const protocolChoices = aiApiProtocolChoices();
     return `<div class="ai-provider-form">
+      <label class="field-label">Provider ID<input class="select" data-ai-provider-id data-focus-key="ai-provider-id" placeholder="例如 my-openai-key" value="${
+      esc(providerId)
+    }" ${isFake || configSaved ? "disabled" : ""} autocomplete="off" /></label>
+      ${configSaved
+        ? `<p class="ai-hint">Provider ID 创建后永久固定，不能再修改；显示名称可以随时改。</p>`
+        : `<p class="ai-hint">保存后这个 ID 就永久固定，之后只能改显示名称。</p>`}
       <label class="field-label">显示名称<input class="select" data-ai-provider-label data-focus-key="ai-provider-label" value="${
-      esc(form.label || descriptor.label || "")
+      esc(form.label || descriptor?.label || "")
     }" /></label>
       <label class="field-label">Base URL<input class="select" data-ai-base-url data-focus-key="ai-base-url" placeholder="https://api.example.com/v1" value="${
       esc(form.base_url || "")
     }" ${isFake ? "disabled" : ""} /></label>
-      ${isFake ? "" : `<label class="field-label">API 协议<select class="select" data-ai-api-protocol data-focus-key="ai-api-protocol"><option value="openai-completions" ${String(form.api_protocol || "openai-completions") === "openai-completions" ? "selected" : ""}>OpenAI Chat Completions</option><option value="openai-responses" ${String(form.api_protocol || "") === "openai-responses" ? "selected" : ""}>OpenAI Responses</option><option value="anthropic-messages" ${String(form.api_protocol || "") === "anthropic-messages" ? "selected" : ""}>Anthropic Messages</option></select></label>`}
+      ${isFake ? "" : `<label class="field-label">API 协议<select class="select" data-ai-api-protocol data-focus-key="ai-api-protocol">${
+    protocolChoices.map((choice) =>
+      `<option value="${esc(choice.id)}" ${
+        String(form.api_protocol || "openai-completions") === choice.id ? "selected" : ""
+      }>${esc(choice.label)}</option>`).join("")
+  }</select></label>`}
       ${
       isFake
-        ? `<p class="ai-hint">「本地确定性连接器」完全离线、不需要地址或密钥，因此没有可保存的配置。</p>
-      <div class="ai-run-row"><button class="secondary" data-action="ai-edit-provider" data-id="custom">改为配置真实服务商</button></div>`
+        ? `<p class="ai-hint">「本地确定性连接器」是完全离线的自动化测试通道，不需要地址或密钥，也没有可保存的配置；它不会出现在连接列表里。</p>`
         : `<p class="ai-hint">这里保存的是地址与模型名，不是密钥；密钥用下面的「保存密钥」单独写入。</p>
       <div class="ai-run-row">
         <button class="secondary" data-action="ai-discover-models" data-focus-key="ai-discover" ${
@@ -2722,16 +2747,36 @@ export function createViews(store) {
         }
       ${
           discovered.length
-            ? `<label class="field-label">搜索模型<input class="select" data-ai-model-search data-focus-key="ai-model-search" placeholder="搜索 Model ID" /></label><div class="ai-model-list" data-ai-model-list>${
+            ? `<label class="field-label">搜索模型<input class="select" data-ai-model-search data-focus-key="ai-model-search" placeholder="搜索 Model ID" /></label>
+      <p class="ai-hint">勾选想要的模型再点「加入所选模型」；这一步只改表单，保存连接之前不会写入任何配置。</p>
+      <div class="ai-model-list" data-ai-model-list>${
               visibleModels.map((id) =>
+                `<button class="ai-model-chip${
+                  ticked.has(id) ? " active" : ""
+                }" data-action="ai-toggle-model-selection" data-id="${
+                  esc(id)
+                }" aria-pressed="${ticked.has(id)}">${esc(store.ui.aiModelLabels?.[id] || id)}${store.ui.aiModelLabels?.[id] ? ` <small>${esc(id)}</small>` : ""}</button>`
+              ).join("")
+            }</div>
+      <div class="ai-run-row"><button class="secondary" data-action="ai-add-selected-models" ${
+              ticked.size ? "" : "disabled"
+            }>加入所选模型${ticked.size ? `（${ticked.size}）` : ""}</button></div>`
+            : ""
+        }
+      ${
+          addedModels.length
+            ? `<p class="ai-hint">这个连接将拥有的模型（点一个设为默认模型）：</p><div class="ai-model-list ai-model-list-added">${
+              addedModels.map((id) =>
                 `<button class="ai-model-chip${
                   chosen === id && !manual ? " active" : ""
                 }" data-action="ai-pick-model" data-id="${
                   esc(id)
-                }" aria-pressed="${chosen === id && !manual}">${esc(store.ui.aiModelLabels?.[id] || id)}${store.ui.aiModelLabels?.[id] ? ` <small>${esc(id)}</small>` : ""}</button>`
+                }" aria-pressed="${chosen === id && !manual}">${
+                  esc(store.ui.aiModelLabels?.[id] || id)
+                }${chosen === id && !manual ? " <small>默认</small>" : ""}</button>`
               ).join("")
             }</div>`
-            : ""
+            : `<p class="ai-hint">还没有加入任何模型；读取失败时也可以直接手动填写 Model ID。</p>`
         }
       <label class="field-label">手动输入 Model ID（读取失败或需要未列出的模型时使用）<input class="select" data-ai-model-manual data-focus-key="ai-model-manual" placeholder="例如 deepseek-chat" value="${
           esc(manual || (discovered.length ? "" : chosen))
@@ -2927,8 +2972,10 @@ export function createViews(store) {
     const choices = aiProviderChoices();
     const configured = aiConfiguredMap();
     const currentProviderId = String(store.ui.aiProviderId || "").trim();
-    const descriptor = choices.find((choice) => choice.id === currentProviderId) ||
-      choices.find((choice) => choice.id === "fake") || choices[0] || null;
+    // §9.7: the panel runs exactly the connection the user selected, never a
+    // stand-in.  Falling back to "the first item" or to the offline connector
+    // would let a run start against a connection nobody chose.
+    const descriptor = choices.find((choice) => choice.id === currentProviderId) || null;
     const providerId = currentProviderId || (descriptor ? descriptor.id : "");
     const models = descriptor && Array.isArray(descriptor.models) ? descriptor.models : [];
     const model = store.ui.aiModel || (descriptor ? descriptor.default_model : "") || models[0] || "";
@@ -2983,7 +3030,9 @@ export function createViews(store) {
       (Array.isArray(store.ui.aiExecutions) && store.ui.aiExecutions.length),
     );
     const hasUsableConnection = Boolean(
-      descriptor && (descriptor.id === "fake" ? hasLocalOutput : configured[providerId] === true && model),
+      descriptor && (aiIsOfflineConnection(descriptor)
+        ? hasLocalOutput
+        : configured[providerId] === true && model),
     );
     if (!hasUsableConnection) {
       return `<div class="side-head"><div><span class="eyebrow">本地优先 · 只生成可审核建议</span><h2>AI 助手</h2></div></div><div class="ai-empty-state">${error ? `<div class="ai-error"><b>${esc(errorTitle)}</b><p>${esc(error.message || "请求没有完成。")}</p>${error.recommended_action ? `<p>${esc(error.recommended_action)}</p>` : ""}</div>` : ""}<b>还没有可用的模型连接</b><p>在设置中添加 API 连接或订阅账户，并保存至少一个可用模型后即可开始。</p><button class="primary" data-action="ai-toggle-settings">配置 AI</button><small>右上角“设置”也可随时打开模型管理。</small></div>`;
@@ -3139,7 +3188,7 @@ export function createViews(store) {
             ? `<label class="field-label">级别<select class="select" data-block-level data-block-id="${
               selected.id
             }">${
-              [1, 2, 3, 4].map((level) =>
+              [1, 2, 3, 4, 5, 6].map((level) =>
                 `<option value="${level}" ${
                   selected.level === level ? "selected" : ""
                 }>H${level}</option>`
@@ -3243,7 +3292,57 @@ export function createViews(store) {
 
   /* ------------------------------------------------------------ overlays */
 
+  /**
+   * §3.2 Case C: the folder does have a project.json, but Workbench cannot use
+   * it. The first actionable failure is visible without a click, "查看具体问题"
+   * reveals the raw field paths, and re-importing is offered twice — once to ask,
+   * once to confirm — because the existing file is never replaced silently.
+   */
+  function projectProblemModal(esc) {
+    const problem = store.ui.projectProblem;
+    if (!problem) return "";
+    const detail = problem.problem || {};
+    const headline = detail.code === "unsupported_schema"
+      ? "这个项目由更高版本的 Workbench 创建。"
+      : "检测到 project.json，但项目数据无法通过校验。";
+    const statusCopy = problem.status === "malformed_json"
+      ? "文件存在但无法解析，可能已损坏。"
+      : problem.status === "unreadable"
+      ? "文件存在，但 Workbench 无法读取它。"
+      : "";
+    const versionCopy = detail.code === "unsupported_schema" && problem.supportedSchemaVersion
+      ? `当前版本支持到 ${esc(String(problem.supportedSchemaVersion))}。`
+      : "";
+    const confirm = problem.confirmReimport;
+    // A newer project is not a broken one: re-importing it would move the user's
+    // own file aside for nothing, so the only honest next step is 返回 + upgrade.
+    const tooNew = detail.code === "unsupported_schema";
+    return `<div class="overlay"><div class="conflict-modal modal project-problem-modal" role="dialog" aria-modal="true" aria-label="项目文件问题" data-stop-click="true">
+      <div class="modal-head"><div><span class="eyebrow">打开项目未完成</span><h2>${esc(headline)}</h2></div></div>
+      <p class="muted">${esc([statusCopy, detail.message || "项目内容无法载入。", versionCopy].filter(Boolean).join(" "))}</p>
+      <p class="small muted">${tooNew
+        ? "当前版本不会改写这个文件。请使用创建该项目的 Workbench 版本打开。"
+        : confirm
+        ? "导入会把原来的 project.json 完整保留为一个带时间戳的备份文件（不会删除），然后按普通资料文件夹重新扫描、映射。"
+        : "你可以返回并修改这个文件，也可以把它当作普通资料文件夹重新导入。重新导入不会覆盖原来的 project.json。"}</p>
+      <details class="diagnostic"><summary>查看具体问题</summary><div class="project-problem-detail">
+        <p><b>${esc(detail.path || "project.json")}</b></p>
+        <p>期望：${esc(detail.expected || "可载入的课程项目")}</p>
+        <p>实际：${esc(detail.actual || "无法载入")}</p>
+        <p>状态码：${esc(detail.code || problem.status || "unknown")}</p>
+        <p class="project-problem-path">${esc(problem.dir || "")}</p>
+      </div></details>
+      <div class="modal-actions">${tooNew
+        ? `<button class="primary" data-action="dismiss-project-problem">返回</button>`
+        : confirm
+        ? `<button class="secondary" data-action="dismiss-project-problem">返回</button><button class="primary danger" data-action="confirm-reimport-project-folder">确认重新导入</button>`
+        : `<button class="secondary" data-action="dismiss-project-problem">返回</button><button class="secondary" data-action="reimport-project-folder">作为普通资料文件夹重新导入</button>`}</div>
+    </div></div>`;
+  }
+
   function overlayView(esc) {
+    const projectProblem = projectProblemModal(esc);
+    if (projectProblem) return projectProblem;
     if (store.externalConflict) {
       const conflict = store.externalConflict;
       const externalEntries = conflict.external_diff?.entries || [];
@@ -3365,11 +3464,14 @@ export function createViews(store) {
     if (store.ui.aiSettingsOpen) {
       const choices = aiProviderChoices();
       const configured = aiConfiguredMap();
-      const editableChoices = choices.filter((choice) => choice.kind !== "openai_chatgpt_subscription");
-      const selected = editableChoices.find((choice) => choice.id === store.ui.aiProviderId) || editableChoices.find((choice) => choice.id === "fake") || null;
+      const editableChoices = choices.filter((choice) => choice.kind !== "openai_chatgpt_subscription" && !aiIsOfflineConnection(choice));
       const form = store.ui.aiProviderForm;
-      const savedForm = form ? choices.find((choice) => choice.id === form.id) : null;
-      const formDescriptor = form && savedForm?.kind !== "openai_chatgpt_subscription" ? editableChoices.find((choice) => choice.id === form.id) || store.aiDescriptor(form.id) : selected;
+      // A brand-new connection exists only as form state (§9.4): it is not in
+      // `ai.connection.list` yet, so the editor renders from the form itself.
+      const formDescriptor = form
+        ? editableChoices.find((choice) => choice.id === String(form.id || "").trim()) ||
+          (form.isNew === true ? form : null)
+        : null;
       return `<div class="overlay ai-settings-overlay" data-action="ai-settings-backdrop"><section class="modal ai-settings-modal" role="dialog" aria-modal="true" aria-labelledby="ai-settings-title" data-stop-click="true"><header class="modal-head"><div><span class="eyebrow">应用设置 · 模型</span><h2 id="ai-settings-title">AI 模型</h2></div><button class="icon-button" data-action="ai-close-settings" aria-label="关闭设置" title="关闭设置">×</button></header><p class="muted">设置连接、协议、模型与本机凭据。配置保存、模型发现和连接测试分别显示状态。</p>${formDescriptor ? aiProviderFormView(formDescriptor, configured) : ""}${aiConnectionManagerView(choices, configured)}${aiSubscriptionSettingsView(store, configured)}${formDescriptor ? "" : `<p class="ai-hint">选择一个 API 连接进行管理，或新建连接。</p>`}<div class="ai-settings-foot"><span>AI 配置仅保存连接元数据；密钥和订阅令牌写入${esc(store.aiStorageLabel ? store.aiStorageLabel() : "本机系统钥匙串")}，课程文件不含凭据。</span><button class="secondary" data-action="ai-close-settings">完成</button></div></section></div>`;
     }
     return "";

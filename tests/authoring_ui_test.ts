@@ -95,6 +95,7 @@ async function bootStore(bridgeOverrides: Record<string, unknown> = {}) {
     ui: Record<string, unknown>;
     saveStatus: string;
     history: unknown[];
+    future: unknown[];
     tabs: unknown[];
     commit: (label: string, mutation: (data: ProjectData) => void) => void;
     currentItem: () => ProjectData["content_items"][number] | null;
@@ -130,7 +131,8 @@ async function bootStore(bridgeOverrides: Record<string, unknown> = {}) {
     insertAsset: (assetId: string, options?: Record<string, unknown>) => Promise<void>;
     detachAsset: (blockId: string, assetId: string) => void;
     deleteAsset: (assetId: string) => void;
-    renameAsset: (assetId: string, title: string) => void;
+    renameAsset: (assetId: string, title: string) => Promise<void>;
+    startAssetRename: (assetId: string) => void;
     createLayout: (mode?: string) => void;
     layoutPages: () => ProjectData["layout_pages"];
     beginPaginationConversion: () => void;
@@ -157,8 +159,8 @@ async function bootStore(bridgeOverrides: Record<string, unknown> = {}) {
     renameSection: (id: string, name: string) => void;
     updateStatus: (dimension: string, value: string) => void;
     moveBoardCard: (id: string, option: string) => void;
-    undo: () => void;
-    redo: () => void;
+    undo: () => void | Promise<void>;
+    redo: () => void | Promise<void>;
     navigateLesson: (direction: string) => void;
     captureToInbox: (text: string, title?: string) => void;
     triageInbox: (id: string, target?: string) => void;
@@ -1251,18 +1253,26 @@ Deno.test("paged canvas stays finite and editor, preview, and publish show real 
     let html = createViews(store).shellView() as string;
     assert(html.includes("data-action=\"select-layout-page\""), "editor renders selectable page identities");
     assert(html.includes("data-action=\"toggle-pagination-edit\""), "editor exposes a separate pagination edit toggle");
-    assert(html.includes('data-page-readonly="true"'), "page placements are inert while viewing");
-    assert(!html.includes("data-action=\"page-duplicate\""), "page structure actions stay hidden while viewing");
+    // 启用分页 must land the user in the state where the new page controls are
+    // usable; a read-only canvas right after converting read as a dead button.
+    assert(html.includes('data-page-readonly="false"'), "confirming the conversion opens pagination editing");
+    assert(html.includes("data-action=\"page-duplicate\""), "pagination editing exposes page structure actions");
+    assert(html.includes("data-action=\"resize-placement\""), "pagination editing exposes placement actions");
+    assert(html.includes("退出分页编辑"), "the exit action names only the editing mode");
     assert(html.includes("有限页面"), "editor identifies finite page geometry");
 
     const togglePaginationEditing = () =>
       (store as unknown as { togglePaginationEditing: () => void }).togglePaginationEditing();
     togglePaginationEditing();
     html = createViews(store).shellView() as string;
-    assert(html.includes("data-action=\"page-duplicate\""), "pagination edit mode exposes page structure actions");
-    assert(html.includes("data-action=\"resize-placement\""), "pagination edit mode exposes placement actions");
+    assert(html.includes('data-page-readonly="true"'), "page placements are inert while viewing");
+    assert(!html.includes("data-action=\"page-duplicate\""), "page structure actions stay hidden while viewing");
+    assert(!html.includes("data-action=\"resize-placement\""), "viewing mode hides placement actions");
+    assert(!html.includes("退出分页编辑"), "the exit action only exists while editing");
     togglePaginationEditing();
     assert(store.data.layout_instances.at(-1)!.pagination_mode === "paged", "closing pagination edit mode does not change the saved layout mode");
+    html = createViews(store).shellView() as string;
+    assert(html.includes("data-action=\"resize-placement\""), "re-entering pagination editing restores the same controls");
 
     store.setMode("preview");
     html = createViews(store).shellView() as string;
@@ -2501,40 +2511,172 @@ Deno.test("requirement panel shows real anchors and type-specific actions", asyn
   }
 });
 
-Deno.test("renaming an asset updates display title metadata, not the filename", async () => {
+/**
+ * §14.1 — renaming a Media Library asset is a filesystem operation now, not a
+ * display-name edit.  The shell owns the transaction, so the UI test checks the
+ * wiring: the command is asked with the requested name, the project it answers
+ * with replaces the local copy, and the history step remembers both names so
+ * Undo can move the file back (§14.5).
+ */
+Deno.test("renaming an asset renames the managed file and stays reversible", async () => {
   const viewsSource = await Deno.readTextFile(
     new URL("../app/views.js", import.meta.url),
   );
   assert(
-    viewsSource.includes('data-action="rename-asset"') ||
+    viewsSource.includes('data-action="rename-asset"') &&
       viewsSource.includes("data-asset-title"),
-    "media library must expose a rename-asset / title edit surface",
+    "media library must expose a rename surface",
+  );
+  assert(
+    /磁盘文件同步改名/.test(viewsSource),
+    "the rename control must say it changes the file",
   );
 
-  const { store, restore } = await bootStore();
+  const calls: Array<{ name: string; args: Record<string, unknown> }> = [];
+  const callCount = () => calls.length;
+  let shellView: { data: ProjectData } | null = null;
+  const { store, restore } = await bootStore({
+    // Stands in for `asset_rename`: it renames the managed row and answers with
+    // the whole project, because the reference rewrite is the shell's job.  It
+    // derives the managed name exactly like `planAssetRename` does — the asset id
+    // as prefix, the extension preserved — because that is what lands on disk.
+    command: async (name: string, args: Record<string, unknown> = {}) => {
+      calls.push({ name, args });
+      if (name !== "asset.rename") throw new Error(`unexpected command: ${name}`);
+      const project = structuredClone(shellView!.data);
+      const asset = project.assets.find((row) => row.id === args.asset_id);
+      if (!asset) throw new Error(`找不到素材: ${String(args.asset_id)}`);
+      const requested = String(args.new_name ?? "").trim();
+      if (!requested) throw new Error("文件名不能为空。");
+      if (requested === "占用") throw new Error("已有一个素材使用这个文件名，请换一个名字后重试。");
+      const basename = requested.toLowerCase().endsWith(".png")
+        ? requested.slice(0, -4)
+        : requested;
+      asset.filename = `${basename}.png`;
+      asset.storage_path = `assets/${String(args.asset_id)}-${basename}.png`;
+      asset.title = asset.filename;
+      return { project };
+    },
+  });
+  shellView = store as unknown as { data: ProjectData };
   try {
     store.addMapItem("素材改名");
     seedImageAsset(store, "asset-rename");
-    const before = store.data.assets.find((asset) => asset.id === "asset-rename")!;
-    assert(before.filename === "插图.png", "fixture keeps the disk filename");
-    assert(before.storage_path === "assets/插图.png", "fixture keeps storage_path");
-
-    store.renameAsset("asset-rename", "课程封面");
-    const after = store.data.assets.find((asset) => asset.id === "asset-rename")!;
-    assert(after.title === "课程封面", "Asset.title is the editable display name");
-    assert(after.filename === "插图.png", "filename must not change");
-    assert(after.storage_path === "assets/插图.png", "disk path must not change");
-
-    store.ui.route = "media";
-    store.ui.screen = "project";
-    store.notify();
-    const { createViews } = await import(
-      `../app/views.js?media-rename-${importCounter}`
-    );
-    const html = createViews(store).shellView() as string;
+    // An import names the managed file after its own import id, not the asset id.
+    // This is the shape that used to break Undo.
+    store.commit("测试导入命名", (data) => {
+      const row = data.assets.find((asset) => asset.id === "asset-rename")!;
+      row.storage_path = "assets/7d2f9c1e-0000-4000-8000-000000000001-插图.png";
+    });
+    const fixture = store.data.assets.find((asset) => asset.id === "asset-rename")!;
+    assert(fixture.filename === "插图.png", "fixture keeps the disk filename");
     assert(
-      html.includes("课程封面"),
-      "media library must show the display title",
+      fixture.storage_path === "assets/7d2f9c1e-0000-4000-8000-000000000001-插图.png",
+      "fixture keeps the imported managed path",
+    );
+
+    store.startAssetRename("asset-rename");
+    const historyBeforeRename = store.history.length;
+    await store.renameAsset("asset-rename", "课程封面");
+    // Enter commits and the field then blurs carrying the same value: one intent
+    // has to stay one shell request and one undo step.
+    await store.renameAsset("asset-rename", "课程封面");
+    const renamed = store.data.assets.find((asset) => asset.id === "asset-rename")!;
+    assert(
+      calls.length === 1 && calls[0]!.name === "asset.rename",
+      `the shell must be asked once: ${JSON.stringify(calls)}`,
+    );
+    assert(
+      store.history.length === historyBeforeRename + 1,
+      `the blur follow-up must not add a step: ${store.history.length - historyBeforeRename}`,
+    );
+    assert(
+      String(store.ui.toast).includes("已重命名文件"),
+      `the success toast must survive the follow-up: ${String(store.ui.toast)}`,
+    );
+    assert(calls[0]!.args.new_name === "课程封面", "the requested name is passed through");
+    assert(renamed.filename === "课程封面.png", "the managed filename changed");
+    assert(
+      renamed.storage_path === "assets/asset-rename-课程封面.png",
+      "the managed path changed",
+    );
+    assert(renamed.id === "asset-rename", "asset id stays stable");
+    assert(renamed.checksum === `checksum-asset-rename`, "content identity stays stable");
+
+    const step = store.history[store.history.length - 1] as Record<string, any>;
+    assert(
+      step?.physical_rename?.previous_name === "插图.png" &&
+        step?.physical_rename?.next_name === "课程封面.png",
+      `the step must carry both names: ${JSON.stringify(step?.physical_rename)}`,
+    );
+
+    // §14.5 — Undo moves the file back through the same command.
+    await store.undo();
+    assert(
+      callCount() === 2 && calls[1]!.args.new_name === "插图.png",
+      `undo must rename back: ${JSON.stringify(calls.slice(-1))}`,
+    );
+    const undone = store.data.assets.find((asset) => asset.id === "asset-rename")!;
+    assert(undone.filename === "插图.png", "undo restores the original filename");
+    // The canonical project has to name the file the command actually wrote: the
+    // pre-rename snapshot still pointed at the import-named path, which that very
+    // command had just invalidated.
+    assert(
+      undone.storage_path === "assets/asset-rename-插图.png",
+      `undo has to agree with the disk: ${undone.storage_path}`,
+    );
+    assert(store.future.length >= 1, "the undone step is available for redo");
+
+    await store.redo();
+    assert(
+      callCount() === 3 && calls[2]!.args.new_name === "课程封面.png",
+      `redo must rename forward: ${JSON.stringify(calls.slice(-1))}`,
+    );
+    assert(
+      store.data.assets.find((asset) => asset.id === "asset-rename")!.storage_path ===
+        "assets/asset-rename-课程封面.png",
+      "redo re-applies the forward path on disk and in data",
+    );
+    assert(
+      store.data.assets.find((asset) => asset.id === "asset-rename")!.filename ===
+        "课程封面.png",
+      "redo restores the new filename",
+    );
+
+    // §14.3 — an empty name must be rejected, and §19/§21 say a rejection has to
+    // be stated rather than the field just closing back on the old name.
+    const historyBeforeEmpty = store.history.length;
+    const callsBeforeEmpty = callCount();
+    store.startAssetRename("asset-rename");
+    await store.renameAsset("asset-rename", "   ");
+    assert(
+      String(store.ui.toast).includes("不能为空"),
+      `an empty name must say what was wrong: ${String(store.ui.toast)}`,
+    );
+    assert(
+      callCount() === callsBeforeEmpty,
+      `an empty name must not reach the shell: ${JSON.stringify(calls.slice(callsBeforeEmpty))}`,
+    );
+    assert(store.history.length === historyBeforeEmpty, "an empty name is not history");
+    assert(
+      store.data.assets.find((asset) => asset.id === "asset-rename")!.filename ===
+        "课程封面.png",
+      "an empty name leaves the file untouched",
+    );
+
+    // A rejected name never touches history and never claims success.
+    const historyLength = store.history.length;
+    store.startAssetRename("asset-rename");
+    await store.renameAsset("asset-rename", "占用");
+    assert(store.history.length === historyLength, "a refused rename is not history");
+    assert(
+      String(store.ui.toast).includes("已有一个素材使用这个文件名"),
+      `the refusal is shown: ${String(store.ui.toast)}`,
+    );
+    assert(
+      store.data.assets.find((asset) => asset.id === "asset-rename")!.filename ===
+        "课程封面.png",
+      "a refused rename changes nothing",
     );
   } finally {
     restore();
@@ -3259,5 +3401,137 @@ Deno.test("block overflow action restores focus to the new summary unless a fiel
     );
   } finally {
     dom.restore();
+  }
+});
+
+/* ------------------------------------------------------------------ *
+ * Item 7 / 10: pagination editing state and page-title uniqueness
+ * ------------------------------------------------------------------ */
+
+function countOf(haystack: string, needle: string): number {
+  return needle ? haystack.split(needle).length - 1 : 0;
+}
+
+/** A paged grid with two named pages and one placement on the active page. */
+async function pagedEditingFixture(title: string) {
+  const booted = await bootStore();
+  const { store } = booted;
+  store.addMapItem(title);
+  store.addBlock("paragraph", "分页正文一");
+  store.addBlock("paragraph", "分页正文二");
+  store.createLayout("grid");
+  store.beginPaginationConversion();
+  store.confirmPaginationConversion();
+  const first = store.layoutPages()[0]!;
+  store.renamePage(first.id, "导入与渲染");
+  store.placeBlock(store.blocks()[0]!.id);
+  store.addLayoutPage();
+  const pages = store.layoutPages();
+  store.selectLayoutPage(first.id);
+  store.ui.screen = "project";
+  store.ui.route = "editor";
+  store.ui.mode = "layout";
+  const { createViews } = await import(`../app/views.js?pagination-editing-${importCounter}`);
+  const render = () => createViews(store).shellView() as string;
+  const toggle = () =>
+    (store as unknown as { togglePaginationEditing: () => void }).togglePaginationEditing();
+  return { ...booted, store, pages, render, toggle };
+}
+
+Deno.test("continuous Grid shows no output-section editor but keeps 启用分页 reachable", async () => {
+  const { store, restore } = await bootStore();
+  try {
+    store.addMapItem("连续网格分组课");
+    store.addBlock("paragraph", "连续网格正文");
+    store.createLayout("grid");
+    store.placeBlock(store.blocks()[0]!.id);
+    store.ui.screen = "project";
+    store.ui.route = "editor";
+    store.ui.mode = "layout";
+    const { createViews } = await import(`../app/views.js?continuous-grid-${importCounter}`);
+    assert(store.data.layout_pages.length === 0, "the layout must still be continuous");
+    assert(store.data.layout_sections.length > 0, "legacy section rows must still be maintained");
+    const html = createViews(store).shellView() as string;
+    assert(!html.includes("输出分区"), "the section editor must not appear before pagination is enabled");
+    assert(!html.includes("＋ 分区"), "the add-section action must not appear before pagination is enabled");
+    assert(!html.includes("data-action=\"grid-new-section\""), "no section mutation may be offered");
+    assert(
+      html.includes("data-action=\"pagination-conversion\""),
+      "启用分页 must stay reachable so a legacy project can still convert",
+    );
+    assert(
+      store.data.placements.every((placement) => "section_id" in placement),
+      "placements must keep their legacy section grouping for export",
+    );
+  } finally {
+    restore();
+  }
+});
+
+Deno.test("exiting pagination editing changes no page or placement data", async () => {
+  const { store, restore, render, toggle } = await pagedEditingFixture("分页编辑状态课");
+  try {
+    const editing = () => Boolean(store.ui.paginationEditing);
+    assert(editing(), "启用分页 must land in pagination editing");
+    const pagesBefore = structuredClone(store.data.layout_pages);
+    const placementsBefore = structuredClone(store.data.placements);
+    const snapshot = JSON.stringify(store.data);
+    const activePageBefore = store.ui.layoutPageId;
+    assert(render().includes("退出分页编辑"), "the editing bar must offer 退出分页编辑");
+
+    toggle();
+    assert(!editing(), "the action leaves editing mode");
+    assert(store.data.layout_pages === store.data.layout_pages, "page rows keep their identity");
+    assert(
+      JSON.stringify(store.data.layout_pages) === JSON.stringify(pagesBefore),
+      "page ids, titles and order must survive exiting editing mode",
+    );
+    assert(
+      JSON.stringify(store.data.placements) === JSON.stringify(placementsBefore),
+      "exiting editing must move nothing and unplace nothing",
+    );
+    assert(JSON.stringify(store.data) === snapshot, "exiting editing is a pure view-state change");
+    assert(store.ui.layoutPageId === activePageBefore, "the active page must survive exiting editing");
+    assert(store.data.layout_instances.at(-1)!.pagination_mode === "paged", "the layout stays paged");
+    const viewing = render();
+    assert(viewing.includes('data-page-readonly="true"'), "the canvas reads as view-only");
+    assert(!viewing.includes("退出分页编辑"), "the exit action is only offered while editing");
+
+    toggle();
+    assert(editing(), "the same action re-enters editing");
+    assert(store.ui.layoutPageId === activePageBefore, "re-entering restores the same active page");
+    assert(JSON.stringify(store.data) === snapshot, "re-entering editing still changes no data");
+  } finally {
+    restore();
+  }
+});
+
+Deno.test("an active page renders exactly one visible page title", async () => {
+  const { store, restore, render, pages } = await pagedEditingFixture("页面标题去重课");
+  try {
+    for (const [index, page] of pages.entries()) {
+      store.selectLayoutPage(page.id);
+      for (const editing of [true, false]) {
+        store.ui.paginationEditing = editing;
+        const html = render();
+        const named = html.match(/data-page-id="[^"]+"/g) || [];
+        assert(named.length === 1, `the active page surface must name one page, got ${named.length}`);
+        const title = index === 0 ? "导入与渲染" : page.title;
+        assert(
+          countOf(html, title) === 1,
+          `page title "${title}" must appear once while ${editing ? "editing" : "viewing"}, got ${countOf(html, title)}`,
+        );
+        assert(
+          !/<span>第 \d+ 页<\/span><small>第 \d+ 页<\/small>/.test(html),
+          "the tab strip must never pair an index label with an identical default title",
+        );
+        assert(
+          !/class="page-canvas-size"[^>]*>[^<]*第 \d+ 页[^<]*pt/.test(html.replace(title, "")),
+          "the canvas size badge must carry geometry, not the page title",
+        );
+      }
+    }
+  } finally {
+    restore();
   }
 });

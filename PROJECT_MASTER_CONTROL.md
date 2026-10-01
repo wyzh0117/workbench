@@ -229,11 +229,23 @@ Backlog
 
 ## 任务结束后
 
-必须同时做两件事：
+必须同时做三件事：
 
 ### A. 输出本次开发报告
 
 ### B. 回写本文件
+
+### C. 更新 Feature Update Manual（`docs/feature-history/`）
+
+永久规则：
+
+> 每一次改变了用户可见产品行为的开发完成，都必须更新 `docs/feature-history/UNRELEASED.md`。
+> 每一次创建公开 Release，都必须把该版本的自然语言变更归档到 `docs/feature-history/vX.Y.Z.md`，并更新索引 `docs/feature-history/README.md`。
+> Feature Update Manual 没有更新，任务就不算完成交接。
+
+原文逐字保留，以免转写丢失：
+
+> Every development completion that changes user-visible product behavior must update docs/feature-history/UNRELEASED.md. Every public release must archive that release's natural-language changes to docs/feature-history/vX.Y.Z.md and update the index. A task is not considered fully handed off until the Feature Update Manual has been updated.
 
 没有更新总控文件：
 
@@ -1903,6 +1915,13 @@ V2 — not active
 已更新 / 未更新
 
 如果未更新，任务不得视为完成交接。
+
+## 12A. FEATURE UPDATE MANUAL UPDATE
+
+docs/feature-history/UNRELEASED.md：已更新 / 未更新 / 本轮没有用户可见行为变化
+公开 Release 归档 docs/feature-history/vX.Y.Z.md + 索引更新：已完成 / 本轮不适用
+
+如果未更新，任务不得视为完成交接（见 §1「任务结束后」C 项）。
 ```
 
 ---
@@ -1961,6 +1980,26 @@ Definition of Done
 
 ---
 
+## G. Feature Update Manual（`docs/feature-history/`）
+
+每一次任务结束，都必须按 §1「任务结束后」C 项的永久规则更新本区域：
+
+```text
+改变了用户可见产品行为  → 更新 docs/feature-history/UNRELEASED.md
+创建了公开 Release      → 把该版本的自然语言变更冻结成
+                          docs/feature-history/vX.Y.Z.md
+                          并在 docs/feature-history/README.md 索引加一行
+                          再把 UNRELEASED.md 重置为下一个周期
+没有用户可见行为变化    → 在 Completion Report 的 12A 项写明「本轮没有」
+```
+
+不为「没有成为公开用户版本的 tag」单独建档；这类 tag 只在索引里标注为
+未发布 / 失败 tag（当前唯一一例是 `v0.2.0`）。
+
+Feature Update Manual 没有更新，任务不得视为完成交接。
+
+---
+
 # 22. Change Log
 
 此处只记录“总控状态变化”，不记录所有代码提交。
@@ -1974,6 +2013,30 @@ YYYY-MM-DD | Task | From → To | Summary
 当前：
 
 ```text
+2026-10-02 | v0.2.4 发布 | 等待用户验收 → 用户授权发布，发布执行中
+用户明确授权「把项目同步到 GitHub，同时 tag 和发布新版本 release」，覆盖 §42.8 / 需求 §22 的
+「未单独授权不发布」限制，范围是本次 v0.2.4。决定：两条未闭合验收通道（§15.4 原生指针 smoke、
+item 9 真实在线 AI）如实写进 Release Notes / docs/feature-history/v0.2.4.md / README，不记成已验收；
+15 项结论仍按 §42.2 逐项保留，不合并成「大致完成」。版本 0.2.3 → 0.2.4（tauri.conf.json /
+Cargo.toml / Cargo.lock 三处同步），新增 .github/release-notes/v0.2.4.md，Feature Manual 冻结成
+docs/feature-history/v0.2.4.md 并把 UNRELEASED.md 重置为下一周期模板，发版步骤固化到
+docs/release-playbook.md。发布前 gate 复跑全绿：deno task check、deno task test 522 passed、
+cargo fmt --check、cargo test 104 passed、cargo build（v0.2.4）。v0.2.3 及更早 tag / 资产不动；
+无 Developer ID 凭据，CI 继续走 ad-hoc 分支。发布结果与校验值见 §43.4。
+2026-10-02 | V1 Post-v0.2.3 实际使用反馈收口 | INTERRUPTED → 实现完成，等待用户验收
+15 项反馈全部实现：智能打开路由与精确诊断、目录后代图片/视频导入、区块浮层化（默认不可见、
+hover/focus 浮出不抖动布局）、移除 B/I/S 与 Markdown 源码 UI、保守可撤销的自动转换、分页两态、
+DSH 式模型设置（三协议 / 无模板 / 只写密钥 / 真实读取模型）、SIWC 分阶段错误、去重复页标题、
+PNG 缩略图与媒体卡重做、素材多选批量导入、磁盘物理重命名（含 Undo/Redo 与回滚）、Grid 左/右键
+根因修复、Feature Update Manual 建立。正式 gate 全绿：deno task check、deno task test 522 passed、
+cargo fmt --check、cargo test 104 passed、cargo build、cargo tauri build（候选 .app，debug，独立
+bundle id）。95 份实时 UI 证据原产于 /tmp/wb-smoke/shots/，已复制到仓库外的
+~/Documents/MiniWork/wb-smoke-evidence-20261002/shots/ 长期保留。未闭环两项：在线 AI 推理被网络阻断
+（api.openai.com 60 秒超时）、原生窗口指针与截图在本 agent 环境不可得（AppleScript -1712；
+screencapture "could not create image from display"），故 §15.4 要求的原生指针 smoke 留给用户。
+全部改动仍在工作树，未 commit、未 tag、未发布；V1 保持 ACTIVE，不创建 V1-T07。详见 §42 与
+docs/V1_Post_v0.2.3_Actual_Use_Closure_2026-10-01_Completion_Report.md。
+
 2026-09-27 | V1-T05 / V1-T06 | DONE → VERIFIED
 验收完成。Deno 346/346 + check、Rust 78/78；独立 review 通过。隔离桌面最终 Universal app 恢复 page 3，native 当前页 PDF smoke 通过（1 页 960×540 pt，标题与正文提取正确）。PowerPoint 三页输出无 Repair 且文本/图片可编辑；完整 PDF 与三页/两图 Static Web 通过阅读器验证。V1 保持 ACTIVE，下一步用户 dogfood；已授权发布 v0.2.0，旧 releases 不可覆盖。
 
@@ -2413,11 +2476,12 @@ V1 ACTIVE
 V1-T01 / V1-T02 / V1-T03 / V1-T04  VERIFIED
 V1-T05 Paged Canvas                VERIFIED
 V1-T06 Layout-aware Export & PPTX  VERIFIED
-CURRENT HANDOFF  用户 dogfood（不新增编号任务）
-CURRENT STATUS  VERIFIED
-PRODUCT STATE   V1 ACTIVE；DOGFOOD READY — ROUND 3
-DISTRIBUTION    PARTIAL；Apple Developer ID signing / notarization not configured
-OPEN BLOCKERS   NONE
+CURRENT CLOSURE   Post-v0.2.3 15 项实际使用反馈：实现完成并随 v0.2.4 发布（§42 / §43）
+CURRENT HANDOFF  用户已授权提交 / tag / 发布；v0.2.4 发布执行中（§43）
+CURRENT STATUS  IMPLEMENTED，SELF-VERIFIED；RELEASE v0.2.4 IN PROGRESS；用户原生验收 PENDING
+PRODUCT STATE   本轮改动随 v0.2.4 提交；发布前公开版本为 v0.2.3（冻结）
+DISTRIBUTION    PARTIAL；Apple Developer ID signing / notarization not configured（CI 走 ad-hoc 分支）
+OPEN BLOCKERS   NONE（在线 AI smoke 与原生指针 smoke = 环境限制，见 §42.4；用户选择先发布）
 BACKLOG         Tauri WebView pointer-reorder；原生 folder picker / invalid-folder toast（Tauri）；
                 Tauri WebView Explorer/Adopt smoke；不创建 V1-T07
 ```
@@ -2425,7 +2489,8 @@ BACKLOG         Tauri WebView pointer-reorder；原生 folder picker / invalid-f
 下一步唯一动作：
 
 ```text
-用户 dogfood V1；签名 / 公证作为单独获批的分发工作
+发布 v0.2.4：提交 → 推送 main → 推 tag → 盯 workflow → 校验公开产物 → 回填 §43.4
+之后仍待用户：在真实窗口跑原生指针 / 面板手势验收（§42.4）
 ```
 
 T05/T06 已 VERIFIED；v0.2.1 已按授权发布，v0.2.0 失败 tag 冻结且无 Release / 资产。严格保护 §0.4，不覆盖已发布 tag / Release / 资产。
@@ -2451,13 +2516,14 @@ CURRENT VERSION
 V1（ACTIVE）
 
 CURRENT TASK
-用户 dogfood：V1-T05 与 V1-T06 已验证（两个平级任务，不新增 combined task）
+v0.2.4 发布执行（§43）；收口内容见 §42；V1-T05 / V1-T06 已 VERIFIED，不新增 V1-T07
 
 CURRENT STATUS
-VERIFIED — V1 ACTIVE
-PRODUCT STATE = V1 ACTIVE；T03/T04 基线为 DOGFOOD READY — ROUND 3
-NEXT ACTION = 用户 dogfood；不创建 V1-T07，不关闭 V1
-DISTRIBUTION STATE = PARTIAL（ad-hoc 签名；Apple Developer ID / 公证未配置）
+IMPLEMENTED，SELF-VERIFIED — v0.2.4 发布执行中；用户原生验收 PENDING；V1 ACTIVE
+PRODUCT STATE = Post-v0.2.3 15 项收口：11 PASS / 2 PARTIAL（item 1、2）/ 1 BLOCKED（item 9 在线推理）/
+item 14 PASS 但原生指针 smoke 条款 BLOCKED；全部证据见 §42 与 Completion Report
+NEXT ACTION = 完成 v0.2.4 发布与验证并回填 §43.4；用户随后跑候选 .app 做原生验收；不创建 V1-T07，不关闭 V1
+DISTRIBUTION STATE = PARTIAL（ad-hoc 签名；Apple Developer ID / 公证未配置）；本轮未产出 DMG / tag / Release
 V0 = CLOSED；V0-T01 / V0-T02 / V0-T03 / V0-T04 全部 VERIFIED
 V1-T01 = VERIFIED（§33）；V1-T02 = VERIFIED（§29 / §35 第一次实施 / §36 第二次实施）；
 V1-T03 = VERIFIED（ego-browser §21 26/27 PASS + 1 N-A；§9.3 page.mouse Drag Handle PASS）；
@@ -2529,7 +2595,11 @@ DONE / IMPLEMENTED
   legacy multi-section overlap 修复均已报告 PASS；native PDF intermediate 3页 960×540 pt，文本/真实图片可检出并通过位置渲染检查。
 
 OPEN BLOCKERS
-- None for T05/T06.
+- T05/T06：None。
+- 本轮（§42）两条环境受限的验收通道，非产品缺陷：
+  1) 在线 AI 真实推理（item 9）——`api.openai.com` 在本环境 60 s 超时；实现与阶段错误码已验证。
+  2) 原生窗口 GUI 输入 / 截图（items 1、2、12 的原生面板手势与 §15.4 原生指针 smoke）——
+     AppleScript `-1712`、`screencapture: could not create image from display`；候选 .app 可自行启动（PID 56564 写入项目租约）。
 
 DISTRIBUTION LIMITATION
 - 缺正式 macOS signing / notarization credentials（无 Developer ID Application 证书或公证凭据）；DMG 为 ad-hoc 签名，macOS 可能显示安全提示。
@@ -2542,7 +2612,8 @@ BACKLOG
 - Tauri WebView Explorer / Mapping / Adopt smoke（本轮未在 WKWebView 内复测）
 
 AFTER CURRENT TASK
-用户 dogfood V1-T05/T06。v0.2.1 已发布；既有 release tags / assets 均冻结。V0 不重新打开。
+用户已授权本次提交 / tag / 发布（§43.1）；下一次发布仍需要单独授权。
+v0.2.4 发布后，v0.2.4 及更早的 release tags / assets 全部冻结。V0 不重新打开。
 
 V1
 ACTIVE
@@ -2551,7 +2622,7 @@ V2
 NOT ACTIVE
 
 NEXT ACTION
-用户 dogfood V1（V1-T05 / V1-T06 VERIFIED；V1 ACTIVE；V0 CLOSED；不创建 V1-T07。）
+发布 v0.2.4 并回填 §43.4，然后由用户对原生 GUI 手势做验收（V1-T01—T06 VERIFIED；V1 ACTIVE；V0 CLOSED；不创建 V1-T07。）
 ```
 
 ---
@@ -3585,9 +3656,9 @@ Current handoff: V1 actual-use feedback closure (2026-09-28), IN PROGRESS
 
 NEXT ACTION = 如需覆盖非空正文/素材引用保留，用含这些内容的隔离课时补测跨阶段移动及 Undo/Redo；有条件时完成显式素材插入的原生 UI 验收和在线 Provider 验收。保持 V1 ACTIVE；不创建 T07；已发布的 `v0.2.2` tag/assets 保持冻结，后续修复发布新版本。
 
-# 40. V1 补充反馈与 v0.2.3 候选收尾（2026-10-01）
+# 40. V1 补充反馈与 v0.2.3 发布收尾记录（2026-10-01）
 
-> 本节是当前状态；§39 及更早章节保留为历史快照。V1 保持 ACTIVE，本节不创建 V1-T07，也不将未完成的实际使用反馈标为 VERIFIED。
+> 本节记录 v0.2.3 发布时的状态；当前收口状态见 §41。V1 保持 ACTIVE，本节不创建 V1-T07，也不将未完成的实际使用反馈标为 VERIFIED。
 
 ## 40.1 Current Position
 
@@ -3635,3 +3706,199 @@ preview4 验证了 PDF 整页中文和真实图片；PPTX 在 PowerPoint 打开�
 2. 保持报告中的 PARTIAL 限制：GIF 动画、在线 SIWC/Provider、Developer ID 签名/公证、精确交互与尺寸仍未验收或未具备条件。
 3. 获得 Apple Developer ID 分发凭据后，可另行制作签名公证版本；保持当前已发布 tag/assets 冻结。
 4. 保持 V1 ACTIVE；后续用户实际使用确认后再收口，不自动关闭 V1。
+
+# 41. V1 Post-v0.2.3 实际使用反馈收口（2026-10-01）
+
+> 本节保留为 2026-10-01 中断记录；**当前状态见 §42**。§40 及更早章节保留为历史记录。V1 保持 ACTIVE，不创建 V1-T07。
+
+## 41.1 Current Position
+
+```text
+V0 = CLOSED
+V1 = ACTIVE
+V1-T01 through V1-T06 = historical VERIFIED records unchanged
+Current closure = INTERRUPTED at the user's request
+Acceptance = PARTIAL; all 15 closure items remain unverified
+Application version baseline = 0.2.3
+Latest public release = v0.2.3 (frozen)
+Closure release = not created; no new tag or release was published
+```
+
+本轮中断原因、精确工作树快照与恢复阅读顺序见[需求中断交接段](V1_Post_v0.2.3_Actual_Use_Closure_2026-10-01.md#28-user-requested-interruption-handoff-2026-10-01)和[交接报告](docs/V1_Post_v0.2.3_Actual_Use_Closure_2026-10-01_Completion_Report.md)。v0.2.3 Release 和资产仍为公开最新版且保持冻结；本轮没有新版本/tag/Release。
+
+## 41.2 Next Gate
+
+1. 用户恢复任务后先阅读需求 §28 中断交接段和 Completion Report，核对当前工作树，再接续尚未验收的内容。
+2. 15 项完成并通过任务要求的自动化 gate、最终 Tauri smoke 前，整体状态保持 PARTIAL。
+3. 需要发布时使用新版本与 tag；当前公开版本继续为 v0.2.3，既有 tag/资产保持冻结。
+4. Apple Developer ID 签名与公证仍是单独的分发限制；v0.2.3 的 DMG 为 ad-hoc signed 且未公证。
+
+本节记录到 2026-10-01 中断为止，作为历史保留。中断已按 §41.2 第 1 条恢复：先读需求 §28 交接段与 Completion Report、核对工作树，再续做 15 项；恢复后的实现与验收结果全部记入 §42，本节文字不再改动。
+
+---
+
+# 42. V1 Post-v0.2.3 实际使用反馈收口（2026-10-02，实现完成 / 等待用户验收）
+
+> 本节记录 2026-10-02 的实现与自测收口；**当前状态见 §43（v0.2.4 发布）**。§41 及更早章节保留为历史记录，V1-T01—T06 的 VERIFIED 记录未改写。V1 保持 ACTIVE，不创建 V1-T07。
+> 需求：`V1_Post_v0.2.3_Actual_Use_Closure_2026-10-01.md`；完整证据：`docs/V1_Post_v0.2.3_Actual_Use_Closure_2026-10-01_Completion_Report.md`。
+
+## 42.1 Current Position
+
+```text
+V0 = CLOSED
+V1 = ACTIVE
+V1-T01 through V1-T06 = historical VERIFIED records unchanged
+Current closure = 15 项全部实现并完成我方自测；整体状态 = IMPLEMENTED, SELF-VERIFIED
+Acceptance = 用户验收 PENDING（§1 规定本轮不产出中间用户验收节点，只交一个最终候选包）
+Source commit = HEAD 4ab8e5d "Document v0.2.3 release verification"；本轮不创建提交，全部改动在工作树
+Worktree = 26 files changed（src/app/tests/deno.json）+ 12 个新测试文件；文档另计
+Application version baseline = src-tauri/tauri.conf.json 仍为 0.2.3（有意不改）
+Latest public release = v0.2.3 (frozen；tag / DMG / .sha256 sidecar 均未移动、未替换、未覆盖)
+Closure release = NOT created；无新 tag、无新 Release、无新 DMG、无 Universal build
+Candidate build = src-tauri/target/debug/bundle/macos/AI Course Workbench.app
+                 debug profile，2026-10-02 00:28 构建，identifier
+                 io.github.wyzh0117.ai-course-workbench.smoke-20261002（与已安装公开版隔离）
+                 仅本机验收用，不发布、不分发
+```
+
+## 42.2 15 项矩阵（§24：实现 / 自动化证据 / 真实 UI 证据 / 结论）
+
+| # | 用户反馈 | 实现 | 自动化证据 | 真实 UI 证据 | 结论 |
+|---:|---|---|---|---|---|
+| 1 | 智能识别项目 / 普通文件夹 | `inspectProjectData`/`inspectProjectDirectory` 分类 valid/migratable/invalid_root/malformed_json/too_new；无 `project.json` 的文件夹走导入扫描并给出诊断层；确认重导时备份不可用清单而非销毁 | `smart_project_inspect_test.ts`(8)、`smart_open_routing_test.ts`(8，驱动真实 overlay DOM)、`smart_open_adoption_backup_test.ts`(3) |  shipped 前端内走查路由；原生 macOS 文件夹面板无法在本环境点击（§42.4） | **PARTIAL** |
+| 2 | 选定目录递归贡献图片/视频子项 | `scanMediaDescendants`（仅 image/video 递归、拒 symlink/路径穿越、逐文件降级、绝不改动源目录）；接入 mapping/adoption/desktop；Mapping Preview 保持单层 | `descendant_media_scan_test.ts`(7)、`descendant_media_adoption_test.ts`(4) | service 测试针对真实磁盘文件；原生 picker + mapping UI 端到端未走（同 item 1） | **PARTIAL** |
+| 3 | 块级工具条默认不可见 | `app/styles.css:861-876` `.block-head` absolute + opacity:0 + visibility:hidden，hover/selected/focus-within/menu-open 才显；`@media (hover: none)` 常显 | `editor_compile_test.ts`、`authoring_ui_test.ts` 结构与计算样式断言 | 实测 REST `opacity=0/hidden`、HOVER `visible`，几何一致无回流；`editor-live-chrome-*.png` | **PASS** |
+| 4 | 去掉 B/I/S 与 Markdown 源码切换，语义直接编译 | `views.js` 删除源码/格式工具条；`markdown.js` + `flushPendingEdit()` 编译粗体/斜体/行内码/删除线/链接/标题/引用/列表/代码块并去掉标记 | `editor_compile_test.ts`（逐标记编译、编译后光标、保留周围空格、未完成语法不动、非编辑器选区不改写）、`markdown_test.ts` | `views.js` 已无加粗/格式/源码控件；`editor_two_blocks.png`、`editor-live-caret.png` | **PASS** |
+| 5 | 块属性改为浮层 | 属性/格式入口进 absolute `.block-head` + ⋯ 溢出菜单（含 `pendingBlockOverflowFocus` 焦点归还） | `authoring_ui_test.ts`「溢出动作把焦点还给新 summary」+ 脱离文档流断言 | 真实 `page.mouse.move` + `editor-live-hover.png`；无布局跳动 | **PASS** |
+| 6 | 保守、可撤销的 Markdown 块自动转换 | `flushPendingEdit(..., {convert,structuralOnly})` + 600ms 空闲探针；转义字面标记；「已是该形态」守卫；IME 由 `composingField` 保护、`focusTextOffset` 复位光标 | `editor_compile_test.ts`「编译后光标原地不动」等、`markdown_test.ts` | 真实键盘完成标题/引用/分割线转换、光标连续、`⌘Z`/`⇧⌘Z` 撤销重做转换、真实 IME 跨两个探针窗口未被打断 | **PASS** |
+| 7 | 分页 UI 状态随启用/编辑态 | `views.js` `paged`/`paginationEditing` 门控：连续 Grid 不渲染输出小节编辑器；分页态显示页签 + 编辑分页/退出分页编辑 | `authoring_ui_test.ts`「连续 Grid 无小节编辑器但 启用分页 可达」「退出分页编辑不改任何页面或放置数据」 | `shots/layout/02,03,05,19,20,23,24`：退出→重进→reload 后页面数据与放置逐字节一致 | **PASS** |
+| 8 | DSH 风格模型设置、无预设模板 | `views.js` 服务商表单（ID/显示名/Base URL/协议/只写密钥/拉取模型/选择模型/手填 Model ID/保存）；`constants.js` 仅三种协议；删除随包模板目录；`baseUrlIssue()`+`rememberProviderForm()` | `ai_provider_config_test.ts`「恰好三种协议且用 DSH 文案」「随包模板目录已不存在」等、`ai_ui_test.ts` | 真实输入走完 `shots/settings/01…11`，含非法输入、密钥掩码、本地 stub 目录拉取、无密钥保存成功；拒绝文案逐字复现且消息中零次出现假 key | **PASS** |
+| 9 | 真实 ChatGPT 订阅 / 真实 API 可用性 | `ai_transport.ts`：SIWC + 套餐范围 + 账户模型清单 + Responses 推理 + 刷新处理，每阶段独立错误码；API 走 `/v1/models`；模型选择跟随线上清单，不硬编码权益 | `ai_subscription_stages_test.ts`(7，含「已登录但无套餐用量要明说」「发现与推理分离」「will refresh vs refresh failed」)、`ai_transport_test.ts` | 本地 stub 目录 + 完整 UI 阶段链已观察；线上半段不可观察：`api.openai.com` 60s 超时。钥匙串确认真实订阅凭据存在（仅读元数据，未打印密钥），沙箱内 `security` exit 44 说明此前“无 key”是 harness 假象 | **BLOCKED**（仅线上推理；实现与阶段上报已验证） |
+| 10 | 页面标题重复 | 分页画布只渲染一个可见页面标题；页签与元数据保留自身标签 | `authoring_ui_test.ts`「活动页面恰好一个可见标题」 | `shots/layout/21-preview-titles.png`、`17/18-5g-page*.png` | **PASS** |
+| 11 | PNG 缩略图空白 + 素材卡片间距 | `assetThumb`/`staticImagePoster` 让 PNG/JPG/WebP 走自己的解码路径，只有 GIF/MP4 走首帧视频逻辑；卡片 markup + `styles.css:357` `aspect-ratio: 4/3` + `object-fit: contain` | `asset_thumbnail_test.ts`、`video_frame_test.ts`、`authoring_ui_test.ts` | `shots/media/01`（PNG 不再空白）…`09-narrow-820.png`；本轮补测：Escape 与 × 共用同一媒体拆除，真实点击播放后 Escape 得 `paused:true, currentTime:0, src 已移除`，DOM 残留 overlay = 0 | **PASS** |
+| 12 | 多选导入素材 | `PROJECT_FILE_PICKER` 为 `multiple`；`importBrowserFiles()`/`importNativeFiles()` 单批处理并逐项记账（导入/重复/失败/跳过/已捕获）、单次撤销步；拖拽区仍支持多文件 | `asset_batch_import_test.ts`(8，含「一个不可读文件不会取消整批」「重复不计撤销步」「空选择/取消不改任何数据」) | shipped 壳内观察 `shots/media/23,24`；原生打开面板的多选手势受 §42.4 限制，同一批处理路径由 bridge 层原生测试覆盖 | **PASS** |
+| 13 | 重命名要真的改本地文件 | `planAssetRename`/`applyAssetRename`(`src/domain/assets.ts:335,:426`) + `renameManagedAsset`(`storage.ts:1556`)：预检→改名→改写 canonical→保存，失败回滚；`asset.rename` Rust 命令；历史步携带 `physical_rename{previous,next}` 使 Undo/Redo 也移动文件；§14.3 拒绝分隔符/`..`/空/冲突/symlink 逃逸 | `asset_physical_rename_test.ts`(8，含「拒绝不安全名称」「canonical 保存失败时回滚文件」「Undo/Redo 往返」)、`authoring_ui_test.ts`（blur 不再二次请求/二次撤销；空名不下发） | 真机改名前后磁盘名 `shots/media/12…15`；拒绝态 `18…22`；空名 toast 逐字「素材名称不能为空，文件名称没有改变。」，普通打开后失焦保持静默 | **PASS** |
+| 14 | 恢复 Grid 左右键交互根因 | `app/main.js` 单一委托的 pointer/click/contextmenu 面，重渲染后仍生效；未放置块左键→首个有效格恰好一次；已放置块左键进入移动态→点高亮格提交；右键可撤销地移出；Escape/点画布取消；块内选字拖拽不被读作命令；移动态在 `commit()` 前清理 | `grid_pointer_test.ts`(8，逐条对应，含「当前格不是 disabled 按钮也不提交」「块内选字拖拽不是移动命令」)、`p2_interaction_test.ts` | shipped 前端真实指针事件 `shots/grid-live-a/b/c`、`shots/layout/09,11,15`；提交后 `.grid-moving-banner` 计数 0、`project.json` sha256 `853fe1d0…` 不变。**§15.4「至少一次真实 Tauri 指针 smoke」条款 BLOCKED，见 §42.4** | **PASS**（含一条 BLOCKED 验收条款） |
+| 15 | 常设 Feature Update Manual | 新建 `docs/feature-history/`：索引 + `UNRELEASED.md` + `v0.1.0/v0.1.1/v0.1.2/v0.2.1/v0.2.2/v0.2.3`；未发布的 v0.2.0 只在索引记为失败/未发布 tag；§23 要求的常设规则写入本文件与任务收尾清单 | 无代码，故无测试；规则见本文件 §Feature Update Manual 条款 | `docs/feature-history/README.md` 版本表含真实发布日期、peeled commit 与 Release 链接；内容仅从 Release Notes / 本文件 / 完成报告 / git history 回填，不虚构能力 | **PASS** |
+
+统计（不做「大致完成」式概括）：**11 PASS**（3、4、5、6、7、8、10、11、12、13、15）、**1 PASS + 1 条 BLOCKED 验收条款**（14）、**2 PARTIAL**（1、2，均因原生面板通道）、**1 BLOCKED**（9，线上推理）。
+
+## 42.3 自动化 gate（§20.1，最终源码状态，2026-10-02 复跑确认）
+
+```text
+deno task check       PASS — exit 0，app/*.js + src/** + 39 个测试文件无类型错误
+deno task test        PASS — 522 passed | 0 failed
+cargo fmt --check     PASS — exit 0，无 diff
+cargo test            PASS — 104 passed; 0 failed; 0 ignored（lib）+ 0（bin）+ 0（doc）
+cargo build           PASS — Finished dev profile，exit 0
+cargo tauri build     PASS — 候选 .app 已打包（debug profile，仅 app bundle）
+graft build           已刷新 — 2961 nodes / 9303 edges / 92 cards
+```
+
+本轮基线移动：收口前记录为 Deno 389 / Rust 95，收口后为 Deno 522 / Rust 104（新增 12 个测试文件并扩写既有用例）。无前端构建步骤，因此浏览器壳执行的 JS 与候选 `.app` 内 JS 逐字节相同。
+
+## 42.4 真实 Tauri 证据与未闭合通道
+
+```text
+候选 .app 启动              OK — PID 56564 从打包 .app 运行，原生完成启动：写入
+                            /tmp/workbench-native-closure/AI学习课程/.workspace/project.lock
+                            （app_instance_id=app-p56564-…、pid、heartbeat）+ project.lock.guard，
+                            证明 JS 启动路径与原生命令往返可用。
+原生指针输入                BLOCKED — AppleScript 操控 System Events 返回
+                            "AppleEvent timed out. (-1712)"：本进程无辅助功能授权且无法应答弹窗。
+窗口截图                    BLOCKED — `screencapture -x` 返回 "could not create image from display"。
+原生打开/保存面板           BLOCKED — 同上（无法点击窗口）。
+在线 AI（item 9）           BLOCKED — 到 api.openai.com 的出网请求 60s 超时；订阅凭据确实存在于钥匙串，
+                            只读元数据、未打印任何密钥（§10.6）。
+```
+
+结论：items 1、2、12 的原生面板手势与 §15.4 的原生指针 smoke 需在用户自己的 GUI 会话各跑一次；除已列证据外不主张任何行为。95 份证据产物（截图、磁盘清单、JSON dump）原产于 `/tmp/wb-smoke/shots/`，已复制到仓库外的
+`~/Documents/MiniWork/wb-smoke-evidence-20261002/shots/` 长期保留，供用户验收时对照。
+
+## 42.5 本轮发现并修复的缺陷（均已有回归断言）
+
+1. 素材重命名提交两次（Enter 后 blur 重发同名，后端补回扩展名，成功 toast 被「素材名称没有变化」覆盖并留下空撤销步）——改为 `ui.editingAssetId` 门控。
+2. 撤销重命名后 canonical 指向已被改走的 `storage_path`——历史步同时携带前后名，Undo 改写它真正写出的路径。
+3. 服务商配置保存被拒时丢弃已填表单——新增 `rememberProviderForm()`，只走 toast，不写 `ui.aiError`。
+4. Base URL 从不校验——新增 `baseUrlIssue()`：空/不可解析/非 http(s)/无 host/含凭据全部拒保存且不发起请求。
+5. Grid 提交后残留「正在移动」横幅与「放这里」目标——移动态在同步渲染的 `commit()` 之前清理。
+6. Markdown 编译后光标漂移——`focusTextOffset` 复位。
+7. 空重命名静默失败——按 §14.3 明确拒绝并提示，不下发命令、不写历史、不动文件。
+8. 放大预览 Escape 不关闭（× 与遮罩可以）——两者共用 `stopMediaPreview()`，保证 GIF/视频一并拆除。
+
+## 42.6 剩余限制（继承 + 新增）
+
+继承自 v0.2.3 且本轮未改变：公开包为 ad-hoc 签名（无 TeamIdentifier / Developer ID / 公证，`spctl --assess --type execute` = rejected，首次启动需手动过 Gatekeeper）；仅支持 macOS；Deno/service 侧 PDF 省略内联图片（`pdf_inline_images_omitted`）；PPTX 会简化复杂表格与嵌套列表并告警；1024px 精确排版、系统文字缩放、拖拽中途指针取消仍未验收。
+
+本轮新增：item 9 的线上半段（真实 SIWC 登录、套餐用量范围、账户模型清单、一次完整响应、一次真实 API 推理）从未被观察过；原生 GUI 手势（含放大后 GIF 动图播放，在被测 WKWebView 环境只显示首帧）未验收；候选 .app 为 debug 包，release profile 与依赖时序的编辑器探针未被它证明。
+
+有意不改（记录以免后续重复排查）：「↗ 移动到其他页面看似无效」不可复现（编辑分页开启时面板正常渲染，此前是在查看态点击）；打开项目后保存标签显示「未保存」是真实状态（`migrateUiProject()` 会在加载时修复旧数据，内存与磁盘确有差异）；批量导入撤销后 `assets/` 保留文件（与已发布的删除策略一致，Workbench 不删除非自建文件）；卡片标题去扩展名与 `body { min-width: 960px }` 符合 §12.3 表述，整体响应式重写不属于这 15 项。
+
+## 42.7 Feature Update Manual 路径
+
+```text
+docs/feature-history/README.md              版本索引（本轮新建）
+docs/feature-history/UNRELEASED.md          本轮 15 项：已实现、已自测、待用户验收
+docs/feature-history/v0.1.0.md … v0.2.3.md  历史回填
+PROJECT_MASTER_CONTROL.md                   常设 Manual 规则 + 本节收口记录 + Change Log + §29/§30
+README.md                                   区分「公开版本 v0.2.3」与「当前源码状态」
+```
+
+## 42.8 Next Gate
+
+1. 用户运行 §42.1 的候选 `.app`，在真实窗口内完成 items 1、2、12 的原生面板手势与 §15.4 的原生指针 smoke，并给出 15 项验收结论；在此之前本轮保持 IMPLEMENTED / SELF-VERIFIED，不称 VERIFIED。
+2. 只有用户另行授权后才创建提交、切 `v0.2.4`、推 tag 或发布 Release；发布需新版本与新 tag，v0.2.3 的 tag / DMG / SHA-256 sidecar 保持冻结。
+3. Apple Developer ID 签名与公证仍是独立分发边界；未获凭据前不得把候选包当作可分发产物。
+4. 保持 V1 ACTIVE，不创建 V1-T07，不改写 V1-T01—T06 的 VERIFIED 记录。
+
+---
+
+# 43. v0.2.4 发布执行记录（2026-10-02）
+
+> 本节是当前状态；§42 及更早章节保留为历史记录。V1 保持 ACTIVE，不创建 V1-T07。
+
+## 43.1 授权与决定
+
+用户在 2026-10-02 明确授权执行收口后的第 2 项交接：**「把项目同步到 GitHub，同时 tag 和发布新版本 release」**。这覆盖了 §42.8 与本轮需求 §22/§26 中「未单独授权不得发布」的限制——授权已经给出来了，范围是本次 v0.2.4 的提交、推送、tag 与 Release。
+
+```text
+Decision   = 在两条验收通道未闭合的情况下先发布（用户决定）
+             1) 原生窗口指针 / 面板手势 smoke（§15.4）
+             2) 真实在线 AI 调用（item 9）
+Consequence= 这两条以「已知限制」写进 Release Notes、docs/feature-history/v0.2.4.md 与 README，
+             不写成已验收；v0.2.4 的 15 项结论仍按 §42.2 逐项记录，不合并成「大致完成」。
+Version    = 0.2.3 → 0.2.4（tauri.conf.json / Cargo.toml / Cargo.lock 三处同步；workflow 校验 tag 与版本一致）
+Tag        = v0.2.4，附注 tag，消息 "Release v0.2.4"（沿用 v0.2.1—v0.2.3 格式）
+Freeze     = v0.2.3 及更早 tag / DMG / .sha256 一律不动
+Signing    = 仍然没有 Apple Developer ID 与公证凭据；CI 走 ad-hoc 分支（`APPLE_SIGNING_IDENTITY: '-'`）
+Playbook   = 发布步骤、验证清单、只有用户能做的部分固化到 docs/release-playbook.md，
+             后续版本照着走，不再从对话记录里重新爬
+```
+
+## 43.2 发布内容
+
+- 源码与测试：§42 的 15 项收口（26 files，代码 + 12 个新测试文件）。
+- `.github/release-notes/v0.2.4.md`：用户视角 What's new（11 条）+ Notes（6 条，含两条未闭合验收通道与 ad-hoc 签名现状）。
+- Feature Update Manual：`docs/feature-history/v0.2.4.md`（五个问题齐全）、`UNRELEASED.md` 重置为下一周期空模板、索引表新增 v0.2.4 行。
+- `docs/release-playbook.md`：本仓库的发版操作手册。
+
+## 43.3 发布前 gate（版本 bump 之后复跑）
+
+```text
+deno task check / deno task test / cargo fmt --check / cargo test / cargo build
+结果见本节末尾的回填；任一项失败则不推 tag。
+```
+
+## 43.4 发布结果与验证（发布后回填）
+
+```text
+Commit                 = 待回填
+Tag → commit           = 待回填
+Workflow run           = 待回填
+Release / isDraft      = 待回填
+DMG SHA-256            = 待回填
+sidecar 一致 / hdiutil = 待回填
+架构切片               = 待回填
+codesign / spctl       = 待回填（无 Developer ID 时预期 ad-hoc + rejected，如实记录）
+/releases/latest 指向  = 待回填
+```

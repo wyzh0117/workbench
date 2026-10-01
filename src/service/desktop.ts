@@ -45,6 +45,7 @@ import {
 } from "./connectors.ts";
 import {
   type FileFingerprint,
+  inspectProjectDirectory,
   type ProjectDirectoryOptions,
   ProjectDirectoryStore,
 } from "./storage.ts";
@@ -57,7 +58,7 @@ import {
   preflightExport,
   previewImport,
 } from "./import_export.ts";
-import { inspectMarkdownImage, readFolderPreview, readFolderSource, scanFolder } from "./folder_scan.ts";
+import { inspectMarkdownImage, readFolderPreview, readFolderSource, scanFolder, scanMediaDescendants } from "./folder_scan.ts";
 import { confirmFolderAdoption } from "./folder_adoption.ts";
 import type { ImportMappingPlan } from "./folder_mapping.ts";
 import type { ExportPreset } from "../domain/types.ts";
@@ -168,6 +169,27 @@ export class DesktopService {
           object_type: "project",
           object_id: this.context.project.project.id,
           action: "open",
+        },
+      };
+    });
+    // Read-only folder classification for the launcher. Mirrors the native
+    // `project_inspect` command: no lock, no writes, structured `status` and
+    // `problem` so the UI never has to parse an error string.
+    this.commands.register("project.inspect", async (input) => {
+      const candidate = input && typeof input === "object"
+        ? input as { path?: string; project_dir?: string; folder_path?: string }
+        : {};
+      const path = String(
+        candidate.path ?? candidate.project_dir ?? candidate.folder_path ?? "",
+      ).trim();
+      if (!path) throw new Error("project.inspect requires an absolute folder path");
+      const inspection = await inspectProjectDirectory(path);
+      return {
+        value: inspection,
+        audit: {
+          object_type: "project",
+          action: "project_inspect",
+          metadata: { status: inspection.status, path },
         },
       };
     });
@@ -455,6 +477,53 @@ export class DesktopService {
           object_type: "asset",
           object_id: result.asset.id,
           action: "import",
+        },
+      };
+    });
+    // Item 13 — rename the managed asset file on disk and synchronise every
+    // canonical reference. Reversible by calling again with the previous name,
+    // which is how the frontend Undo/Redo layer drives it.
+    this.commands.register("asset.rename", async (input) => {
+      if (!this.context.project) throw new Error("No project is open");
+      const candidate = input && typeof input === "object"
+        ? input as { asset_id?: string; assetId?: string; new_name?: string; newName?: string }
+        : {};
+      const assetId = String(candidate.asset_id ?? candidate.assetId ?? "").trim();
+      const newName = String(candidate.new_name ?? candidate.newName ?? "");
+      if (!assetId) throw new Error("asset.rename requires asset_id");
+      const outcome = await this.store.renameManagedAsset(
+        this.context.project,
+        assetId,
+        newName,
+      );
+      this.context.project = outcome.project;
+      await this.search.rebuild(this.context.project);
+      const renamed = outcome.project.assets.find((asset) => asset.id === assetId) ?? null;
+      return {
+        value: {
+          status: outcome.status,
+          asset: renamed,
+          // Parity with the native shell: the rename rewrites references across
+          // collections, so the caller replaces its copy from this payload.
+          project: outcome.project,
+          rewritten: outcome.rewritten,
+          old_storage_path: outcome.plan.old_storage_path,
+          new_storage_path: outcome.plan.new_storage_path,
+          old_filename: outcome.plan.old_filename,
+          new_filename: outcome.plan.new_filename,
+        },
+        events: [EventBus.domainEvent({
+          type: "ProjectChanged",
+          project_id: this.context.project.project.id,
+          entity_type: "asset",
+          entity_id: assetId,
+          source: "user",
+          metadata: { action: "rename" },
+        })],
+        audit: {
+          object_type: "asset",
+          object_id: assetId,
+          action: "rename",
         },
       };
     });
@@ -810,6 +879,40 @@ export class DesktopService {
         },
       };
     });
+    // Recursive visual-media discovery for one SELECTED directory row. The
+    // Mapping Preview root listing stays direct-children-only; this command is
+    // the only path that walks below a user-chosen folder.
+    this.commands.register("folder.scan_media", async (input) => {
+      const candidate = input && typeof input === "object"
+        ? input as {
+          root?: string;
+          path?: string;
+          folder_path?: string;
+          relative_dir?: string;
+          relative_path?: string;
+        }
+        : {};
+      const root = String(
+        candidate.root ?? candidate.path ?? candidate.folder_path ?? "",
+      ).trim();
+      const relativeDir = String(
+        candidate.relative_dir ?? candidate.relative_path ?? "",
+      ).trim();
+      if (!root) throw new Error("folder.scan_media requires an absolute folder path");
+      const report = await scanMediaDescendants(root, relativeDir);
+      return {
+        value: report,
+        audit: {
+          object_type: "import",
+          action: "folder_scan_media",
+          metadata: {
+            count: report.entries.length,
+            root: report.root,
+            relative_dir: report.relative_dir,
+          },
+        },
+      };
+    });
     // Read-only preview for Workspace Explorer. Never writes project.json.
     this.commands.register("folder.read_preview", async (input) => {
       const candidate = input && typeof input === "object"
@@ -887,6 +990,7 @@ export class DesktopService {
           plan?: ImportMappingPlan;
           duplicate_choice?: "existing" | "copy" | "cancel";
           project_title?: string;
+          replace_invalid_project?: boolean;
         }
         : {};
       if (!candidate.plan) throw new Error("folder.adopt requires a mapping plan");
@@ -896,6 +1000,7 @@ export class DesktopService {
       const result = await confirmFolderAdoption(candidate.plan, {
         duplicate_choice: candidate.duplicate_choice,
         project_title: candidate.project_title,
+        replace_invalid_project: candidate.replace_invalid_project === true,
       });
       // Adoption writes into plan.root (possibly ≠ this.store.directory).
       // Hand the adopted project to the caller; do not rebuild this service's

@@ -522,6 +522,154 @@ Deno.test("ai.connection.save rejects credential-shaped provider fields", async 
   });
 });
 
+Deno.test("§9.4 a saved connection's Provider ID is immutable while its display name is not", async () => {
+  await withDesktop(async ({ desktop }) => {
+    const created = await desktop.commands.execute("ai.connection.save", {
+      provider: PROVIDER,
+      require_new: true,
+    });
+    assert(
+      !created.error,
+      `+ Add model provider must succeed: ${JSON.stringify(created.error)}`,
+    );
+    const stored = await desktop.commands.execute("ai.secret.set", {
+      provider_id: "deepseek",
+      value: CREDENTIAL,
+    });
+    assert(!stored.error, "the credential must save before the rename");
+
+    // §9.4: "Display name remains editable" — same id, edit in place.
+    const renamed = await desktop.commands.execute("ai.connection.save", {
+      provider: { ...PROVIDER, label: "我的 DeepSeek 连接" },
+      original_id: "deepseek",
+    });
+    assert(
+      !renamed.error,
+      `editing only the display name must succeed: ${JSON.stringify(renamed.error)}`,
+    );
+    const renamedProvider = (
+      renamed.value as { provider: { id: string; label: string } }
+    ).provider;
+    assert(
+      renamedProvider.id === "deepseek" &&
+        renamedProvider.label === "我的 DeepSeek 连接",
+      "an edit must keep the id and take the new display name",
+    );
+
+    // §9.4: a different ID describes a different connection, so it is refused.
+    const mutated = await desktop.commands.execute("ai.connection.save", {
+      provider: { ...PROVIDER, id: "renamed-id", label: "我的 DeepSeek 连接" },
+      original_id: "deepseek",
+    });
+    assert(
+      mutated.error?.code === "invalid_request",
+      `changing the Provider ID must be rejected, got ${JSON.stringify(mutated.error)}`,
+    );
+    assert(
+      (mutated.error?.user_message ?? "").includes("deepseek") &&
+        (mutated.error?.user_message ?? "").includes("renamed-id"),
+      "the readable error must name both the original and the submitted id",
+    );
+    assert(
+      (mutated.error?.technical_message ?? "").includes(
+        "Provider id is immutable after creation (deepseek -> renamed-id)",
+      ),
+      `the technical message must state immutability: ${mutated.error?.technical_message}`,
+    );
+    assert(
+      (mutated.error?.recommended_action ?? "").includes("显示名称"),
+      "the guidance must point at the editable display name instead",
+    );
+    assert(
+      !JSON.stringify(mutated.error).includes(CREDENTIAL),
+      "a rejected rename must never echo the credential",
+    );
+
+    // The refusal is inert: the old row keeps its id, its new label and its key.
+    const listed = await desktop.commands.execute("ai.connection.list", {});
+    assert(!listed.error, "ai.connection.list must succeed");
+    const state = listed.value as {
+      providers: Array<{ id: string; label: string }>;
+      configured: Record<string, boolean>;
+    };
+    assert(
+      JSON.stringify(state.providers.map((entry) => [entry.id, entry.label])) ===
+        JSON.stringify([["deepseek", "我的 DeepSeek 连接"]]),
+      "an id-change rejection must not add, rename or drop a connection",
+    );
+    assert(
+      state.configured.deepseek === true,
+      "an id-change rejection must keep the saved credential bound to the id",
+    );
+    assert(
+      state.configured["renamed-id"] === undefined,
+      "the rejected id must never exist in the store",
+    );
+  });
+});
+
+Deno.test("§9.4 add-mode refuses a duplicate id and edit-mode refuses a phantom target", async () => {
+  await withDesktop(async ({ desktop }) => {
+    const first = await desktop.commands.execute("ai.connection.save", {
+      provider: PROVIDER,
+    });
+    assert(!first.error, "the first connection must save");
+
+    // "+ Add model provider" may not silently overwrite an existing row.
+    const duplicate = await desktop.commands.execute("ai.connection.save", {
+      provider: { ...PROVIDER, label: "同名不同人" },
+      require_new: true,
+    });
+    assert(
+      duplicate.error?.code === "invalid_request",
+      `a reused Provider ID must be refused: ${JSON.stringify(duplicate.error)}`,
+    );
+    assert(
+      (duplicate.error?.user_message ?? "").includes("已经存在"),
+      "the readable error must say the id already exists",
+    );
+
+    // Claiming to edit a row that is not stored must not create it either.
+    const phantom = await desktop.commands.execute("ai.connection.save", {
+      provider: { ...PROVIDER, id: "brand-new", label: "新连接" },
+      original_id: "never-saved",
+    });
+    assert(
+      phantom.error?.code === "invalid_request",
+      `an unknown edit target must be refused: ${JSON.stringify(phantom.error)}`,
+    );
+    assert(
+      (phantom.error?.user_message ?? "").includes("never-saved"),
+      "the readable error must name the missing edit target",
+    );
+
+    // Editing a row by its own id is legitimate and adds nothing.
+    const selfEdit = await desktop.commands.execute("ai.connection.save", {
+      provider: { ...PROVIDER, api_protocol: "anthropic-messages" },
+      original_id: "deepseek",
+    });
+    assert(
+      !selfEdit.error,
+      `editing a connection by its own id must succeed: ${JSON.stringify(selfEdit.error)}`,
+    );
+
+    const listed = await desktop.commands.execute("ai.connection.list", {});
+    const state = listed.value as {
+      providers: Array<Record<string, unknown>>;
+    };
+    assert(
+      state.providers.length === 1 && state.providers[0]?.id === "deepseek",
+      "only the saved connection may exist",
+    );
+    // §9.4 immutability inputs are call metadata, never stored provider metadata.
+    assert(
+      !("original_id" in (state.providers[0] ?? {})) &&
+        !("require_new" in (state.providers[0] ?? {})),
+      "call metadata must not leak onto the stored connection record",
+    );
+  });
+});
+
 Deno.test("ai.complete posts once with the injected auth header and normalises bodies", async () => {
   const { fetch: stub, calls } = stubFetch(() =>
     jsonResponse({ choices: [{ message: { content: "你好" } }] })
@@ -2098,8 +2246,14 @@ Deno.test("saved protocol adapters reach a local HTTP service with isolated auth
         const models = await desktop.commands.execute("ai.models.list", { provider_id: id });
         assert(!models.error, `${item.protocol} model discovery should succeed`);
         assert(
-          (models.value as { models: string[] }).models.includes("test-model"),
+          (models.value as { model_ids: string[] }).model_ids.includes("test-model"),
           `${item.protocol} should parse model IDs`,
+        );
+        const catalog = (models.value as { models: Array<{ id: string; label: string }> })
+          .models;
+        assert(
+          catalog.some((entry) => entry.id === "test-model" && typeof entry.label === "string" && entry.label.length > 0),
+          `${item.protocol} discovery must return { id, label } entries (§9.5)`,
         );
         const modelCall = server.calls.at(-1)!;
         assert(modelCall.method === "GET" && modelCall.path === "/v1/models", "model discovery must use the saved base URL");

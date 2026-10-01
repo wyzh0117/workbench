@@ -22,13 +22,15 @@ import type {
 } from "../domain/types.ts";
 import { id, now, sha256Bytes } from "../domain/util.ts";
 import { createInboxItem } from "../domain/workflow.ts";
+import { ADOPTABLE_FILE_KINDS, scanMediaDescendants } from "./folder_scan.ts";
+import type { MediaDescendantScan } from "./folder_scan.ts";
 import type {
   ImportMappingItem,
   ImportMappingPlan,
   ImportMappingDestination,
   MappingRole,
 } from "./folder_mapping.ts";
-import { ProjectDirectoryStore } from "./storage.ts";
+import { ProjectDirectoryStore, inspectProjectDirectory } from "./storage.ts";
 import { parseMarkdown } from "../../app/markdown.js";
 
 export interface FolderAdoptionOptions {
@@ -42,6 +44,12 @@ export interface FolderAdoptionOptions {
   skip_project_write?: boolean;
   /** Persist through the caller's active project lease before promoting assets. */
   persist_project?: (data: ProjectData) => Promise<void>;
+  /**
+   * §3.2 Case C: the user confirmed that an existing `project.json` in this
+   * folder is unusable and chose to re-import it. The old manifest is moved
+   * aside, never deleted, and only after the import is otherwise ready to commit.
+   */
+  replace_invalid_project?: boolean;
 }
 
 export interface FolderAdoptionResult {
@@ -61,6 +69,10 @@ export interface FolderAdoptionResult {
 }
 
 const TEXT_EXT = new Set([".md", ".markdown", ".txt"]);
+// Mirrors `normalize_asset_type` / `mime_for_filename` in src-tauri/src/lib.rs
+// and ASSET_EXTENSIONS in src/service/folder_scan.ts. Adding an extension here
+// without adding it there makes a folder adopted in the browser and reopened in
+// the native app classify differently.
 const ASSET_EXT: Record<string, AssetType> = {
   ".png": "image",
   ".jpg": "image",
@@ -68,13 +80,16 @@ const ASSET_EXT: Record<string, AssetType> = {
   ".gif": "gif",
   ".webp": "image",
   ".svg": "image",
+  ".avif": "image",
   ".mp4": "video",
   ".webm": "video",
   ".mov": "video",
+  ".m4v": "video",
   ".mp3": "audio",
   ".wav": "audio",
   ".m4a": "audio",
   ".aac": "audio",
+  ".ogg": "audio",
   ".pdf": "document",
   ".doc": "document",
   ".docx": "document",
@@ -107,12 +122,15 @@ function mimeFor(name: string, fallback = "application/octet-stream"): string {
     ".gif": "image/gif",
     ".webp": "image/webp",
     ".svg": "image/svg+xml",
+    ".avif": "image/avif",
     ".mp4": "video/mp4",
     ".webm": "video/webm",
     ".mov": "video/quicktime",
+    ".m4v": "video/mp4",
     ".mp3": "audio/mpeg",
     ".wav": "audio/wav",
     ".m4a": "audio/mp4",
+    ".ogg": "audio/ogg",
     ".pdf": "application/pdf",
     ".doc": "application/msword",
     ".docx":
@@ -252,6 +270,43 @@ async function projectJsonExists(root: string): Promise<boolean> {
   } catch (caught) {
     if (caught instanceof Deno.errors.NotFound) return false;
     throw caught;
+  }
+}
+
+/**
+ * §3.2 Case C: keep the unusable manifest under a name the folder scan already
+ * ignores (`*.backup`) instead of letting the atomic write replace it. Mirrors
+ * the native `project.json.<stamp>.invalid.backup` naming.
+ */
+async function quarantineInvalidManifest(root: string): Promise<string> {
+  const original = join(root, "project.json");
+  const stamp = new Date().toISOString().replace(/[-:]/g, "").replace(/\.\d+Z$/, "").replace("T", "");
+  let backup = join(root, `project.json.${stamp}.invalid.backup`);
+  for (let attempt = 1; await pathExists(backup); attempt += 1) {
+    if (attempt > 99) {
+      throw new Error("无法为原有的 project.json 找到可用的备份文件名，导入已中止。");
+    }
+    backup = join(root, `project.json.${stamp}-${attempt}.invalid.backup`);
+  }
+  await Deno.rename(original, backup);
+  return backup;
+}
+
+/** Put the manifest back under its original name when the commit failed. */
+async function restoreQuarantinedManifest(root: string, backup: string): Promise<void> {
+  try {
+    await Deno.rename(backup, join(root, "project.json"));
+  } catch {
+    // The backup file still holds every byte; report through the caller's error.
+  }
+}
+
+async function pathExists(path: string): Promise<boolean> {
+  try {
+    await Deno.lstat(path);
+    return true;
+  } catch {
+    return false;
   }
 }
 
@@ -513,6 +568,74 @@ function recordSource(
 }
 
 /**
+ * §4.2/§4.3: a directory row the user selected contributes the visual media found
+ * anywhere beneath it, as asset candidates. The Mapping Preview listing stays flat
+ * (§4.1), so the sweep runs here, when the confirmed plan is applied. Descendants
+ * become Assets only — never Lesson content, and never an `AssetUsage` created
+ * merely because the folder was selected. Any path the preview already lists keeps
+ * the user's own mapping instead of a synthesized row.
+ */
+async function expandSelectedDirectoryMedia(
+  sourceRoot: string,
+  items: ImportMappingItem[],
+  warnings: string[],
+): Promise<ImportMappingItem[]> {
+  const claimed = new Set(
+    items.map((item) => item.relative_path.replaceAll("\\", "/")),
+  );
+  const selectedDirs = items
+    .filter(isIncluded)
+    .filter((item) => item.kind === "directory")
+    .map((item) =>
+      item.relative_path.replaceAll("\\", "/").replace(/^\/+|\/+$/g, "")
+    )
+    .filter((rel) => rel.length > 0);
+
+  const synthesized: ImportMappingItem[] = [];
+  for (const rel of selectedDirs) {
+    if (
+      rel.includes("\0") || isAbsolute(rel) ||
+      rel.split("/").some((part) => part === ".." || part === ".")
+    ) {
+      warnings.push(`${rel}: 非法路径已跳过`);
+      continue;
+    }
+    let scan: MediaDescendantScan;
+    try {
+      scan = await scanMediaDescendants(sourceRoot, rel);
+    } catch (caught) {
+      // A directory that cannot be swept degrades to a warning: the rest of the
+      // confirmed plan still applies.
+      warnings.push(
+        `${rel}: ${caught instanceof Error ? caught.message : String(caught)}`,
+      );
+      continue;
+    }
+    warnings.push(...scan.warnings, ...scan.errors);
+    for (const entry of scan.entries) {
+      const candidate = entry.relative_path.replaceAll("\\", "/");
+      if (!candidate || claimed.has(candidate)) continue;
+      claimed.add(candidate);
+      synthesized.push({
+        relative_path: candidate,
+        kind: entry.kind,
+        mime: entry.mime,
+        size: entry.size,
+        suggested: "asset",
+        mapping: "asset",
+        selected: true,
+        is_suggestion: true,
+      });
+    }
+  }
+  if (!synthesized.length) return items;
+  warnings.push(
+    `已从所选文件夹递归收录 ${synthesized.length} 个图片/视频素材，仅作为素材入库，没有写入课时正文。`,
+  );
+  return [...items, ...synthesized];
+}
+
+/**
  * Apply a user-confirmed mapping plan as Strategy A in-place adoption.
  * Throws if the plan is not confirmed.
  */
@@ -532,10 +655,37 @@ export async function confirmFolderAdoption(
   });
 
   // Match native: never silently overwrite an existing Canonical project.
-  if (!options.data && !options.persist_project && !options.skip_project_write && await projectJsonExists(root)) {
-    throw new Error(
-      "该文件夹已有 project.json，不能重复原地接管。请先打开现有项目。",
-    );
+  let quarantineManifest = false;
+  const freshAdoption = !options.data && !options.persist_project && !options.skip_project_write;
+  if (freshAdoption && await projectJsonExists(root)) {
+    if (!options.replace_invalid_project) {
+      throw new Error(
+        "该文件夹已有 project.json，不能重复原地接管。请先打开现有项目。",
+      );
+    }
+    // The confirmation says "the file here is broken", not "overwrite whatever is
+    // here": a readable or migratable project must still be opened, and a file we
+    // cannot even read is never ours to move.
+    const diagnosis = await inspectProjectDirectory(root);
+    if (diagnosis.status === "valid" || diagnosis.status === "migratable") {
+      throw new Error(
+        "这个文件夹里的 project.json 是一个可用的课程项目。请直接「打开现有项目」，不要重新导入。",
+      );
+    }
+    // A newer project is not a broken one: the fix is to upgrade, not to let an
+    // older build rearrange someone's course.
+    if (diagnosis.problem?.code === "unsupported_schema") {
+      throw new Error(
+        "这个项目由更高版本的 Workbench 创建，当前版本不会改写它。请升级后再打开；若确实要把它当作资料文件夹导入，请先自行改名或移除其中的 project.json。",
+      );
+    }
+    if (diagnosis.status === "unreadable" ||
+      (diagnosis.status !== "invalid" && diagnosis.status !== "malformed_json")) {
+      throw new Error(
+        `无法确认这个文件夹里的 project.json：${diagnosis.problem?.message || "文件不可读"}`,
+      );
+    }
+    quarantineManifest = true;
   }
 
   const title = options.project_title ||
@@ -563,7 +713,12 @@ export async function confirmFolderAdoption(
   const stagingRoot = `.workspace/adopt-staging/${crypto.randomUUID()}`;
 
   try {
-  const included = plan.items.filter(isIncluded);
+  const items = await expandSelectedDirectoryMedia(
+    sourceRoot,
+    plan.items,
+    result.warnings,
+  );
+  const included = items.filter(isIncluded);
   const stageByRel = new Map<string, string>();
 
   // Pass 1: stages (directories)
@@ -579,9 +734,11 @@ export async function confirmFolderAdoption(
   const duplicateChoice = options.duplicate_choice ?? "existing";
   await ensureWorkspace(root);
 
-  // Pass 2: files
+  // Pass 2: files, including the image/video rows expandSelectedDirectoryMedia
+  // appended for directories the user selected. Directories stay in pass 1 as
+  // stages and are never swept in as documents here.
   for (const item of included) {
-    if (item.kind !== "file") continue;
+    if (!ADOPTABLE_FILE_KINDS.includes(item.kind)) continue;
     const role: MappingRole = item.mapping;
     const rel = item.relative_path.replaceAll("\\", "/");
     const sourceAbs = await sourceFilePath(sourceRoot, rel);
@@ -874,9 +1031,14 @@ export async function confirmFolderAdoption(
     }
     await cleanupStaging(root, staged, stagingRoot);
   } else if (!options.skip_project_write) {
+    // §3.2 Case C: a corrupted manifest would fail the store's own read, so the
+    // file moves aside before anything opens the folder — and every later failure
+    // puts the name back, so an aborted import still changes nothing.
+    let quarantined: string | null = null;
+    if (quarantineManifest) quarantined = await quarantineInvalidManifest(root);
     const store = new ProjectDirectoryStore(root);
-    await store.open();
     try {
+      await store.open();
       const promoted = await promoteStaging(root, staged);
       try {
         await store.writeProject(data);
@@ -886,9 +1048,15 @@ export async function confirmFolderAdoption(
       }
     } catch (caught) {
       await cleanupStaging(root, staged, stagingRoot);
+      if (quarantined) await restoreQuarantinedManifest(root, quarantined);
       throw caught;
     } finally {
       await store.close().catch(() => {});
+    }
+    if (quarantined) {
+      result.warnings.push(
+        `原有的 project.json 已完整保留为「${basename(quarantined)}」，没有删除任何文件。`,
+      );
     }
     await cleanupStaging(root, staged, stagingRoot);
   } else if (staged.length) {

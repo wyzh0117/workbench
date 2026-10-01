@@ -8,18 +8,20 @@
  * project that ever used the AI panel.
  */
 import {
+  AI_API_PROTOCOLS,
   AI_EXECUTION_OUTCOME,
   AI_EXECUTION_STATUS,
   AI_FAILURE_CODES,
-  AI_PROVIDER_PRESETS,
+  AI_OFFLINE_PROVIDER_ID,
   AiFailure,
   FakeAiConnector,
   HttpAiConnector,
+  aiApiProtocolChoices,
   aiChangeDraftDiffRows,
   aiContextPreviewLines,
   aiContextPromptPayload,
-  aiProviderDescriptors,
-  aiProviderPreset,
+  aiIsKnownApiProtocol,
+  aiIsOfflineConnection,
   applyAiChangeDraft,
   assembleAiContext,
   buildAiExecutionRecord,
@@ -88,6 +90,102 @@ const LESSON_ONE_SECOND =
 const LESSON_TWO_BODY =
   "第二课的正文：这一课的内容绝对不能被发送到第一课的课级或区块级上下文里，用来验证跨课泄漏。";
 const SECRET_VALUE = "sk-live-abcdefghijklmnopqrstuvwxyz012345";
+
+/* ------------------------------------------------------------------ *
+ * Connection fixtures (§9.2)
+ *
+ * Workbench ships no preset provider templates any more, so every case that
+ * needs a provider builds an *explicit* connection record.  The values below
+ * are test data, not a product catalogue: nothing in `app/ai.js` can look them
+ * up by id.  Each factory returns a fresh object, so a case may mutate or
+ * extend it without leaking into another one.
+ * ------------------------------------------------------------------ */
+
+interface ConnectionFixture {
+  id: string;
+  label: string;
+  kind: string;
+  api_protocol: string;
+  base_url: string;
+  chat_path: string;
+  auth_header: string;
+  auth_scheme: string;
+  default_model: string;
+  models: string[];
+  [extra: string]: unknown;
+}
+
+/** One user-created OpenAI-compatible API connection. */
+function connectionFixture(
+  overrides: Partial<ConnectionFixture> = {},
+): ConnectionFixture {
+  return {
+    id: "test-connection",
+    label: "测试连接",
+    kind: "openai_compatible",
+    api_protocol: "openai-completions",
+    base_url: "https://example.test/v1",
+    chat_path: "/chat/completions",
+    auth_header: "authorization",
+    auth_scheme: "Bearer",
+    default_model: "test-model",
+    models: ["test-model"],
+    ...overrides,
+  };
+}
+
+/** Chat-Completions connection with its own base URL and model list. */
+function deepseekConnection(): ConnectionFixture {
+  return connectionFixture({
+    id: "deepseek",
+    label: "DeepSeek",
+    base_url: "https://api.deepseek.com",
+    chat_path: "/chat/completions",
+    default_model: "deepseek-chat",
+    models: ["deepseek-chat", "deepseek-reasoner"],
+  });
+}
+
+/** Second saved connection: proves the builder reads the record, not defaults. */
+function openaiConnection(): ConnectionFixture {
+  return connectionFixture({
+    id: "openai",
+    label: "OpenAI",
+    base_url: "https://api.openai.com/v1",
+    default_model: "gpt-4o-mini",
+    models: ["gpt-4o-mini", "gpt-4o", "gpt-4.1-mini"],
+  });
+}
+
+/** A half-filled form: no Base URL and no model until the user types them. */
+function customConnection(
+  overrides: Partial<ConnectionFixture> = {},
+): ConnectionFixture {
+  return connectionFixture({
+    id: "custom",
+    label: "自定义连接",
+    base_url: "",
+    chat_path: "",
+    default_model: "",
+    models: [],
+    ...overrides,
+  });
+}
+
+/** The offline test connector's own record — a code path, never a template. */
+function offlineConnection(): ConnectionFixture {
+  return connectionFixture({
+    id: AI_OFFLINE_PROVIDER_ID,
+    label: "本地确定性连接器（离线）",
+    kind: "fake",
+    base_url: "",
+    chat_path: "",
+    auth_header: "",
+    auth_scheme: "",
+    default_model: "fake-deterministic",
+    models: ["fake-deterministic"],
+  });
+}
 
 function aiFixture() {
   const data = createEmptyProjectData("AI Workflow 测试");
@@ -576,35 +674,60 @@ Deno.test("scope resolution fails readably when there is nothing to target", asy
 });
 
 /* ------------------------------------------------------------------ *
- * Provider catalog and request building
+ * Explicit connections and request building (§9.2)
  * ------------------------------------------------------------------ */
 
-Deno.test("provider catalog exposes the five presets as copies", () => {
-  const ids = AI_PROVIDER_PRESETS.map((preset) => preset.id);
+Deno.test("§9.2 exposes no provider templates: only three protocols, copies included", () => {
+  const choices = aiApiProtocolChoices();
   assertEquals(
-    ids,
-    ["deepseek", "doubao", "openai", "custom", "fake"],
-    "Provider 目录必须稳定",
+    choices.map((choice) => choice.id),
+    ["openai-completions", "openai-responses", "anthropic-messages"],
+    "API 协议目录必须稳定且只有 §9.4 的三项",
   );
   assert(
-    aiProviderPreset("deepseek")?.requires_credential === true,
-    "在线 Provider 必须声明需要密钥",
+    aiIsKnownApiProtocol("openai-completions") === true,
+    "在线连接必须能用协议 id 声明自己走哪种协议",
   );
   assert(
-    aiProviderPreset("fake")?.requires_credential === false,
+    aiIsOfflineConnection(AI_OFFLINE_PROVIDER_ID) === true,
+    "本地连接器仍然必须可被识别（自动化测试的代码路径）",
+  );
+  // The list must be a copy: mutating it cannot rewrite the module's choices.
+  choices[0]!.label = "被改坏了";
+  assert(
+    AI_API_PROTOCOLS[0]!.label === "OpenAI Chat Completions",
+    "协议目录必须返回副本，不能被外部修改",
+  );
+  assertEquals(
+    aiApiProtocolChoices().length,
+    AI_API_PROTOCOLS.length,
+    "副本必须覆盖全部协议",
+  );
+  // §9.2: the ids the removed templates used are now meaningless on their own.
+  for (const former of ["deepseek", "doubao", "openai", "custom"]) {
+    assert(
+      !aiIsKnownApiProtocol(former),
+      `旧预设 id「${former}」不能仍是一个可用协议`,
+    );
+    assert(
+      !aiIsOfflineConnection(former),
+      `旧预设 id「${former}」不能被误认成本地连接器`,
+    );
+  }
+});
+
+Deno.test("credential requirement is a property of the connection, not a template", () => {
+  const online = new HttpAiConnector({
+    connection: deepseekConnection(),
+    transport: () => Promise.resolve({ ok: true, status: 200, body: {} }),
+  });
+  assert(
+    online.descriptor().requires_credential === true,
+    "在线连接必须声明需要密钥",
+  );
+  assert(
+    new FakeAiConnector().descriptor().requires_credential === false,
     "本地连接器不需要密钥",
-  );
-  assertEquals(aiProviderPreset("nope"), null, "未知 Provider 必须返回 null");
-  const descriptors = aiProviderDescriptors();
-  descriptors[0]!.label = "被改坏了";
-  assert(
-    aiProviderPreset("deepseek")?.label === "DeepSeek",
-    "目录必须返回副本，不能被外部修改",
-  );
-  assertEquals(
-    descriptors.length,
-    AI_PROVIDER_PRESETS.length,
-    "descriptors 必须覆盖全部预设",
   );
 });
 
@@ -630,7 +753,9 @@ Deno.test("buildAiProviderCall builds a chat request without any credential", ()
     include: FULL_INCLUDE,
   });
   const call = buildAiProviderCall({
-    preset: "deepseek",
+    // A UI-only field rides along on purpose: nothing but the transport
+    // contract's own fields may cross the bridge (§9.3).
+    preset: { ...deepseekConnection(), requires_credential: true },
     model: "deepseek-chat",
     context,
     instruction: "重写这一段",
@@ -643,8 +768,8 @@ Deno.test("buildAiProviderCall builds a chat request without any credential", ()
   );
   assertEquals(call.response_kind, "chat", "响应类型必须是 chat");
   assertEquals(call.provider_id, "deepseek", "调用必须带 provider_id");
-  assertEquals(call.auth.header, "authorization", "鉴权头名称由 preset 声明");
-  assertEquals(call.auth.scheme, "Bearer", "鉴权方案由 preset 声明");
+  assertEquals(call.auth.header, "authorization", "鉴权头名称由连接声明");
+  assertEquals(call.auth.scheme, "Bearer", "鉴权方案由连接声明");
   assert(
     !Object.keys(call.headers).some((key) => key.toLowerCase() === "authorization"),
     "请求头里不能直接出现 authorization（密钥由 transport 进程注入）",
@@ -674,7 +799,7 @@ Deno.test("buildAiProviderCall builds a chat request without any credential", ()
   assert(!serialized.includes("sk-"), "请求里绝不能出现密钥");
   assert(
     !serialized.includes("requires_credential"),
-    "preset 的 UI 字段不能进入 transport 载荷",
+    "连接的 UI 字段不能进入 transport 载荷",
   );
   assert(
     !serialized.includes(SECRET_VALUE),
@@ -682,7 +807,7 @@ Deno.test("buildAiProviderCall builds a chat request without any credential", ()
   );
 
   const explain = buildAiProviderCall({
-    preset: aiProviderPreset("openai")!,
+    preset: openaiConnection(),
     context,
     instruction: "解释这一段",
     wants_changes: false,
@@ -695,7 +820,7 @@ Deno.test("buildAiProviderCall builds a chat request without any credential", ()
   assertEquals(
     explain.url,
     "https://api.openai.com/v1/chat/completions",
-    "自定义 base_url 必须被尊重",
+    "连接自带的 base_url 必须被尊重",
   );
 });
 
@@ -708,15 +833,14 @@ Deno.test("buildAiProviderCall supports the Responses and Anthropic protocols", 
     instruction: "改写这一段",
     include: FULL_INCLUDE,
   });
-  const custom = aiProviderPreset("custom")!;
   const responses = buildAiProviderCall({
-    preset: {
-      ...custom,
+    preset: connectionFixture({
       id: "test-responses",
+      label: "Responses 连接",
       api_protocol: "openai-responses",
       base_url: "https://example.test/v1",
       default_model: "gpt-test",
-    },
+    }),
     context,
     instruction: "改写这一段",
   });
@@ -728,15 +852,15 @@ Deno.test("buildAiProviderCall supports the Responses and Anthropic protocols", 
   assertEquals(responses.body.input[0].content[0].type, "input_text", "用户文本类型必须符合 Responses API");
 
   const anthropic = buildAiProviderCall({
-    preset: {
-      ...custom,
+    preset: connectionFixture({
       id: "test-anthropic",
+      label: "Anthropic 连接",
       api_protocol: "anthropic-messages",
       base_url: "https://example.test/v1",
       auth_header: "x-api-key",
       auth_scheme: "",
       default_model: "claude-test",
-    },
+    }),
     context,
     instruction: "解释这一段",
   });
@@ -749,30 +873,113 @@ Deno.test("buildAiProviderCall supports the Responses and Anthropic protocols", 
   assertEquals(anthropic.body.messages[0].role, "user", "Anthropic 使用 user 消息");
 });
 
-Deno.test("buildAiProviderCall reports an unconfigured provider readably", async () => {
-  const failure = await assertAiFailure(
-    () => buildAiProviderCall({ preset: "custom", instruction: "你好" }),
+Deno.test("buildAiProviderCall reports an unconfigured connection readably", async () => {
+  // §9.2: Workbench resolves nothing from a bare id any more — every id the
+  // removed templates used is now just a string that cannot be a config.
+  for (
+    const bareId of ["custom", "unknown-provider", "fake", "deepseek", "doubao", "openai"]
+  ) {
+    const failure = await assertAiFailure(
+      () => buildAiProviderCall({ preset: bareId, instruction: "你好" }),
+      "not_configured",
+      `旧模板 id「${bareId}」不能仍被解析成默认配置`,
+    );
+    assert(
+      failure.message.includes("不再内置服务商模板"),
+      `必须说明 Workbench 不再内置服务商模板（${bareId}）`,
+    );
+    assert(
+      failure.recommended_action.includes("设置 → 模型"),
+      `必须引导用户新建 API 连接（${bareId}）`,
+    );
+    assert(
+      !failure.message.includes(SECRET_VALUE),
+      "错误信息不得回显任何密钥",
+    );
+  }
+
+  // An explicit record that is only half filled keeps its own, more precise
+  // guidance — it must not be mistaken for the removed-template error.
+  const noBase = await assertAiFailure(
+    () => buildAiProviderCall({ preset: customConnection(), instruction: "你好" }),
     "not_configured",
     "没有 Base URL 时必须报 not_configured",
   );
   assert(
-    failure.message.includes("Base URL"),
+    noBase.message.includes("Base URL"),
     "错误信息必须指出缺什么",
   );
-  await assertAiFailure(
-    () => buildAiProviderCall({ preset: "unknown-provider", instruction: "你好" }),
-    "not_configured",
-    "未知 Provider 必须报 not_configured",
+  assert(
+    !noBase.message.includes("不再内置服务商模板"),
+    "缺 Base URL 不能误报成模板错误",
   );
+
   await assertAiFailure(
     () =>
       buildAiProviderCall({
-        preset: "fake",
+        preset: connectionFixture({ id: "no-model", default_model: "", models: [] }),
         instruction: "你好",
       }),
     "not_configured",
+    "还没有选择模型时必须报 not_configured",
+  );
+
+  await assertAiFailure(
+    () => buildAiProviderCall({ instruction: "你好" }),
+    "not_configured",
+    "完全没有连接时必须报 not_configured",
+  );
+
+  // The offline connector stays a test-only code path: never a wire call.
+  const offline = await assertAiFailure(
+    () => buildAiProviderCall({ preset: offlineConnection(), instruction: "你好" }),
+    "not_configured",
     "本地连接器不走网络调用",
   );
+  assert(
+    offline.message.includes("FakeAiConnector"),
+    "本地连接器必须被引导改用 FakeAiConnector",
+  );
+});
+
+Deno.test("buildAiProviderCall reads the connection record, not the preset alias", () => {
+  const { data, first } = aiFixture();
+  const context = assembleAiContext(data, {
+    scope: "block",
+    content_item_id: "lesson-1",
+    block_id: first.id,
+    instruction: "重写这一段",
+    include: FULL_INCLUDE,
+  });
+  // `preset` is a deprecated alias for `connection`; both must describe the
+  // same explicit record and produce an identical wire payload.
+  const viaConnection = buildAiProviderCall({
+    connection: deepseekConnection(),
+    context,
+    instruction: "重写这一段",
+    wants_changes: true,
+  });
+  const viaPreset = buildAiProviderCall({
+    preset: deepseekConnection(),
+    context,
+    instruction: "重写这一段",
+    wants_changes: true,
+  });
+  assertEquals(viaPreset, viaConnection, "preset 别名必须与 connection 等价");
+  // §9.3/§9.4: an Anthropic connection may leave the auth fields empty and the
+  // protocol still dictates x-api-key with no scheme.
+  const derived = buildAiProviderCall({
+    connection: connectionFixture({
+      id: "derived-anthropic",
+      api_protocol: "anthropic-messages",
+      auth_header: "",
+      auth_scheme: "",
+      default_model: "claude-test",
+    }),
+    instruction: "解释这一段",
+  });
+  assertEquals(derived.auth.header, "x-api-key", "Anthropic 连接默认使用 x-api-key");
+  assertEquals(derived.auth.scheme, "", "Anthropic 连接不加 Bearer 前缀");
 });
 
 /* ------------------------------------------------------------------ *
@@ -782,8 +989,8 @@ Deno.test("buildAiProviderCall reports an unconfigured provider readably", async
 const ANSWER_JSON = '{"answer":"我把这一段改得更口语了。","changes":[]}';
 
 Deno.test("normalizeAiProviderResponse reads a JSON chat completion", () => {
-  const preset = aiProviderPreset("deepseek")!;
-  const normalized = normalizeAiProviderResponse(preset, {
+  const connection = deepseekConnection();
+  const normalized = normalizeAiProviderResponse(connection, {
     ok: true,
     status: 200,
     headers: { "content-type": "application/json" },
@@ -805,7 +1012,7 @@ Deno.test("normalizeAiProviderResponse reads a JSON chat completion", () => {
 });
 
 Deno.test("normalizeAiProviderResponse reads SSE and parsed chunk arrays", () => {
-  const preset = aiProviderPreset("deepseek")!;
+  const connection = deepseekConnection();
   const sse = [
     'data: {"model":"deepseek-chat","choices":[{"delta":{"content":"你"}}]}',
     "",
@@ -818,7 +1025,7 @@ Deno.test("normalizeAiProviderResponse reads SSE and parsed chunk arrays", () =>
     "data: [DONE]",
     "",
   ].join("\n");
-  const streamed = normalizeAiProviderResponse(preset, {
+  const streamed = normalizeAiProviderResponse(connection, {
     ok: true,
     status: 200,
     headers: { "content-type": "text/event-stream" },
@@ -830,7 +1037,7 @@ Deno.test("normalizeAiProviderResponse reads SSE and parsed chunk arrays", () =>
   assertEquals(streamed.usage, { total_tokens: 7 }, "必须读取 SSE 的用量");
   assertEquals(streamed.raw_kind, "stream", "必须标记为流式响应");
 
-  const chunks = normalizeAiProviderResponse(preset, {
+  const chunks = normalizeAiProviderResponse(connection, {
     ok: true,
     status: 200,
     headers: { "content-type": "text/event-stream" },
@@ -843,9 +1050,10 @@ Deno.test("normalizeAiProviderResponse reads SSE and parsed chunk arrays", () =>
 });
 
 Deno.test("normalizeAiProviderResponse reads Responses SSE and Anthropic JSON", () => {
-  const responses = aiProviderPreset("custom")!;
-  responses.id = "test-responses";
-  responses.api_protocol = "openai-responses";
+  const responses = customConnection({
+    id: "test-responses",
+    api_protocol: "openai-responses",
+  });
   const streamed = normalizeAiProviderResponse(responses, {
     ok: true,
     status: 200,
@@ -864,9 +1072,10 @@ Deno.test("normalizeAiProviderResponse reads Responses SSE and Anthropic JSON", 
   assertEquals(streamed.model, "gpt-test", "应读取 Responses 模型名");
   assertEquals(streamed.usage, { total_tokens: 2 }, "应读取 Responses 用量");
 
-  const anthropic = aiProviderPreset("custom")!;
-  anthropic.id = "test-anthropic";
-  anthropic.api_protocol = "anthropic-messages";
+  const anthropic = customConnection({
+    id: "test-anthropic",
+    api_protocol: "anthropic-messages",
+  });
   const message = normalizeAiProviderResponse(anthropic, {
     ok: true,
     status: 200,
@@ -885,9 +1094,10 @@ Deno.test("normalizeAiProviderResponse reads Responses SSE and Anthropic JSON", 
 });
 
 Deno.test("Responses rejects failed, incomplete, and abruptly ended streams", async () => {
-  const responses = aiProviderPreset("custom")!;
-  responses.id = "test-responses-terminal";
-  responses.api_protocol = "openai-responses";
+  const responses = customConnection({
+    id: "test-responses-terminal",
+    api_protocol: "openai-responses",
+  });
   const normalize = (body: string) =>
     normalizeAiProviderResponse(responses, {
       ok: true,
@@ -926,7 +1136,7 @@ Deno.test("Responses rejects failed, incomplete, and abruptly ended streams", as
 });
 
 Deno.test("chat completion streams accept the protocol's normal completion signals", () => {
-  const completions = aiProviderPreset("deepseek")!;
+  const completions = deepseekConnection();
   const doneOnly = normalizeAiProviderResponse(completions, {
     ok: true,
     status: 200,
@@ -946,7 +1156,7 @@ Deno.test("chat completion streams accept the protocol's normal completion signa
 });
 
 Deno.test("chat completion streams reject abrupt EOF without a completion signal", async () => {
-  const completions = aiProviderPreset("deepseek")!;
+  const completions = deepseekConnection();
   await assertAiFailure(
     () => normalizeAiProviderResponse(completions, {
       ok: true,
@@ -961,10 +1171,10 @@ Deno.test("chat completion streams reject abrupt EOF without a completion signal
 });
 
 Deno.test("normalizeAiProviderResponse rejects unreadable or empty bodies", async () => {
-  const preset = aiProviderPreset("deepseek")!;
+  const connection = deepseekConnection();
   await assertAiFailure(
     () =>
-      normalizeAiProviderResponse(preset, {
+      normalizeAiProviderResponse(connection, {
         ok: true,
         status: 200,
         headers: { "content-type": "application/json" },
@@ -976,7 +1186,7 @@ Deno.test("normalizeAiProviderResponse rejects unreadable or empty bodies", asyn
   );
   await assertAiFailure(
     () =>
-      normalizeAiProviderResponse(preset, {
+      normalizeAiProviderResponse(connection, {
         ok: true,
         status: 200,
         headers: { "content-type": "application/json" },
@@ -988,7 +1198,7 @@ Deno.test("normalizeAiProviderResponse rejects unreadable or empty bodies", asyn
   );
   await assertAiFailure(
     () =>
-      normalizeAiProviderResponse(preset, {
+      normalizeAiProviderResponse(connection, {
         ok: false,
         code: "rate_limited",
         message: "限流了",
@@ -1400,7 +1610,7 @@ Deno.test("FakeAiConnector honours cancellation and latency", async () => {
 });
 
 Deno.test("HttpAiConnector maps HTTP status codes to failure codes", async () => {
-  const preset = aiProviderPreset("deepseek")!;
+  const connection = deepseekConnection();
   const cases: Array<[number, string]> = [
     [401, "authentication_failed"],
     [403, "permission_denied"],
@@ -1410,7 +1620,7 @@ Deno.test("HttpAiConnector maps HTTP status codes to failure codes", async () =>
   ];
   for (const [status, code] of cases) {
     const connector = new HttpAiConnector({
-      preset,
+      connection,
       transport: () =>
         Promise.resolve({
           ok: false,
@@ -1428,7 +1638,7 @@ Deno.test("HttpAiConnector maps HTTP status codes to failure codes", async () =>
   }
   // A transport that reports ok:true with an error status is still mapped.
   const odd = new HttpAiConnector({
-    preset,
+    connection,
     transport: () =>
       Promise.resolve({ ok: true, status: 403, headers: {}, body: {} }),
   });
@@ -1440,9 +1650,9 @@ Deno.test("HttpAiConnector maps HTTP status codes to failure codes", async () =>
 });
 
 Deno.test("HttpAiConnector maps timeout, cancel and missing transport", async () => {
-  const preset = aiProviderPreset("deepseek")!;
+  const connection = deepseekConnection();
   const timeoutConnector = new HttpAiConnector({
-    preset,
+    connection,
     transport: () => {
       const error = new Error("request timed out after 60000ms");
       error.name = "TimeoutError";
@@ -1456,7 +1666,7 @@ Deno.test("HttpAiConnector maps timeout, cancel and missing transport", async ()
   );
 
   const cancelConnector = new HttpAiConnector({
-    preset,
+    connection,
     transport: (_call, options) =>
       new Promise((_resolve, reject) => {
         options.signal?.addEventListener("abort", () => {
@@ -1490,7 +1700,7 @@ Deno.test("HttpAiConnector maps timeout, cancel and missing transport", async ()
     "已经取消的信号必须立刻失败",
   );
 
-  const noTransport = new HttpAiConnector({ preset });
+  const noTransport = new HttpAiConnector({ connection });
   await assertAiFailure(
     () => noTransport.complete({ instruction: "你好" }),
     "transport_unavailable",
@@ -1498,7 +1708,7 @@ Deno.test("HttpAiConnector maps timeout, cancel and missing transport", async ()
   );
 
   const network = new HttpAiConnector({
-    preset,
+    connection,
     transport: () => Promise.reject(new Error("network is unreachable")),
   });
   await assertAiFailure(
@@ -1531,7 +1741,7 @@ function bridgeFailure(
 
 function throwingConnector(failure: unknown) {
   return new HttpAiConnector({
-    preset: aiProviderPreset("deepseek")!,
+    connection: deepseekConnection(),
     transport: () => Promise.reject(failure),
   });
 }
@@ -1768,7 +1978,7 @@ Deno.test("HttpAiConnector completes offline through an injected transport", asy
   });
   let seen: { url: string; body: Record<string, unknown> } | null = null;
   const connector = new HttpAiConnector({
-    preset: "deepseek",
+    preset: deepseekConnection(),
     model: "deepseek-chat",
     transport: (call: {
       url: string;
@@ -2612,7 +2822,7 @@ Deno.test("offline end-to-end: context → call → parse → suggestion → dra
   });
   const started = new Date().toISOString();
   const connector = new HttpAiConnector({
-    preset: "deepseek",
+    preset: deepseekConnection(),
     model: "deepseek-chat",
     transport: (call: { body: Record<string, unknown> }) => {
       // The transport sees the assembled context only, never a credential.
