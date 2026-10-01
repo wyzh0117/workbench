@@ -298,3 +298,28 @@ What only the user can do:
 2. Decide whether to authorize committing this working tree, cutting `v0.2.4`, and letting
    the release workflow publish a Universal DMG with Developer ID signing still unavailable.
    Nothing in this round does that on its own.
+
+## 12. Release outcome (2026-10-02, supersedes the "no commit / no tag" state above)
+
+The handoff in §11 item 2 was authorized by the user on 2026-10-02
+(「把项目同步到 GitHub，同时 tag 和发布新版本 release」), so statements in §201-206
+("No new version, tag, Release, DMG, or commit") describe the pre-authorization state of this
+report and are kept as a snapshot.
+
+- Source commit `4db396bf7c1953a62f72d3887d6ae07b03fcaa76` pushed to `main`; annotated tag
+  `v0.2.4` (tag object `db3171c2ad14cac8ae1ded0d1300757963ffe937`) → release workflow run
+  `36906333256`, `completed` / `success`; Release published, `isDraft=false`.
+- Public artifact verified by anonymous download: Universal DMG 12,107,473 bytes,
+  SHA-256 `82fdba5957f57d9650f74922197e9593e981be418515e6c7e34519164cef4dab`, identical to the
+  `.sha256` sidecar and GitHub's own asset digest; `hdiutil verify` VALID; `lipo -archs`
+  `x86_64 arm64`; bundle version 0.2.4; signature ad-hoc with no `TeamIdentifier`;
+  `spctl --assess --type execute` → `rejected`. `releases/latest` resolves to `v0.2.4`.
+- Gates at the tagged source state: `deno task check` clean, Deno 522 passed / 0 failed,
+  `cargo fmt --check` clean, Rust 104 passed / 0 failed, `cargo build` clean.
+- `v0.2.3` and earlier tags, DMGs and sidecars untouched; nothing was rebuilt or overwritten.
+- §11 item 1 is **still open and was not converted into a pass by this release**: the native
+  window pointer / open-panel gesture pass and the first real live AI call remain for the user,
+  item by item in `PROJECT_MASTER_CONTROL.md` §43.6. Any follow-up ships as `v0.2.5`.
+- Full facts: `PROJECT_MASTER_CONTROL.md` §43.4; user-facing record:
+  [`docs/feature-history/v0.2.4.md`](./feature-history/v0.2.4.md); procedure kept for the next
+  release: [`docs/release-playbook.md`](./release-playbook.md).
