@@ -113,15 +113,15 @@ BLOCKER            = 缺正式 macOS signing / notarization credentials
 - V1-T04 — Workspace Explorer & Existing-Folder Adoption：**VERIFIED**
 - V1-T05 — Paged Canvas & Pagination：**VERIFIED**
 - V1-T06 — Layout-aware Export & PPTX：**VERIFIED**
-- 当前交接：**V1 补充反馈（2026-09-30）/ v0.2.3 发布准备**
-- 当前状态：**V1 ACTIVE；v0.2.3 候选进入发布准备**（T01–T06 的 VERIFIED 为历史任务结论）
-- 产品状态：**PARTIAL**；候选可进入发布流程，但 GIF 动画在本机 WKWebView 未观察到，在线服务及若干精确交互/尺寸仍未验收，不作整体 VERIFIED 或 DOGFOOD READY 结论
-- 分发状态：**PARTIAL**（0.2.3 Universal DMG 已本地构建；v0.2.3 Release 与 sidecar 尚未公开；当前制品为 ad-hoc signed，无 `TeamIdentifier`，`spctl --assess --type execute` 为 `rejected`，未做 Developer ID 签名或公证）
+- 当前交接：**V1 补充反馈（2026-09-30）/ v0.2.3 已发布**
+- 当前状态：**V1 ACTIVE；v0.2.3 已发布**（T01–T06 的 VERIFIED 为历史任务结论）
+- 产品状态：**PARTIAL**；GIF 动画在本机 WKWebView 未观察到，在线服务及若干精确交互/尺寸仍未验收，不作整体 VERIFIED 或 DOGFOOD READY 结论
+- 分发状态：**PARTIAL / 公开下载可用**（v0.2.3 Universal DMG 与 SHA-256 sidecar 已匿名下载校验；制品为 ad-hoc signed，无 `TeamIdentifier`，`spctl --assess --type execute` 为 `rejected`，未做 Developer ID 签名或公证）
 - V0 状态：**V0 CLOSED；V0-T01 / V0-T02 / V0-T03 / V0-T04 全部 VERIFIED**
-- 最新公开版本仍为 [`v0.2.2`](https://github.com/wyzh0117/workbench/releases/tag/v0.2.2)（workflow run `36539271460`）；本地目标版本为 `0.2.3`，尚未发布。已发布 tag 与 DMG 保持冻结。
-- NEXT ACTION：复核 Universal DMG 与 SHA-256 sidecar、完成匿名下载/Release 检查后发布 v0.2.3；保留下方已说明的验收限制。不创建 V1-T07，不关闭 V1
+- 最新公开版本为 [`v0.2.3`](https://github.com/wyzh0117/workbench/releases/tag/v0.2.3)（tag/source commit `0ce229ac79b925164e3ea43eae4ac8059d5022e4`，workflow run `36805861906`）；[Universal DMG](https://github.com/wyzh0117/workbench/releases/download/v0.2.3/AI-Course-Workbench-macOS.dmg) 与 [SHA-256 sidecar](https://github.com/wyzh0117/workbench/releases/download/v0.2.3/AI-Course-Workbench-macOS.dmg.sha256) 已匿名下载核验，该 tag 与资产保持冻结。
+- NEXT ACTION：在获得 Apple Developer ID 分发凭据后评估签名/公证；保留下方已说明的验收限制。不创建 V1-T07，不关闭 V1
 
-2026-10-01 候选验收：preview4 PDF/PPTX 原生检查通过，PPTX 在 PowerPoint 中可打开且文字、图片可编辑。preview6–9 对编辑、追加、分页、设置、窄屏工具栏、Markdown/图片/PDF 预览及视频完成了多项原生走查；最终源码自动化为 Deno 389/389、Rust 95/95，`deno task check` 与 `cargo fmt --check` 通过。QA-only 诊断脚本及 HTML 引用已删除，清理后的 Universal app+DMG 生产构建成功，`hdiutil verify` 通过，架构 x86_64+arm64。preview9 验证 GIF Blob 487B、MIME、GIF89a 与 fixture SHA 一致，独立 IMG 从同字节加载为 160×90；但本机 WKWebView 中 modal 与独立 IMG 在 2.65 秒内都只观察到红帧，动画未通过/未闭环，不能归因于源文件损坏。最终无诊断 QA 轻抽检确认正文聚焦行显示自己的 +/⋯ 操作，顶部设置进入 AI 模型管理且课程地图可达。preview8 窄屏工具栏可读；精确 1024/字体缩放、指针拖动取消及在线 SIWC/Provider 请求未验证。原生 GUI 观察来自 QA 快照，未在正式包上重复完整 GUI 套件。53 项明确文件已暂存，尚未提交、打 tag 或发布；latest public release 仍为 v0.2.2。正式 DMG 为 ad-hoc signed、无 `TeamIdentifier`，`spctl --assess --type execute` 返回 `rejected`；未做 Developer ID 签名/公证。preview6–9 为隔离 QA 包，不是发布物。详见 [v0.2.3 验收报告](docs/V1_Feedback_Import_Rendering_AI_Settings_2026-09-30_Acceptance_Report.md)。
+2026-10-01 v0.2.3 验收与发布：源码提交 `0ce229ac79b925164e3ea43eae4ac8059d5022e4` 已推送，`v0.2.3` tag 触发 workflow `36805861906` 成功，GitHub Release 为 Latest。公开 Universal DMG 与 SHA-256 sidecar 均以匿名 HTTP 200 下载并校验一致；公开 DMG SHA-256 为 `62f8d6a4c00360c27452244aa0de6d2a1fb3dd9d7a9053522494e07d750a2d73`，`hdiutil verify` 通过，版本 0.2.3、架构 x86_64+arm64。preview4 PDF/PPTX 原生检查通过，PPTX 在 PowerPoint 中可打开且文字、图片可编辑。preview6–9 对编辑、追加、分页、设置、窄屏工具栏、Markdown/图片/PDF 预览及视频完成了多项原生走查；最终源码自动化为 Deno 389/389、Rust 95/95，`deno task check` 与 `cargo fmt --check` 通过。QA-only 诊断脚本及 HTML 引用已删除。preview9 验证 GIF Blob 487B、MIME、GIF89a 与 fixture SHA 一致，独立 IMG 从同字节加载为 160×90；但本机 WKWebView 中 modal 与独立 IMG 在 2.65 秒内都只观察到红帧，动画未通过/未闭环，不能归因于源文件损坏。最终无诊断 QA 轻抽检确认正文聚焦行显示自己的 +/⋯ 操作，顶部设置进入 AI 模型管理且课程地图可达。preview8 窄屏工具栏可读；精确 1024/字体缩放、指针拖动取消及在线 SIWC/Provider 请求未验证。原生 GUI 观察来自 QA 快照，未在正式包上重复完整 GUI 套件。正式 DMG 为 ad-hoc signed、无 `TeamIdentifier`，`spctl --assess --type execute` 返回 `rejected`；未做 Developer ID 签名/公证。preview6–9 为隔离 QA 包，不是发布物。详见 [v0.2.3 验收报告](docs/V1_Feedback_Import_Rendering_AI_Settings_2026-09-30_Acceptance_Report.md)。
 
 T05/T06 自动化检查为 346/346，Rust 检查 78/78；这些是 §38 历史验收证据。页面恢复修复已在隔离桌面项目上连续两次重启验证；T05/T06 的 Universal app 恢复了 page 3。原生 PDF smoke 输出一页 960×540 pt，正确包含第 3 页标题与正文。PowerPoint 已打开三页 PPTX 且未触发 Repair，并在副本中验证文字与图片可编辑。三页、两张图片的 Static Web 样例已通过独立 Chrome `file://` 阅读检查。此前 `v0.2.1` 由 tag-triggered run `36325086880` 成功发布；其公开 Universal DMG SHA-256 为 `ca151a578065939f6c2e0dfa4f23955faee5f512c6833ccbe4931a68bf66817c`，匿名下载与 `.sha256` sidecar 校验一致。`v0.2.0` 失败 tag 保持冻结且没有 Release/资产。当前公开版本及 `v0.2.2` 分发状态见上方；DMG 为 ad-hoc signed，未做 Apple Developer ID 签名或公证。
 

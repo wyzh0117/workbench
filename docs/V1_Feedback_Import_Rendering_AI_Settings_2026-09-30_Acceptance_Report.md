@@ -1,10 +1,10 @@
 # V1 补充反馈验收报告（目标版本 0.2.3）
 
-> 更新日期：2026-10-01。状态：**验收总体 PARTIAL；0.2.3 候选进入发布准备**。本报告按反馈原编号区分自动化证据与原生 GUI 证据；未覆盖项保持待测。V1 仍为 ACTIVE，不据此关闭 V1。
+> 更新日期：2026-10-01。状态：**验收总体 PARTIAL；v0.2.3 已公开发布**。本报告按反馈原编号区分自动化证据与原生 GUI 证据；未覆盖项保持待测。V1 仍为 ACTIVE，不据此关闭 V1。
 
 ## 版本与验证状态
 
-- 应用配置版本为 `0.2.3`；当前公开版本仍是 [`v0.2.2`](https://github.com/wyzh0117/workbench/releases/tag/v0.2.2)。本地 Universal app/DMG 生产构建已生成，`hdiutil verify` 通过；DMG SHA-256 为 `b109449abc48f534fdc6e64618e3e0297da3435fad8bcdcb64df7631689074f6`，架构 x86_64+arm64。53 项明确文件已暂存，尚未提交、打 tag 或发布；该制品不是 GitHub Release 资产，尚无最终发布 commit/tag/URL 或公开 sidecar。
+- v0.2.3 已通过 [`GitHub Release`](https://github.com/wyzh0117/workbench/releases/tag/v0.2.3) 发布并列为 Latest；源码 tag `v0.2.3` 指向 `0ce229ac79b925164e3ea43eae4ac8059d5022e4`，发布 workflow [36805861906](https://github.com/wyzh0117/workbench/actions/runs/36805861906) 成功。匿名下载的公开 Universal DMG 与 SHA-256 sidecar 校验一致；SHA-256 为 `62f8d6a4c00360c27452244aa0de6d2a1fb3dd9d7a9053522494e07d750a2d73`，大小 11,963,243 bytes，`hdiutil verify` 通过。包内版本 0.2.3，架构 x86_64+arm64；签名为 ad-hoc、无 `TeamIdentifier`，`spctl --assess --type execute` 为 `rejected`，未做 Developer ID 签名或公证。此前本地预构建 DMG 的 SHA 为 `b109449abc48f534fdc6e64618e3e0297da3435fad8bcdcb64df7631689074f6`，与 workflow 产出的公开资产不同，不作为公开下载校验值。
 - preview6 构建基线位于 `main` 的 `d85c3f7f42cdf794ad53f9c8f2c3f8c7d726b9fd`；构建时版本候选改动仍在工作区，不能把该基线 commit 当作本轮发布源码 commit。
 - 首次接管在用户明确选择的来源目录根创建 `project.json` 与 `.workspace`；确认的素材副本位于该项目的 `assets/`。preview7 原生向既有 C02 追加 TXT 与 Markdown 成功；同 SHA Markdown 默认跳过，保留已编辑正文，追加可一次 Undo/Redo。来源文件保持原位且字节不变；项目身份、历史和已有引用另有自动化回归保护。
 - Markdown 正文仍以源 Markdown 存入 Canonical `Block.content`。浏览器/Deno 共享 AST parser 派生语义块与 HTML；显式本地图片引用按 AST 建立 `settings.markdown_assets` 的 href→asset ID 映射，远程/危险 href 不自动抓取；导入边界再次以源 hash、后端解析和路径授权校验依赖。预览层通过受控资源 resolver 渲染，不从 HTML 或正则反推路径。
@@ -46,6 +46,6 @@
 - 正式 Universal app/DMG 为 ad-hoc signed，没有 `TeamIdentifier`；本机 `spctl --assess --type execute` 结果为 `rejected`，未使用 Developer ID 签名或 Apple 公证。因此分发状态为 PARTIAL，不能承诺首次打开无需 Gatekeeper 放行。
 - 原始反馈、用户私人历史文档和本地 QA 临时材料不属于公开发布文件。已发布 `v0.2.2` 的 tag/assets 必须保持冻结。
 
-## 正式发布回填
+## 正式发布记录
 
-清理 QA 诊断后的正式 Universal app/DMG 已生成且 `hdiutil verify` 通过。最终源码 `deno task test` 389/389、Rust `cargo test` 95/95、`deno task check` 与 `cargo fmt --check` 均已通过；正式构建成功。原生 GUI 观察来自 preview4/6/7/8/9，未在正式包上重跑完整 GUI 验收。候选整体验收仍为 PARTIAL。正式发布后补入：源码 commit 与 tag、公开下载与 sidecar 对照、GitHub Release URL。当前 DMG hash 是本地生产构建记录，不是公开下载验证；发布不代表 GIF 动画、在线 SIWC/Provider、精确字体缩放或指针拖动取消已验收。
+源码提交 `0ce229ac79b925164e3ea43eae4ac8059d5022e4` 已推送到 `main`，tag `v0.2.3` 指向该 commit；后续公开状态文档作为独立 commit 推送，不移动发布 tag。Release URL：<https://github.com/wyzh0117/workbench/releases/tag/v0.2.3>。直接下载：[Universal DMG](https://github.com/wyzh0117/workbench/releases/download/v0.2.3/AI-Course-Workbench-macOS.dmg) · [SHA-256 sidecar](https://github.com/wyzh0117/workbench/releases/download/v0.2.3/AI-Course-Workbench-macOS.dmg.sha256)。workflow `36805861906` 成功；两项资产以匿名 HTTP 200 下载，sidecar 比对通过，下载后的 DMG `hdiutil verify` 为 VALID。公开制品 SHA-256 `62f8d6a4c00360c27452244aa0de6d2a1fb3dd9d7a9053522494e07d750a2d73`。正式源码 `deno task test` 389/389、Rust `cargo test` 95/95、`deno task check` 与 `cargo fmt --check` 均已通过；原生 GUI 观察来自 preview4/6/7/8/9，未在正式包上重跑完整 GUI 验收。整体验收仍为 PARTIAL；发布不代表 GIF 动画、在线 SIWC/Provider、精确字体缩放或指针拖动取消已验收。

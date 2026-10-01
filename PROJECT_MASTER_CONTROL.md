@@ -3595,22 +3595,27 @@ NEXT ACTION = 如需覆盖非空正文/素材引用保留，用含这些内容�
 V0 = CLOSED
 V1 = ACTIVE
 V1-T01 through V1-T06 = historical VERIFIED records unchanged
-Current task = v0.2.3 candidate release preparation; overall acceptance PARTIAL
+Current task = v0.2.3 published; overall acceptance PARTIAL
 Application target version = 0.2.3
-Latest public release = v0.2.2 (frozen)
-v0.2.3 release = user-authorized; production Universal app/DMG built; 53 files staged; commit/publication pending
-Local DMG SHA-256 = b109449abc48f534fdc6e64618e3e0297da3435fad8bcdcb64df7631689074f6 (hdiutil verify passed; not yet a public asset)
+Latest public release = v0.2.3 (Latest)
+v0.2.3 source commit/tag = 0ce229ac79b925164e3ea43eae4ac8059d5022e4 / v0.2.3
+Release workflow = 36805861906 (success)
+Public release = https://github.com/wyzh0117/workbench/releases/tag/v0.2.3
+Public Universal DMG = https://github.com/wyzh0117/workbench/releases/download/v0.2.3/AI-Course-Workbench-macOS.dmg
+Public SHA-256 sidecar = https://github.com/wyzh0117/workbench/releases/download/v0.2.3/AI-Course-Workbench-macOS.dmg.sha256
+Public DMG SHA-256 = 62f8d6a4c00360c27452244aa0de6d2a1fb3dd9d7a9053522494e07d750a2d73 (anonymous download and sidecar match; hdiutil verify passed)
+Local pre-release DMG SHA-256 = b109449abc48f534fdc6e64618e3e0297da3435fad8bcdcb64df7631689074f6 (local pre-release build; not the public asset)
 Product state = PARTIAL; explicit limitations remain; V1 stays ACTIVE
 Distribution = PARTIAL; Developer ID signing / notarization unavailable
 ```
 
-用户已授权本轮完成后同步 Git、GitHub 与 Release 页面。最终源码检查、测试和清理 QA-only 诊断后的 Universal app/DMG 构建均已完成；53 项明确文件已暂存，仍待提交、打 tag 与发布。review 已程序化核对发布 53 项 pathspec，4 份原始反馈/私人历史文件排除在外。v0.2.2 及更早 tags/assets 保持不变。原始反馈及用户私人历史文档保留本地，不纳入发布文件。
+用户已授权本轮完成后同步 Git、GitHub 与 Release 页面。53 项功能源码和预发布文档已提交至 `0ce229ac79b925164e3ea43eae4ac8059d5022e4` 并推送 `main`；tag `v0.2.3` 指向该源码提交且保持冻结。release workflow `36805861906` 成功，GitHub Release 已列为 Latest；公开 Universal DMG 与 sidecar 完成匿名下载、SHA 和镜像校验。发布后状态文档回填作为独立后续提交推送到 `main`，不移动 tag。4 份原始反馈/私人历史文件排除在公开提交之外，v0.2.2 及更早 tags/assets 保持不变。
 
 ## 40.2 Scope and Acceptance Record
 
 本轮范围按反馈 15 项覆盖：文件与文件夹首次导入/追加、Markdown 解析与显式本地图片依赖、编辑器小屏与区块交互、分页控制、AI 设置与三类 API 协议、媒体库及文件页预览。导入重复检测使用来源校验和持久来源记录；追加需保留项目身份、现有正文/分页/素材引用，并把一个导入作为一次可撤销操作。安全预览仅处理明确的本地引用，不自动抓取远程图片。
 
-逐项状态、preview4/6/7/8/9 原生证据、未验证边界及正式发布后待补资料详见 [`0.2.3 验收报告`](docs/V1_Feedback_Import_Rendering_AI_Settings_2026-09-30_Acceptance_Report.md)。报告区分自动化与原生证据，未以单项测试通过替代整体验收。
+逐项状态、preview4/6/7/8/9 原生证据、正式发布记录和仍未验证边界详见 [`0.2.3 验收报告`](docs/V1_Feedback_Import_Rendering_AI_Settings_2026-09-30_Acceptance_Report.md)。报告区分自动化与原生证据，未以单项测试通过替代整体验收。
 
 ## 40.3 Automated Validation Snapshot
 
@@ -3620,13 +3625,13 @@ Distribution = PARTIAL; Developer ID signing / notarization unavailable
 
 ## 40.4 Native Snapshot and Blockers
 
-preview4 验证了 PDF 整页中文和真实图片；PPTX 在 PowerPoint 打开且未触发 Repair，文字和图片对象分别可编辑。preview6/7 视频静态 poster 显示红色首帧且未自动播放；显式播放与返回复位通过。preview6 中文正文编辑持久、加粗 Undo/Redo、分页退出重进及拖动后重新选字通过；preview7 已有 C02 追加、同 SHA 默认跳过、单次 Undo/Redo、新连接表单取消无持久化通过。preview8 验证窄屏工具栏与四种侧栏组合、设置三协议取消保留列表、Markdown 本地图/缺图/PDF、依赖展开保持选择、分页位置保留及 Escape 取消 click-move 后正文可选字。目录选择经键盘明确选中后扫描目标目录；此前 CUA 单击只是 hover，不是产品路径缺陷。preview9 GIF Blob 为 487B，MIME/GIF89a/SHA 与 fixture 匹配，独立 IMG 从同字节重建并加载；modal 与独立 IMG 连续 2.65 秒都只观察到红帧，本机 WKWebView 动画未通过/未闭环，不归因于源文件损坏。最终无诊断 QA 轻抽检确认正文聚焦行显示自己的 +/⋯ 控件、顶部设置进入 AI 模型管理且课程地图可达。精确 1024/字体缩放、指针拖动取消、在线 SIWC/Provider 未测。首帧解码透明帧重试与迟到 Blob 清理自动化已通过。preview6–9 均为 QA 快照；当前生产 Universal app/DMG 已构建并通过 `hdiutil verify`；53 项明确文件已暂存，尚未提交、tag 或发布。DMG 本地 SHA-256 `b109449abc48f534fdc6e64618e3e0297da3435fad8bcdcb64df7631689074f6`；ad-hoc signed，spctl rejected，无 Developer ID 签名/公证。候选可进入发布流程，但总体验收保持 PARTIAL。
+preview4 验证了 PDF 整页中文和真实图片；PPTX 在 PowerPoint 打开且未触发 Repair，文字和图片对象分别可编辑。preview6/7 视频静态 poster 显示红色首帧且未自动播放；显式播放与返回复位通过。preview6 中文正文编辑持久、加粗 Undo/Redo、分页退出重进及拖动后重新选字通过；preview7 已有 C02 追加、同 SHA 默认跳过、单次 Undo/Redo、新连接表单取消无持久化通过。preview8 验证窄屏工具栏与四种侧栏组合、设置三协议取消保留列表、Markdown 本地图/缺图/PDF、依赖展开保持选择、分页位置保留及 Escape 取消 click-move 后正文可选字。目录选择经键盘明确选中后扫描目标目录；此前 CUA 单击只是 hover，不是产品路径缺陷。preview9 GIF Blob 为 487B，MIME/GIF89a/SHA 与 fixture 匹配，独立 IMG 从同字节重建并加载；modal 与独立 IMG 连续 2.65 秒都只观察到红帧，本机 WKWebView 动画未通过/未闭环，不归因于源文件损坏。最终无诊断 QA 轻抽检确认正文聚焦行显示自己的 +/⋯ 控件、顶部设置进入 AI 模型管理且课程地图可达。精确 1024/字体缩放、指针拖动取消、在线 SIWC/Provider 未测。首帧解码透明帧重试与迟到 Blob 清理自动化已通过。preview6–9 均为 QA 快照；正式发布的 Universal app/DMG 由 workflow `36805861906` 构建成功，公开匿名下载和 sidecar 校验一致，镜像 `hdiutil verify` 通过；包内版本 0.2.3、架构 x86_64+arm64。公开 DMG SHA-256 `62f8d6a4c00360c27452244aa0de6d2a1fb3dd9d7a9053522494e07d750a2d73`；ad-hoc signed，`TeamIdentifier` 未设置，spctl rejected，无 Developer ID 签名/公证。整体验收保持 PARTIAL。
 
 三种 API 协议的 loopback 请求与部分订阅会话行为通过自动化/本地替身验证；没有在线 SIWC 登录、真实 token refresh 或真实 Provider 请求。不得把本地替身描述为在线账户验收。签名与公证仍是单独的分发阻碍。
 
 ## 40.5 Next Gate
 
-1. 53 项发布 pathspec 已暂存；待发布授权后提交源码，并检查提交/tag 与生产构建对应关系；保持 4 份私人/反馈文档不发布。
-2. 核对 Universal DMG、SHA-256 sidecar、匿名下载及 Release 页面，按用户授权发布 v0.2.3；以真实 commit/tag/工作流/资产数据回填 README、本报告与本节。
-3. 发布说明保留 GIF 动画在本机 WKWebView 未观察到、在线服务未测、签名/公证未完成和精确交互/尺寸未测等限制；不将总体 PARTIAL 改成整体 VERIFIED。
+1. 已完成 v0.2.3 源码提交、main/tag push、Release workflow、匿名下载与 sidecar/DMG 校验；发布后回填文档独立推送 main，不移动 tag。
+2. 保持报告中的 PARTIAL 限制：GIF 动画、在线 SIWC/Provider、Developer ID 签名/公证、精确交互与尺寸仍未验收或未具备条件。
+3. 获得 Apple Developer ID 分发凭据后，可另行制作签名公证版本；保持当前已发布 tag/assets 冻结。
 4. 保持 V1 ACTIVE；后续用户实际使用确认后再收口，不自动关闭 V1。
