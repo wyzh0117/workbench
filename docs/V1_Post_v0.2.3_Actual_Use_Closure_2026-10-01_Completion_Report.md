@@ -302,9 +302,9 @@ What only the user can do:
 ## 12. Release outcome (2026-10-02, supersedes the "no commit / no tag" state above)
 
 The handoff in §11 item 2 was authorized by the user on 2026-10-02
-(「把项目同步到 GitHub，同时 tag 和发布新版本 release」), so statements in §201-206
-("No new version, tag, Release, DMG, or commit") describe the pre-authorization state of this
-report and are kept as a snapshot.
+(「把项目同步到 GitHub，同时 tag 和发布新版本 release」), so the §7 line
+「No new version, tag, Release, DMG, or commit」and the §11 ask describe the
+pre-authorization state of this report and are kept as a snapshot.
 
 - Source commit `4db396bf7c1953a62f72d3887d6ae07b03fcaa76` pushed to `main`; annotated tag
   `v0.2.4` (tag object `db3171c2ad14cac8ae1ded0d1300757963ffe937`) → release workflow run
