@@ -5,7 +5,7 @@
  */
 import { join } from "node:path";
 import { DesktopService } from "../src/service/desktop.ts";
-import { scanFolder, type ScanResult } from "../src/service/folder_scan.ts";
+import { inspectMarkdownImage, readFolderPreview, scanFolder, type ScanResult } from "../src/service/folder_scan.ts";
 
 function assert(condition: unknown, message: string): asserts condition {
   if (!condition) throw new Error(message);
@@ -79,7 +79,44 @@ Deno.test("launcher exposes three distinct project-entry actions including 导�
   );
 });
 
-Deno.test("scanFolder walks nested folders and tags roles without writing project.json", async () => {
+Deno.test("Markdown dependency status distinguishes present, missing, and unsafe refs", async () => {
+  const root = await Deno.makeTempDir({ prefix: "acw-md-image-status-" });
+  try {
+    await Deno.mkdir(join(root, "images"), { recursive: true });
+    await Deno.writeTextFile(join(root, "lesson.md"), "![x](images/present.png)");
+    await Deno.writeFile(join(root, "images/present.png"), new Uint8Array([1, 2, 3]));
+    const present = await inspectMarkdownImage(root, "lesson.md", "images/present.png");
+    assert(present.status === "present" && present.size === 3, "real dependencies return file metadata only");
+    const missing = await inspectMarkdownImage(root, "lesson.md", "images/missing.png");
+    assert(missing.status === "missing", "only absent local files are classified missing");
+    const escape = await inspectMarkdownImage(root, "lesson.md", "../../outside.png");
+    assert(escape.status === "unsafe", "path escape is not reported as a missing image");
+  } finally {
+    await Deno.remove(root, { recursive: true });
+  }
+});
+
+Deno.test("readFolderPreview rejects intermediate symlinks and still reads an in-root file", async () => {
+  const root = await Deno.makeTempDir({ prefix: "acw-preview-symlink-root-" });
+  const outside = await Deno.makeTempDir({ prefix: "acw-preview-symlink-out-" });
+  try {
+    await Deno.mkdir(join(root, "images"), { recursive: true });
+    await Deno.writeFile(join(root, "images", "local.png"), new Uint8Array([1, 2, 3]));
+    await Deno.writeFile(join(outside, "secret.png"), new Uint8Array([9, 8, 7]));
+    await Deno.symlink(outside, join(root, "external"), { type: "dir" });
+
+    const local = await readFolderPreview(root, "images/local.png");
+    assert(local.preview_kind === "image" && local.bytes_base64, "an ordinary in-root image remains previewable");
+    const escaped = await readFolderPreview(root, "external/secret.png");
+    assert(escaped.error?.includes("符号链接"), "an intermediate symlink must be rejected by the preview boundary");
+    assert(escaped.bytes_base64 === null, "preview must not return bytes from outside the selected root");
+  } finally {
+    await Deno.remove(root, { recursive: true });
+    await Deno.remove(outside, { recursive: true });
+  }
+});
+
+Deno.test("scanFolder lists only direct children and excludes managed entries", async () => {
   const root = await Deno.makeTempDir({ prefix: "acw-t04-scan-" });
   try {
     await Deno.mkdir(join(root, "01-基础"), { recursive: true });
@@ -92,6 +129,12 @@ Deno.test("scanFolder walks nested folders and tags roles without writing projec
     await Deno.writeFile(join(root, "总体说明.pdf"), new Uint8Array([6]));
     await Deno.writeTextFile(join(root, "notes.txt"), "txt");
     await Deno.writeTextFile(join(root, "weird.bin"), "bin");
+    await Deno.writeTextFile(join(root, "project.lock"), "lock");
+    await Deno.writeTextFile(join(root, "credentials.json"), "secret metadata");
+    await Deno.mkdir(join(root, "target"), { recursive: true });
+    await Deno.mkdir(join(root, ".workspace"), { recursive: true });
+    await Deno.mkdir(join(root, ".git"), { recursive: true });
+    await Deno.writeTextFile(join(root, ".env.production"), "PRIVATE_VALUE=hidden");
 
     const before = await fingerprintTree(root);
     const report = await scanFolder(root);
@@ -111,20 +154,25 @@ Deno.test("scanFolder walks nested folders and tags roles without writing projec
     const map = byRelative(report.entries);
     assert(map.get("01-基础")?.kind === "directory", "nested folder must appear");
     assert(map.get("01-基础")?.suggested_role === "stage", "top-level folder → stage suggestion");
-    assert(map.get("01-基础/导论.md")?.suggested_role === "lesson", "markdown → lesson");
-    assert(map.get("01-基础/导论.md")?.mime === "text/markdown", "markdown mime");
+    assert(!map.has("01-基础/导论.md"), "subfolder contents must not be scanned");
     assert(map.get("notes.txt")?.suggested_role === "lesson", "txt → lesson");
-    assert(map.get("01-基础/intro.png")?.suggested_role === "asset", "image → asset");
-    assert(map.get("02-进阶/demo.mp4")?.suggested_role === "asset", "video → asset");
-    assert(map.get("01-基础/大纲.docx")?.suggested_role === "reference", "docx → reference");
+    assert(!map.has("01-基础/intro.png"), "subfolder assets must not be scanned");
+    assert(!map.has("02-进阶/demo.mp4"), "subfolder media must not be scanned");
+    assert(!map.has("01-基础/大纲.docx"), "subfolder references must not be scanned");
     assert(map.get("总体说明.pdf")?.suggested_role === "reference", "pdf → reference");
+    assert(!map.has("project.lock"), "project lock is never an import suggestion");
+    assert(!map.has("credentials.json"), "credentials are never import suggestions");
+    assert(!map.has("target"), "build output folders are never import suggestions");
+    assert(!map.has(".workspace") && !map.has(".git"), "workspace and Git metadata are skipped");
+    assert(!map.has(".env.production"), "environment credentials are skipped");
+    assert(report.warnings.some((warning) => warning.includes("project.lock")), "managed files are explained");
     assert(
       map.get("weird.bin")?.suggested_role === "unsupported",
       "unknown type must be tagged unsupported, not crash",
     );
     assert(
-      typeof map.get("01-基础/导论.md")?.size === "number" &&
-        (map.get("01-基础/导论.md")?.size ?? 0) > 0,
+      typeof map.get("notes.txt")?.size === "number" &&
+        (map.get("notes.txt")?.size ?? 0) > 0,
       "file size must be present",
     );
   } finally {
@@ -132,7 +180,7 @@ Deno.test("scanFolder walks nested folders and tags roles without writing projec
   }
 });
 
-Deno.test("scanFolder isolates unreadable entries without failing the tree", async () => {
+Deno.test("scanFolder shows a child folder without reading its contents", async () => {
   const root = await Deno.makeTempDir({ prefix: "acw-t04-unreadable-" });
   const locked = join(root, "locked");
   try {
@@ -150,10 +198,7 @@ Deno.test("scanFolder isolates unreadable entries without failing the tree", asy
     );
     const lockedEntry = map.get("locked");
     assert(lockedEntry, "unreadable directory must still appear as a degraded entry");
-    assert(
-      Boolean(lockedEntry.error) || lockedEntry.suggested_role === "unsupported",
-      "unreadable entry must be degraded, not throw",
-    );
+    assert(lockedEntry.kind === "directory", "child folder must be listed as a directory");
     assert(
       !map.has("locked/secret.md"),
       "contents under an unreadable directory must not be required",
@@ -196,7 +241,7 @@ Deno.test("scanFolder degrades an unreadable single file without failing sibling
   }
 });
 
-Deno.test("CourseFolder fixture (§41) scans as nested stages with md/png/mp4/docx/pdf roles", async () => {
+Deno.test("CourseFolder fixture scan exposes stages but not their contents", async () => {
   const fixture = new URL("./fixtures/CourseFolder", import.meta.url);
   const root = Deno.build.os === "windows"
     ? decodeURIComponent(fixture.pathname.replace(/^\//, ""))
@@ -212,12 +257,12 @@ Deno.test("CourseFolder fixture (§41) scans as nested stages with md/png/mp4/do
   const map = byRelative(report.entries);
   assert(map.get("01-基础")?.suggested_role === "stage", "01-基础 → stage");
   assert(map.get("02-进阶")?.suggested_role === "stage", "02-进阶 → stage");
-  assert(map.get("01-基础/导论.md")?.suggested_role === "lesson", "导论.md → lesson");
-  assert(map.get("01-基础/intro.png")?.suggested_role === "asset", "intro.png → asset");
-  assert(map.get("02-进阶/demo.mp4")?.suggested_role === "asset", "demo.mp4 → asset");
-  assert(map.get("01-基础/大纲.docx")?.suggested_role === "reference", "大纲.docx → reference");
-  assert(map.get("总体说明.pdf")?.suggested_role === "reference", "总体说明.pdf → reference");
-  assert(map.get("02-进阶/第二课.md")?.suggested_role === "lesson", "第二课.md → lesson");
+  assert(!map.has("01-基础/导论.md"), "lesson inside a stage requires a separate root selection");
+  assert(!map.has("01-基础/intro.png"), "assets inside a stage require a separate root selection");
+  assert(!map.has("02-进阶/demo.mp4"), "media inside a stage require a separate root selection");
+  assert(!map.has("01-基础/大纲.docx"), "references inside a stage are not scanned");
+  assert(map.get("总体说明.pdf")?.suggested_role === "reference", "root reference → reference");
+  assert(!map.has("02-进阶/第二课.md"), "lesson inside a stage is not scanned");
   assert(
     !(await Deno.stat(join(root, "project.json")).then(() => true).catch(() => false)),
     "fixture must remain without project.json after scan",
@@ -242,9 +287,13 @@ Deno.test("folder.scan command is read-only and does not require an open project
       assert(report.root === root, "command must return scanned root");
       assert(
         report.entries.some((entry) =>
-          entry.relative_path.replaceAll("\\", "/") === "单元/a.md"
+          entry.relative_path.replaceAll("\\", "/") === "单元"
         ),
-        "command must return nested scan entries",
+        "command must return the direct child folder",
+      );
+      assert(
+        !report.entries.some((entry) => entry.relative_path.includes("a.md")),
+        "command must not scan inside the child folder",
       );
       assert(
         !(await Deno.stat(join(root, "project.json")).then(() => true).catch(() => false)),

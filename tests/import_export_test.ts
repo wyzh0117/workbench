@@ -28,6 +28,7 @@ import {
   getAvailablePublicationAdapters,
   getPublicationCapabilities,
 } from "../app/publication.js";
+import { renderPublishHtml, renderPublishPdf } from "../src/service/publish.ts";
 
 function assert(condition: unknown, message: string): asserts condition {
   if (!condition) throw new Error(message);
@@ -769,7 +770,7 @@ Deno.test("export refuses a symlink at the final output target", async () => {
   );
 });
 
-Deno.test("publish projection keeps scope/order/layout and omits workflow placeholders", () => {
+Deno.test("publish projection keeps scope/order/layout and omits workflow placeholders", async () => {
   const data = courseData();
   const item = data.content_items[0]!;
   appendBlock(data, item.id, "heading", "稳定标题", { level: 2 });
@@ -783,6 +784,9 @@ Deno.test("publish projection keeps scope/order/layout and omits workflow placeh
   }).asset;
   const imageBlock = appendBlock(data, item.id, "image", image.filename, {
     asset_id: image.id,
+  });
+  appendBlock(data, item.id, "paragraph", "**粗体** 与 `字面` ![封面](images/cover.png) <script>x</script>", {
+    markdown_assets: [{ href: "images/cover.png", asset_id: image.id }],
   });
   addAssetUsage(data, image.id, item.id, { block_id: imageBlock.id });
   const layout = createLayoutInstance(data, item.id, {
@@ -802,6 +806,35 @@ Deno.test("publish projection keeps scope/order/layout and omits workflow placeh
   assert(projection.lessons[0]!.blocks.filter((block) => block.media?.id === image.id).length === 1, "inline media should occur once");
   assert(projection.lessons[0]!.attachments.every((media) => media.id !== image.id), "inline media must not be repeated as an attachment");
   assert(projection.lessons[0]!.layout?.mode === "grid", "layout semantics should survive projection");
+  const semanticBlock = projection.lessons[0]!.blocks.find((block) => block.type === "paragraph");
+  assert(semanticBlock?.rich_text?.some((part) => part.type === "paragraph" && part.children.some((node) => node.type === "strong")), "projection should carry parsed inline semantics");
+  assert(semanticBlock?.inline_media?.some((media) => media.id === image.id), "inline Markdown asset should be included in controlled media references");
+  const html = renderPublishHtml({
+    ...projection,
+    lessons: projection.lessons.map((lesson) => ({ ...lesson, layout: null })),
+  });
+  assert(html.includes("<strong>粗体</strong>") && html.includes("<code>字面</code>"), "HTML export should preserve Markdown inline formatting");
+  assert(html.includes('class="publication-inline-image" src="assets/%E4%B8%AD%E6%96%87%20%E5%B0%81%E9%9D%A2.png"'), "HTML export should resolve imported Markdown images to asset paths");
+  assert(html.includes("&lt;script&gt;x&lt;/script&gt;") && !html.includes("<script>x</script>"), "publication must keep raw HTML inert");
+  const pdfProjection = {
+    ...projection,
+    lessons: projection.lessons.map((lesson) => ({ ...lesson, layout: null })),
+  };
+  const pdf = new TextDecoder().decode(renderPublishPdf(pdfProjection));
+  const boldTextHex = Array.from("粗体").map((character) => character.charCodeAt(0).toString(16).padStart(4, "0")).join("");
+  assert(pdf.includes(boldTextHex), "PDF text should consume the same semantic projection");
+  const pdfPreset = createExportPreset(data, {
+    name: "语义投影 PDF",
+    output_type: "pdf",
+    platform: "通用",
+    naming_rule: "semantic",
+  });
+  const preflight = await preflightExport(data, pdfPreset, {
+    content_item_id: item.id,
+    asset_bytes: { [image.id]: new Uint8Array([1]) },
+  });
+  assert(!preflight.blocking.some((issue) => issue.code === "missing_asset" && issue.asset_id === image.id), "inline Markdown assets must participate in asset preflight");
+  assert(preflight.warnings.some((issue) => issue.code === "pdf_inline_images_omitted"), "service PDF image downgrade must be explicit");
 });
 
 Deno.test("static web package is portable and copies only referenced assets", async () => {

@@ -8,8 +8,11 @@ import { join } from "node:path";
 import {
   addPlacement,
   appendBlock,
+  buildBlueprintDraft,
+  confirmBlueprint,
   createEmptyProjectData,
   createExportPreset,
+  createCourseSeed,
   createLayoutInstance,
   exportProject,
   movePlacementToPage,
@@ -21,6 +24,8 @@ import {
   buildImportMappingPlan,
   confirmImportMappingPlan,
   type ImportMappingPlan,
+  setImportMappingAllowDuplicate,
+  setImportMappingDestination,
   setImportMappingRole,
   setImportMappingSelected,
 } from "../src/service/folder_mapping.ts";
@@ -76,23 +81,15 @@ async function fingerprintOriginals(
 async function seedCourseFolder(root: string): Promise<void> {
   await Deno.mkdir(join(root, "01-基础"), { recursive: true });
   await Deno.mkdir(join(root, "02-进阶"), { recursive: true });
-  await Deno.writeTextFile(
-    join(root, "01-基础", "导论.md"),
-    "# 导论\n第一课正文\n",
-  );
-  await Deno.writeTextFile(join(root, "01-基础", "大纲.docx"), "docx-bytes");
-  await Deno.writeFile(
-    join(root, "01-基础", "intro.png"),
-    new Uint8Array([1, 2, 3, 4]),
-  );
-  await Deno.writeTextFile(
-    join(root, "02-进阶", "第二课.md"),
-    "## 二\n进阶内容\n",
-  );
-  await Deno.writeFile(
-    join(root, "02-进阶", "demo.mp4"),
-    new Uint8Array([9, 8, 7]),
-  );
+  // Root-level files are the selected plan. Nested children remain present to
+  // assert that shallow scans never pull them in implicitly.
+  await Deno.writeTextFile(join(root, "导论.md"), "# 导论\n第一课正文\n");
+  await Deno.writeTextFile(join(root, "大纲.docx"), "docx-bytes");
+  await Deno.writeFile(join(root, "intro.png"), new Uint8Array([1, 2, 3, 4]));
+  await Deno.writeTextFile(join(root, "第二课.md"), "## 二\n进阶内容\n");
+  await Deno.writeFile(join(root, "demo.mp4"), new Uint8Array([9, 8, 7]));
+  await Deno.writeTextFile(join(root, "01-基础", "内部.md"), "不能默认导入");
+  await Deno.writeTextFile(join(root, "02-进阶", "内部.md"), "不能默认导入");
   await Deno.writeFile(join(root, "总体说明.pdf"), new Uint8Array([6, 6, 6]));
   await Deno.writeTextFile(join(root, "notes.txt"), "纯文本笔记");
   await Deno.writeTextFile(join(root, "weird.bin"), "bin");
@@ -310,7 +307,7 @@ Deno.test("selected+ignore and unselected files are not imported", async () => {
   try {
     await seedCourseFolder(root);
     const plan = await confirmedPlanFor(root, (p) => {
-      let next = setImportMappingSelected(p, "01-基础/intro.png", false);
+      let next = setImportMappingSelected(p, "intro.png", false);
       next = setImportMappingRole(next, "notes.txt", "ignore");
       // selected + ignore must still be treated as ignore
       next = setImportMappingSelected(next, "notes.txt", true);
@@ -349,10 +346,9 @@ Deno.test("selected+ignore and unselected files are not imported", async () => {
 Deno.test("same checksum reuses existing Asset; same name different bytes does not silent-overwrite", async () => {
   const root = await Deno.makeTempDir({ prefix: "acw-t04-adopt-dup-" });
   try {
-    await Deno.mkdir(join(root, "media"), { recursive: true });
     const bytesA = new Uint8Array([10, 20, 30, 40]);
     const bytesB = new Uint8Array([10, 20, 30, 99]); // same name later, different bytes
-    await Deno.writeFile(join(root, "media", "shot.png"), bytesA);
+    await Deno.writeFile(join(root, "shot.png"), bytesA);
     await Deno.writeTextFile(join(root, "readme.md"), "# hi\n");
 
     // First adoption seeds an asset.
@@ -369,11 +365,11 @@ Deno.test("same checksum reuses existing Asset; same name different bytes does n
     );
 
     // Second adoption into the same project data: identical checksum → reuse.
-    await Deno.writeFile(join(root, "media", "shot-copy.png"), bytesA);
+    await Deno.writeFile(join(root, "shot-copy.png"), bytesA);
     const report2 = await scanFolder(root);
     let plan2 = buildImportMappingPlan(report2.root, report2.entries);
     plan2 = setImportMappingSelected(plan2, "readme.md", false);
-    plan2 = setImportMappingRole(plan2, "media/shot-copy.png", "asset");
+    plan2 = setImportMappingRole(plan2, "shot-copy.png", "asset");
     plan2 = confirmImportMappingPlan(plan2);
     const reused = await confirmFolderAdoption(plan2, {
       data: first.data,
@@ -395,15 +391,15 @@ Deno.test("same checksum reuses existing Asset; same name different bytes does n
     );
 
     // Same filename, different bytes → new assets/{id}-shot.png, no overwrite.
-    await Deno.mkdir(join(root, "media2"), { recursive: true });
-    await Deno.writeFile(join(root, "media2", "shot.png"), bytesB);
-    const report3 = await scanFolder(root);
+    const otherSource = await Deno.makeTempDir({ prefix: "acw-t04-adopt-dup-source-" });
+    await Deno.writeFile(join(otherSource, "shot.png"), bytesB);
+    const report3 = await scanFolder(otherSource);
     let plan3 = buildImportMappingPlan(report3.root, report3.entries);
-    plan3 = setImportMappingRole(plan3, "media2/shot.png", "asset");
-    plan3 = setImportMappingSelected(plan3, "media2/shot.png", true);
+    plan3 = setImportMappingRole(plan3, "shot.png", "asset");
+    plan3 = setImportMappingSelected(plan3, "shot.png", true);
     // Deselect everything else to keep focus on conflict.
     for (const item of plan3.items) {
-      if (item.relative_path !== "media2/shot.png") {
+      if (item.relative_path !== "shot.png") {
         plan3 = setImportMappingSelected(plan3, item.relative_path, false);
       }
     }
@@ -413,10 +409,10 @@ Deno.test("same checksum reuses existing Asset; same name different bytes does n
       project_root: root,
       skip_project_write: true,
     });
-    const originals = await Deno.readFile(join(root, "media", "shot.png"));
+    const originals = await Deno.readFile(join(root, "shot.png"));
     assert(
       Array.from(originals).join(",") === Array.from(bytesA).join(","),
-      "original media/shot.png bytes must stay intact",
+      "original shot.png bytes must stay intact",
     );
     const managed = await Deno.readFile(join(root, storage1));
     assert(
@@ -436,6 +432,7 @@ Deno.test("same checksum reuses existing Asset; same name different bytes does n
         newAsset.storage_path.includes("-shot.png"),
       "collision path must keep id-prefixed filename",
     );
+    await Deno.remove(otherSource, { recursive: true });
   } finally {
     await Deno.remove(root, { recursive: true });
   }
@@ -448,7 +445,7 @@ Deno.test("markdown lesson becomes Canonical blocks; docx/pdf stay Source/Refere
     const plan = await confirmedPlanFor(root, (p) =>
       setImportMappingRole(
         setImportMappingSelected(p, "weird.bin", false),
-        "01-基础/导论.md",
+        "导论.md",
         "lesson",
       ));
     const result = await confirmFolderAdoption(plan);
@@ -476,18 +473,17 @@ Deno.test("markdown lesson becomes Canonical blocks; docx/pdf stay Source/Refere
   }
 });
 
-Deno.test("promote failure after writeProject keeps staging (matches Rust)", async () => {
+Deno.test("asset promotion failure leaves Canonical manifest uncommitted", async () => {
   const root = await Deno.makeTempDir({
     prefix: "acw-t04-adopt-promote-fail-",
   });
   try {
-    await Deno.mkdir(join(root, "media"), { recursive: true });
     await Deno.writeFile(
-      join(root, "media", "shot.png"),
+      join(root, "shot.png"),
       new Uint8Array([1, 2, 3]),
     );
     await Deno.writeTextFile(join(root, "readme.md"), "# hi\n");
-    // Block assets/ so promoteStaging fails after Canonical write.
+    // Block assets/ so promotion fails before the Canonical manifest commit.
     await Deno.writeTextFile(join(root, "assets"), "not-a-directory");
 
     const plan = await confirmedPlanFor(root);
@@ -501,26 +497,87 @@ Deno.test("promote failure after writeProject keeps staging (matches Rust)", asy
     }
     assert(threw, "promote failure must surface");
     assert(
-      /课程项目已写入.*素材提升失败/.test(message) &&
-        /adopt-staging/.test(message),
-      `must match Rust-style recover messaging (got: ${message})`,
+      /assets/.test(message),
+      `promotion error must be surfaced (got: ${message})`,
     );
     assert(
-      await Deno.stat(join(root, "project.json")).then((s) => s.isFile),
-      "project.json must remain after promote failure",
+      await Deno.stat(join(root, "project.json")).then(() => false).catch(() => true),
+      "project.json must not be committed when assets cannot be promoted",
     );
     const stagingDir = join(root, ".workspace", "adopt-staging");
-    assert(
-      await Deno.stat(stagingDir).then((s) => s.isDirectory),
-      "staging dir must not be wiped after promote failure",
-    );
-    let stagedFiles = 0;
-    for await (const entry of Deno.readDir(stagingDir)) {
-      if (entry.isFile) stagedFiles += 1;
+    let stagedTransactions = 0;
+    try {
+      for await (const _ of Deno.readDir(stagingDir)) stagedTransactions += 1;
+    } catch {
+      // Empty staging parent may be removed eagerly.
     }
-    assert(stagedFiles > 0, "staged media must remain recoverable");
+    assert(stagedTransactions === 0, "the failed transaction's staging must be cleaned");
+    assert(
+      Array.from(await Deno.readFile(join(root, "shot.png"))).join(",") === "1,2,3",
+      "promotion failure must preserve original source bytes",
+    );
   } finally {
     await Deno.remove(root, { recursive: true });
+  }
+});
+
+Deno.test("append commit failure removes only transaction-owned promoted assets", async () => {
+  const target = await Deno.makeTempDir({ prefix: "acw-t04-append-target-" });
+  const source = await Deno.makeTempDir({ prefix: "acw-t04-append-source-" });
+  try {
+    await Deno.writeFile(join(target, "old.png"), new Uint8Array([4, 5, 6]));
+    const initialPlan = await confirmedPlanFor(target);
+    const initial = await confirmFolderAdoption(initialPlan);
+    const oldAsset = initial.data.assets.find((asset) => asset.filename === "old.png");
+    assert(oldAsset, "initial project has old asset");
+    const oldBytes = await Deno.readFile(join(target, oldAsset.storage_path));
+    const manifestBefore = await Deno.readTextFile(join(target, "project.json"));
+
+    await Deno.writeFile(join(source, "new.png"), new Uint8Array([7, 8, 9]));
+    const plan = await confirmedPlanFor(source);
+    const appendData = structuredClone(initial.data);
+    let threw = false;
+    try {
+      await confirmFolderAdoption(plan, {
+        data: appendData,
+        project_root: target,
+        persist_project: async () => {
+          throw new Error("simulated external modification conflict");
+        },
+      });
+    } catch {
+      threw = true;
+    }
+    assert(threw, "failed canonical commit must surface");
+    assert(
+      await Deno.readTextFile(join(target, "project.json")) === manifestBefore,
+      "failed append must leave the old Canonical manifest unchanged",
+    );
+    assert(
+      Array.from(await Deno.readFile(join(target, oldAsset.storage_path))).join(",") === Array.from(oldBytes).join(","),
+      "failed append must preserve old managed assets",
+    );
+    assert(
+      Array.from(await Deno.readFile(join(source, "new.png"))).join(",") === "7,8,9",
+      "failed append must preserve the source file",
+    );
+    const newAsset = appendData.assets.find((asset) => asset.filename === "new.png");
+    assert(newAsset, "failed in-memory candidate records its owned asset");
+    assert(
+      await Deno.stat(join(target, newAsset.storage_path)).then(() => false).catch(() => true),
+      "failed append must roll back its transaction-owned promoted asset",
+    );
+    const staging = join(target, ".workspace", "adopt-staging");
+    let stagedTransactions = 0;
+    try {
+      for await (const _ of Deno.readDir(staging)) stagedTransactions += 1;
+    } catch {
+      // An empty parent may be absent on a platform that removes it eagerly.
+    }
+    assert(stagedTransactions === 0, "failed append must clean only its own staging directory");
+  } finally {
+    await Deno.remove(target, { recursive: true });
+    await Deno.remove(source, { recursive: true });
   }
 });
 
@@ -560,16 +617,42 @@ Deno.test("folder.adopt command applies confirmed plan into the chosen folder", 
 
 let importCounter = 0;
 
+async function waitForMarkdownPreview(store: { ui: Record<string, unknown> }) {
+  for (let attempt = 0; attempt < 40; attempt += 1) {
+    const plan = store.ui.importMappingPlan as ImportMappingPlan | undefined;
+    const pending = plan?.items.some((item) =>
+      item.selected && item.mapping === "lesson" &&
+      /\.(md|markdown)$/i.test(item.relative_path) &&
+      !["ready", "error"].includes(item.markdown_dependency_preview?.state || "")
+    );
+    if (!pending) return;
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
+  throw new Error("Markdown dependency preview did not settle");
+}
+
 async function bootStore() {
   const source = createEmptyProjectData("接管 UI 测试");
+  const seed = createCourseSeed(source, {
+    source_type: "blank",
+    raw_text: "# 原有课程\n已有正文",
+  });
+  const draft = buildBlueprintDraft(source, seed.id);
+  confirmBlueprint(source, draft.id);
+  const existingItem = source.content_items[0];
+  if (existingItem) appendBlock(source, existingItem.id, "paragraph", "稳定的既有内容");
   const state: {
     project: ProjectData;
     writes: number;
     adopts: unknown[];
+    appends: unknown[];
+    adoptFailure: string;
   } = {
     project: structuredClone(source) as ProjectData,
     writes: 0,
     adopts: [],
+    appends: [],
+    adoptFailure: "",
   };
   const root = {
     innerHTML: "",
@@ -655,8 +738,26 @@ async function bootStore() {
           errors: [],
         };
       }
+      if (name === "folder.read_source") {
+        const text = "# 导论\n第一课正文\n";
+        const digest = new Uint8Array(await crypto.subtle.digest(
+          "SHA-256",
+          new TextEncoder().encode(text),
+        ));
+        const sha256 = [...digest].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+        return {
+          relative_path: String(input.relativePath || "01-基础/导论.md"),
+          size: new TextEncoder().encode(text).length,
+          sha256,
+          text,
+        };
+      }
+      if (name === "folder.markdown_image_status") {
+        return { status: "present", relative_path: "images/fixture.png", size: 1, mime: "image/png" };
+      }
       if (name === "folder.adopt") {
         state.adopts.push({ name, input });
+        if (state.adoptFailure) throw new Error(state.adoptFailure);
         const plan = input.plan as ImportMappingPlan;
         assert(plan?.confirmed === true, "UI must only adopt confirmed plans");
         const adopted = createEmptyProjectData("已接管课程");
@@ -687,6 +788,28 @@ async function bootStore() {
           copied_files: [],
         };
       }
+      if (name === "folder.append") {
+        state.appends.push({ name, input });
+        const plan = input.plan as ImportMappingPlan;
+        assert(plan?.confirmed === true, "append UI must only write a confirmed plan");
+        const appended = structuredClone(state.project);
+        const item = appended.content_items[0];
+        assert(item, "append fixture needs an existing content item");
+        appendBlock(appended, item.id, "paragraph", "通过追加计划导入的正文");
+        state.project = appended;
+        state.writes += 1;
+        return {
+          data: appended,
+          root: plan.root,
+          stage_ids: [],
+          content_item_ids: [item.id],
+          asset_ids: [],
+          source_ids: [],
+          reused_asset_ids: [],
+          warnings: [],
+          copied_files: [],
+        };
+      }
       if (name === "ai.connection.list") return { providers: [] };
       if (name === "ai.execution.list") return { records: [] };
       throw new Error(`unexpected command ${name}`);
@@ -695,10 +818,16 @@ async function bootStore() {
   const store = new (WorkbenchStore as new (bridge: unknown) => {
     data: ProjectData;
     ui: Record<string, unknown>;
-    importExistingFolder: (dir: string) => Promise<void>;
+    importExistingFolder: (dir: string, mode?: string) => Promise<void>;
     openImportMappingPreview: () => void;
-    confirmImportMapping: () => void;
+    confirmImportMapping: () => Promise<void>;
     applyFolderAdoption: () => Promise<void>;
+    undo: () => void;
+    redo: () => void;
+    flush: () => Promise<boolean>;
+    history: unknown[];
+    future: unknown[];
+    blocks: (item?: unknown) => ProjectData["blocks"];
     notify: () => void;
   })(bridge);
   store.data = structuredClone(state.project);
@@ -714,11 +843,12 @@ async function bootStore() {
   };
 }
 
-Deno.test("UI confirm then apply: apply consumes confirmed plan and writes Canonical", async () => {
+Deno.test("UI confirmation performs one adopt action and keeps row controls distinct", async () => {
   const { store, state, restore } = await bootStore();
   try {
     await store.importExistingFolder("/tmp/course");
     store.openImportMappingPreview();
+    await waitForMarkdownPreview(store);
     assert(store.ui.importMappingPlan, "preview must exist");
     assert(
       (store.ui.importMappingPlan as ImportMappingPlan).confirmed === false,
@@ -730,31 +860,24 @@ Deno.test("UI confirm then apply: apply consumes confirmed plan and writes Canon
     );
     let html = createViews(store).shellView() as string;
     assert(
-      html.includes("确认导入计划"),
-      "confirm control must remain available before apply",
+      html.includes("确认并追加到当前课程") || html.includes("确认导入计划并打开"),
+      "single final confirm control must be available",
+    );
+    assert(
+      html.includes("data-mapping-row") && html.includes("data-mapping-select"),
+      "mapping rows and keyboard checkbox control must both be present",
     );
 
-    store.confirmImportMapping();
+    await store.confirmImportMapping();
     assert(
       (store.ui.importMappingPlan as ImportMappingPlan).confirmed === true,
-      "confirm marks plan",
+      "confirm marks the plan before executing it",
     );
-    const adoptsBeforeApply = state.adopts.length;
-    assert(adoptsBeforeApply === 0, "confirm alone must not adopt");
-
-    html = createViews(store).shellView() as string;
-    assert(
-      html.includes("写入课程项目") || html.includes("开始接管") ||
-        html.includes('data-action="apply-folder-adoption"'),
-      "after confirm, UI must expose apply/adoption action",
-    );
-
-    await store.applyFolderAdoption();
     await new Promise((resolve) => setTimeout(resolve, 0));
     const adoptsAfter = state.adopts.length;
     assert(
       adoptsAfter === 1,
-      `apply must call folder.adopt once (got ${adoptsAfter})`,
+      `one confirm must call folder.adopt once (got ${adoptsAfter})`,
     );
     assert(state.writes >= 1, "apply must persist Canonical project");
     assert(
@@ -770,5 +893,369 @@ Deno.test("UI confirm then apply: apply consumes confirmed plan and writes Canon
     );
   } finally {
     restore();
+  }
+});
+
+Deno.test("failed import keeps the editable plan, shows a persistent safe reason, and can retry", async () => {
+  const { store, state, restore } = await bootStore();
+  try {
+    await store.importExistingFolder("/tmp/course");
+    store.openImportMappingPreview();
+    await waitForMarkdownPreview(store);
+    const originalItems = structuredClone(
+      (store.ui.importMappingPlan as ImportMappingPlan).items,
+    );
+    state.adoptFailure = "permission denied";
+
+    await store.confirmImportMapping();
+
+    const plan = store.ui.importMappingPlan as ImportMappingPlan;
+    assert(!plan.confirmed, "a failed pre-commit import must unlock the plan");
+    assert(!store.ui.importingMapping, "busy state must clear after failure");
+    assert(
+      JSON.stringify(plan.items) === JSON.stringify(originalItems),
+      "failure must keep the user's plan choices",
+    );
+    assert(
+      String(store.ui.importMappingError).includes("检查项目目录权限"),
+      "the actionable error must remain in UI state after the toast expires",
+    );
+
+    const { createViews } = await import(
+      `../app/views.js?t04-adoption-retry-view-${importCounter}`
+    );
+    const failedHtml = createViews(store).shellView() as string;
+    assert(failedHtml.includes('role="alert"'), "the error must be announced accessibly");
+    assert(
+      failedHtml.includes("确认导入计划并打开"),
+      "the error state must leave the original confirmation action available for retry",
+    );
+    assert(
+      failedHtml.includes('data-action="confirm-import-mapping"'),
+      "the confirmation action must be restored after failure",
+    );
+    assert(
+      !failedHtml.includes("data-action=\"confirm-import-mapping\" disabled"),
+      "the failed import must not strand the confirmation button",
+    );
+
+    state.adoptFailure = "";
+    await store.confirmImportMapping();
+    assert(state.adopts.length === 2, "a second confirmation must retry the same plan");
+    assert(String(store.ui.route) === "map", "successful retry must open the course map");
+    assert(!store.ui.importMappingError, "success must clear the persistent error");
+  } finally {
+    restore();
+  }
+});
+
+Deno.test("folder append is one undoable Canonical change and never removes source files", async () => {
+  const sourceRoot = await Deno.makeTempDir({ prefix: "acw-append-undo-source-" });
+  const sourceFile = join(sourceRoot, "lesson.md");
+  await Deno.writeTextFile(sourceFile, "# appended source remains");
+  const { store, state, restore } = await bootStore();
+  try {
+    const existing = store.data.blocks.at(-1)!;
+    const original = structuredClone(store.data);
+    const existingId = existing.id;
+    const selectedId = existing.id;
+    store.ui.selectedBlockId = selectedId;
+    const historyBefore = store.history.length;
+
+    await store.importExistingFolder(sourceRoot, "append");
+    store.openImportMappingPreview();
+    await waitForMarkdownPreview(store);
+    await store.confirmImportMapping();
+
+    assert(state.appends.length === 1, "confirmed append should execute once");
+    const imported = store.data.blocks.find((block) => block.content === "通过追加计划导入的正文");
+    assert(imported, "appended Canonical content should appear");
+    const importedId = imported.id;
+    assert(store.history.length === historyBefore + 1, "append should add exactly one undo entry");
+    assert((store.history.at(-1) as { label: string }).label === "追加文件夹资料", "undo history should explain the append");
+
+    store.undo();
+    await store.flush();
+    assert(store.data.blocks.some((block) => block.id === existingId), "undo should retain prior IDs");
+    assert(!store.data.blocks.some((block) => block.id === importedId), "undo should remove the imported rows from Canonical");
+    assert(store.ui.selectedBlockId === selectedId, "undo should keep a still-valid selection");
+    assert(store.data.project.id === original.project.id, "undo should keep the project identity");
+    assert(!state.project.blocks.some((block) => block.id === importedId), "undo should persist the old Canonical project");
+    assert((await Deno.stat(sourceFile)).isFile, "undo must not delete the original source file");
+
+    store.redo();
+    await store.flush();
+    assert(store.data.blocks.some((block) => block.id === importedId), "redo should restore the same imported block ID");
+    assert(state.project.blocks.some((block) => block.id === importedId), "redo should persist the appended project");
+    assert((await Deno.stat(sourceFile)).isFile, "redo must leave the original source file untouched");
+  } finally {
+    restore();
+    await Deno.remove(sourceRoot, { recursive: true }).catch(() => {});
+  }
+});
+
+Deno.test("Markdown import keeps missing local image refs visible and cleans only its own staging on failure", async () => {
+  const root = await Deno.makeTempDir({ prefix: "acw-adopt-md-missing-" });
+  try {
+    await Deno.mkdir(join(root, "images"), { recursive: true });
+    await Deno.writeFile(join(root, "images/present.png"), new Uint8Array([1, 2, 3]));
+    const markdown = "# Lesson\n\n![present](images/present.png)\n\n![missing](images/missing.png)\n";
+    await Deno.writeTextFile(join(root, "lesson.md"), markdown);
+    const plan = await confirmedPlanFor(root, (current) => {
+      current = setImportMappingRole(current, "lesson.md", "lesson");
+      return setImportMappingRole(current, "images", "ignore");
+    });
+    const result = await confirmFolderAdoption(plan);
+    assert(result.asset_ids.length === 1, "only the existing referenced image becomes an asset");
+    assert(result.data.asset_usages.length === 1, "only the existing image receives an usage");
+    assert(
+      result.warnings.some((warning) => warning.includes("images/missing.png")),
+      "missing href is reported with its original relative path",
+    );
+    assert(
+      result.data.blocks.some((block) => typeof block.content === "string" && block.content.includes("images/missing.png")),
+      "unresolved image Markdown remains in the authored block",
+    );
+    assert(await Deno.readTextFile(join(root, "lesson.md")) === markdown, "source Markdown is unchanged");
+
+    const failingRoot = await Deno.makeTempDir({ prefix: "acw-adopt-md-unsafe-" });
+    try {
+      await Deno.mkdir(join(failingRoot, "images"), { recursive: true });
+      await Deno.mkdir(join(failingRoot, ".workspace/adopt-staging"), { recursive: true });
+      await Deno.writeTextFile(join(failingRoot, ".workspace/adopt-staging/legacy.keep"), "old");
+      await Deno.writeFile(join(failingRoot, "images/present.png"), new Uint8Array([4, 5, 6]));
+      const unsafeMarkdown = "![present](images/present.png)\n\n![escape](../../outside.png)\n";
+      await Deno.writeTextFile(join(failingRoot, "lesson.md"), unsafeMarkdown);
+      const unsafePlan = await confirmedPlanFor(failingRoot, (current) => {
+        current = setImportMappingRole(current, "lesson.md", "lesson");
+        return setImportMappingRole(current, "images", "ignore");
+      });
+      let failed = false;
+      try {
+        await confirmFolderAdoption(unsafePlan);
+      } catch {
+        failed = true;
+      }
+      assert(failed, "path traversal remains a hard failure");
+      assert(!(await Deno.stat(join(failingRoot, "project.json")).then(() => true).catch(() => false)), "failed transaction writes no manifest");
+      const remaining = [];
+      for await (const entry of Deno.readDir(join(failingRoot, ".workspace/adopt-staging"))) remaining.push(entry.name);
+      assert(remaining.length === 1 && remaining[0] === "legacy.keep", "only this transaction's UUID staging is removed");
+      assert(await Deno.readTextFile(join(failingRoot, "lesson.md")) === unsafeMarkdown, "failure never changes source Markdown");
+    } finally {
+      await Deno.remove(failingRoot, { recursive: true });
+    }
+  } finally {
+    await Deno.remove(root, { recursive: true });
+  }
+});
+
+Deno.test("append targets a lesson, preserves its edits/pages, and skips Markdown duplicates unless acknowledged", async () => {
+  const targetRoot = await Deno.makeTempDir({ prefix: "acw-append-target-destination-" });
+  const sourceRoot = await Deno.makeTempDir({ prefix: "acw-append-source-destination-" });
+  try {
+    await Deno.writeTextFile(join(targetRoot, "existing.md"), "# Existing\n");
+    const initial = await confirmFolderAdoption(await confirmedPlanFor(targetRoot));
+    const data = initial.data;
+    const lesson = data.content_items.find((item) => item.type === "lesson");
+    assert(lesson, "target project starts with one lesson");
+    appendBlock(data, lesson.id, "paragraph", "用户已经编辑的内容");
+    const originalBlockIds = data.blocks.filter((block) =>
+      data.documents.find((document) => document.id === block.document_id)?.content_item_id === lesson.id
+    ).map((block) => block.id);
+    const layout = createLayoutInstance(data, lesson.id, {
+      name: "保留分页",
+      mode: "grid",
+      grid_definition: { columns: [1], rows: [1] },
+    });
+    createPagedLayout(data, layout.id);
+    const secondPage = addLayoutPage(data, layout.id, {
+      title: "第二页",
+      grid_definition: { columns: [1], rows: [1] },
+    });
+    const originalPages = structuredClone(data.layout_pages);
+
+    await Deno.mkdir(join(sourceRoot, "images"), { recursive: true });
+    const markdown = "# Imported\n\n![diagram](images/diagram.png)\n";
+    const imageBytes = new Uint8Array([12, 34, 56]);
+    await Deno.writeTextFile(join(sourceRoot, "lesson.md"), markdown);
+    await Deno.writeFile(join(sourceRoot, "images/diagram.png"), imageBytes);
+
+    const appendPlan = async (relativePath: string, allowDuplicate = false) =>
+      await confirmedPlanFor(sourceRoot, (plan) => {
+        for (const entry of plan.items) {
+          if (entry.kind === "directory") {
+            plan = setImportMappingRole(plan, entry.relative_path, "ignore");
+          } else if (entry.relative_path !== relativePath) {
+            plan = setImportMappingSelected(plan, entry.relative_path, false);
+          }
+        }
+        plan = setImportMappingRole(plan, relativePath, "lesson");
+        plan = setImportMappingDestination(plan, relativePath, {
+          kind: "existing_lesson",
+          content_item_id: lesson.id,
+        });
+        if (allowDuplicate) plan = setImportMappingAllowDuplicate(plan, relativePath, true);
+        return plan;
+      });
+
+    const first = await confirmFolderAdoption(await appendPlan("lesson.md"), {
+      data,
+      project_root: targetRoot,
+      skip_project_write: true,
+    });
+    assert(first.data.project.id === data.project.id, "append keeps project identity");
+    assert(first.data.content_items.length === 1, "existing lesson target does not create another lesson");
+    assert(first.data.blocks.some((block) => block.content === "用户已经编辑的内容"), "existing edits remain");
+    for (const blockId of originalBlockIds) {
+      assert(first.data.blocks.some((block) => block.id === blockId), "existing block identity remains");
+    }
+    assert(JSON.stringify(first.data.layout_pages) === JSON.stringify(originalPages), "all existing pages remain unchanged");
+    assert(first.data.layout_pages.some((page) => page.id === secondPage.id), "second page identity survives append");
+    const provenanceBlock = first.data.blocks.find((block) => {
+      const provenance = block.settings.markdown_import;
+      return Boolean(provenance && typeof provenance === "object" && !Array.isArray(provenance) && provenance.source_hash);
+    });
+    assert(provenanceBlock, "imported block stores compatibility source hash provenance");
+    const blockProvenance = provenanceBlock.settings.markdown_import as Record<string, unknown>;
+    const ledger = first.data.project.settings.markdown_import_sources;
+    assert(Array.isArray(ledger) && ledger.some((source) =>
+      source && typeof source === "object" && !Array.isArray(source) &&
+      source.source_hash === blockProvenance.source_hash
+    ), "project-level import ledger records source provenance");
+    const firstSourceHash = String(blockProvenance.source_hash);
+    assert(first.data.asset_usages.some((usage) => usage.content_item_id === lesson.id), "imported Markdown image usage points at target lesson");
+    assert(await Deno.readTextFile(join(sourceRoot, "lesson.md")) === markdown, "source stays untouched");
+
+    // The durable project ledger survives editing away the compatibility block copy.
+    first.data.blocks = first.data.blocks.filter((block) => block.id !== provenanceBlock.id);
+    const beforeDuplicate = structuredClone(first.data);
+    const renamedMarkdown = "# Imported\n\n![diagram](images/diagram.png)\n";
+    await Deno.writeTextFile(join(sourceRoot, "renamed.md"), renamedMarkdown);
+    const duplicate = await confirmFolderAdoption(await appendPlan("renamed.md"), {
+      data: first.data,
+      project_root: targetRoot,
+      skip_project_write: true,
+    });
+    assert(duplicate.data.blocks.length === beforeDuplicate.blocks.length, "same SHA still skips after deleting the provenance block");
+    assert(duplicate.warnings.some((warning) => warning.includes("SHA-256") && warning.includes("默认跳过")), "duplicate skip explains its source match");
+
+    const deletedLesson = structuredClone(duplicate.data);
+    const deletedDocumentIds = new Set(deletedLesson.documents
+      .filter((document) => document.content_item_id === lesson.id)
+      .map((document) => document.id));
+    const deletedBlockIds = new Set(deletedLesson.blocks
+      .filter((block) => deletedDocumentIds.has(block.document_id))
+      .map((block) => block.id));
+    const deletedLayoutIds = new Set(deletedLesson.layout_instances
+      .filter((layout) => layout.content_item_id === lesson.id)
+      .map((layout) => layout.id));
+    deletedLesson.blocks = deletedLesson.blocks.filter((block) => !deletedDocumentIds.has(block.document_id));
+    deletedLesson.documents = deletedLesson.documents.filter((document) => !deletedDocumentIds.has(document.id));
+    deletedLesson.content_items = deletedLesson.content_items.filter((item) => item.id !== lesson.id);
+    deletedLesson.requirements = deletedLesson.requirements.filter((requirement) =>
+      requirement.content_item_id !== lesson.id && !deletedBlockIds.has(requirement.anchor_block_id || "")
+    );
+    deletedLesson.asset_usages = deletedLesson.asset_usages.filter((usage) =>
+      usage.content_item_id !== lesson.id && !deletedBlockIds.has(usage.block_id || "")
+    );
+    deletedLesson.placements = deletedLesson.placements.filter((placement) =>
+      !deletedLayoutIds.has(placement.layout_instance_id) && !deletedBlockIds.has(placement.block_id)
+    );
+    deletedLesson.layout_sections = deletedLesson.layout_sections.filter((section) =>
+      !deletedLayoutIds.has(section.layout_instance_id)
+    );
+    deletedLesson.layout_pages = deletedLesson.layout_pages.filter((page) =>
+      !deletedLayoutIds.has(page.layout_instance_id)
+    );
+    deletedLesson.layout_instances = deletedLesson.layout_instances.filter((layout) => layout.content_item_id !== lesson.id);
+    deletedLesson.groups = deletedLesson.groups.filter((group) => !deletedDocumentIds.has(group.document_id));
+    deletedLesson.status_assignments = deletedLesson.status_assignments.filter((assignment) =>
+      assignment.content_item_id !== lesson.id
+    );
+    deletedLesson.publications = deletedLesson.publications.filter((publication) =>
+      publication.content_item_id !== lesson.id
+    );
+    const afterLessonDelete = await confirmFolderAdoption(await appendPlan("renamed.md"), {
+      data: deletedLesson,
+      project_root: targetRoot,
+      skip_project_write: true,
+    });
+    assert(afterLessonDelete.data.content_items.length === 0, "the project ledger survives whole-lesson deletion");
+    assert(afterLessonDelete.data.blocks.length === 0, "a deleted lesson stays deleted on duplicate detection");
+    assert(afterLessonDelete.warnings.some((warning) => warning.includes("目标课时已删除")), "deleted lesson source match is explained");
+    const explicitReimport = await confirmedPlanFor(sourceRoot, (plan) => {
+      for (const entry of plan.items) {
+        if (entry.kind === "directory") plan = setImportMappingRole(plan, entry.relative_path, "ignore");
+        else if (entry.relative_path !== "renamed.md") plan = setImportMappingSelected(plan, entry.relative_path, false);
+      }
+      plan = setImportMappingRole(plan, "renamed.md", "lesson");
+      plan = setImportMappingDestination(plan, "renamed.md", { kind: "unassigned_lesson" });
+      return setImportMappingAllowDuplicate(plan, "renamed.md", true);
+    });
+    const reimported = await confirmFolderAdoption(explicitReimport, {
+      data: afterLessonDelete.data,
+      project_root: targetRoot,
+      skip_project_write: true,
+    });
+    assert(reimported.data.content_items.length === 1, "explicit duplicate choice can recreate a deliberately deleted lesson");
+    assert(reimported.warnings.some((warning) => warning.includes("按当前目标新建或追加")), "deleted-target reimport warning describes the actual destination action");
+    await Deno.writeTextFile(join(sourceRoot, "lesson.md"), "# Revision after deletion\n");
+    const deletedTargetRevisionPlan = await confirmedPlanFor(sourceRoot, (plan) => {
+      for (const entry of plan.items) {
+        if (entry.kind === "directory") plan = setImportMappingRole(plan, entry.relative_path, "ignore");
+        else if (entry.relative_path !== "lesson.md") plan = setImportMappingSelected(plan, entry.relative_path, false);
+      }
+      plan = setImportMappingRole(plan, "lesson.md", "lesson");
+      plan = setImportMappingDestination(plan, "lesson.md", { kind: "unassigned_lesson" });
+      return setImportMappingAllowDuplicate(plan, "lesson.md", true);
+    });
+    const reimportedRevision = await confirmFolderAdoption(deletedTargetRevisionPlan, {
+      data: reimported.data,
+      project_root: targetRoot,
+      skip_project_write: true,
+    });
+    assert(reimportedRevision.warnings.some((warning) => warning.includes("曾删除课时") && warning.includes("按当前目标新建或追加")), "explicit changed-source reimport must describe the deleted target accurately");
+
+    const changed = "# Imported revision\n";
+    await Deno.writeTextFile(join(sourceRoot, "lesson.md"), changed);
+    const changedPlan = await appendPlan("lesson.md");
+    const skippedRevision = await confirmFolderAdoption(changedPlan, {
+      data: first.data,
+      project_root: targetRoot,
+      skip_project_write: true,
+    });
+    assert(skippedRevision.data.blocks.length === beforeDuplicate.blocks.length, "changed source defaults to no replacement or append");
+    assert(skippedRevision.warnings.some((warning) => warning.includes("来源路径已有较旧导入")), "changed source is reported for explicit handling");
+
+    const explicitRevision = await confirmFolderAdoption(await appendPlan("lesson.md", true), {
+      data: first.data,
+      project_root: targetRoot,
+      skip_project_write: true,
+    });
+    assert(explicitRevision.data.content_items.length === 1, "explicit revision still targets the selected lesson");
+    assert(explicitRevision.data.blocks.some((block) => block.content === "用户已经编辑的内容"), "explicit new version never overwrites manual edits");
+    assert(explicitRevision.data.blocks.some((block) => block.content === "Imported revision"), "explicit new version appends parsed content");
+    assert(explicitRevision.warnings.some((warning) => warning.includes("用户已明确选择导入来源的新版本")), "explicit revision records the user's choice");
+
+    const revisionLedger = explicitRevision.data.project.settings.markdown_import_sources;
+    assert(Array.isArray(revisionLedger), "version ledger is an array");
+    const latestImported = revisionLedger.at(-1);
+    assert(latestImported && typeof latestImported === "object" && !Array.isArray(latestImported), "version ledger retains the latest source record");
+    const secondSourceHash = String((latestImported as Record<string, unknown>).source_hash || "");
+    const thirdRevision = "# Imported third revision\n";
+    await Deno.writeTextFile(join(sourceRoot, "lesson.md"), thirdRevision);
+    const thirdVersion = await confirmFolderAdoption(await appendPlan("lesson.md"), {
+      data: explicitRevision.data,
+      project_root: targetRoot,
+      skip_project_write: true,
+    });
+    assert(thirdVersion.data.blocks.length === explicitRevision.data.blocks.length, "third source version defaults to skip");
+    const thirdWarning = thirdVersion.warnings.find((warning) => warning.includes("来源路径已有较旧导入")) || "";
+    assert(thirdWarning.includes(secondSourceHash.slice(0, 12)), "changed-source warning names the latest explicitly imported SHA");
+    assert(!thirdWarning.includes(firstSourceHash.slice(0, 12)), "changed-source warning does not report the stale v1 SHA");
+  } finally {
+    await Deno.remove(targetRoot, { recursive: true }).catch(() => {});
+    await Deno.remove(sourceRoot, { recursive: true }).catch(() => {});
   }
 });

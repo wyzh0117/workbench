@@ -224,7 +224,9 @@ async function bootDom() {
   htmlWrites.length = 0;
 
   const fireDocument = (type: string, event: Record<string, unknown>) => {
-    for (const handler of documentListeners.get(type) ?? []) handler(event);
+    const handlers = documentListeners.get(type) ?? [];
+    for (const handler of handlers) handler(event);
+    return handlers.length;
   };
 
   /** Show a project screen and render it, with the given selectors registered. */
@@ -560,10 +562,16 @@ Deno.test("an in-flight IME composition is never rebuilt underneath", async () =
   try {
     const data = projectWith("输入法");
     dom.renderProject(data);
+    // Let startup-only provider/session notifications settle before observing
+    // editor renders; those chrome updates are independent of composition.
+    await new Promise((resolve) => setTimeout(resolve, 0));
     const blockId = data.blocks[0]!.id;
     const field = dom.createNode({ blockId, editProperty: "text" }, { value: "中文" });
     dom.registered.set(`textarea[data-block-id="${blockId}"], input[data-block-id="${blockId}"]`, field);
     dom.document.activeElement = field;
+    const block = dom.store.data.blocks.find((candidate: { id: string }) => candidate.id === blockId)!;
+    const originalContent = block.content;
+    const historyBefore = dom.store.history.length;
 
     dom.fireDocument("compositionstart", { target: field });
     const writesBefore = dom.htmlWrites.length;
@@ -573,12 +581,16 @@ Deno.test("an in-flight IME composition is never rebuilt underneath", async () =
       "a render during composition must be deferred, not applied",
     );
 
-    // The committed text arrives, then the composition ends: the queued render
-    // runs and the caret comes back to the same field.
+    // The committed text arrives, then the composition ends. The queued render
+    // waits until the target's compositionend listener can serialize the final
+    // DOM and close the one undo transaction.
+    field.dataset.editBaseline = originalContent;
     field.value = "中文已完成";
+    block.content = field.value;
     field.selectionStart = 5;
     field.selectionEnd = 5;
     dom.fireDocument("compositionend", { target: field });
+    await Promise.resolve();
     assert(
       dom.htmlWrites.length === writesBefore + 1,
       "ending the composition must replay the deferred render exactly once",
@@ -589,6 +601,12 @@ Deno.test("an in-flight IME composition is never rebuilt underneath", async () =
       field.selectionStart === 5,
       "the caret must be restored to where the user left it",
     );
+    assert(block.content === "中文已完成", "the complete IME text must reach canonical content before rendering");
+    assert(dom.store.history.length === historyBefore + 1, "the composition must create one undo entry");
+    dom.store.undo();
+    const restored = dom.store.data.blocks.find((candidate: { id: string }) => candidate.id === blockId)!;
+    assert(restored.id === blockId, "undo must preserve the stable block ID");
+    assert(restored.content === originalContent, "undo must restore the content from before composition");
   } finally {
     dom.restore();
   }
@@ -694,12 +712,14 @@ Deno.test("hint text never reaches canonical content", async () => {
     for (const hint of ["开始写点什么", "新的小节", "引用内容", "提示内容", "// 代码"]) {
       assert(!canonical.includes(hint), `the hint ${hint} must never be persisted`);
     }
-    // The editor still shows a hint: it is the control's placeholder attribute.
+    // The rich editor renders an accessible CSS placeholder, never editable text.
     const source = await Deno.readTextFile(new URL("../app/views.js", import.meta.url));
     assert(
-      source.includes('placeholder="开始写点什么…"'),
-      "the paragraph control must carry the hint as its own placeholder",
+      source.includes('data-placeholder="${esc(placeholder)}"') && source.includes('aria-placeholder="${esc(placeholder)}"'),
+      "the paragraph editor must expose its own accessible placeholder",
     );
+    const styles = await Deno.readTextFile(new URL("../app/styles.css", import.meta.url));
+    assert(styles.includes('.markdown-rich-editor[data-empty="true"]::before'), "the hint must be a non-editable empty-state decoration");
   } finally {
     restore();
   }

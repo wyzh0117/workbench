@@ -169,8 +169,8 @@ Deno.test("P2-1 model discovery reads the provider's own list with the stored ke
         );
       },
     });
-    await transport.setCredential(PROVIDER.id, CREDENTIAL);
     await transport.saveConnection({ provider: PROVIDER });
+    await transport.setCredential(PROVIDER.id, CREDENTIAL);
     const result = await transport.listAiModels({ provider_id: PROVIDER.id });
     assert(
       calls.length === 1 && calls[0]!.url === "https://api.deepseek.com/models",
@@ -204,8 +204,8 @@ Deno.test("P2-1 a provider without model enumeration fails readably instead of i
           new Response("not found", { status: 404, headers: { "content-type": "text/plain" } }),
         ),
     });
-    await transport.setCredential(PROVIDER.id, CREDENTIAL);
     await transport.saveConnection({ provider: PROVIDER });
+    await transport.setCredential(PROVIDER.id, CREDENTIAL);
     let thrown: unknown = null;
     try {
       await transport.listAiModels({ provider_id: PROVIDER.id });
@@ -476,6 +476,17 @@ Deno.test("T03 selected block keeps a left accent; handle uses pointer reorder n
   assert(
     /\.block\.drop-before\s*\{/.test(styles),
     "pointer reorder must still have a drop indicator style",
+  );
+  assert(
+    /\.writing-toolbar\s*>\s*button\s*\{[^}]*white-space:\s*nowrap/m.test(styles),
+    "block creation controls must wrap as whole buttons",
+  );
+  assert(
+    /\.block-head-actions\s*\{[^}]*visibility:\s*hidden/m.test(styles) &&
+      /\.block:focus-within\s+\.block-head-actions/.test(styles) &&
+      /\.block\.menu-open\s+\.block-head-actions/.test(styles) &&
+      /@media\s*\(hover:\s*none\)/.test(styles),
+    "block actions stay stable, keyboard reachable, visible while menu opens, and accessible on touch",
   );
 
   const data = createEmptyProjectData("选中强调");

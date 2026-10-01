@@ -699,6 +699,56 @@ Deno.test("buildAiProviderCall builds a chat request without any credential", ()
   );
 });
 
+Deno.test("buildAiProviderCall supports the Responses and Anthropic protocols", () => {
+  const { data, first } = aiFixture();
+  const context = assembleAiContext(data, {
+    scope: "block",
+    content_item_id: "lesson-1",
+    block_id: first.id,
+    instruction: "改写这一段",
+    include: FULL_INCLUDE,
+  });
+  const custom = aiProviderPreset("custom")!;
+  const responses = buildAiProviderCall({
+    preset: {
+      ...custom,
+      id: "test-responses",
+      api_protocol: "openai-responses",
+      base_url: "https://example.test/v1",
+      default_model: "gpt-test",
+    },
+    context,
+    instruction: "改写这一段",
+  });
+  assertEquals(responses.url, "https://example.test/v1/responses", "Responses 路径必须固定");
+  assertEquals(responses.response_kind, "responses", "必须标识 Responses 响应");
+  assertEquals(responses.body.store, false, "Responses 请求必须禁用存储");
+  assertEquals(responses.body.stream, true, "Responses 使用事件流");
+  assert(typeof responses.body.instructions === "string", "Responses 应传 instructions");
+  assertEquals(responses.body.input[0].content[0].type, "input_text", "用户文本类型必须符合 Responses API");
+
+  const anthropic = buildAiProviderCall({
+    preset: {
+      ...custom,
+      id: "test-anthropic",
+      api_protocol: "anthropic-messages",
+      base_url: "https://example.test/v1",
+      auth_header: "x-api-key",
+      auth_scheme: "",
+      default_model: "claude-test",
+    },
+    context,
+    instruction: "解释这一段",
+  });
+  assertEquals(anthropic.url, "https://example.test/v1/messages", "Anthropic 路径必须固定");
+  assertEquals(anthropic.response_kind, "anthropic", "必须标识 Anthropic 响应");
+  assertEquals(anthropic.auth.header, "x-api-key", "Anthropic 使用 x-api-key");
+  assertEquals(anthropic.auth.scheme, "", "Anthropic API Key 不带 Bearer 前缀");
+  assertEquals(anthropic.headers["anthropic-version"], "2023-06-01", "必须发送 API 版本头");
+  assertEquals(anthropic.body.max_tokens, 4096, "Anthropic 请求要给出输出上限");
+  assertEquals(anthropic.body.messages[0].role, "user", "Anthropic 使用 user 消息");
+});
+
 Deno.test("buildAiProviderCall reports an unconfigured provider readably", async () => {
   const failure = await assertAiFailure(
     () => buildAiProviderCall({ preset: "custom", instruction: "你好" }),
@@ -786,10 +836,128 @@ Deno.test("normalizeAiProviderResponse reads SSE and parsed chunk arrays", () =>
     headers: { "content-type": "text/event-stream" },
     body: [{ choices: [{ delta: { content: "流" } }] }, {
       choices: [{ delta: { content: "式" } }],
-    }],
+    }, { choices: [{ delta: {}, finish_reason: "stop" }] }],
     response_kind: "stream",
   });
   assertEquals(chunks.text, "流式", "必须接受已解析的分片数组");
+});
+
+Deno.test("normalizeAiProviderResponse reads Responses SSE and Anthropic JSON", () => {
+  const responses = aiProviderPreset("custom")!;
+  responses.id = "test-responses";
+  responses.api_protocol = "openai-responses";
+  const streamed = normalizeAiProviderResponse(responses, {
+    ok: true,
+    status: 200,
+    headers: { "content-type": "text/event-stream" },
+    body: [
+      'event: response.output_text.delta\ndata: {"type":"response.output_text.delta","delta":"OK"}',
+      "",
+      'event: response.completed\ndata: {"type":"response.completed","response":{"model":"gpt-test","usage":{"total_tokens":2}}}',
+      "",
+      "data: [DONE]",
+      "",
+    ].join("\n"),
+    response_kind: "stream",
+  });
+  assertEquals(streamed.text, "OK", "必须合并 Responses delta");
+  assertEquals(streamed.model, "gpt-test", "应读取 Responses 模型名");
+  assertEquals(streamed.usage, { total_tokens: 2 }, "应读取 Responses 用量");
+
+  const anthropic = aiProviderPreset("custom")!;
+  anthropic.id = "test-anthropic";
+  anthropic.api_protocol = "anthropic-messages";
+  const message = normalizeAiProviderResponse(anthropic, {
+    ok: true,
+    status: 200,
+    headers: { "content-type": "application/json" },
+    body: {
+      model: "claude-test",
+      content: [{ type: "text", text: "Answer" }],
+      stop_reason: "end_turn",
+      usage: { input_tokens: 3, output_tokens: 1 },
+    },
+    response_kind: "json",
+  });
+  assertEquals(message.text, "Answer", "应抽出 Anthropic 文本块");
+  assertEquals(message.model, "claude-test", "应读取 Anthropic 模型名");
+  assertEquals(message.finish_reason, "end_turn", "应读取 stop_reason");
+});
+
+Deno.test("Responses rejects failed, incomplete, and abruptly ended streams", async () => {
+  const responses = aiProviderPreset("custom")!;
+  responses.id = "test-responses-terminal";
+  responses.api_protocol = "openai-responses";
+  const normalize = (body: string) =>
+    normalizeAiProviderResponse(responses, {
+      ok: true,
+      status: 200,
+      headers: { "content-type": "text/event-stream" },
+      body,
+      response_kind: "stream",
+    });
+  const delta = 'data: {"type":"response.output_text.delta","delta":"partial"}\n\n';
+  const failed = await assertAiFailure(
+    () => normalize(`${delta}data: {"type":"response.failed","response":{"error":{"message":"credential must not be surfaced"}}}\n\n`),
+    "provider_error",
+    "failed Responses streams must not return earlier deltas",
+  );
+  assert(!failed.message.includes("credential must not be surfaced"), "provider stream errors must not expose arbitrary error details");
+  await assertAiFailure(
+    () => normalize(`${delta}data: {"type":"response.incomplete","response":{"incomplete_details":{"reason":"max_output_tokens"}}}\n\n`),
+    "malformed_response",
+    "incomplete Responses streams must not return earlier deltas",
+  );
+  await assertAiFailure(
+    () => normalize(delta),
+    "malformed_response",
+    "a Responses stream without response.completed must fail",
+  );
+  await assertAiFailure(
+    () => normalize(`${delta}data: {"type":"error","message":"credential must not be surfaced"}\n\n`),
+    "provider_error",
+    "Responses error events must fail without echoing provider details",
+  );
+  await assertAiFailure(
+    () => normalize(`${delta}data: {"choices":[{"delta":{},"finish_reason":"stop"}]}\n\n`),
+    "malformed_response",
+    "a Chat Completions finish_reason cannot complete a Responses stream",
+  );
+});
+
+Deno.test("chat completion streams accept the protocol's normal completion signals", () => {
+  const completions = aiProviderPreset("deepseek")!;
+  const doneOnly = normalizeAiProviderResponse(completions, {
+    ok: true,
+    status: 200,
+    headers: { "content-type": "text/event-stream" },
+    body: 'data: {"choices":[{"delta":{"content":"OK"}}]}\n\ndata: [DONE]\n\n',
+    response_kind: "stream",
+  });
+  assertEquals(doneOnly.text, "OK", "[DONE] completes Chat Completions streams");
+  const finishOnly = normalizeAiProviderResponse(completions, {
+    ok: true,
+    status: 200,
+    headers: { "content-type": "text/event-stream" },
+    body: 'data: {"choices":[{"delta":{"content":"OK"},"finish_reason":"stop"}]}\n\n',
+    response_kind: "stream",
+  });
+  assertEquals(finishOnly.text, "OK", "finish_reason completes Chat Completions streams");
+});
+
+Deno.test("chat completion streams reject abrupt EOF without a completion signal", async () => {
+  const completions = aiProviderPreset("deepseek")!;
+  await assertAiFailure(
+    () => normalizeAiProviderResponse(completions, {
+      ok: true,
+      status: 200,
+      headers: { "content-type": "text/event-stream" },
+      body: 'data: {"choices":[{"delta":{"content":"partial"}}]}\n\n',
+      response_kind: "stream",
+    }),
+    "malformed_response",
+    "Chat Completions must not accept a partial stream after abrupt EOF",
+  );
 });
 
 Deno.test("normalizeAiProviderResponse rejects unreadable or empty bodies", async () => {
@@ -1234,7 +1402,7 @@ Deno.test("FakeAiConnector honours cancellation and latency", async () => {
 Deno.test("HttpAiConnector maps HTTP status codes to failure codes", async () => {
   const preset = aiProviderPreset("deepseek")!;
   const cases: Array<[number, string]> = [
-    [401, "missing_credential"],
+    [401, "authentication_failed"],
     [403, "permission_denied"],
     [429, "rate_limited"],
     [500, "provider_error"],

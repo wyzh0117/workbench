@@ -57,7 +57,7 @@ import {
   preflightExport,
   previewImport,
 } from "./import_export.ts";
-import { readFolderPreview, scanFolder } from "./folder_scan.ts";
+import { inspectMarkdownImage, readFolderPreview, readFolderSource, scanFolder } from "./folder_scan.ts";
 import { confirmFolderAdoption } from "./folder_adoption.ts";
 import type { ImportMappingPlan } from "./folder_mapping.ts";
 import type { ExportPreset } from "../domain/types.ts";
@@ -842,6 +842,43 @@ export class DesktopService {
         },
       };
     });
+    this.commands.register("folder.read_source", async (input) => {
+      const candidate = input && typeof input === "object"
+        ? input as { root?: string; relative_path?: string; relativePath?: string }
+        : {};
+      const root = String(candidate.root || "").trim();
+      const relativePath = String(candidate.relative_path ?? candidate.relativePath ?? "").trim();
+      if (!root || !relativePath) throw new Error("folder.read_source requires root and relative_path");
+      const source = await readFolderSource(root, relativePath);
+      return {
+        value: source,
+        audit: {
+          object_type: "import",
+          action: "folder_read_source",
+          metadata: { root, relative_path: relativePath, size: source.size },
+        },
+      };
+    });
+    this.commands.register("folder.markdown_image_status", async (input) => {
+      const candidate = input && typeof input === "object"
+        ? input as { root?: string; markdown_relative_path?: string; markdownRelativePath?: string; href?: string }
+        : {};
+      const root = String(candidate.root || "").trim();
+      const markdownRelativePath = String(candidate.markdown_relative_path ?? candidate.markdownRelativePath ?? "").trim();
+      const href = String(candidate.href || "");
+      if (!root || !markdownRelativePath || !href) {
+        throw new Error("folder.markdown_image_status requires root, markdownRelativePath, and href");
+      }
+      const status = await inspectMarkdownImage(root, markdownRelativePath, href);
+      return {
+        value: status,
+        audit: {
+          object_type: "import",
+          action: "folder_markdown_image_status",
+          metadata: { root, relative_path: markdownRelativePath, status: status.status },
+        },
+      };
+    });
     // Strategy A in-place adoption. Requires a confirmed ImportMappingPlan.
     // Writes project.json + .workspace into plan.root; copies media to assets/.
     this.commands.register("folder.adopt", async (input) => {
@@ -880,6 +917,46 @@ export class DesktopService {
           metadata: {
             root: result.root,
             stages: result.stage_ids.length,
+            lessons: result.content_item_ids.length,
+            assets: result.asset_ids.length,
+            sources: result.source_ids.length,
+            reused: result.reused_asset_ids.length,
+          },
+        },
+      };
+    });
+    this.commands.register("folder.append", async (input) => {
+      const candidate = input && typeof input === "object"
+        ? input as { plan?: ImportMappingPlan; duplicate_choice?: "existing" | "copy" | "cancel" }
+        : {};
+      if (!candidate.plan) throw new Error("folder.append requires a mapping plan");
+      if (candidate.plan.confirmed !== true) throw new Error("只能对已确认的导入计划执行文件追加");
+      if (!this.context.project) throw new Error("请先打开课程项目，再追加文件");
+      const data = structuredClone(this.context.project);
+      const result = await confirmFolderAdoption(candidate.plan, {
+        data,
+        project_root: this.store.directory,
+        duplicate_choice: candidate.duplicate_choice,
+        persist_project: (project) => this.store.saveWithRecovery(project),
+      });
+      this.context.project = result.data;
+      await this.search.rebuild(result.data);
+      return {
+        value: result,
+        events: [EventBus.domainEvent({
+          type: "ProjectChanged",
+          project_id: result.data.project.id,
+          entity_type: "project",
+          entity_id: result.data.project.id,
+          source: "user",
+          metadata: { action: "files_appended" },
+        })],
+        audit: {
+          object_type: "import",
+          action: "folder_append",
+          metadata: {
+            source_root: candidate.plan.root,
+            target_root: this.store.directory,
             lessons: result.content_item_ids.length,
             assets: result.asset_ids.length,
             sources: result.source_ids.length,
@@ -1246,6 +1323,21 @@ export class DesktopService {
         },
       };
     });
+    for (const command of [
+      "ai.subscription.start",
+      "ai.subscription.status",
+      "ai.subscription.cancel",
+      "ai.subscription.logout",
+    ] as const) {
+      this.commands.register(command, async () => {
+        throw error(
+          "subscription_native_only",
+          "ChatGPT 订阅登录需要 macOS 桌面版的系统浏览器回调和系统钥匙串。",
+          "Sign in with ChatGPT is supported by the native Tauri runtime only",
+          { recoverable: false, recommended_action: "请在 macOS 桌面版 Workbench 的 AI 设置中管理订阅账户。", details: {} },
+        );
+      });
+    }
     this.commands.register("ai.secret.set", async (input) => {
       this.assertAiProjectOpen();
       const candidate = input && typeof input === "object"
@@ -1302,6 +1394,32 @@ export class DesktopService {
             provider_id: result.provider_id,
             count: result.models.length,
           },
+        },
+      };
+    });
+    this.commands.register("ai.models.probe", async (input) => {
+      this.assertAiProjectOpen();
+      const result = await this.aiTransport().probeAiModels(input);
+      return {
+        value: result,
+        audit: {
+          object_type: "ai",
+          object_id: null,
+          action: "probe_models",
+          metadata: { count: result.models.length },
+        },
+      };
+    });
+    this.commands.register("ai.connection.test", async (input) => {
+      this.assertAiProjectOpen();
+      const result = await this.aiTransport().testAiConnection(input);
+      return {
+        value: result,
+        audit: {
+          object_type: "ai",
+          object_id: result.provider_id,
+          action: "test_connection",
+          metadata: { provider_id: result.provider_id, model: result.model },
         },
       };
     });

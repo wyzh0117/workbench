@@ -89,6 +89,19 @@ export function markdownToHtml(markdown) {
 
 const BYTES_PER_MEGABYTE = 1024 * 1024;
 
+export function stopPreviewMedia(scope = globalThis.document) {
+  const media = scope?.matches?.("audio,video")
+    ? [scope]
+    : Array.from(scope?.querySelectorAll?.("audio,video") || []);
+  for (const element of media) {
+    try { element.pause(); } catch { /* media may already be detached */ }
+    try { element.currentTime = 0; } catch { /* metadata may not be loaded */ }
+    element.removeAttribute?.("src");
+    try { element.load(); } catch { /* detached media cannot be reloaded */ }
+  }
+  return media.length;
+}
+
 /**
  * Bounded preview cache.
  *
@@ -100,9 +113,12 @@ const BYTES_PER_MEGABYTE = 1024 * 1024;
 export class AssetPreviewCache {
   constructor(bridge, options = {}) {
     this.bridge = bridge;
-    this.mediaLimit = options.mediaLimit ?? 64 * BYTES_PER_MEGABYTE;
+    this.mediaLimit = options.mediaLimit ?? 8 * BYTES_PER_MEGABYTE;
     this.maxCacheBytes = options.maxCacheBytes ?? 96 * BYTES_PER_MEGABYTE;
     this.maxEntries = options.maxEntries ?? 32;
+    this.maxConcurrentLoads = options.maxConcurrentLoads ?? 2;
+    this.activeLoads = 0;
+    this.loadQueue = [];
     this.entries = new Map();
     this.pending = new Map();
     this.assetsByKey = new Map();
@@ -216,6 +232,30 @@ export class AssetPreviewCache {
     this.onChange = listener;
   }
 
+  acquireLoadSlot(generation) {
+    if (generation !== this.generation) return Promise.resolve(false);
+    if (this.activeLoads < this.maxConcurrentLoads) {
+      this.activeLoads += 1;
+      return Promise.resolve(true);
+    }
+    return new Promise((resolve) => {
+      this.loadQueue.push({ generation, resolve });
+    });
+  }
+
+  releaseLoadSlot() {
+    this.activeLoads = Math.max(0, this.activeLoads - 1);
+    while (this.loadQueue.length && this.activeLoads < this.maxConcurrentLoads) {
+      const waiter = this.loadQueue.shift();
+      if (waiter.generation !== this.generation) {
+        waiter.resolve(false);
+        continue;
+      }
+      this.activeLoads += 1;
+      waiter.resolve(true);
+    }
+  }
+
   scheduleNotify() {
     if (this.notifyScheduled) return;
     this.notifyScheduled = true;
@@ -251,7 +291,10 @@ export class AssetPreviewCache {
     if (!current || current.archived || this.keyFor(current) !== key) return;
     const generation = this.generation;
     const task = (async () => {
+      const acquired = await this.acquireLoadSlot(generation);
+      if (!acquired) return;
       let entry;
+      let sourceRelease = null;
       const ownedUrls = [];
       const keepUrl = (url) => {
         this.trackUrl({ url });
@@ -259,13 +302,32 @@ export class AssetPreviewCache {
         return url;
       };
       try {
-        const bytes = await this.bridge.readAssetBytes(assetId);
+        let bytes = null;
+        let source = null;
+        if (asset.type === "video") {
+          if (!String(asset.mime_type || "").toLowerCase().startsWith("video/")) {
+            throw new Error("素材类型与视频文件格式不匹配");
+          }
+          source = await this.bridge.previewAssetVideoSource(assetId);
+          sourceRelease = source?.release || null;
+        } else {
+          bytes = await this.bridge.readAssetBytes(assetId, this.mediaLimit);
+        }
         // Project switches and content edits invalidate reads already in
         // flight. Never let their late response repopulate the new cache.
         const current = this.findAsset(assetId);
         if (generation !== this.generation || !current ||
-          this.keyFor(current) !== key) return;
-        if (!bytes || bytes.length === 0) {
+          this.keyFor(current) !== key) {
+          try { sourceRelease?.(); } catch { /* source token may already be gone */ }
+          sourceRelease = null;
+          return;
+        }
+        if (source) {
+          const frame = await decodeVideoFrame(source.url);
+          if (frame.posterUrl) keepUrl(frame.posterUrl);
+          entry = { url: source.url, ...frame, release: sourceRelease, loaded: true };
+          sourceRelease = null;
+        } else if (!bytes || bytes.length === 0) {
           entry = {
             failed: true,
             error: "素材文件为空",
@@ -273,7 +335,7 @@ export class AssetPreviewCache {
         } else if (bytes.length > this.mediaLimit) {
           entry = {
             failed: true,
-            error: "素材过大，无法在工作台内预览",
+            error: `素材超过单文件预览上限（${this.mediaLimit / BYTES_PER_MEGABYTE} MiB）`,
           };
         } else if (isTextAsset(asset)) {
           const text = new TextDecoder().decode(bytes);
@@ -284,8 +346,9 @@ export class AssetPreviewCache {
           }
           const url = keepUrl(urlForBytes(bytes, asset));
           const image = await loadImage(url);
-          const thumbnailUrl = await posterFromImage(image).catch(() => null);
-          if (thumbnailUrl) keepUrl(thumbnailUrl);
+          const thumbnailUrl = asset.type === "gif"
+            ? keepUrl(await staticImagePoster(bytes, asset.mime_type))
+            : keepUrl(await posterFromImage(image).catch(() => null));
           entry = {
             url,
             thumbnailUrl,
@@ -294,13 +357,7 @@ export class AssetPreviewCache {
             loaded: true,
           };
         } else if (asset.type === "video") {
-          if (!String(asset.mime_type || "").toLowerCase().startsWith("video/")) {
-            throw new Error("素材类型与视频文件格式不匹配");
-          }
-          const url = keepUrl(urlForBytes(bytes, asset));
-          const frame = await decodeVideoFrame(url);
-          if (frame.posterUrl) keepUrl(frame.posterUrl);
-          entry = { url, ...frame, loaded: true };
+          entry = { failed: true, error: "视频来源不可用" };
         } else if (asset.type === "audio") {
           if (!String(asset.mime_type || "").toLowerCase().startsWith("audio/")) {
             throw new Error("素材类型与音频文件格式不匹配");
@@ -332,6 +389,8 @@ export class AssetPreviewCache {
         this.cache(key, entry, bytes?.byteLength || 0);
       } catch (error) {
         for (const url of ownedUrls) this.releaseEntry({ url });
+        try { sourceRelease?.(); } catch { /* source token may already be gone */ }
+        sourceRelease = null;
         if (generation !== this.generation) return;
         this.failures += 1;
         entry = {
@@ -340,6 +399,7 @@ export class AssetPreviewCache {
         };
         this.cache(key, entry, 0);
       } finally {
+        this.releaseLoadSlot();
         if (generation === this.generation) {
           this.pending.delete(key);
           this.assetsByKey.delete(key);
@@ -372,6 +432,7 @@ export class AssetPreviewCache {
   }
 
   releaseEntry(entry) {
+    try { entry?.release?.(); } catch { /* source token may already be gone */ }
     for (const url of [entry?.url, entry?.posterUrl, entry?.thumbnailUrl]) {
       if (typeof url !== "string" || !url.startsWith("blob:")) continue;
       this.urls.delete(url);
@@ -390,7 +451,10 @@ export class AssetPreviewCache {
   }
 
   clear() {
+    stopPreviewMedia(globalThis.document);
     this.generation += 1;
+    for (const waiter of this.loadQueue.splice(0)) waiter.resolve(false);
+    for (const cached of this.entries.values()) this.releaseEntry(cached.value);
     for (const url of this.urls) {
       try {
         URL.revokeObjectURL(url);
@@ -429,7 +493,7 @@ function looksLikePdf(bytes) {
   return header.includes("%PDF-") && tail.includes("%%EOF");
 }
 
-function loadImage(url) {
+export function loadImage(url) {
   return new Promise((resolve, reject) => {
     if (typeof Image !== "function") {
       reject(new Error("当前 WebView 无法解码图片"));
@@ -475,7 +539,27 @@ async function posterFromImage(image) {
   return URL.createObjectURL(blob);
 }
 
-async function decodeVideoFrame(url) {
+/** Decode the static default/first frame from encoded animated image bytes. */
+export async function staticImagePoster(bytes, mime = "image/gif") {
+  if (typeof document === "undefined" || typeof createImageBitmap !== "function") {
+    throw new Error("当前 WebView 无法生成 GIF 首帧缩略图");
+  }
+  const bitmap = await createImageBitmap(new Blob([bytes], { type: mime }));
+  try {
+    const scale = Math.min(1, 320 / Math.max(bitmap.width, bitmap.height));
+    const canvas = document.createElement("canvas");
+    canvas.width = Math.max(1, Math.round(bitmap.width * scale));
+    canvas.height = Math.max(1, Math.round(bitmap.height * scale));
+    const context = canvas.getContext("2d");
+    if (!context) throw new Error("无法生成 GIF 首帧缩略图");
+    context.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+    return URL.createObjectURL(await canvasBlob(canvas));
+  } finally {
+    bitmap.close();
+  }
+}
+
+export async function decodeVideoFrame(url) {
   if (typeof document === "undefined") {
     throw new Error("当前 WebView 无法解码视频");
   }
@@ -483,15 +567,28 @@ async function decodeVideoFrame(url) {
   video.muted = true;
   video.playsInline = true;
   video.preload = "metadata";
+  video.crossOrigin = "anonymous";
   return await new Promise((resolve, reject) => {
     let settled = false;
+    let captureInFlight = false;
+    let frameCallbackId = null;
+    let animationFrameId = null;
+    let fallbackFrames = 0;
+    const supportsVideoFrameCallback =
+      typeof video.requestVideoFrameCallback === "function";
     const timeout = setTimeout(() => finish(
       new Error("视频解码超时，未取得可显示画面"),
     ), 15000);
     const cleanup = () => {
       clearTimeout(timeout);
+      if (frameCallbackId !== null) {
+        video.cancelVideoFrameCallback?.(frameCallbackId);
+      }
+      if (animationFrameId !== null) {
+        globalThis.cancelAnimationFrame?.(animationFrameId);
+      }
       video.removeEventListener("loadedmetadata", onMetadata);
-      video.removeEventListener("loadeddata", onFrame);
+      video.removeEventListener("loadeddata", scheduleFallbackFrame);
       video.removeEventListener("seeked", onFrame);
       video.removeEventListener("error", onError);
       video.pause();
@@ -505,12 +602,20 @@ async function decodeVideoFrame(url) {
       if (error) reject(error);
       else resolve(result);
     };
-    const onError = () => finish(
-      new Error("视频无法解码，格式可能不受支持或文件已损坏"),
-    );
+    const onError = () => {
+      const code = Number(video.error?.code || 0);
+      const reason = {
+        1: "读取已取消",
+        2: "读取媒体资源失败",
+        3: "WebView 无法解码媒体",
+        4: "媒体格式或资源协议不受支持",
+      }[code] || "媒体读取或解码失败";
+      finish(new Error(`${reason}（MediaError ${code || "unknown"}）`));
+    };
     const onFrame = async () => {
-      if (!video.videoWidth || !video.videoHeight) {
-        finish(new Error("视频没有可显示画面"));
+      if (settled || captureInFlight) return;
+      if (video.readyState < 2 || !video.videoWidth || !video.videoHeight) {
+        scheduleFallbackFrame();
         return;
       }
       try {
@@ -524,7 +629,24 @@ async function decodeVideoFrame(url) {
         const context = canvas.getContext("2d");
         if (!context) throw new Error("无法生成视频预览缩略图");
         context.drawImage(video, 0, 0, canvas.width, canvas.height);
-        const posterUrl = URL.createObjectURL(await canvasBlob(canvas));
+        const pixels = context.getImageData(0, 0, canvas.width, canvas.height).data;
+        let hasVisiblePixel = false;
+        for (let index = 3; index < pixels.length; index += 4) {
+          if (pixels[index] !== 0) {
+            hasVisiblePixel = true;
+            break;
+          }
+        }
+        if (!hasVisiblePixel) {
+          scheduleFallbackFrame();
+          return;
+        }
+        captureInFlight = true;
+        const blob = await canvasBlob(canvas);
+        // A timeout or project switch may settle the request while toBlob is
+        // still pending; do not create an unowned URL after cleanup.
+        if (settled) return;
+        const posterUrl = URL.createObjectURL(blob);
         finish(null, {
           posterUrl,
           durationSeconds: Number.isFinite(video.duration)
@@ -532,23 +654,49 @@ async function decodeVideoFrame(url) {
             : null,
         });
       } catch (error) {
-        finish(error instanceof Error ? error : new Error("无法生成视频预览缩略图"));
+        if (error instanceof DOMException && error.name === "SecurityError") {
+          finish(new Error("视频帧受跨源安全策略阻止，无法生成缩略图（SecurityError）"));
+        } else {
+          finish(error instanceof Error ? error : new Error("无法生成视频预览缩略图"));
+        }
       }
     };
+    const scheduleFallbackFrame = () => {
+      if (settled || animationFrameId !== null) return;
+      if (fallbackFrames >= 30) {
+        finish(new Error("WebView 未能合成视频首帧缩略图"));
+        return;
+      }
+      if (typeof globalThis.requestAnimationFrame !== "function") {
+        finish(new Error("当前 WebView 无法等待视频画面合成"));
+        return;
+      }
+      fallbackFrames += 1;
+      animationFrameId = globalThis.requestAnimationFrame(() => {
+        animationFrameId = null;
+        void onFrame();
+      });
+    };
+    const onPresentedFrame = () => {
+      frameCallbackId = null;
+      void onFrame();
+    };
     const onMetadata = () => {
-      const seekTo = Number.isFinite(video.duration) && video.duration > 0.1
-        ? Math.min(0.1, video.duration / 2)
-        : 0;
-      if (!seekTo) video.addEventListener("loadeddata", onFrame, { once: true });
-      else video.addEventListener("seeked", onFrame, { once: true });
-      try {
-        video.currentTime = seekTo;
-      } catch {
-        video.addEventListener("loadeddata", onFrame, { once: true });
+      if (video.currentTime !== 0) {
+        video.addEventListener("seeked", onFrame, { once: true });
+        try { video.currentTime = 0; } catch { /* loadeddata still reports the first decoded frame */ }
       }
     };
     video.addEventListener("loadedmetadata", onMetadata, { once: true });
+    if (!supportsVideoFrameCallback) {
+      video.addEventListener("loadeddata", scheduleFallbackFrame, { once: true });
+    }
     video.addEventListener("error", onError, { once: true });
+    // WebKit can fire loadeddata before a video frame is paintable to canvas.
+    // Register before loading the source so the callback marks compositor readiness.
+    if (supportsVideoFrameCallback) {
+      frameCallbackId = video.requestVideoFrameCallback(onPresentedFrame);
+    }
     video.src = url;
     video.load();
   });
@@ -620,7 +768,7 @@ export function explorerEntryName(relativePath) {
 
 /**
  * Preview kind for Workspace Explorer (§28). Recognition ≠ editable.
- * PDF/DOCX stay "reference" until a real parser exists.
+ * PDF is an inline preview; DOCX stays "reference" until a real parser exists.
  */
 export function explorerPreviewKind(entry) {
   if (!entry) return "unsupported";
@@ -639,11 +787,11 @@ export function explorerPreviewKind(entry) {
   if (mime.startsWith("audio/") || /\.(mp3|wav|m4a|ogg)$/i.test(name)) {
     return "audio";
   }
+  if (mime === "application/pdf" || /\.pdf$/i.test(name)) return "pdf";
   if (
     entry.suggested_role === "reference" ||
-    mime === "application/pdf" ||
     /word|document/.test(mime) ||
-    /\.(pdf|docx?|odt|rtf)$/i.test(name)
+    /\.(docx?|odt|rtf)$/i.test(name)
   ) {
     return "reference";
   }
@@ -660,7 +808,8 @@ export function explorerTypeLabel(entry) {
     image: "图片",
     video: "视频",
     audio: "音频",
-    reference: /\.pdf$/i.test(name) ? "PDF" : "DOCX",
+    pdf: "PDF",
+    reference: "DOCX",
     unsupported: "未识别",
   }[kind] || "未识别";
 }
@@ -801,6 +950,13 @@ export function mappingRoleLabel(role, options = {}) {
   return options.suggestion ? `建议${base}` : base;
 }
 
+export function mappingRowClickToggles(target) {
+  return Boolean(
+    target && typeof target.closest === "function" &&
+      !target.closest("input, select, button, a, label, details, summary, .mapping-source-match"),
+  );
+}
+
 /**
  * Build an editable mapping preview from ScanResult rows.
  * Does not confirm and does not write Canonical.
@@ -821,9 +977,21 @@ export function buildImportMappingPlan(root, entries) {
         selected,
         is_suggestion: true,
         error: entry.error ?? null,
+        destination: suggested === "lesson" ? { kind: "unassigned_lesson" } : null,
+        markdown_dependency_preview: null,
+        markdown_source_match: null,
+        allow_duplicate: false,
       };
     })
     .filter((item) => item.relative_path.length > 0);
+  for (const item of items) {
+    if (item.mapping !== "lesson") continue;
+    const hasMappedStageParent = items.some((candidate) =>
+      candidate.kind === "directory" && candidate.selected && candidate.mapping === "stage" &&
+      item.relative_path.startsWith(`${candidate.relative_path}/`)
+    );
+    item.destination = hasMappedStageParent ? null : { kind: "unassigned_lesson" };
+  }
   return {
     root: String(root || ""),
     items,
@@ -838,7 +1006,18 @@ function cloneImportMappingPlan(plan) {
     confirmed: Boolean(plan?.confirmed),
     confirmed_at: plan?.confirmed_at ?? null,
     items: Array.isArray(plan?.items)
-      ? plan.items.map((item) => ({ ...item }))
+      ? plan.items.map((item) => ({
+        ...item,
+        destination: item.destination ? { ...item.destination } : null,
+        markdown_dependency_preview: item.markdown_dependency_preview
+          ? {
+            ...item.markdown_dependency_preview,
+            counts: { ...item.markdown_dependency_preview.counts },
+            images: (item.markdown_dependency_preview.images || []).map((image) => ({ ...image })),
+          }
+          : null,
+        markdown_source_match: item.markdown_source_match ? { ...item.markdown_source_match } : null,
+      }))
       : [],
   };
 }
@@ -852,6 +1031,11 @@ export function setImportMappingSelected(plan, relativePath, selected) {
   for (const item of next.items) {
     if (item.relative_path === path) {
       item.selected = Boolean(selected);
+      if (item.selected && item.mapping === "lesson" && /\.(md|markdown)$/i.test(item.relative_path)) {
+        item.markdown_dependency_preview = null;
+        item.markdown_source_match = null;
+        item.allow_duplicate = false;
+      }
       break;
     }
   }
@@ -870,10 +1054,97 @@ export function setImportMappingRole(plan, relativePath, role) {
       item.mapping = mapping;
       if (mapping === "ignore") item.selected = false;
       else if (!item.selected) item.selected = true;
+      if (mapping === "lesson") {
+        const hasMappedStageParent = next.items.some((candidate) =>
+          candidate.kind === "directory" && candidate.selected && candidate.mapping === "stage" &&
+          item.relative_path.startsWith(`${candidate.relative_path}/`)
+        );
+        item.destination = hasMappedStageParent ? null : (item.destination || { kind: "unassigned_lesson" });
+      } else {
+        item.destination = null;
+        item.markdown_dependency_preview = null;
+        item.markdown_source_match = null;
+        item.allow_duplicate = false;
+      }
       break;
     }
   }
   return next;
+}
+
+/** Set a lesson destination explicitly; the backend still validates its foreign key. */
+export function setImportMappingDestination(plan, relativePath, destination) {
+  const path = String(relativePath || "").replaceAll("\\", "/");
+  const next = cloneImportMappingPlan(plan);
+  next.confirmed = false;
+  next.confirmed_at = null;
+  for (const item of next.items) {
+    if (item.relative_path !== path || item.mapping !== "lesson") continue;
+    const value = destination && typeof destination === "object" ? destination : {};
+    if (value.kind === "folder_structure") {
+      item.destination = null;
+    } else if (value.kind === "existing_stage" && typeof value.stage_id === "string") {
+      item.destination = { kind: "existing_stage", stage_id: value.stage_id };
+    } else if (value.kind === "existing_lesson" && typeof value.content_item_id === "string") {
+      item.destination = { kind: "existing_lesson", content_item_id: value.content_item_id };
+    } else {
+      item.destination = { kind: "unassigned_lesson" };
+    }
+    break;
+  }
+  return next;
+}
+
+/** Explicitly acknowledge importing a Markdown source match as a new copy. */
+export function setImportMappingAllowDuplicate(plan, relativePath, allow) {
+  const path = String(relativePath || "").replaceAll("\\", "/");
+  const next = cloneImportMappingPlan(plan);
+  next.confirmed = false;
+  next.confirmed_at = null;
+  for (const item of next.items) {
+    if (item.relative_path === path && item.mapping === "lesson") {
+      item.allow_duplicate = Boolean(allow);
+      break;
+    }
+  }
+  return next;
+}
+
+/** Summarize refs emitted by the Markdown AST; callers authorize local paths separately. */
+export function buildMarkdownDependencyPreview(sourceHash, parsed, statusByHref = {}) {
+  const localRefs = new Set(
+    (parsed?.explicitLocalImageRefs || []).map((ref) => `${ref.blockIndex}:${ref.tokenIndex}`),
+  );
+  const images = (parsed?.imageRefs || []).map((ref) => {
+    const key = `${ref.blockIndex}:${ref.tokenIndex}`;
+    const status = localRefs.has(key)
+      ? statusByHref[ref.href]
+      : "remote_or_unsafe";
+    if (!new Set(["present", "missing", "outside_root", "remote_or_unsafe"]).has(status)) {
+      throw new Error(`Markdown图片依赖状态缺失：${ref.href}`);
+    }
+    return { ...ref, status };
+  });
+  const counts = {
+    total: images.length,
+    local_readable: 0,
+    missing: 0,
+    outside_root: 0,
+    remote_or_unsafe: 0,
+  };
+  for (const image of images) {
+    if (image.status === "present") counts.local_readable += 1;
+    else if (image.status === "missing") counts.missing += 1;
+    else if (image.status === "outside_root") counts.outside_root += 1;
+    else counts.remote_or_unsafe += 1;
+  }
+  return {
+    state: "ready",
+    source_hash: sourceHash,
+    fingerprint: JSON.stringify({ source_hash: sourceHash, images }),
+    counts,
+    images,
+  };
 }
 
 /**

@@ -280,7 +280,7 @@ Deno.test("user-facing copy explains safety, continuation, and next actions", as
   assert(views.includes("请选择重新载入、自动合并，或在确认后保留本地版本"), "conflict copy must name the next actions");
   assert(!views.includes("EXTERNAL MODIFICATION CONFLICT") && !views.includes("BLOCKING") && !views.includes("WARNING"), "technical conflict/preflight labels must stay out of primary copy");
   assert(views.includes("显示技术信息") && views.includes("必须修复") && views.includes("确认提示并导出"), "preflight must separate repair blockers from confirmable notices");
-  assert(views.includes("预览失败；请打开媒体库查看，或重新导入文件") && views.includes("没有找到匹配的素材。换一个文件名继续搜索"), "asset copy must explain recovery and search next steps");
+  assert(views.includes('preview.error || "素材不可读"') && views.includes("重试预览") && views.includes("没有找到匹配的素材。换一个文件名继续搜索"), "asset preview must show its error, offer retry, and explain search next steps");
   assert(views.includes("课程内容没有改动，你可以检查设置后重试"), "AI failure copy must state that canonical content is safe");
   assert(main.includes("const userFacingError") && main.includes("external_modification_conflict") && main.includes("keychain_unavailable") && main.includes("当前操作没有写入"), "save/open/AI failures must map technical causes to safe user copy");
   assert(main.includes("发现未完成的保存；磁盘版本没有改变") && main.includes("暂存内容"), "startup recovery copy must explain the available choices");

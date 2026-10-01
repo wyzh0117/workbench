@@ -1,5 +1,12 @@
-use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
-use serde::Serialize;
+use base64::{
+    engine::general_purpose::STANDARD as BASE64,
+    engine::general_purpose::URL_SAFE_NO_PAD as BASE64URL, Engine as _,
+};
+use pulldown_cmark::{
+    Event as MarkdownEvent, Options as MarkdownOptions, Parser as MarkdownParser,
+    Tag as MarkdownTag,
+};
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
 use sha2::{Digest, Sha256};
 use std::collections::{HashMap, HashSet};
@@ -26,6 +33,7 @@ const PROJECT_LOCK_READ_ATTEMPTS: usize = 4;
 static APP_INSTANCE_ID: OnceLock<String> = OnceLock::new();
 static ACTIVE_PROJECT_LOCKS: OnceLock<Mutex<HashMap<PathBuf, LeaseHandle>>> = OnceLock::new();
 static PROJECT_BASELINES: OnceLock<Mutex<HashMap<PathBuf, ProjectBaseline>>> = OnceLock::new();
+static SCANNED_FOLDER_VIDEOS: OnceLock<Mutex<HashSet<(PathBuf, String)>>> = OnceLock::new();
 static EXIT_READY: AtomicBool = AtomicBool::new(false);
 
 /// Project directory requested on the command line (`--project-dir <path>`).
@@ -286,6 +294,23 @@ fn reject_symlink(path: &Path, label: &str) -> Result<(), String> {
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
         Err(error) => Err(format!("无法检查{label}: {error}")),
     }
+}
+
+fn path_has_symlink_component(root: &Path, relative_path: &str) -> Result<bool, String> {
+    let mut cursor = root.to_path_buf();
+    for part in relative_path
+        .split(['/', '\\'])
+        .filter(|part| !part.is_empty())
+    {
+        cursor.push(part);
+        match fs::symlink_metadata(&cursor) {
+            Ok(metadata) if metadata.file_type().is_symlink() => return Ok(true),
+            Ok(_) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+            Err(error) => return Err(format!("无法检查预览路径: {error}")),
+        }
+    }
+    Ok(false)
 }
 
 fn ensure_directory(path: &Path, label: &str) -> Result<PathBuf, String> {
@@ -1522,6 +1547,7 @@ fn picker_result(kind: &str, status: &str, path: Option<&Path>) -> Value {
 fn picker_kind(command: &str) -> &'static str {
     match command {
         "select_file" => "file",
+        "select_files" => "files",
         "select_folder" => "folder",
         _ => "export",
     }
@@ -1571,6 +1597,7 @@ fn has_explicit_picker_result(input: &Value) -> bool {
         .as_object()
         .map(|object| {
             object.get("cancelled").is_some()
+                || object.get("paths").is_some()
                 || field(
                     object,
                     &[
@@ -1595,7 +1622,36 @@ fn picker_path(input: Option<Value>, command: &str) -> Result<Value, String> {
         .and_then(Value::as_bool)
         .unwrap_or(false)
     {
+        if command == "select_files" {
+            return Ok(json!({ "status": "cancelled", "kind": "files", "paths": [] }));
+        }
         return Ok(picker_result(kind, "cancelled", None));
+    }
+    if command == "select_files" {
+        let Some(paths) = object.get("paths").and_then(Value::as_array) else {
+            return Ok(json!({
+                "status": "unsupported",
+                "kind": "files",
+                "paths": [],
+                "error": { "code": "native_picker_unavailable", "user_message": "当前原生壳未安装系统文件选择器。" }
+            }));
+        };
+        let mut validated = Vec::with_capacity(paths.len());
+        for raw in paths {
+            let Some(raw) = raw
+                .as_str()
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+            else {
+                return Err("多选结果包含无效路径".into());
+            };
+            let result = validate_picker_path(PathBuf::from(raw), "select_file")?;
+            validated.push(result.get("path").cloned().unwrap_or(Value::Null));
+        }
+        if validated.is_empty() {
+            return Ok(json!({ "status": "cancelled", "kind": "files", "paths": [] }));
+        }
+        return Ok(json!({ "status": "selected", "kind": "files", "paths": validated }));
     }
     let path_value = field(
         object,
@@ -1630,6 +1686,20 @@ fn picker_path(input: Option<Value>, command: &str) -> Result<Value, String> {
 }
 
 fn dialog_picker(app: &AppHandle, command: &str, input: &Value) -> Result<Value, String> {
+    if command == "select_files" {
+        let Some(selected) = app.dialog().file().blocking_pick_files() else {
+            return Ok(json!({ "status": "cancelled", "kind": "files", "paths": [] }));
+        };
+        let mut paths = Vec::with_capacity(selected.len());
+        for selected in selected {
+            let path = selected
+                .into_path()
+                .map_err(|error| format!("无法解析系统选择路径: {error}"))?;
+            let validated = validate_picker_path(path, "select_file")?;
+            paths.push(validated.get("path").cloned().unwrap_or(Value::Null));
+        }
+        return Ok(json!({ "status": "selected", "kind": "files", "paths": paths }));
+    }
     let selected = match command {
         "select_file" => app.dialog().file().blocking_pick_file(),
         "select_folder" => app.dialog().file().blocking_pick_folder(),
@@ -1681,6 +1751,15 @@ async fn select_file(app: AppHandle, input: Option<Value>) -> Result<Value, Stri
         return picker_path(Some(input), "select_file");
     }
     dialog_picker(&app, "select_file", &input)
+}
+
+#[tauri::command]
+async fn select_files(app: AppHandle, input: Option<Value>) -> Result<Value, String> {
+    let input = input.unwrap_or_else(|| json!({}));
+    if has_explicit_picker_result(&input) {
+        return picker_path(Some(input), "select_files");
+    }
+    dialog_picker(&app, "select_files", &input)
 }
 
 #[tauri::command]
@@ -2173,6 +2252,7 @@ fn push_scan_entry(
 fn walk_folder_scan(
     root: &Path,
     path: &Path,
+    depth: usize,
     entries: &mut Vec<Value>,
     warnings: &mut Vec<String>,
     errors: &mut Vec<String>,
@@ -2215,6 +2295,11 @@ fn walk_folder_scan(
         };
         if !relative.is_empty() {
             push_scan_entry(entries, path, &relative, "directory", None, None);
+            // Mapping previews expose only direct children. A subfolder must
+            // be selected as a new root before its contents are considered.
+            if depth > 0 {
+                return;
+            }
         }
         let reader = match fs::read_dir(path) {
             Ok(reader) => reader,
@@ -2244,6 +2329,15 @@ fn walk_folder_scan(
             if name.starts_with('.') {
                 continue;
             }
+            if managed_import_name(&name) {
+                let relative = if relative.is_empty() {
+                    name.to_string()
+                } else {
+                    format!("{relative}/{name}")
+                };
+                warnings.push(format!("{relative}: 已跳过工作台管理文件或构建目录"));
+                continue;
+            }
             let child_path = child.path();
             if let Ok(child_meta) = fs::symlink_metadata(&child_path) {
                 if child_meta.file_type().is_symlink() {
@@ -2256,7 +2350,15 @@ fn walk_folder_scan(
                     continue;
                 }
             }
-            walk_folder_scan(root, &child_path, entries, warnings, errors, visited);
+            walk_folder_scan(
+                root,
+                &child_path,
+                depth + 1,
+                entries,
+                warnings,
+                errors,
+                visited,
+            );
         }
         return;
     }
@@ -2295,6 +2397,48 @@ fn walk_folder_scan(
     push_scan_entry(entries, path, &relative, "file", Some(meta.len()), None);
 }
 
+fn managed_import_name(name: &str) -> bool {
+    let lower = name.to_ascii_lowercase();
+    matches!(
+        lower.as_str(),
+        "project.json"
+            | "project.json.bak"
+            | "project.json.backup"
+            | "project.lock"
+            | "project.lock.guard"
+            | "providers.json"
+            | "providers.bak"
+            | "credentials.json"
+            | ".workspace"
+            | ".git"
+            | ".svn"
+            | ".hg"
+            | "node_modules"
+            | "vendor"
+            | "target"
+            | "dist"
+            | "build"
+            | "out"
+            | "coverage"
+            | ".next"
+            | ".cache"
+            | ".env"
+            | "id_rsa"
+            | "id_ed25519"
+            | "backups"
+            | "backup"
+    ) || [".bak", ".backup", ".lock", ".tmp", "~"]
+        .iter()
+        .any(|suffix| lower.ends_with(suffix))
+        || lower.starts_with(".env.")
+        || ["credential", "secret", "token", "api_key", "api-key"]
+            .iter()
+            .any(|marker| lower.contains(marker))
+        || [".pem", ".key", ".p12", ".pfx", ".orig", ".old", ".swp"]
+            .iter()
+            .any(|suffix| lower.ends_with(suffix))
+}
+
 /// Read-only folder scan for 导入已有文件夹 (V1-T04). Does not write project.json.
 /// Accepts the same flat `{ path }` payload the bridge sends for non-project commands.
 #[tauri::command]
@@ -2327,6 +2471,7 @@ fn folder_scan(
     walk_folder_scan(
         &root,
         &root,
+        0,
         &mut entries,
         &mut warnings,
         &mut errors,
@@ -2343,6 +2488,23 @@ fn folder_scan(
             .unwrap_or("");
         left_rel.cmp(right_rel)
     });
+    let scanned_videos: HashSet<(PathBuf, String)> = entries
+        .iter()
+        .filter_map(|entry| {
+            if entry.get("kind").and_then(Value::as_str) != Some("file") {
+                return None;
+            }
+            let relative_path = entry.get("relative_path")?.as_str()?;
+            let name = Path::new(relative_path).file_name()?.to_str()?;
+            let mime = mime_for_filename(name);
+            (folder_preview_kind(name, Some(mime)) == "video")
+                .then(|| (root.clone(), relative_path.to_owned()))
+        })
+        .collect();
+    *SCANNED_FOLDER_VIDEOS
+        .get_or_init(|| Mutex::new(HashSet::new()))
+        .lock()
+        .unwrap() = scanned_videos;
     Ok(json!({
         "root": root.to_string_lossy(),
         "entries": entries,
@@ -2376,10 +2538,12 @@ fn folder_preview_kind(name: &str, mime: Option<&str>) -> &'static str {
     if lower_mime.starts_with("audio/") || matches!(ext.as_str(), "mp3" | "wav" | "m4a" | "ogg") {
         return "audio";
     }
-    if lower_mime == "application/pdf"
-        || lower_mime.contains("word")
+    if lower_mime == "application/pdf" || ext == "pdf" {
+        return "pdf";
+    }
+    if lower_mime.contains("word")
         || lower_mime.contains("document")
-        || matches!(ext.as_str(), "pdf" | "doc" | "docx" | "odt" | "rtf")
+        || matches!(ext.as_str(), "doc" | "docx" | "odt" | "rtf")
     {
         return "reference";
     }
@@ -2425,6 +2589,18 @@ fn folder_read_preview(
         absolute.push(part);
     }
     let _ = scan_relative(&resolved_root, &absolute)?;
+    if path_has_symlink_component(&resolved_root, rel)? {
+        return Ok(json!({
+            "relative_path": rel,
+            "mime": Value::Null,
+            "size": Value::Null,
+            "preview_kind": "unsupported",
+            "text": Value::Null,
+            "bytes_base64": Value::Null,
+            "note": Value::Null,
+            "error": "已跳过符号链接，避免越过所选文件夹",
+        }));
+    }
     let name = absolute
         .file_name()
         .and_then(|value| value.to_str())
@@ -2471,6 +2647,18 @@ fn folder_read_preview(
     let mime = scan_mime_for(&name);
     let kind = folder_preview_kind(&name, mime);
     let size = meta.len();
+    if size == 0 {
+        return Ok(json!({
+            "relative_path": rel,
+            "mime": mime,
+            "size": size,
+            "preview_kind": kind,
+            "text": Value::Null,
+            "bytes_base64": Value::Null,
+            "note": Value::Null,
+            "error": "文件为空，无法预览",
+        }));
+    }
     if kind == "reference" {
         return Ok(json!({
             "relative_path": rel,
@@ -2479,7 +2667,7 @@ fn folder_read_preview(
             "preview_kind": "reference",
             "text": Value::Null,
             "bytes_base64": Value::Null,
-            "note": "作为参考文件导入",
+            "note": "参考文件 · 仅显示文件信息",
         }));
     }
     if kind == "unsupported" {
@@ -2499,6 +2687,8 @@ fn folder_read_preview(
         MEDIA_LIMIT
     };
     if size > limit {
+        let limit_label = if kind == "text" { "512 KiB" } else { "16 MiB" };
+        let message = format!("文件超过单文件预览上限（{limit_label}），无法在资源浏览器内读取");
         return Ok(json!({
             "relative_path": rel,
             "mime": mime,
@@ -2506,8 +2696,8 @@ fn folder_read_preview(
             "preview_kind": kind,
             "text": Value::Null,
             "bytes_base64": Value::Null,
-            "note": "文件过大，无法在资源浏览器内预览",
-            "error": "文件过大，无法在资源浏览器内预览",
+            "note": message,
+            "error": message,
         }));
     }
     let bytes = fs::read(&absolute).map_err(|error| format!("无法读取文件：{error}"))?;
@@ -2523,6 +2713,18 @@ fn folder_read_preview(
             "note": Value::Null,
         }));
     }
+    if kind == "pdf" && !bytes.starts_with(b"%PDF-") {
+        return Ok(json!({
+            "relative_path": rel,
+            "mime": mime,
+            "size": bytes.len(),
+            "preview_kind": kind,
+            "text": Value::Null,
+            "bytes_base64": Value::Null,
+            "note": Value::Null,
+            "error": "PDF 文件内容无效或已损坏，无法预览",
+        }));
+    }
     Ok(json!({
         "relative_path": rel,
         "mime": mime,
@@ -2532,6 +2734,160 @@ fn folder_read_preview(
         "bytes_base64": BASE64.encode(&bytes),
         "note": Value::Null,
     }))
+}
+
+/// Read one explicitly selected UTF-8 source for the shared Markdown parser.
+#[tauri::command]
+fn folder_read_source(root: String, relative_path: String) -> Result<Value, String> {
+    let root_path = PathBuf::from(root.trim());
+    if !root_path.is_absolute() {
+        return Err("导入文件夹必须是用户明确选择的绝对路径".into());
+    }
+    reject_symlink(&root_path, "导入文件夹")?;
+    let root_meta =
+        fs::symlink_metadata(&root_path).map_err(|error| format!("无法打开所选文件夹：{error}"))?;
+    if root_meta.file_type().is_symlink() || !root_meta.is_dir() {
+        return Err("Markdown源必须位于所选文件夹内".into());
+    }
+    let resolved_root =
+        fs::canonicalize(&root_path).map_err(|error| format!("无法解析所选文件夹：{error}"))?;
+    let rel = relative_path.trim().trim_start_matches(['/', '\\']);
+    if rel.is_empty()
+        || rel.contains('\0')
+        || rel
+            .split(['/', '\\'])
+            .any(|part| part == ".." || part == ".")
+    {
+        return Err("导入源路径无效".into());
+    }
+    let mut absolute = resolved_root.clone();
+    for part in rel.split(['/', '\\']).filter(|part| !part.is_empty()) {
+        absolute.push(part);
+        let meta = fs::symlink_metadata(&absolute)
+            .map_err(|error| format!("无法读取Markdown源：{error}"))?;
+        if meta.file_type().is_symlink() {
+            return Err("Markdown源路径包含符号链接".into());
+        }
+    }
+    let canonical =
+        fs::canonicalize(&absolute).map_err(|error| format!("无法解析Markdown源：{error}"))?;
+    if !canonical.starts_with(&resolved_root) {
+        return Err("Markdown源超出所选文件夹".into());
+    }
+    let bytes = fs::read(&canonical).map_err(|error| format!("无法读取Markdown源：{error}"))?;
+    let text =
+        String::from_utf8(bytes.clone()).map_err(|_| "Markdown源必须是UTF-8文本".to_string())?;
+    Ok(json!({
+        "relative_path": rel,
+        "size": bytes.len(),
+        "sha256": sha256_hex(&bytes),
+        "text": text,
+    }))
+}
+
+#[tauri::command]
+fn folder_markdown_image_status(
+    root: String,
+    markdown_relative_path: String,
+    href: String,
+) -> Result<Value, String> {
+    let root_path = PathBuf::from(root.trim());
+    if !root_path.is_absolute() {
+        return Err("导入文件夹必须是用户明确选择的绝对路径".into());
+    }
+    reject_symlink(&root_path, "导入文件夹")?;
+    let root_meta =
+        fs::symlink_metadata(&root_path).map_err(|error| format!("无法打开所选文件夹：{error}"))?;
+    if root_meta.file_type().is_symlink() || !root_meta.is_dir() {
+        return Err("Markdown源必须位于所选文件夹内".into());
+    }
+    let resolved_root =
+        fs::canonicalize(&root_path).map_err(|error| format!("无法解析所选文件夹：{error}"))?;
+    let rel = markdown_relative_path
+        .trim()
+        .trim_start_matches(['/', '\\']);
+    if rel.is_empty()
+        || rel.contains('\0')
+        || rel
+            .split(['/', '\\'])
+            .any(|part| part.is_empty() || part == ".." || part == ".")
+    {
+        return Err("导入源路径无效".into());
+    }
+    let mut markdown_path = resolved_root.clone();
+    for part in rel.split(['/', '\\']) {
+        markdown_path.push(part);
+        let meta = fs::symlink_metadata(&markdown_path)
+            .map_err(|error| format!("无法读取Markdown源：{error}"))?;
+        if meta.file_type().is_symlink() {
+            return Err("Markdown源路径包含符号链接".into());
+        }
+    }
+    let canonical_markdown =
+        fs::canonicalize(&markdown_path).map_err(|error| format!("无法解析Markdown源：{error}"))?;
+    if !canonical_markdown.starts_with(&resolved_root)
+        || !fs::metadata(&canonical_markdown)
+            .map(|metadata| metadata.is_file())
+            .unwrap_or(false)
+    {
+        return Err("Markdown源必须位于所选文件夹内".into());
+    }
+
+    match markdown_dependency_path(&resolved_root, rel, &href) {
+        Ok(None) => Ok(json!({
+            "status": "missing",
+            "relative_path": Value::Null,
+            "size": Value::Null,
+            "mime": Value::Null,
+        })),
+        Ok(Some(path)) => match fs::metadata(&path) {
+            Ok(metadata) if metadata.is_file() => Ok(json!({
+                "status": "present",
+                "relative_path": scan_relative(&resolved_root, &path)?,
+                "size": metadata.len(),
+                "mime": mime_for_filename(path.file_name().and_then(|name| name.to_str()).unwrap_or("")),
+            })),
+            Ok(_) => Ok(json!({
+                "status": "unsafe",
+                "relative_path": scan_relative(&resolved_root, &path).ok(),
+                "size": Value::Null,
+                "mime": Value::Null,
+                "message": "图片依赖不是文件",
+            })),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(json!({
+                "status": "missing",
+                "relative_path": Value::Null,
+                "size": Value::Null,
+                "mime": Value::Null,
+            })),
+            Err(_) => Ok(json!({
+                "status": "error",
+                "relative_path": scan_relative(&resolved_root, &path).ok(),
+                "size": Value::Null,
+                "mime": Value::Null,
+                "message": "无法读取图片依赖信息",
+            })),
+        },
+        Err(message) => {
+            let unsafe_path = [
+                "Markdown图片引用必须是所选目录内的相对路径",
+                "Markdown图片路径编码无效",
+                "Markdown图片路径无效",
+                "Markdown图片引用超出所选目录",
+                "Markdown图片依赖不能经过符号链接",
+                "Markdown图片依赖超出所选目录或不是文件",
+            ]
+            .iter()
+            .any(|prefix| message.starts_with(prefix));
+            Ok(json!({
+                "status": if unsafe_path { "unsafe" } else { "error" },
+                "relative_path": Value::Null,
+                "size": Value::Null,
+                "mime": Value::Null,
+                "message": message,
+            }))
+        }
+    }
 }
 
 /// Strategy A in-place adoption after confirm (§§32–35).
@@ -2546,6 +2902,697 @@ fn folder_adopt(
     plan: Value,
     duplicate_choice: Option<String>,
     project_title: Option<String>,
+) -> Result<Value, String> {
+    folder_apply_import(plan, duplicate_choice, project_title, None)
+}
+
+/// Append an explicitly confirmed mapping into the already open Canonical project.
+/// The active lease remains held until media and the final manifest commit finish.
+#[tauri::command]
+fn folder_append(
+    plan: Value,
+    project_dir: String,
+    duplicate_choice: Option<String>,
+) -> Result<Value, String> {
+    let project_dir = explicit_project_dir(&project_dir, false)?;
+    let _lease_guard = require_active_project_lock(&project_dir)?;
+    let current = read_project_value(&project_dir)?;
+    validate_project(&current)?;
+    folder_apply_import(plan, duplicate_choice, None, Some((project_dir, current)))
+}
+
+fn local_markdown_image_href(href: &str) -> bool {
+    let value = href.trim();
+    if value.is_empty()
+        || value.starts_with('#')
+        || value.starts_with("//")
+        || value.chars().any(|character| character.is_control())
+    {
+        return false;
+    }
+    let Some((scheme, _)) = value.split_once(':') else {
+        return true;
+    };
+    let mut chars = scheme.chars();
+    let scheme = chars
+        .next()
+        .map(|first| first.is_ascii_alphabetic())
+        .unwrap_or(false)
+        && chars.all(|character| {
+            character.is_ascii_alphanumeric() || matches!(character, '+' | '.' | '-')
+        })
+        && !scheme.is_empty()
+        && value.find(':').unwrap_or(0) == scheme.len();
+    !scheme
+}
+
+/// Independently verify image refs against the source with the app's GFM-relevant
+/// CommonMark extensions. The frontend parser still owns block projection; Rust
+/// refuses any dependency href or occurrence absent from its own source parse.
+fn verify_markdown_image_refs(
+    source: &str,
+    parsed_blocks: &Value,
+    refs: &[Value],
+) -> Result<(), String> {
+    let options = MarkdownOptions::ENABLE_TABLES
+        | MarkdownOptions::ENABLE_STRIKETHROUGH
+        | MarkdownOptions::ENABLE_TASKLISTS;
+    let mut expected = Vec::new();
+    let mut occurrences: HashMap<String, u64> = HashMap::new();
+    let mut token_index = 0_u64;
+    for event in MarkdownParser::new_ext(source, options) {
+        let MarkdownEvent::Start(MarkdownTag::Image { dest_url, .. }) = event else {
+            continue;
+        };
+        let href = dest_url.to_string();
+        let occurrence = *occurrences.get(&href).unwrap_or(&0);
+        occurrences.insert(href.clone(), occurrence + 1);
+        if local_markdown_image_href(&href) {
+            expected.push((href, token_index, occurrence));
+        }
+        token_index += 1;
+    }
+    let blocks = parsed_blocks
+        .as_array()
+        .ok_or("Markdown解析结果缺少blocks")?;
+    if refs.len() != expected.len() {
+        return Err("Markdown图片解析结果不一致，请重新打开映射预览".into());
+    }
+    for (index, (reference, (expected_href, expected_token, expected_occurrence))) in
+        refs.iter().zip(expected.iter()).enumerate()
+    {
+        let href = reference.get("href").and_then(Value::as_str).unwrap_or("");
+        let token_index = reference.get("tokenIndex").and_then(Value::as_u64);
+        let occurrence = reference.get("occurrence").and_then(Value::as_u64);
+        let block_index = reference
+            .get("blockIndex")
+            .and_then(Value::as_u64)
+            .and_then(|value| usize::try_from(value).ok());
+        if href != expected_href
+            || token_index != Some(*expected_token)
+            || occurrence != Some(*expected_occurrence)
+            || !local_markdown_image_href(href)
+        {
+            return Err("Markdown图片解析结果不一致，请重新打开映射预览".into());
+        }
+        let Some(block_index) = block_index.filter(|value| *value < blocks.len()) else {
+            return Err("Markdown图片引用指向无效区块".into());
+        };
+        let in_block = blocks[block_index]
+            .get("imageRefs")
+            .and_then(Value::as_array)
+            .map(|images| {
+                images.iter().any(|image| {
+                    image.get("href").and_then(Value::as_str) == Some(href)
+                        && image.get("tokenIndex").and_then(Value::as_u64) == Some(*expected_token)
+                        && image.get("occurrence").and_then(Value::as_u64)
+                            == Some(*expected_occurrence)
+                })
+            })
+            .unwrap_or(false);
+        if !in_block {
+            return Err(format!("Markdown图片解析区块不一致（引用 {}）", index + 1));
+        }
+    }
+    Ok(())
+}
+
+fn markdown_dependency_path(
+    source_root: &Path,
+    markdown_rel: &str,
+    href: &str,
+) -> Result<Option<PathBuf>, String> {
+    let href = href.trim();
+    if href.is_empty()
+        || href.starts_with('/')
+        || href.starts_with('\\')
+        || href.contains(':')
+        || href.starts_with("//")
+    {
+        return Err("Markdown图片引用必须是所选目录内的相对路径".into());
+    }
+    let path_part = href.split(['?', '#']).next().unwrap_or_default();
+    let decoded = ai_percent_decode(path_part).ok_or("Markdown图片路径编码无效")?;
+    if decoded.is_empty() || decoded.contains('\0') || decoded.contains('\\') {
+        return Err("Markdown图片路径无效".into());
+    }
+    let mut relative = PathBuf::new();
+    let parent = Path::new(markdown_rel)
+        .parent()
+        .unwrap_or_else(|| Path::new(""));
+    for component in parent.join(decoded).components() {
+        match component {
+            Component::CurDir => {}
+            Component::ParentDir => {
+                if !relative.pop() {
+                    return Err("Markdown图片引用超出所选目录".into());
+                }
+            }
+            Component::Normal(value) => relative.push(value),
+            _ => return Err("Markdown图片路径无效".into()),
+        }
+    }
+    if relative.as_os_str().is_empty() {
+        return Err("Markdown图片路径无效".into());
+    }
+    let mut candidate = source_root.to_path_buf();
+    for component in relative.components() {
+        let Component::Normal(value) = component else {
+            continue;
+        };
+        candidate.push(value);
+        let metadata = match fs::symlink_metadata(&candidate) {
+            Ok(value) => value,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+            Err(error) => return Err(format!("无法读取Markdown图片依赖：{error}")),
+        };
+        if metadata.file_type().is_symlink() {
+            return Err("Markdown图片依赖不能经过符号链接".into());
+        }
+    }
+    let canonical = match fs::canonicalize(&candidate) {
+        Ok(value) => value,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(format!("无法解析Markdown图片依赖：{error}")),
+    };
+    if !canonical.starts_with(source_root)
+        || !fs::metadata(&canonical)
+            .map(|m| m.is_file())
+            .unwrap_or(false)
+    {
+        return Err("Markdown图片依赖超出所选目录或不是文件".into());
+    }
+    Ok(Some(canonical))
+}
+
+struct AdoptStagingGuard(PathBuf);
+
+impl Drop for AdoptStagingGuard {
+    fn drop(&mut self) {
+        let _ = fs::remove_dir_all(&self.0);
+    }
+}
+
+struct MarkdownSourceMatch {
+    state: &'static str,
+    title: String,
+    previous_hash: String,
+    target_deleted: bool,
+}
+
+fn find_markdown_source_match(
+    project: &Value,
+    source_root: &Path,
+    relative_path: &str,
+    checksum: &str,
+) -> Option<MarkdownSourceMatch> {
+    let project_id = project.get("project")?.get("id")?.as_str()?;
+    let documents = project.get("documents")?.as_array()?;
+    let content_items = project.get("content_items")?.as_array()?;
+    let blocks = project.get("blocks")?.as_array()?;
+    let canonical_root = source_root.to_string_lossy();
+    let mut changed_ledger_entry: Option<(String, MarkdownSourceMatch)> = None;
+    if let Some(ledger) = project
+        .get("project")
+        .and_then(|value| value.get("settings"))
+        .and_then(|value| value.get("markdown_import_sources"))
+        .and_then(Value::as_array)
+    {
+        for source in ledger {
+            let (Some(prior_root), Some(prior_path), Some(prior_hash), Some(content_id)) = (
+                source.get("source_root").and_then(Value::as_str),
+                source.get("relative_path").and_then(Value::as_str),
+                source.get("source_hash").and_then(Value::as_str),
+                source.get("content_item_id").and_then(Value::as_str),
+            ) else {
+                continue;
+            };
+            if content_id.is_empty()
+                || prior_root.is_empty()
+                || prior_path.is_empty()
+                || prior_hash.len() != 64
+                || !prior_hash.bytes().all(|byte| byte.is_ascii_hexdigit())
+            {
+                continue;
+            }
+            let content_item = content_items
+                .iter()
+                .find(|item| item.get("id").and_then(Value::as_str) == Some(content_id));
+            if content_item.is_some_and(|item| {
+                item.get("project_id").and_then(Value::as_str) != Some(project_id)
+                    || item.get("type").and_then(Value::as_str) != Some("lesson")
+            }) {
+                continue;
+            }
+            let title = content_item
+                .and_then(|item| item.get("title"))
+                .and_then(Value::as_str)
+                .or_else(|| source.get("title").and_then(Value::as_str))
+                .unwrap_or("已删除的课时")
+                .to_owned();
+            let matched = MarkdownSourceMatch {
+                state: "changed_source",
+                title,
+                previous_hash: prior_hash.to_owned(),
+                target_deleted: content_item.is_none(),
+            };
+            if prior_hash == checksum {
+                return Some(MarkdownSourceMatch {
+                    state: "same_content",
+                    ..matched
+                });
+            }
+            if prior_root == canonical_root.as_ref() && prior_path == relative_path {
+                let imported_at = source
+                    .get("imported_at")
+                    .and_then(Value::as_str)
+                    .unwrap_or("")
+                    .to_owned();
+                let is_latest = changed_ledger_entry
+                    .as_ref()
+                    .map(|(latest, _)| imported_at.as_str() >= latest.as_str())
+                    .unwrap_or(true);
+                if is_latest {
+                    changed_ledger_entry = Some((imported_at, matched));
+                }
+            }
+        }
+    }
+    if let Some((_, matched)) = changed_ledger_entry {
+        return Some(matched);
+    }
+    let mut changed_source = None;
+    for block in blocks {
+        let Some(source) = block
+            .get("settings")
+            .and_then(|settings| settings.get("markdown_import"))
+        else {
+            continue;
+        };
+        let (Some(prior_root), Some(prior_path), Some(prior_hash), Some(document_id)) = (
+            source.get("source_root").and_then(Value::as_str),
+            source.get("relative_path").and_then(Value::as_str),
+            source.get("source_hash").and_then(Value::as_str),
+            block.get("document_id").and_then(Value::as_str),
+        ) else {
+            continue;
+        };
+        let Some(content_id) = documents.iter().find_map(|document| {
+            (document.get("id").and_then(Value::as_str) == Some(document_id))
+                .then(|| document.get("content_item_id").and_then(Value::as_str))
+                .flatten()
+        }) else {
+            continue;
+        };
+        let Some(content_item) = content_items.iter().find(|item| {
+            item.get("id").and_then(Value::as_str) == Some(content_id)
+                && item.get("project_id").and_then(Value::as_str) == Some(project_id)
+                && item.get("type").and_then(Value::as_str) == Some("lesson")
+                && !item
+                    .get("archived")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false)
+        }) else {
+            continue;
+        };
+        let title = content_item
+            .get("title")
+            .and_then(Value::as_str)
+            .unwrap_or("未命名课时");
+        let matched = MarkdownSourceMatch {
+            state: "same_content",
+            title: title.to_owned(),
+            previous_hash: prior_hash.to_owned(),
+            target_deleted: false,
+        };
+        if prior_hash == checksum {
+            return Some(matched);
+        }
+        if prior_root == canonical_root.as_ref()
+            && prior_path == relative_path
+            && changed_source.is_none()
+        {
+            changed_source = Some(MarkdownSourceMatch {
+                state: "changed_source",
+                title: title.to_owned(),
+                previous_hash: prior_hash.to_owned(),
+                target_deleted: false,
+            });
+        }
+    }
+    changed_source
+}
+
+struct AdoptLessonDestination {
+    existing_lesson_id: Option<String>,
+    stage_id: Option<String>,
+}
+
+fn adopt_lesson_destination(
+    project: &Value,
+    project_id: &str,
+    item: &Value,
+    fallback_stage_id: Option<String>,
+) -> Result<AdoptLessonDestination, String> {
+    let Some(destination) = item.get("destination").filter(|value| !value.is_null()) else {
+        return Ok(AdoptLessonDestination {
+            existing_lesson_id: None,
+            stage_id: fallback_stage_id,
+        });
+    };
+    let kind = destination
+        .get("kind")
+        .and_then(Value::as_str)
+        .unwrap_or("");
+    match kind {
+        "unassigned_lesson" => Ok(AdoptLessonDestination {
+            existing_lesson_id: None,
+            stage_id: None,
+        }),
+        "existing_stage" => {
+            let stage_id = destination
+                .get("stage_id")
+                .and_then(Value::as_str)
+                .filter(|value| !value.is_empty())
+                .ok_or("导入目标阶段缺少ID")?;
+            let exists = project
+                .get("stages")
+                .and_then(Value::as_array)
+                .map(|stages| {
+                    stages.iter().any(|stage| {
+                        stage.get("id").and_then(Value::as_str) == Some(stage_id)
+                            && stage.get("project_id").and_then(Value::as_str) == Some(project_id)
+                            && !stage
+                                .get("archived")
+                                .and_then(Value::as_bool)
+                                .unwrap_or(false)
+                    })
+                })
+                .unwrap_or(false);
+            if !exists {
+                return Err("导入目标阶段不属于当前课程或已不可用；请刷新目标列表后重试。".into());
+            }
+            Ok(AdoptLessonDestination {
+                existing_lesson_id: None,
+                stage_id: Some(stage_id.to_owned()),
+            })
+        }
+        "existing_lesson" => {
+            let content_item_id = destination
+                .get("content_item_id")
+                .and_then(Value::as_str)
+                .filter(|value| !value.is_empty())
+                .ok_or("导入目标课时缺少ID")?;
+            let content_item = project
+                .get("content_items")
+                .and_then(Value::as_array)
+                .and_then(|items| {
+                    items.iter().find(|content| {
+                        content.get("id").and_then(Value::as_str) == Some(content_item_id)
+                            && content.get("project_id").and_then(Value::as_str) == Some(project_id)
+                            && content.get("type").and_then(Value::as_str) == Some("lesson")
+                            && !content
+                                .get("archived")
+                                .and_then(Value::as_bool)
+                                .unwrap_or(false)
+                    })
+                })
+                .ok_or("导入目标课时不属于当前课程或已不可用；请刷新目标列表后重试。")?;
+            let document_id = content_item
+                .get("document_id")
+                .and_then(Value::as_str)
+                .ok_or("目标课时正文文档无效，无法安全追加")?;
+            let valid_document = project
+                .get("documents")
+                .and_then(Value::as_array)
+                .map(|documents| {
+                    documents.iter().any(|document| {
+                        document.get("id").and_then(Value::as_str) == Some(document_id)
+                            && document.get("content_item_id").and_then(Value::as_str)
+                                == Some(content_item_id)
+                    })
+                })
+                .unwrap_or(false);
+            if !valid_document {
+                return Err("目标课时正文文档无效，无法安全追加".into());
+            }
+            Ok(AdoptLessonDestination {
+                existing_lesson_id: Some(content_item_id.to_owned()),
+                stage_id: content_item
+                    .get("stage_id")
+                    .and_then(Value::as_str)
+                    .map(ToOwned::to_owned),
+            })
+        }
+        _ => Err("导入目标类型无效；请重新选择目标后重试。".into()),
+    }
+}
+
+fn adopt_append_text_lesson(
+    project: &mut Value,
+    content_id: &str,
+    text: &str,
+) -> Result<(), String> {
+    let document_id = project
+        .get("content_items")
+        .and_then(Value::as_array)
+        .and_then(|items| {
+            items
+                .iter()
+                .find(|item| item.get("id").and_then(Value::as_str) == Some(content_id))
+        })
+        .and_then(|item| item.get("document_id").and_then(Value::as_str))
+        .ok_or("目标课时正文文档无效，无法安全追加")?
+        .to_owned();
+    let blocks = project
+        .get_mut("blocks")
+        .and_then(Value::as_array_mut)
+        .ok_or("blocks 无效")?;
+    let order_index = blocks
+        .iter()
+        .filter(|block| block.get("document_id").and_then(Value::as_str) == Some(&document_id))
+        .count();
+    blocks.push(json!({
+        "id": uuid_v4()?,
+        "document_id": document_id,
+        "parent_block_id": Value::Null,
+        "type": "paragraph",
+        "order_index": order_index,
+        "content": text,
+        "settings": {},
+        "created_at": rfc3339_now(),
+        "updated_at": rfc3339_now(),
+    }));
+    Ok(())
+}
+
+fn adopt_markdown_blocks(
+    project: &mut Value,
+    content_id: &str,
+    parsed_blocks: &Value,
+    assets_by_block: &HashMap<usize, Vec<Value>>,
+    source_provenance: Option<&Value>,
+) -> Result<(), String> {
+    let values = parsed_blocks
+        .as_array()
+        .ok_or("Markdown解析结果缺少blocks")?;
+    let document_id = project
+        .get("content_items")
+        .and_then(Value::as_array)
+        .and_then(|items| {
+            items
+                .iter()
+                .find(|item| item["id"].as_str() == Some(content_id))
+        })
+        .and_then(|item| item["document_id"].as_str())
+        .ok_or("Markdown课时缺少文档")?
+        .to_owned();
+    let blocks = project
+        .get_mut("blocks")
+        .and_then(Value::as_array_mut)
+        .ok_or("blocks无效")?;
+    let mut pending_usages: Vec<(String, String)> = Vec::new();
+    for (index, value) in values.iter().enumerate() {
+        let raw_type = value.get("type").and_then(Value::as_str).unwrap_or("other");
+        let raw = value.get("raw").and_then(Value::as_str).unwrap_or("");
+        let text = value.get("text").and_then(Value::as_str).unwrap_or(raw);
+        if raw.len() > 2_000_000 || text.len() > 2_000_000 {
+            return Err("Markdown区块超过可导入大小限制".into());
+        }
+        let (block_type, content) = match raw_type {
+            "heading" => ("heading", text.to_owned()),
+            "paragraph" => ("paragraph", text.to_owned()),
+            "quote" => ("quote", text.to_owned()),
+            "code" => ("code", text.to_owned()),
+            "divider" => ("divider", String::new()),
+            "table" => ("table", raw.to_owned()),
+            "list" | "html" | "other" => ("paragraph", raw.to_owned()),
+            _ => return Err("Markdown解析结果包含未知区块类型".into()),
+        };
+        let mut settings = json!({});
+        if block_type == "heading" {
+            let level = value
+                .get("level")
+                .and_then(Value::as_u64)
+                .unwrap_or(1)
+                .clamp(1, 6);
+            settings["level"] = json!(level);
+        }
+        if block_type == "code" {
+            if let Some(language) = value
+                .get("language")
+                .and_then(Value::as_str)
+                .filter(|s| !s.is_empty())
+            {
+                settings["language"] = json!(language);
+            }
+        }
+        if let Some(assets) = assets_by_block.get(&index) {
+            settings["markdown_assets"] = Value::Array(assets.clone());
+        }
+        if index == 0 {
+            if let Some(provenance) = source_provenance {
+                settings["markdown_import"] = provenance.clone();
+            }
+        }
+        let block_id = uuid_v4()?;
+        let order_index = blocks
+            .iter()
+            .filter(|block| {
+                block.get("document_id").and_then(Value::as_str) == Some(document_id.as_str())
+            })
+            .count();
+        blocks.push(json!({
+            "id": block_id,
+            "document_id": document_id.clone(),
+            "parent_block_id": Value::Null,
+            "type": block_type,
+            "order_index": order_index,
+            "content": content,
+            "settings": settings,
+            "created_at": rfc3339_now(),
+            "updated_at": rfc3339_now(),
+        }));
+        if let Some(assets) = assets_by_block.get(&index) {
+            for asset in assets {
+                if let Some(asset_id) = asset.get("asset_id").and_then(Value::as_str) {
+                    pending_usages.push((block_id.clone(), asset_id.to_owned()));
+                }
+            }
+        }
+    }
+    if values.is_empty() {
+        if let Some(provenance) = source_provenance {
+            let block_id = uuid_v4()?;
+            let order_index = blocks
+                .iter()
+                .filter(|block| {
+                    block.get("document_id").and_then(Value::as_str) == Some(document_id.as_str())
+                })
+                .count();
+            blocks.push(json!({
+                "id": block_id,
+                "document_id": document_id.clone(),
+                "parent_block_id": Value::Null,
+                "type": "paragraph",
+                "order_index": order_index,
+                "content": "",
+                "settings": { "markdown_import": provenance },
+                "created_at": rfc3339_now(),
+                "updated_at": rfc3339_now(),
+            }));
+        }
+    }
+    for (block_id, asset_id) in pending_usages {
+        let input =
+            json!({ "content_item_id": content_id, "block_id": block_id, "role": "content" });
+        append_asset_usage(
+            project,
+            input.as_object().ok_or("素材引用格式无效")?,
+            &asset_id,
+        )?;
+    }
+    let updated_at = rfc3339_now();
+    if let Some(document) = project
+        .get_mut("documents")
+        .and_then(Value::as_array_mut)
+        .and_then(|documents| {
+            documents.iter_mut().find(|document| {
+                document.get("id").and_then(Value::as_str) == Some(document_id.as_str())
+            })
+        })
+    {
+        document["updated_at"] = json!(updated_at);
+    }
+    if let Some(content_item) = project
+        .get_mut("content_items")
+        .and_then(Value::as_array_mut)
+        .and_then(|items| {
+            items
+                .iter_mut()
+                .find(|item| item.get("id").and_then(Value::as_str) == Some(content_id))
+        })
+    {
+        content_item["updated_at"] = json!(updated_at);
+    }
+    if let Some(project_object) = project.get_mut("project") {
+        project_object["updated_at"] = json!(updated_at);
+    }
+    Ok(())
+}
+
+fn record_markdown_import_source(
+    project: &mut Value,
+    content_id: &str,
+    title: &str,
+    provenance: &Value,
+) -> Result<(), String> {
+    let settings = project
+        .get_mut("project")
+        .and_then(Value::as_object_mut)
+        .ok_or("项目缺少project对象")?
+        .entry("settings")
+        .or_insert_with(|| json!({}))
+        .as_object_mut()
+        .ok_or("项目settings无效")?;
+    let ledger = settings
+        .entry("markdown_import_sources")
+        .or_insert_with(|| json!([]))
+        .as_array_mut()
+        .ok_or("Markdown导入来源记录无效")?;
+    let source_root = provenance
+        .get("source_root")
+        .and_then(Value::as_str)
+        .unwrap_or("");
+    let relative_path = provenance
+        .get("relative_path")
+        .and_then(Value::as_str)
+        .unwrap_or("");
+    let source_hash = provenance
+        .get("source_hash")
+        .and_then(Value::as_str)
+        .unwrap_or("");
+    if ledger.iter().any(|entry| {
+        entry.get("source_root").and_then(Value::as_str) == Some(source_root)
+            && entry.get("relative_path").and_then(Value::as_str) == Some(relative_path)
+            && entry.get("source_hash").and_then(Value::as_str) == Some(source_hash)
+            && entry.get("content_item_id").and_then(Value::as_str) == Some(content_id)
+    }) {
+        return Ok(());
+    }
+    let mut record = provenance.clone();
+    record["content_item_id"] = json!(content_id);
+    record["title"] = json!(title);
+    record["imported_at"] = json!(rfc3339_now());
+    ledger.push(record);
+    Ok(())
+}
+
+fn folder_apply_import(
+    plan: Value,
+    duplicate_choice: Option<String>,
+    project_title: Option<String>,
+    append_target: Option<(PathBuf, Value)>,
 ) -> Result<Value, String> {
     let plan_obj = plan
         .as_object()
@@ -2576,11 +3623,15 @@ fn folder_adopt(
     if root_meta.file_type().is_symlink() || !root_meta.is_dir() {
         return Err("导入已有文件夹需要选择一个文件夹，而不是单个文件".into());
     }
-    let resolved_root = fs::canonicalize(&root_path).unwrap_or(root_path.clone());
-    reject_symlink(&resolved_root, "导入文件夹")?;
+    let resolved_source_root = fs::canonicalize(&root_path).unwrap_or(root_path.clone());
+    reject_symlink(&resolved_source_root, "导入文件夹")?;
+    let resolved_root = append_target
+        .as_ref()
+        .map(|(directory, _)| directory.clone())
+        .unwrap_or_else(|| resolved_source_root.clone());
 
-    // Refuse to clobber an existing Canonical project silently.
-    if resolved_root.join("project.json").exists() {
+    // Refuse to clobber an existing Canonical project silently on first adoption.
+    if append_target.is_none() && resolved_root.join("project.json").exists() {
         return Err("该文件夹已有 project.json，不能重复原地接管。请先打开现有项目。".into());
     }
 
@@ -2595,14 +3646,18 @@ fn folder_adopt(
         .filter(|value| !value.is_empty())
         .map(str::to_string)
         .unwrap_or_else(|| {
-            resolved_root
+            resolved_source_root
                 .file_name()
                 .and_then(|value| value.to_str())
                 .unwrap_or("未命名课程")
                 .to_string()
         });
 
-    let mut project = blank_adopt_project(&title)?;
+    let mut project = if let Some((_, current)) = append_target.as_ref() {
+        current.clone()
+    } else {
+        blank_adopt_project(&title)?
+    };
     let project_id = project
         .get("project")
         .and_then(|value| value.get("id"))
@@ -2651,7 +3706,11 @@ fn folder_adopt(
             .and_then(|value| value.to_str())
             .unwrap_or(&rel)
             .to_string();
-        let order = stage_ids.len();
+        let order = project
+            .get("stages")
+            .and_then(Value::as_array)
+            .map(Vec::len)
+            .unwrap_or(0);
         let stage = json!({
             "id": stage_id,
             "project_id": project_id,
@@ -2680,6 +3739,11 @@ fn folder_adopt(
         .map_err(|error| format!("无法创建 .workspace：{error}"))?;
     fs::create_dir_all(resolved_root.join(".workspace/adopt-staging"))
         .map_err(|error| format!("无法创建素材暂存目录：{error}"))?;
+    let staging_relative_root = format!(".workspace/adopt-staging/{}", uuid_v4()?);
+    let staging_absolute_root = resolved_root.join(&staging_relative_root);
+    fs::create_dir(&staging_absolute_root)
+        .map_err(|error| format!("无法创建素材暂存目录：{error}"))?;
+    let staging_cleanup = AdoptStagingGuard(staging_absolute_root);
 
     // Pass 2: files
     for item in &items {
@@ -2699,13 +3763,26 @@ fn folder_adopt(
         if kind != "file" || rel.is_empty() {
             continue;
         }
-        if rel.contains("..") {
+        if Path::new(&rel).is_absolute() || rel.split('/').any(|part| part == ".." || part == ".") {
             warnings.push(format!("{rel}: 非法路径已跳过"));
             continue;
         }
-        let mut absolute = resolved_root.clone();
+        let mut absolute = resolved_source_root.clone();
+        let mut invalid_path = false;
         for part in rel.split('/').filter(|part| !part.is_empty()) {
             absolute.push(part);
+            match fs::symlink_metadata(&absolute) {
+                Ok(meta) if meta.file_type().is_symlink() => {
+                    invalid_path = true;
+                    break;
+                }
+                Ok(_) => {}
+                Err(_) => break,
+            }
+        }
+        if invalid_path {
+            warnings.push(format!("{rel}: 已跳过符号链接"));
+            continue;
         }
         let meta = match fs::symlink_metadata(&absolute) {
             Ok(value) => value,
@@ -2718,6 +3795,14 @@ fn folder_adopt(
             warnings.push(format!("{rel}: 已跳过符号链接"));
             continue;
         }
+        let canonical_absolute = match fs::canonicalize(&absolute) {
+            Ok(path) if path.starts_with(&resolved_source_root) => path,
+            _ => {
+                warnings.push(format!("{rel}: 导入路径超出所选文件夹"));
+                continue;
+            }
+        };
+        absolute = canonical_absolute;
         let bytes = match fs::read(&absolute) {
             Ok(value) => value,
             Err(error) => {
@@ -2741,16 +3826,240 @@ fn folder_adopt(
 
         match mapping {
             "lesson" => {
-                let text = String::from_utf8_lossy(&bytes).into_owned();
-                let content_id = adopt_add_lesson(
-                    &mut project,
-                    &project_id,
-                    stage_id.as_deref(),
-                    &file_title,
-                    &text,
-                    filename.ends_with(".md") || filename.ends_with(".markdown"),
-                )?;
-                content_item_ids.push(content_id);
+                let destination =
+                    adopt_lesson_destination(&project, &project_id, item, stage_id.clone())?;
+                let markdown = matches!(
+                    Path::new(&filename)
+                        .extension()
+                        .and_then(|value| value.to_str())
+                        .unwrap_or_default()
+                        .to_ascii_lowercase()
+                        .as_str(),
+                    "md" | "markdown"
+                );
+                let content_id = if markdown {
+                    let parsed = item
+                        .get("parsed_markdown")
+                        .filter(|value| value.is_object())
+                        .ok_or_else(|| {
+                            format!("{rel}: 缺少共享Markdown解析结果，请重新打开映射预览")
+                        })?;
+                    let expected_hash = parsed
+                        .get("source_hash")
+                        .and_then(Value::as_str)
+                        .unwrap_or("");
+                    if expected_hash != checksum {
+                        return Err(format!("{rel}: 源文件在解析后发生变化，未提交导入"));
+                    }
+                    let source_text = std::str::from_utf8(&bytes)
+                        .map_err(|_| format!("{rel}: Markdown源不是UTF-8文本"))?;
+                    let parsed_blocks = parsed.get("blocks").ok_or("Markdown解析结果缺少blocks")?;
+                    let refs = parsed
+                        .get("explicitLocalImageRefs")
+                        .and_then(Value::as_array)
+                        .cloned()
+                        .unwrap_or_default();
+                    verify_markdown_image_refs(source_text, parsed_blocks, &refs)?;
+                    if let Some(source_match) =
+                        find_markdown_source_match(&project, &resolved_source_root, &rel, &checksum)
+                    {
+                        let allowed = item
+                            .get("allow_duplicate")
+                            .and_then(Value::as_bool)
+                            .unwrap_or(false);
+                        if !allowed {
+                            warnings.push(if source_match.state == "same_content" {
+                                if source_match.target_deleted {
+                                    format!(
+                                        "{rel}: SHA-256与曾导入来源「{}」一致，但目标课时已删除；项目仍保留来源记录，默认跳过。",
+                                        source_match.title
+                                    )
+                                } else {
+                                    format!(
+                                        "{rel}: SHA-256与已导入课时「{}」一致；默认跳过，已有编辑内容保持不变。",
+                                        source_match.title
+                                    )
+                                }
+                            } else {
+                                format!(
+                                    "{rel}: 来源路径已有较旧导入「{}」{}（SHA-256 {}）；默认跳过以避免静默替换，请明确选择“作为新版本导入”。",
+                                    source_match.title,
+                                    if source_match.target_deleted { "（目标课时已删除）" } else { "" },
+                                    source_match.previous_hash.chars().take(12).collect::<String>()
+                                )
+                            });
+                            continue;
+                        }
+                        warnings.push(if source_match.state == "same_content" {
+                            if source_match.target_deleted {
+                                format!(
+                                    "{rel}: 用户已明确重新导入曾删除课时「{}」的相同Markdown；按当前目标新建或追加。",
+                                    source_match.title
+                                )
+                            } else {
+                                format!(
+                                    "{rel}: 用户已明确选择再次导入与「{}」内容相同的Markdown；原课时正文不会被覆盖。",
+                                    source_match.title
+                                )
+                            }
+                        } else {
+                            if source_match.target_deleted {
+                                format!(
+                                    "{rel}: 用户已明确导入曾删除课时「{}」的来源新版本；按当前目标新建或追加。",
+                                    source_match.title
+                                )
+                            } else {
+                                format!(
+                                    "{rel}: 用户已明确选择导入来源的新版本；「{}」及其编辑内容保持不变。",
+                                    source_match.title
+                                )
+                            }
+                        });
+                    }
+                    let mut assets_by_block: HashMap<usize, Vec<Value>> = HashMap::new();
+                    for reference in refs {
+                        let block_index = reference
+                            .get("blockIndex")
+                            .and_then(Value::as_u64)
+                            .and_then(|value| usize::try_from(value).ok())
+                            .ok_or("Markdown图片引用缺少区块索引")?;
+                        let href = reference
+                            .get("href")
+                            .and_then(Value::as_str)
+                            .ok_or("Markdown图片引用缺少路径")?;
+                        let occurrence = reference
+                            .get("occurrence")
+                            .and_then(Value::as_u64)
+                            .unwrap_or(0);
+                        let parser_block = parsed_blocks
+                            .as_array()
+                            .and_then(|blocks| blocks.get(block_index))
+                            .ok_or("Markdown图片引用指向不存在区块")?;
+                        let in_block = parser_block
+                            .get("imageRefs")
+                            .and_then(Value::as_array)
+                            .map(|images| {
+                                images.iter().any(|image| {
+                                    image.get("href").and_then(Value::as_str) == Some(href)
+                                        && image.get("occurrence").and_then(Value::as_u64)
+                                            == Some(occurrence)
+                                })
+                            })
+                            .unwrap_or(false);
+                        if !in_block {
+                            return Err("Markdown图片引用与解析区块不一致".into());
+                        }
+                        let dependency =
+                            match markdown_dependency_path(&resolved_source_root, &rel, href)? {
+                                Some(path) => path,
+                                None => {
+                                    warnings.push(format!(
+                                    "{rel}: 图片依赖「{href}」不存在；已保留正文原文，未创建素材。"
+                                ));
+                                    continue;
+                                }
+                            };
+                        let dependency_bytes = match fs::read(&dependency) {
+                            Ok(bytes) => bytes,
+                            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                                warnings.push(format!(
+                                    "{rel}: 图片依赖「{href}」不存在；已保留正文原文，未创建素材。"
+                                ));
+                                continue;
+                            }
+                            Err(error) => {
+                                return Err(format!("无法读取Markdown图片依赖「{href}」：{error}"))
+                            }
+                        };
+                        let dependency_name = safe_asset_filename(
+                            dependency
+                                .file_name()
+                                .and_then(|value| value.to_str())
+                                .unwrap_or("image"),
+                        );
+                        let dependency_checksum = sha256_hex(&dependency_bytes);
+                        let asset_id = adopt_import_asset(
+                            &mut project,
+                            &resolved_root,
+                            &project_id,
+                            &dependency_name,
+                            &dependency_bytes,
+                            &dependency_checksum,
+                            &dependency,
+                            duplicate_choice,
+                            None,
+                            &mut warnings,
+                            &mut reused_asset_ids,
+                            &mut copied_files,
+                            &mut staged_pairs,
+                            &staging_relative_root,
+                        )?
+                        .ok_or("Markdown图片依赖没有生成素材")?;
+                        if !asset_ids.contains(&asset_id) {
+                            asset_ids.push(asset_id.clone());
+                        }
+                        assets_by_block.entry(block_index).or_default().push(json!({
+                            "href": href,
+                            "asset_id": asset_id,
+                            "occurrence": occurrence,
+                        }));
+                    }
+                    let content_id = if let Some(existing_id) = destination.existing_lesson_id {
+                        existing_id
+                    } else {
+                        adopt_add_lesson(
+                            &mut project,
+                            &project_id,
+                            destination.stage_id.as_deref(),
+                            &file_title,
+                            "",
+                            false,
+                        )?
+                    };
+                    let provenance = json!({
+                        "source_root": resolved_source_root.to_string_lossy(),
+                        "relative_path": rel,
+                        "source_hash": checksum,
+                    });
+                    adopt_markdown_blocks(
+                        &mut project,
+                        &content_id,
+                        parsed_blocks,
+                        &assets_by_block,
+                        Some(&provenance),
+                    )?;
+                    let imported_title = project["content_items"]
+                        .as_array()
+                        .and_then(|items| items.iter().find(|item| item["id"] == content_id))
+                        .and_then(|item| item["title"].as_str())
+                        .unwrap_or(&file_title)
+                        .to_owned();
+                    record_markdown_import_source(
+                        &mut project,
+                        &content_id,
+                        &imported_title,
+                        &provenance,
+                    )?;
+                    content_id
+                } else {
+                    let text = String::from_utf8_lossy(&bytes).into_owned();
+                    if let Some(existing_id) = destination.existing_lesson_id {
+                        adopt_append_text_lesson(&mut project, &existing_id, &text)?;
+                        existing_id
+                    } else {
+                        adopt_add_lesson(
+                            &mut project,
+                            &project_id,
+                            destination.stage_id.as_deref(),
+                            &file_title,
+                            &text,
+                            false,
+                        )?
+                    }
+                };
+                if !content_item_ids.contains(&content_id) {
+                    content_item_ids.push(content_id);
+                }
             }
             "asset" => {
                 if let Some(asset_id) = adopt_import_asset(
@@ -2767,6 +4076,7 @@ fn folder_adopt(
                     &mut reused_asset_ids,
                     &mut copied_files,
                     &mut staged_pairs,
+                    &staging_relative_root,
                 )? {
                     asset_ids.push(asset_id);
                 }
@@ -2799,6 +4109,7 @@ fn folder_adopt(
                         &mut reused_asset_ids,
                         &mut copied_files,
                         &mut staged_pairs,
+                        &staging_relative_root,
                     )? {
                         asset_ids.push(id.clone());
                         asset_id = Value::String(id);
@@ -2836,38 +4147,77 @@ fn folder_adopt(
         }
     }
 
-    // Create + write Canonical project in-place (Strategy A), then promote
-    // staged media into assets/. On failure, drop staging only — never originals.
+    // Promote this transaction's UUID-owned media first, then atomically write
+    // the Canonical manifest as the final commit. Existing assets and originals
+    // are never replaced or removed.
     let root_str = resolved_root.to_string_lossy().into_owned();
-    if let Err(error) = project_create(root_str.clone(), project.clone()) {
+    let mut promoted = Vec::new();
+    let promotion = (|| -> Result<(), String> {
+        if !staged_pairs.is_empty() {
+            reject_symlink(&resolved_root.join("assets"), "素材目录")?;
+            fs::create_dir_all(resolved_root.join("assets"))
+                .map_err(|error| format!("无法创建 assets：{error}"))?;
+        }
+        for (staging, final_path) in &staged_pairs {
+            let from = resolved_root.join(staging);
+            let to = resolved_root.join(final_path);
+            if let Some(parent) = to.parent() {
+                reject_symlink(parent, "素材目录")?;
+                fs::create_dir_all(parent).map_err(|error| format!("无法创建素材目录：{error}"))?;
+            }
+            let mut output = fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(&to)
+                .map_err(|error| format!("素材提升失败，课程清单尚未提交（{error}）"))?;
+            promoted.push(to.clone());
+            let mut input =
+                fs::File::open(&from).map_err(|error| format!("无法读取素材暂存文件：{error}"))?;
+            std::io::copy(&mut input, &mut output)
+                .map_err(|error| format!("素材提升失败，课程清单尚未提交（{error}）"))?;
+            output
+                .sync_all()
+                .map_err(|error| format!("素材落盘失败，课程清单尚未提交（{error}）"))?;
+            fs::remove_file(&from)
+                .map_err(|error| format!("素材暂存清理失败，课程清单尚未提交（{error}）"))?;
+        }
+        Ok(())
+    })();
+    if let Err(error) = promotion {
+        for path in &promoted {
+            let _ = fs::remove_file(path);
+        }
         for (staging, _) in &staged_pairs {
             let _ = fs::remove_file(resolved_root.join(staging));
         }
-        let _ = fs::remove_dir_all(resolved_root.join(".workspace/adopt-staging"));
         return Err(error);
     }
-    fs::create_dir_all(resolved_root.join("assets"))
-        .map_err(|error| format!("无法创建 assets：{error}"))?;
-    for (staging, final_path) in &staged_pairs {
-        let from = resolved_root.join(staging);
-        let to = resolved_root.join(final_path);
-        if let Some(parent) = to.parent() {
-            fs::create_dir_all(parent).map_err(|error| format!("无法创建素材目录：{error}"))?;
-        }
-        if fs::rename(&from, &to).is_err() {
-            fs::copy(&from, &to).map_err(|error| {
-                format!(
-                    "课程项目已写入，但素材提升失败（{error}）。原文件未改动；请检查 assets/ 与 .workspace/adopt-staging/"
-                )
-            })?;
-            let _ = fs::remove_file(&from);
-        }
+
+    if let Some(project_object) = project.get_mut("project").and_then(Value::as_object_mut) {
+        project_object.insert("updated_at".into(), json!(rfc3339_now()));
     }
-    let _ = fs::remove_dir_all(resolved_root.join(".workspace/adopt-staging"));
+    let commit = if append_target.is_some() {
+        write_project_value_unlocked(&resolved_root, &project)
+    } else {
+        project_create(root_str.clone(), project.clone()).map(|_| ())
+    };
+    if let Err(error) = commit {
+        for path in &promoted {
+            let _ = fs::remove_file(path);
+        }
+        for (staging, _) in &staged_pairs {
+            let _ = fs::remove_file(resolved_root.join(staging));
+        }
+        return Err(error);
+    }
+    let staging_parent = resolved_root.join(".workspace/adopt-staging");
+    drop(staging_cleanup);
+    let _ = fs::remove_dir(staging_parent);
 
     Ok(json!({
         "data": project,
         "root": root_str,
+        "source_root": resolved_source_root.to_string_lossy(),
         "stage_ids": stage_ids,
         "content_item_ids": content_item_ids,
         "asset_ids": asset_ids,
@@ -3132,6 +4482,7 @@ fn adopt_import_asset(
     reused_asset_ids: &mut Vec<String>,
     copied_files: &mut Vec<String>,
     staged_pairs: &mut Vec<(String, String)>,
+    staging_root: &str,
 ) -> Result<Option<String>, String> {
     if let Some(existing) = project
         .get("assets")
@@ -3161,7 +4512,7 @@ fn adopt_import_asset(
 
     let asset_id = uuid_v4()?;
     let storage_path = format!("assets/{asset_id}-{filename}");
-    let staging_path = format!(".workspace/adopt-staging/{asset_id}-{filename}");
+    let staging_path = format!("{staging_root}/{asset_id}-{filename}");
     let dest = root.join(&staging_path);
     if let Some(parent) = dest.parent() {
         fs::create_dir_all(parent).map_err(|error| format!("无法创建素材暂存目录：{error}"))?;
@@ -4469,6 +5820,12 @@ fn export_preflight_report(
                 "message": message
             }));
         }
+        if format == "pptx" && paged_export::has_simplified_pptx_semantics(projection) {
+            warnings.push(json!({
+                "code": "rich_text_structure_simplified",
+                "message": "PPTX 会保留可编辑文字、行内强调与图片；Markdown 表格及嵌套列表将展平为可编辑文本，结构布局可能简化。"
+            }));
+        }
         if let Some(assets) = project.get("assets").and_then(Value::as_array) {
             for asset in assets {
                 if !asset
@@ -4635,6 +5992,7 @@ fn export_preflight_report(
             "layout_linearized",
             "open_requirements",
             "external_reference",
+            "rich_text_structure_simplified",
         ];
         if acknowledged
             .iter()
@@ -5445,7 +6803,7 @@ fn asset_read(input: Value) -> Result<Value, String> {
     }
     if metadata.len() > ASSET_READ_SIZE_LIMIT {
         return Err(format!(
-            "素材过大，无法在工作台内预览（上限 {} MB）",
+            "素材过大，无法在工作台内预览（单文件上限 {} MiB）",
             ASSET_READ_SIZE_LIMIT / (1024 * 1024)
         ));
     }
@@ -5461,6 +6819,122 @@ fn asset_read(input: Value) -> Result<Value, String> {
         "file_size": bytes.len(),
         "bytes_base64": BASE64.encode(&bytes),
     }))
+}
+
+/// Grant the asset protocol access to one validated video file for ranged
+/// playback. Tauri's allow_file scope lasts for this app process; exact-file
+/// grants keep the capability narrow. Add revocable opaque tokens if
+/// per-project grant revocation becomes a requirement.
+#[tauri::command]
+fn asset_preview_source(app: AppHandle, input: Value) -> Result<String, String> {
+    let outer = require_object(&input, "asset_preview_source")?;
+    let payload = outer
+        .get("input")
+        .filter(|value| value.is_object())
+        .cloned()
+        .unwrap_or(input);
+    let object = require_object(&payload, "asset_preview_source")?;
+    let project_dir = required_string(object, &["project_dir", "projectDir"], "项目目录")?;
+    let asset_id = required_string(object, &["asset_id", "assetId"], "素材 ID")?;
+    let project_dir = explicit_project_dir(&project_dir, false)?;
+    let _project_guard = require_active_project_lock(&project_dir)?;
+    let project = read_project_value(&project_dir)?;
+    let asset = project
+        .get("assets")
+        .and_then(Value::as_array)
+        .and_then(|assets| {
+            assets
+                .iter()
+                .find(|asset| asset.get("id").and_then(Value::as_str) == Some(asset_id.as_str()))
+        })
+        .ok_or("找不到素材")?;
+    if asset.get("archived").and_then(Value::as_bool) == Some(true) {
+        return Err("素材已归档，无法预览".into());
+    }
+    if asset.get("type").and_then(Value::as_str) != Some("video")
+        || !asset
+            .get("mime_type")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .starts_with("video/")
+    {
+        return Err("该素材不是受支持的视频文件".into());
+    }
+    let path = canonical_export_asset_path(&project, &project_dir, &asset_id)?;
+    app.asset_protocol_scope()
+        .allow_file(&path)
+        .map_err(|error| format!("无法授权视频预览：{error}"))?;
+    Ok(path.to_string_lossy().into_owned())
+}
+
+/// The folder scanner has already shown this source to the user. Resolve its
+/// relative path again at the trust boundary and grant only the exact video.
+#[tauri::command]
+fn folder_preview_source(
+    app: AppHandle,
+    root: String,
+    relative_path: String,
+) -> Result<String, String> {
+    let root_path = PathBuf::from(root.trim());
+    if !root_path.is_absolute() {
+        return Err("导入文件夹必须是用户明确选择的绝对路径".into());
+    }
+    reject_symlink(&root_path, "导入文件夹")?;
+    let root_meta =
+        fs::symlink_metadata(&root_path).map_err(|error| format!("无法打开所选文件夹：{error}"))?;
+    if root_meta.file_type().is_symlink() || !root_meta.is_dir() {
+        return Err("视频预览需要已选择的文件夹根目录".into());
+    }
+    let resolved_root =
+        fs::canonicalize(&root_path).map_err(|error| format!("无法解析所选文件夹：{error}"))?;
+    reject_symlink(&resolved_root, "导入文件夹")?;
+    let rel = relative_path.trim().replace('\\', "/");
+    if rel.is_empty()
+        || rel.starts_with('/')
+        || rel.contains('\0')
+        || rel
+            .split('/')
+            .any(|part| part.is_empty() || part == "." || part == "..")
+    {
+        return Err("预览路径无效".into());
+    }
+    let mut target = resolved_root.clone();
+    for part in rel.split('/') {
+        target.push(part);
+        reject_symlink(&target, "视频来源")?;
+    }
+    let _ = scan_relative(&resolved_root, &target)?;
+    let metadata = fs::metadata(&target).map_err(|error| format!("无法读取视频来源：{error}"))?;
+    if !metadata.is_file() {
+        return Err("视频来源不是文件".into());
+    }
+    let name = target
+        .file_name()
+        .and_then(|value| value.to_str())
+        .unwrap_or("");
+    let mime = mime_for_filename(name);
+    if folder_preview_kind(name, Some(mime)) != "video" || !mime.starts_with("video/") {
+        return Err("该文件不是受支持的视频格式".into());
+    }
+    let real_target =
+        fs::canonicalize(&target).map_err(|error| format!("无法解析视频来源：{error}"))?;
+    if !real_target.starts_with(&resolved_root) {
+        return Err("视频来源超出所选文件夹".into());
+    }
+    if !SCANNED_FOLDER_VIDEOS
+        .get_or_init(|| Mutex::new(HashSet::new()))
+        .lock()
+        .unwrap()
+        .contains(&(resolved_root.clone(), rel.clone()))
+    {
+        return Err("请先从已扫描的文件夹中选择视频".into());
+    }
+    // ponytail: exact file grants live for this process; opaque revocable
+    // grants only become necessary if per-project revocation is required.
+    app.asset_protocol_scope()
+        .allow_file(&real_target)
+        .map_err(|error| format!("无法授权视频预览：{error}"))?;
+    Ok(real_target.to_string_lossy().into_owned())
 }
 
 fn safe_asset_filename(value: &str) -> String {
@@ -6228,6 +7702,42 @@ fn ai_url_origin(url: &str) -> Option<String> {
     let parsed = reqwest::Url::parse(url).ok()?;
     let origin = parsed.origin().ascii_serialization();
     (!origin.is_empty() && origin != "null").then_some(origin)
+}
+
+fn ai_provider_api_protocol(provider: &Value) -> Result<&'static str, String> {
+    match provider.get("api_protocol").and_then(Value::as_str) {
+        None | Some("openai-completions") => Ok("openai-completions"),
+        Some("openai-responses") => Ok("openai-responses"),
+        Some("anthropic-messages") => Ok("anthropic-messages"),
+        Some(_) => Err(ai_invalid_request("Provider API 协议无效。")),
+    }
+}
+
+fn ai_provider_completion_endpoint(provider: &Value) -> Result<String, String> {
+    let base = provider
+        .get("base_url")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| ai_invalid_request("还没有填写 Base URL，无法发送 AI 请求。"))?;
+    let protocol = ai_provider_api_protocol(provider)?;
+    let path = match protocol {
+        "openai-responses" => "/responses",
+        "anthropic-messages" => "/messages",
+        _ => provider
+            .get("chat_path")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .unwrap_or("/chat/completions"),
+    };
+    let base = base.trim_end_matches('/');
+    let path = path.trim_start_matches('/');
+    Ok(if base.ends_with(&format!("/{path}")) {
+        base.to_owned()
+    } else {
+        format!("{base}/{path}")
+    })
 }
 
 fn ai_credential_origin_error(
@@ -7254,6 +8764,21 @@ fn ai_connection_save_with_confirmation_at(
         .and_then(Value::as_str)
         .unwrap_or("");
     let provider_id = ai_validate_provider_id(raw_id)?;
+    let protocol = match provider.get("api_protocol") {
+        None => "openai-completions",
+        Some(Value::String(value)) => value.as_str(),
+        Some(_) => {
+            return Err(ai_invalid_request(
+                "Provider 字段 api_protocol 必须是文本。",
+            ))
+        }
+    };
+    if !matches!(
+        protocol,
+        "openai-completions" | "openai-responses" | "anthropic-messages"
+    ) {
+        return Err(ai_invalid_request("Provider API 协议无效。"));
+    }
     // 与浏览器壳一致：密钥形状的字段一律拒绝（而不是静默丢弃），
     // 这样同一份配置在两个壳里的行为完全相同。
     if let Some(field_path) = ai_forbidden_field_path(provider, "", ai_credential_field_name) {
@@ -7267,7 +8792,7 @@ fn ai_connection_save_with_confirmation_at(
             "invalid_request",
             &format!("Provider 配置中出现了不允许的字段「{field_path}」。"),
             Some(&format!(
-                "{hint}允许的字段：id / label / kind / base_url / chat_path / auth_header / auth_scheme / default_model / models。"
+                "{hint}允许的字段：id / label / kind / base_url / chat_path / api_protocol / auth_header / auth_scheme / default_model / models。"
             )),
             json!({ "field": field_path }),
         ));
@@ -7285,6 +8810,27 @@ fn ai_connection_save_with_confirmation_at(
         _ => return Err(ai_invalid_request("Provider 配置必须是 JSON 对象。")),
     };
     record.insert("id".into(), json!(provider_id));
+    record.insert("api_protocol".into(), json!(protocol));
+    if !record.get("auth_header").is_some_and(Value::is_string) {
+        record.insert(
+            "auth_header".into(),
+            json!(if protocol == "anthropic-messages" {
+                "x-api-key"
+            } else {
+                "authorization"
+            }),
+        );
+    }
+    if !record.get("auth_scheme").is_some_and(Value::is_string) {
+        record.insert(
+            "auth_scheme".into(),
+            json!(if protocol == "anthropic-messages" {
+                ""
+            } else {
+                "Bearer"
+            }),
+        );
+    }
     let mut record = Value::Object(record);
 
     let paths = ai_store_paths(base);
@@ -7391,6 +8937,12 @@ fn ai_connection_delete_at(base: &Path, provider_id: &str) -> Result<Value, Stri
 /// 保存凭据。`value` 只出现在钥匙串写入内容里：返回值、错误文本、日志一行都不带它。
 fn ai_secret_set_at(base: &Path, provider_id: &str, value: &str) -> Result<Value, String> {
     let provider_id = ai_validate_provider_id(provider_id)?;
+    if siwc_provider_at(base, &provider_id).is_ok() {
+        return Err(siwc_error(
+            "invalid_request",
+            "订阅访问令牌只能通过 ChatGPT 授权流程管理，不能按 API Key 保存。",
+        ));
+    }
     let value = value.trim();
     if value.is_empty() {
         return Err(ai_invalid_request("API Key 不能为空。"));
@@ -7447,6 +8999,1115 @@ fn ai_secret_delete_at(base: &Path, provider_id: &str) -> Result<Value, String> 
         ai_write_provider_store(&paths.providers, &Value::Object(store), "AI Provider 配置")?;
     }
     Ok(json!({ "provider_id": provider_id, "removed": removed }))
+}
+
+// ---- Sign in with ChatGPT (public, dynamically registered client) --------
+
+const SIWC_KIND: &str = "openai_chatgpt_subscription";
+const SIWC_ISSUER: &str = "https://auth.openai.com";
+const SIWC_AUTHORIZATION_ENDPOINT: &str = "https://auth.openai.com/api/accounts/authorize";
+const SIWC_TOKEN_ENDPOINT: &str = "https://auth.openai.com/api/accounts/oauth/token";
+const SIWC_DISCOVERY_ENDPOINT: &str = "https://auth.openai.com/.well-known/openid-configuration";
+const SIWC_RESOURCE: &str = "https://api.openai.com/v1";
+const SIWC_SCOPE: &str =
+    "openid profile email offline_access resource.invoke chatgpt.tokens.use.direct";
+const SIWC_API_MODELS_ENDPOINT: &str = "https://api.openai.com/v1/models";
+const SIWC_API_RESPONSES_ENDPOINT: &str = "https://api.openai.com/v1/responses";
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+struct SiwcCredential {
+    client_id: String,
+    subject: String,
+    email: String,
+    host_id: String,
+    id_token: String,
+    access_token: String,
+    refresh_token: String,
+    scopes: Vec<String>,
+    expires_at: u64,
+}
+
+#[derive(Debug, Deserialize)]
+struct SiwcTokenResponse {
+    access_token: String,
+    refresh_token: Option<String>,
+    id_token: Option<String>,
+    token_type: Option<String>,
+    expires_in: u64,
+    scope: Option<String>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+struct SiwcOidcDiscovery {
+    issuer: String,
+    jwks_uri: String,
+    revocation_endpoint: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct SiwcIdClaims {
+    iss: String,
+    sub: String,
+    aud: Value,
+    exp: u64,
+    nonce: Option<String>,
+    email: Option<String>,
+}
+
+#[derive(Clone, Serialize)]
+struct SiwcAttemptView {
+    attempt_id: String,
+    status: String,
+    provider_id: Option<String>,
+    message: Option<String>,
+}
+
+struct SiwcAttempt {
+    view: SiwcAttemptView,
+    cancelled: bool,
+}
+
+struct SiwcFlow {
+    base: PathBuf,
+    provider_id: String,
+    client_id: String,
+    host_id: String,
+    expected_subject: Option<String>,
+    email_hint: Option<String>,
+    state: String,
+    nonce: String,
+    verifier: String,
+    redirect_uri: String,
+    listener: std::net::TcpListener,
+    attempt: Arc<Mutex<SiwcAttempt>>,
+}
+
+static SIWC_ATTEMPTS: OnceLock<Mutex<HashMap<String, Arc<Mutex<SiwcAttempt>>>>> = OnceLock::new();
+static SIWC_REFRESH_LOCKS: OnceLock<Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>> =
+    OnceLock::new();
+
+fn siwc_error(code: &'static str, message: &'static str) -> String {
+    structured_ai_error(
+        code,
+        message,
+        Some("请在设置中重新连接 ChatGPT 订阅账户。"),
+        json!({}),
+    )
+}
+
+fn siwc_attempts() -> &'static Mutex<HashMap<String, Arc<Mutex<SiwcAttempt>>>> {
+    SIWC_ATTEMPTS.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn siwc_refresh_lock(provider_id: &str) -> Arc<tokio::sync::Mutex<()>> {
+    SIWC_REFRESH_LOCKS
+        .get_or_init(|| Mutex::new(HashMap::new()))
+        .lock()
+        .unwrap()
+        .entry(provider_id.to_owned())
+        .or_insert_with(|| Arc::new(tokio::sync::Mutex::new(())))
+        .clone()
+}
+
+fn siwc_scopes(raw: &str) -> Vec<String> {
+    let mut scopes = raw
+        .split_whitespace()
+        .map(str::to_owned)
+        .collect::<Vec<_>>();
+    scopes.sort();
+    scopes.dedup();
+    scopes
+}
+
+fn siwc_has_usage_scope(scopes: &[String]) -> bool {
+    scopes
+        .iter()
+        .any(|scope| scope == "chatgpt.tokens.use.direct")
+}
+
+fn siwc_parse_credential(raw: &str) -> Result<SiwcCredential, String> {
+    serde_json::from_str::<SiwcCredential>(raw).map_err(|_| {
+        siwc_error(
+            "subscription_session_unavailable",
+            "ChatGPT 订阅会话不可读取；请重新登录。",
+        )
+    })
+}
+
+fn siwc_cached_access_token_at(base: &Path, provider_id: &str) -> Result<String, String> {
+    let raw = ai_keychain_credential(base, provider_id)?
+        .ok_or_else(|| siwc_error("missing_credential", "ChatGPT 订阅账户已退出登录。"))?;
+    let credential = siwc_parse_credential(&raw)?;
+    if !siwc_has_usage_scope(&credential.scopes) {
+        return Err(siwc_error(
+            "subscription_scope_missing",
+            "ChatGPT 账户没有可用的模型调用授权。",
+        ));
+    }
+    if credential.expires_at <= unix_seconds().saturating_add(5) {
+        return Err(siwc_error(
+            "subscription_refresh_required",
+            "ChatGPT 订阅会话需要刷新，请重试。",
+        ));
+    }
+    Ok(credential.access_token)
+}
+
+fn siwc_provider_at(base: &Path, provider_id: &str) -> Result<Value, String> {
+    let store = ai_read_provider_store_secure(base)?;
+    ai_provider_records(&store)
+        .into_iter()
+        .find(|provider| provider.get("id").and_then(Value::as_str) == Some(provider_id))
+        .filter(|provider| provider.get("kind").and_then(Value::as_str) == Some(SIWC_KIND))
+        .ok_or_else(|| {
+            structured_ai_error(
+                "not_configured",
+                "找不到这个 ChatGPT 订阅账户。",
+                None,
+                json!({ "provider_id": provider_id }),
+            )
+        })
+}
+
+fn siwc_account_id() -> String {
+    format!(
+        "chatgpt-{}",
+        system_random_hex(16).unwrap_or_else(|| native_id("account").replace('-', ""))
+    )
+}
+
+fn siwc_host_id(base: &Path) -> Result<String, String> {
+    let path = base.join("siwc-host-id");
+    if path.exists() {
+        let value = fs::read_to_string(&path)
+            .map_err(|_| siwc_error("subscription_storage_failed", "无法读取本机订阅主机标识。"))?;
+        let value = value.trim();
+        if value.starts_with("urn:uuid:") && value.len() <= 50 {
+            return Ok(value.to_owned());
+        }
+        return Err(siwc_error(
+            "subscription_storage_failed",
+            "本机订阅主机标识格式无效。",
+        ));
+    }
+    let mut bytes = [0u8; 16];
+    getrandom::fill(&mut bytes)
+        .map_err(|_| siwc_error("subscription_storage_failed", "无法创建本机订阅主机标识。"))?;
+    bytes[6] = (bytes[6] & 0x0f) | 0x40;
+    bytes[8] = (bytes[8] & 0x3f) | 0x80;
+    let hex = bytes
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect::<String>();
+    let value = format!(
+        "urn:uuid:{}-{}-{}-{}-{}",
+        &hex[0..8],
+        &hex[8..12],
+        &hex[12..16],
+        &hex[16..20],
+        &hex[20..32]
+    );
+    atomic_write_path(&path, &value, false)
+        .map_err(|_| siwc_error("subscription_storage_failed", "无法保存本机订阅主机标识。"))?;
+    Ok(value)
+}
+
+fn siwc_browser_open(url: &str) -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    {
+        ProcessCommand::new("/usr/bin/open")
+            .arg(url)
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .map(|_| ())
+            .map_err(|_| {
+                siwc_error(
+                    "subscription_browser_unavailable",
+                    "无法打开系统浏览器进行 ChatGPT 授权。",
+                )
+            })
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = url;
+        Err(siwc_error(
+            "subscription_platform_unsupported",
+            "ChatGPT 订阅登录目前需要 macOS 系统钥匙串和系统浏览器。",
+        ))
+    }
+}
+
+fn siwc_auth_url(
+    client_id: &str,
+    host_id: &str,
+    redirect_uri: &str,
+    state: &str,
+    nonce: &str,
+    verifier: &str,
+    email: Option<&str>,
+    new_registration: bool,
+) -> Result<String, String> {
+    let challenge = BASE64URL.encode(Sha256::digest(verifier.as_bytes()));
+    let mut url = reqwest::Url::parse(SIWC_AUTHORIZATION_ENDPOINT)
+        .map_err(|_| siwc_error("subscription_config_invalid", "ChatGPT 登录地址无效。"))?;
+    {
+        let mut query = url.query_pairs_mut();
+        query
+            .append_pair("client_id", client_id)
+            .append_pair("ext_agent_host_id", host_id)
+            .append_pair("response_type", "code")
+            .append_pair("redirect_uri", redirect_uri)
+            .append_pair("scope", SIWC_SCOPE)
+            .append_pair("resource", SIWC_RESOURCE)
+            .append_pair("state", state)
+            .append_pair("nonce", nonce)
+            .append_pair("code_challenge_method", "S256")
+            .append_pair("code_challenge", &challenge);
+        if new_registration {
+            query.append_pair("agent_name_hint", "AI Course Workbench");
+        }
+        if let Some(email) = email.filter(|value| !value.is_empty()) {
+            query.append_pair("login_hint", email);
+        }
+    }
+    Ok(url.to_string())
+}
+
+fn siwc_constant_time_eq(left: &str, right: &str) -> bool {
+    let left = left.as_bytes();
+    let right = right.as_bytes();
+    if left.len() != right.len() {
+        return false;
+    }
+    left.iter()
+        .zip(right)
+        .fold(0u8, |difference, (a, b)| difference | (a ^ b))
+        == 0
+}
+
+fn siwc_validate_id_token(
+    id_token: &str,
+    jwks: &jsonwebtoken::jwk::JwkSet,
+    client_id: &str,
+    nonce: &str,
+) -> Result<SiwcIdClaims, String> {
+    let header = jsonwebtoken::decode_header(id_token).map_err(|_| {
+        siwc_error(
+            "subscription_identity_invalid",
+            "ChatGPT 返回的身份令牌无效。",
+        )
+    })?;
+    if header.alg != jsonwebtoken::Algorithm::RS256 {
+        return Err(siwc_error(
+            "subscription_identity_invalid",
+            "ChatGPT 身份令牌签名算法不受支持。",
+        ));
+    }
+    let kid = header.kid.ok_or_else(|| {
+        siwc_error(
+            "subscription_identity_invalid",
+            "ChatGPT 身份令牌缺少签名密钥标识。",
+        )
+    })?;
+    let jwk = jwks
+        .keys
+        .iter()
+        .find(|jwk| jwk.common.key_id.as_deref() == Some(kid.as_str()))
+        .ok_or_else(|| {
+            siwc_error(
+                "subscription_identity_invalid",
+                "ChatGPT 身份令牌签名密钥无法验证。",
+            )
+        })?;
+    let key = jsonwebtoken::DecodingKey::from_jwk(jwk).map_err(|_| {
+        siwc_error(
+            "subscription_identity_invalid",
+            "ChatGPT 身份令牌签名密钥无效。",
+        )
+    })?;
+    let mut validation = jsonwebtoken::Validation::new(jsonwebtoken::Algorithm::RS256);
+    validation.set_issuer(&[SIWC_ISSUER]);
+    validation.set_audience(&[client_id]);
+    validation.validate_exp = true;
+    validation.leeway = 0;
+    let claims = jsonwebtoken::decode::<SiwcIdClaims>(id_token, &key, &validation)
+        .map_err(|_| {
+            siwc_error(
+                "subscription_identity_invalid",
+                "ChatGPT 身份签名、受众或有效期无法验证。",
+            )
+        })?
+        .claims;
+    if claims.exp <= unix_seconds()
+        || claims.iss != SIWC_ISSUER
+        || claims.sub.trim().is_empty()
+        || !claims.aud_matches(client_id)
+        || !claims
+            .nonce
+            .as_deref()
+            .is_some_and(|value| siwc_constant_time_eq(value, nonce))
+    {
+        return Err(siwc_error(
+            "subscription_identity_invalid",
+            "ChatGPT 身份与本次授权不匹配。",
+        ));
+    }
+    Ok(claims)
+}
+
+impl SiwcIdClaims {
+    fn aud_matches(&self, client_id: &str) -> bool {
+        match &self.aud {
+            Value::String(audience) => audience == client_id,
+            Value::Array(audiences) => audiences
+                .iter()
+                .any(|value| value.as_str() == Some(client_id)),
+            _ => false,
+        }
+    }
+}
+
+fn siwc_http_client() -> Result<reqwest::Client, String> {
+    reqwest::Client::builder()
+        .timeout(Duration::from_secs(20))
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
+        .map_err(|_| {
+            siwc_error(
+                "subscription_transport_unavailable",
+                "无法初始化 ChatGPT 授权网络连接。",
+            )
+        })
+}
+
+fn siwc_validate_auth_url(url: &str) -> Result<(), String> {
+    let parsed = reqwest::Url::parse(url)
+        .map_err(|_| siwc_error("subscription_config_invalid", "ChatGPT 授权服务地址无效。"))?;
+    if parsed.scheme() != "https"
+        || parsed.host_str() != Some("auth.openai.com")
+        || parsed.port().is_some()
+        || !parsed.username().is_empty()
+        || parsed.password().is_some()
+    {
+        return Err(siwc_error(
+            "subscription_config_invalid",
+            "ChatGPT 授权服务地址不受信任。",
+        ));
+    }
+    Ok(())
+}
+
+async fn siwc_discovery(client: &reqwest::Client) -> Result<SiwcOidcDiscovery, String> {
+    let response = client
+        .get(SIWC_DISCOVERY_ENDPOINT)
+        .send()
+        .await
+        .map_err(|_| {
+            siwc_error(
+                "subscription_transport_unavailable",
+                "无法连接 ChatGPT 授权服务。",
+            )
+        })?;
+    if !response.status().is_success() {
+        return Err(siwc_error(
+            "subscription_provider_error",
+            "ChatGPT 授权服务暂时不可用。",
+        ));
+    }
+    let discovery = response.json::<SiwcOidcDiscovery>().await.map_err(|_| {
+        siwc_error(
+            "subscription_provider_error",
+            "ChatGPT 授权服务返回了无效配置。",
+        )
+    })?;
+    siwc_validate_auth_url(&discovery.jwks_uri)?;
+    siwc_validate_auth_url(&discovery.revocation_endpoint)?;
+    if discovery.issuer != SIWC_ISSUER {
+        return Err(siwc_error(
+            "subscription_config_invalid",
+            "ChatGPT 授权服务签发者不匹配。",
+        ));
+    }
+    Ok(discovery)
+}
+
+async fn siwc_fetch_jwks(
+    client: &reqwest::Client,
+    discovery: &SiwcOidcDiscovery,
+) -> Result<jsonwebtoken::jwk::JwkSet, String> {
+    let response = client.get(&discovery.jwks_uri).send().await.map_err(|_| {
+        siwc_error(
+            "subscription_transport_unavailable",
+            "无法读取 ChatGPT 身份签名密钥。",
+        )
+    })?;
+    if !response.status().is_success() {
+        return Err(siwc_error(
+            "subscription_provider_error",
+            "ChatGPT 身份签名密钥暂时不可用。",
+        ));
+    }
+    response
+        .json::<jsonwebtoken::jwk::JwkSet>()
+        .await
+        .map_err(|_| {
+            siwc_error(
+                "subscription_provider_error",
+                "ChatGPT 身份签名密钥格式无效。",
+            )
+        })
+}
+
+async fn siwc_exchange_code(
+    client: &reqwest::Client,
+    code: &str,
+    client_id: &str,
+    verifier: &str,
+    redirect_uri: &str,
+) -> Result<SiwcTokenResponse, String> {
+    let response = client
+        .post(SIWC_TOKEN_ENDPOINT)
+        .form(&[
+            ("grant_type", "authorization_code"),
+            ("code", code),
+            ("client_id", client_id),
+            ("code_verifier", verifier),
+            ("redirect_uri", redirect_uri),
+            ("resource", SIWC_RESOURCE),
+        ])
+        .send()
+        .await
+        .map_err(|_| {
+            siwc_error(
+                "subscription_transport_unavailable",
+                "连接 ChatGPT 授权服务失败。",
+            )
+        })?;
+    if !response.status().is_success() {
+        return Err(siwc_error(
+            "subscription_authorization_failed",
+            "ChatGPT 没有完成授权。请重新开始登录。",
+        ));
+    }
+    response.json::<SiwcTokenResponse>().await.map_err(|_| {
+        siwc_error(
+            "subscription_provider_error",
+            "ChatGPT 授权服务未返回有效会话。",
+        )
+    })
+}
+
+fn siwc_save_account(
+    base: &Path,
+    provider_id: &str,
+    client_id: &str,
+    host_id: &str,
+    claims: &SiwcIdClaims,
+    credential: &SiwcCredential,
+) -> Result<(), String> {
+    let email = credential.email.trim();
+    let previous = siwc_provider_at(base, provider_id).ok();
+    let provider = json!({
+        "id": provider_id,
+        "label": if email.is_empty() { format!("ChatGPT 账户 {}", &claims.sub.chars().take(8).collect::<String>()) } else { email.to_owned() },
+        "kind": SIWC_KIND,
+        "base_url": SIWC_RESOURCE,
+        "chat_path": "/chat/completions",
+        "api_protocol": "openai-responses",
+        "auth_header": "authorization",
+        "auth_scheme": "Bearer",
+        "default_model": previous.as_ref().and_then(|value| value.get("default_model")).cloned().unwrap_or(json!("")),
+        "models": previous.as_ref().and_then(|value| value.get("models")).cloned().unwrap_or(json!([])),
+        "siwc_registration_id": client_id,
+        "siwc_identity": claims.sub,
+        "siwc_email": email,
+        "siwc_host_id": host_id,
+    });
+    ai_connection_save_at(base, &provider)?;
+    let raw = serde_json::to_string(credential)
+        .map_err(|_| siwc_error("subscription_storage_failed", "无法保存 ChatGPT 会话。"))?;
+    if let Err(error) = ai_credential_store(base).set(provider_id, &raw) {
+        let _ = ai_connection_delete_at(base, provider_id);
+        return Err(error);
+    }
+    let saved = (|| -> Result<(), String> {
+        let mut store = ai_read_provider_store_secure(base)?;
+        let mut origins = store
+            .get("credential_origins")
+            .and_then(Value::as_object)
+            .cloned()
+            .unwrap_or_default();
+        origins.insert(provider_id.to_owned(), json!(SIWC_RESOURCE));
+        store.insert("credential_origins".into(), Value::Object(origins));
+        let paths = ai_store_paths(base);
+        ai_write_provider_store(&paths.providers, &Value::Object(store), "AI Provider 配置")
+    })();
+    if let Err(error) = saved {
+        let _ = ai_credential_store(base).delete(provider_id);
+        let _ = ai_connection_delete_at(base, provider_id);
+        return Err(error);
+    }
+    Ok(())
+}
+
+fn siwc_read_callback(
+    listener: &std::net::TcpListener,
+    attempt: &Arc<Mutex<SiwcAttempt>>,
+) -> Result<(String, Option<String>, String), String> {
+    listener.set_nonblocking(true).map_err(|_| {
+        siwc_error(
+            "subscription_callback_failed",
+            "无法监听 ChatGPT 授权回调。",
+        )
+    })?;
+    let deadline = std::time::Instant::now() + Duration::from_secs(300);
+    while std::time::Instant::now() < deadline {
+        if attempt.lock().map(|value| value.cancelled).unwrap_or(true) {
+            return Err(siwc_error("subscription_cancelled", "ChatGPT 登录已取消。"));
+        }
+        match listener.accept() {
+            Ok((mut stream, _)) => {
+                let _ = stream.set_read_timeout(Some(Duration::from_secs(2)));
+                let mut request = [0u8; 8192];
+                let count = stream.read(&mut request).unwrap_or(0);
+                let text = String::from_utf8_lossy(&request[..count]);
+                let target = text
+                    .lines()
+                    .next()
+                    .and_then(|line| line.split_whitespace().nth(1))
+                    .unwrap_or("");
+                let parsed = reqwest::Url::parse(&format!("http://127.0.0.1{target}"));
+                let Ok(url) = parsed else {
+                    continue;
+                };
+                if url.path() != "/auth/callback" {
+                    let _ = stream.write_all(
+                        b"HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+                    );
+                    continue;
+                }
+                let query: HashMap<String, String> = url.query_pairs().into_owned().collect();
+                let got_state = query.get("state").cloned().unwrap_or_default();
+                let code = query.get("code").cloned().unwrap_or_default();
+                let callback_client_id = query.get("client_id").cloned();
+                let error = query.get("error").cloned().unwrap_or_default();
+                let body = if error == "access_denied" {
+                    "授权已取消。你可以关闭此页面。"
+                } else {
+                    "ChatGPT 授权回调已收到。你可以关闭此页面并返回 Workbench。"
+                };
+                let response = format!("HTTP/1.1 200 OK\r\nContent-Type: text/plain; charset=utf-8\r\nCache-Control: no-store\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}", body.len(), body);
+                let _ = stream.write_all(response.as_bytes());
+                if error == "access_denied" {
+                    return Err(siwc_error(
+                        "subscription_cancelled",
+                        "你在 ChatGPT 页面取消了授权。",
+                    ));
+                }
+                if !error.is_empty() {
+                    return Err(siwc_error(
+                        "subscription_authorization_failed",
+                        "ChatGPT 没有完成授权。请重新开始登录。",
+                    ));
+                }
+                return Ok((code, callback_client_id, got_state));
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                thread::sleep(Duration::from_millis(100))
+            }
+            Err(_) => {
+                return Err(siwc_error(
+                    "subscription_callback_failed",
+                    "ChatGPT 授权回调读取失败。",
+                ))
+            }
+        }
+    }
+    Err(siwc_error(
+        "subscription_timeout",
+        "ChatGPT 授权等待超时。请重新开始登录。",
+    ))
+}
+
+async fn siwc_finish_flow(flow: SiwcFlow) -> Result<String, String> {
+    let (code, callback_client_id, got_state) = siwc_read_callback(&flow.listener, &flow.attempt)?;
+    if !siwc_constant_time_eq(&got_state, &flow.state) {
+        return Err(siwc_error(
+            "subscription_state_mismatch",
+            "ChatGPT 授权回调校验失败。请重新开始登录。",
+        ));
+    }
+    if flow
+        .attempt
+        .lock()
+        .map(|attempt| attempt.cancelled)
+        .unwrap_or(true)
+    {
+        return Err(siwc_error("subscription_cancelled", "ChatGPT 登录已取消。"));
+    }
+    let client_id = if flow.client_id == "dynamic_agent_client" {
+        callback_client_id
+            .filter(|value| !value.is_empty() && value != "dynamic_agent_client")
+            .ok_or_else(|| {
+                siwc_error(
+                    "subscription_registration_incomplete",
+                    "ChatGPT 没有返回 Workbench 的动态客户端身份。请重新开始登录。",
+                )
+            })?
+    } else {
+        if callback_client_id
+            .as_deref()
+            .is_some_and(|value| value != flow.client_id)
+        {
+            return Err(siwc_error(
+                "subscription_identity_invalid",
+                "ChatGPT 回调属于另一个账户连接。",
+            ));
+        }
+        flow.client_id.clone()
+    };
+    let client = siwc_http_client()?;
+    let response = siwc_exchange_code(
+        &client,
+        &code,
+        &client_id,
+        &flow.verifier,
+        &flow.redirect_uri,
+    )
+    .await?;
+    let scopes = siwc_scopes(response.scope.as_deref().unwrap_or(""));
+    if !siwc_has_usage_scope(&scopes) {
+        return Err(siwc_error(
+            "subscription_scope_missing",
+            "ChatGPT 账户没有授予直接模型调用权限。",
+        ));
+    }
+    if response
+        .token_type
+        .as_deref()
+        .is_some_and(|value| !value.eq_ignore_ascii_case("bearer"))
+        || response.access_token.is_empty()
+        || response.refresh_token.as_deref().unwrap_or("").is_empty()
+        || response.id_token.as_deref().unwrap_or("").is_empty()
+    {
+        return Err(siwc_error(
+            "subscription_provider_error",
+            "ChatGPT 授权服务返回的会话不完整。",
+        ));
+    }
+    let discovery = siwc_discovery(&client).await?;
+    let jwks = siwc_fetch_jwks(&client, &discovery).await?;
+    let id_token = response.id_token.as_deref().unwrap();
+    let claims = siwc_validate_id_token(id_token, &jwks, &client_id, &flow.nonce)?;
+    if flow
+        .expected_subject
+        .as_deref()
+        .is_some_and(|subject| subject != claims.sub)
+    {
+        return Err(siwc_error(
+            "subscription_identity_changed",
+            "重新授权返回了不同的 ChatGPT 账户；原账户未更改。",
+        ));
+    }
+    let email = claims
+        .email
+        .clone()
+        .or(flow.email_hint.clone())
+        .unwrap_or_default();
+    let credential = SiwcCredential {
+        client_id: client_id.clone(),
+        subject: claims.sub.clone(),
+        email,
+        host_id: flow.host_id.clone(),
+        id_token: id_token.to_owned(),
+        access_token: response.access_token,
+        refresh_token: response.refresh_token.unwrap(),
+        scopes,
+        expires_at: unix_seconds().saturating_add(response.expires_in),
+    };
+    let mut attempt = flow
+        .attempt
+        .lock()
+        .map_err(|_| siwc_error("subscription_state_unavailable", "登录状态暂不可用。"))?;
+    if attempt.cancelled || attempt.view.status != "pending" {
+        return Err(siwc_error("subscription_cancelled", "ChatGPT 登录已取消。"));
+    }
+    // Keep cancellation and the credential commit under one lock: cancel can
+    // either win before this point or observe a completed attempt, never race
+    // between the final check and keychain persistence.
+    siwc_save_account(
+        &flow.base,
+        &flow.provider_id,
+        &client_id,
+        &flow.host_id,
+        &claims,
+        &credential,
+    )?;
+    attempt.view.status = "connected".into();
+    attempt.view.provider_id = Some(flow.provider_id.clone());
+    attempt.view.message = Some("ChatGPT 订阅账户已连接".into());
+    Ok(flow.provider_id)
+}
+
+fn unix_seconds() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs()
+}
+
+fn siwc_start_at(base: &Path, provider_id: Option<&str>) -> Result<Value, String> {
+    fs::create_dir_all(base)
+        .map_err(|_| siwc_error("subscription_storage_failed", "无法创建订阅账户数据目录。"))?;
+    let (provider_id, client_id, expected_subject, email_hint) =
+        if let Some(provider_id) = provider_id.filter(|value| !value.trim().is_empty()) {
+            let provider_id = ai_validate_provider_id(provider_id)?;
+            let provider = siwc_provider_at(base, &provider_id)?;
+            let client_id = provider
+                .get("siwc_registration_id")
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .to_owned();
+            let subject = provider
+                .get("siwc_identity")
+                .and_then(Value::as_str)
+                .map(ToOwned::to_owned);
+            let email = provider
+                .get("siwc_email")
+                .and_then(Value::as_str)
+                .map(ToOwned::to_owned);
+            if client_id.is_empty() {
+                return Err(siwc_error(
+                    "subscription_registration_incomplete",
+                    "此订阅账户没有已验证的客户端身份，请添加新账户。",
+                ));
+            }
+            (provider_id, client_id, subject, email)
+        } else {
+            (
+                siwc_account_id(),
+                "dynamic_agent_client".to_owned(),
+                None,
+                None,
+            )
+        };
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").map_err(|_| {
+        siwc_error(
+            "subscription_callback_failed",
+            "无法启动受限的本机授权回调。",
+        )
+    })?;
+    let port = listener
+        .local_addr()
+        .map_err(|_| siwc_error("subscription_callback_failed", "无法读取本机授权回调地址。"))?
+        .port();
+    let redirect_uri = format!("http://127.0.0.1:{port}/auth/callback");
+    let state = system_random_hex(32)
+        .ok_or_else(|| siwc_error("subscription_random_failed", "无法生成授权安全状态。"))?;
+    let nonce = system_random_hex(32)
+        .ok_or_else(|| siwc_error("subscription_random_failed", "无法生成授权安全随机值。"))?;
+    let verifier = BASE64URL.encode({
+        let mut bytes = [0u8; 32];
+        getrandom::fill(&mut bytes)
+            .map_err(|_| siwc_error("subscription_random_failed", "无法生成授权安全随机值。"))?;
+        bytes
+    });
+    let host_id = siwc_host_id(base)?;
+    let attempt_id = format!(
+        "siwc-{}",
+        system_random_hex(12)
+            .ok_or_else(|| siwc_error("subscription_random_failed", "无法生成登录尝试编号。"))?
+    );
+    let attempt = Arc::new(Mutex::new(SiwcAttempt {
+        view: SiwcAttemptView {
+            attempt_id: attempt_id.clone(),
+            status: "pending".into(),
+            provider_id: None,
+            message: Some("等待你在系统浏览器中完成授权".into()),
+        },
+        cancelled: false,
+    }));
+    let auth_url = siwc_auth_url(
+        &client_id,
+        &host_id,
+        &redirect_uri,
+        &state,
+        &nonce,
+        &verifier,
+        email_hint.as_deref(),
+        client_id == "dynamic_agent_client",
+    )?;
+    siwc_attempts()
+        .lock()
+        .map_err(|_| siwc_error("subscription_state_unavailable", "登录状态暂不可用。"))?
+        .insert(attempt_id.clone(), attempt.clone());
+    if let Err(error) = siwc_browser_open(&auth_url) {
+        siwc_attempts().lock().unwrap().remove(&attempt_id);
+        return Err(error);
+    }
+    let flow = SiwcFlow {
+        base: base.to_owned(),
+        provider_id,
+        client_id,
+        host_id,
+        expected_subject,
+        email_hint,
+        state,
+        nonce,
+        verifier,
+        redirect_uri,
+        listener,
+        attempt: attempt.clone(),
+    };
+    thread::spawn(move || {
+        let outcome = tauri::async_runtime::block_on(siwc_finish_flow(flow));
+        if let Ok(mut pending) = attempt.lock() {
+            if pending.cancelled {
+                pending.view.status = "cancelled".into();
+                pending.view.message = Some("登录已取消".into());
+            } else {
+                match outcome {
+                    Ok(provider_id) => {
+                        pending.view.status = "connected".into();
+                        pending.view.provider_id = Some(provider_id);
+                        pending.view.message = Some("ChatGPT 订阅账户已连接".into());
+                    }
+                    Err(error) => {
+                        pending.view.status = if error.contains("subscription_cancelled") {
+                            "cancelled"
+                        } else {
+                            "error"
+                        }
+                        .into();
+                        pending.view.message = Some(
+                            if error.contains("subscription_cancelled") {
+                                "登录已取消"
+                            } else {
+                                "登录未完成，请检查网络或授权后重试"
+                            }
+                            .into(),
+                        );
+                    }
+                }
+            }
+        }
+    });
+    Ok(json!({ "attempt_id": attempt_id, "status": "pending" }))
+}
+
+fn siwc_status_at(attempt_id: &str) -> Result<Value, String> {
+    let attempts = siwc_attempts()
+        .lock()
+        .map_err(|_| siwc_error("subscription_state_unavailable", "登录状态暂不可用。"))?;
+    let attempt = attempts.get(attempt_id).ok_or_else(|| {
+        siwc_error(
+            "subscription_state_missing",
+            "找不到这次登录状态；请重新开始登录。",
+        )
+    })?;
+    let view = attempt
+        .lock()
+        .map_err(|_| siwc_error("subscription_state_unavailable", "登录状态暂不可用。"))?
+        .view
+        .clone();
+    serde_json::to_value(view)
+        .map_err(|_| siwc_error("subscription_state_unavailable", "登录状态暂不可用。"))
+}
+
+fn siwc_cancel_at(attempt_id: &str) -> Result<Value, String> {
+    let attempts = siwc_attempts()
+        .lock()
+        .map_err(|_| siwc_error("subscription_state_unavailable", "登录状态暂不可用。"))?;
+    let Some(attempt) = attempts.get(attempt_id) else {
+        return Ok(json!({ "cancelled": false }));
+    };
+    let mut attempt = attempt
+        .lock()
+        .map_err(|_| siwc_error("subscription_state_unavailable", "登录状态暂不可用。"))?;
+    if attempt.view.status != "pending" {
+        return Ok(json!({ "cancelled": false }));
+    }
+    attempt.cancelled = true;
+    attempt.view.status = "cancelled".into();
+    attempt.view.message = Some("登录已取消".into());
+    Ok(json!({ "cancelled": true }))
+}
+
+async fn siwc_access_token_with_endpoint(
+    base: &Path,
+    provider_id: &str,
+    token_endpoint: &str,
+) -> Result<String, String> {
+    let lock = siwc_refresh_lock(provider_id);
+    let _guard = lock.lock().await;
+    let raw = ai_keychain_credential(base, provider_id)?
+        .ok_or_else(|| siwc_error("missing_credential", "ChatGPT 订阅账户已退出登录。"))?;
+    let mut credential = siwc_parse_credential(&raw)?;
+    if !siwc_has_usage_scope(&credential.scopes) {
+        return Err(siwc_error(
+            "subscription_scope_missing",
+            "ChatGPT 账户没有可用的模型调用授权。",
+        ));
+    }
+    if credential.expires_at > unix_seconds().saturating_add(60) {
+        return Ok(credential.access_token);
+    }
+    let client = siwc_http_client()?;
+    let response = client
+        .post(token_endpoint)
+        .form(&[
+            ("grant_type", "refresh_token"),
+            ("client_id", credential.client_id.as_str()),
+            ("refresh_token", credential.refresh_token.as_str()),
+            ("resource", SIWC_RESOURCE),
+        ])
+        .send()
+        .await
+        .map_err(|_| {
+            siwc_error(
+                "subscription_refresh_failed",
+                "刷新 ChatGPT 订阅会话失败。请重新登录。",
+            )
+        })?;
+    if !response.status().is_success() {
+        return Err(siwc_error(
+            "subscription_refresh_failed",
+            "ChatGPT 订阅会话已过期或撤销。请重新登录。",
+        ));
+    }
+    let refreshed = response.json::<SiwcTokenResponse>().await.map_err(|_| {
+        siwc_error(
+            "subscription_refresh_failed",
+            "ChatGPT 没有返回有效的刷新会话。请重新登录。",
+        )
+    })?;
+    if refreshed.access_token.is_empty()
+        || refreshed
+            .token_type
+            .as_deref()
+            .is_some_and(|value| !value.eq_ignore_ascii_case("bearer"))
+    {
+        return Err(siwc_error(
+            "subscription_refresh_failed",
+            "ChatGPT 没有返回有效的刷新会话。请重新登录。",
+        ));
+    }
+    if let Some(scope) = &refreshed.scope {
+        let scopes = siwc_scopes(scope);
+        if !siwc_has_usage_scope(&scopes) {
+            return Err(siwc_error(
+                "subscription_scope_missing",
+                "ChatGPT 刷新后未保留模型调用授权。请重新登录。",
+            ));
+        }
+        credential.scopes = scopes;
+    }
+    credential.access_token = refreshed.access_token;
+    credential.refresh_token = refreshed
+        .refresh_token
+        .filter(|value| !value.is_empty())
+        .unwrap_or(credential.refresh_token);
+    // Keep the originally verified ID token. A refresh response's optional
+    // replacement ID token is not used until independently revalidated.
+    credential.expires_at = unix_seconds().saturating_add(refreshed.expires_in);
+    let serialized = serde_json::to_string(&credential)
+        .map_err(|_| siwc_error("subscription_storage_failed", "无法更新 ChatGPT 订阅会话。"))?;
+    // The account lock spans refresh and replacement. Logout takes the same lock, so it cannot be undone by an in-flight refresh.
+    ai_credential_store(base)
+        .set(provider_id, &serialized)
+        .map_err(|_| {
+            siwc_error(
+                "subscription_storage_failed",
+                "无法安全保存刷新的 ChatGPT 会话。",
+            )
+        })?;
+    Ok(credential.access_token)
+}
+
+async fn siwc_access_token_at(base: &Path, provider_id: &str) -> Result<String, String> {
+    siwc_access_token_with_endpoint(base, provider_id, SIWC_TOKEN_ENDPOINT).await
+}
+
+async fn siwc_logout_with_endpoint(
+    base: &Path,
+    provider_id: &str,
+    revocation_endpoint: Option<&str>,
+) -> Result<Value, String> {
+    let provider_id = ai_validate_provider_id(provider_id)?;
+    let provider = siwc_provider_at(base, &provider_id)?;
+    let lock = siwc_refresh_lock(&provider_id);
+    let _guard = lock.lock().await;
+    let raw = ai_keychain_credential(base, &provider_id)?;
+    let mut remote_revoked = false;
+    if let Some(raw) = raw {
+        if let Ok(credential) = siwc_parse_credential(&raw) {
+            if let Ok(client) = siwc_http_client() {
+                let endpoint = if let Some(endpoint) = revocation_endpoint {
+                    Some(endpoint.to_owned())
+                } else {
+                    siwc_discovery(&client)
+                        .await
+                        .ok()
+                        .map(|discovery| discovery.revocation_endpoint)
+                };
+                if let Some(endpoint) = endpoint {
+                    for delay in [0, 400, 1200] {
+                        if delay > 0 {
+                            tokio::time::sleep(Duration::from_millis(delay)).await;
+                        }
+                        let response = client
+                            .post(&endpoint)
+                            .form(&[
+                                ("token", credential.refresh_token.as_str()),
+                                ("token_type_hint", "refresh_token"),
+                                ("client_id", credential.client_id.as_str()),
+                            ])
+                            .send()
+                            .await;
+                        match response {
+                            Ok(response) if response.status() == reqwest::StatusCode::OK => {
+                                remote_revoked = true;
+                                break;
+                            }
+                            Ok(response) if response.status().is_server_error() => continue,
+                            _ => break,
+                        }
+                    }
+                }
+            }
+        }
+    }
+    ai_credential_store(base).delete(&provider_id)?;
+    let mut store = ai_read_provider_store_secure(base)?;
+    let mut origins = store
+        .get("credential_origins")
+        .and_then(Value::as_object)
+        .cloned()
+        .unwrap_or_default();
+    origins.remove(&provider_id);
+    store.insert("credential_origins".into(), Value::Object(origins));
+    if let Some(providers) = store.get_mut("providers").and_then(Value::as_array_mut) {
+        for entry in providers
+            .iter_mut()
+            .filter(|entry| entry.get("id").and_then(Value::as_str) == Some(provider_id.as_str()))
+        {
+            if let Some(object) = entry.as_object_mut() {
+                object.insert(
+                    "default_model".into(),
+                    provider.get("default_model").cloned().unwrap_or(json!("")),
+                );
+            }
+        }
+    }
+    let paths = ai_store_paths(base);
+    ai_write_provider_store(&paths.providers, &Value::Object(store), "AI Provider 配置")?;
+    Ok(json!({ "provider_id": provider_id, "logged_out": true, "remote_revoked": remote_revoked }))
+}
+
+async fn siwc_logout_at(base: &Path, provider_id: &str) -> Result<Value, String> {
+    siwc_logout_with_endpoint(base, provider_id, None).await
 }
 
 // ---- AI 传输 -------------------------------------------------------------
@@ -7648,12 +10309,15 @@ fn ai_request_spec(base: &Path, input: &Value) -> Result<AiRequestSpec, String> 
         .map(str::trim)
         .unwrap_or("")
         .to_owned();
-    let auth = ai_normalize_auth(field(&payload, &["auth"]))?;
+    let requested_auth = ai_normalize_auth(field(&payload, &["auth"]))?;
+    let mut auth = requested_auth.clone();
+    let mut api_protocol = "openai-completions";
     let mut stored_credential = None;
+    let mut is_siwc = false;
     // Credentials only go to the endpoint built from the saved provider
     // record. An authenticated renderer URL is ignored, even if it names a
     // different (otherwise allowed) origin.
-    let url = if auth.is_some() {
+    let url = if requested_auth.is_some() {
         if provider_id.is_empty() {
             return Err(structured_ai_error(
                 "not_configured",
@@ -7674,36 +10338,42 @@ fn ai_request_spec(base: &Path, input: &Value) -> Result<AiRequestSpec, String> 
                     json!({ "provider_id": provider_id }),
                 )
             })?;
-        let base_url = provider
-            .get("base_url")
-            .and_then(Value::as_str)
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-            .ok_or_else(|| {
-                structured_ai_error(
-                    "invalid_request",
-                    "还没有填写 Base URL，无法发送 AI 请求。",
-                    Some("在服务商设置里填写 Base URL 后重试。"),
-                    json!({ "provider_id": provider_id }),
-                )
-            })?;
-        let chat_path = provider
-            .get("chat_path")
-            .and_then(Value::as_str)
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-            .unwrap_or("/chat/completions");
-        let endpoint = format!(
-            "{}{}",
-            base_url.trim_end_matches('/'),
-            if chat_path.starts_with('/') {
-                chat_path.to_owned()
-            } else {
-                format!("/{chat_path}")
-            }
-        );
+        is_siwc = provider.get("kind").and_then(Value::as_str) == Some(SIWC_KIND);
+        api_protocol = if is_siwc {
+            "openai-responses"
+        } else {
+            ai_provider_api_protocol(&provider)?
+        };
+        let endpoint = if is_siwc {
+            SIWC_API_RESPONSES_ENDPOINT.to_owned()
+        } else {
+            ai_provider_completion_endpoint(&provider)?
+        };
         ai_validate_request_url(&endpoint)?;
-        stored_credential = Some(
+        if requested_auth.is_some() {
+            let default_header = if api_protocol == "anthropic-messages" {
+                "x-api-key"
+            } else {
+                "authorization"
+            };
+            let default_scheme = if api_protocol == "anthropic-messages" {
+                ""
+            } else {
+                "Bearer"
+            };
+            let saved_auth = if is_siwc {
+                json!({ "header": "authorization", "scheme": "Bearer" })
+            } else {
+                json!({
+                    "header": provider.get("auth_header").and_then(Value::as_str).unwrap_or(default_header),
+                    "scheme": provider.get("auth_scheme").and_then(Value::as_str).unwrap_or(default_scheme),
+                })
+            };
+            auth = ai_normalize_auth(Some(&saved_auth))?;
+        }
+        stored_credential = Some(if is_siwc {
+            siwc_cached_access_token_at(base, &provider_id)?
+        } else {
             ai_keychain_credential(base, &provider_id)?
                 .filter(|value| !value.trim().is_empty())
                 .ok_or_else(|| {
@@ -7713,8 +10383,18 @@ fn ai_request_spec(base: &Path, input: &Value) -> Result<AiRequestSpec, String> 
                         Some("在 AI 面板点击该服务商的「保存密钥」，填入 API Key 后重试。"),
                         json!({ "provider_id": provider_id }),
                     )
-                })?,
-        );
+                })?
+        });
+        if !is_siwc
+            && stored_credential
+                .as_deref()
+                .is_some_and(|value| serde_json::from_str::<SiwcCredential>(value).is_ok())
+        {
+            return Err(siwc_error(
+                "subscription_native_only",
+                "订阅会话不能作为 API Key 使用；请通过 ChatGPT 授权账户连接。",
+            ));
+        }
         let target_origin = ai_url_origin(&endpoint);
         let bound_origin = store
             .get("credential_origins")
@@ -7731,6 +10411,12 @@ fn ai_request_spec(base: &Path, input: &Value) -> Result<AiRequestSpec, String> 
         }
         endpoint
     } else {
+        if !provider_id.is_empty() && siwc_provider_at(base, &provider_id).is_ok() {
+            return Err(siwc_error(
+                "missing_credential",
+                "ChatGPT 订阅账户必须使用已验证的授权会话。",
+            ));
+        }
         let raw = field(&payload, &["url"])
             .and_then(Value::as_str)
             .map(str::trim)
@@ -7748,8 +10434,28 @@ fn ai_request_spec(base: &Path, input: &Value) -> Result<AiRequestSpec, String> 
             raw.clamp(1, AI_MAX_TIMEOUT_MS)
         }
     };
-    let headers = ai_normalize_headers(field(&payload, &["headers"]))?;
-    let body = ai_serialize_body(field(&payload, &["body"]))?;
+    let mut headers = ai_normalize_headers(field(&payload, &["headers"]))?;
+    if api_protocol == "anthropic-messages" {
+        headers.retain(|(name, _)| !name.eq_ignore_ascii_case("anthropic-version"));
+        headers.push(("anthropic-version".into(), "2023-06-01".into()));
+    } else if api_protocol == "openai-responses" {
+        headers.retain(|(name, _)| !name.eq_ignore_ascii_case("accept"));
+        headers.push(("accept".into(), "text/event-stream".into()));
+    }
+    let mut body = ai_serialize_body(field(&payload, &["body"]))?;
+    if is_siwc {
+        let mut parsed: Value = serde_json::from_slice(&body)
+            .map_err(|_| ai_invalid_request("ChatGPT Responses 请求必须是 JSON 对象。"))?;
+        let object = parsed
+            .as_object_mut()
+            .ok_or_else(|| ai_invalid_request("ChatGPT Responses 请求必须是 JSON 对象。"))?;
+        object.insert("store".into(), json!(false));
+        object.insert("stream".into(), json!(true));
+        body = serde_json::to_vec(&parsed)
+            .map_err(|_| ai_invalid_request("ChatGPT Responses 请求无法序列化。"))?;
+        headers.retain(|(name, _)| !name.eq_ignore_ascii_case("accept"));
+        headers.push(("accept".into(), "text/event-stream".into()));
+    }
     let credential = stored_credential;
     let auth_header = match (auth, credential.clone()) {
         (Some((header, scheme)), Some(credential)) => {
@@ -7772,7 +10478,16 @@ fn ai_request_spec(base: &Path, input: &Value) -> Result<AiRequestSpec, String> 
         timeout_ms,
         // 存储里的每个凭据（含 `<scheme> <value>` 形态）都参与擦除，
         // 而不是只擦本次注入的那一个。
-        secrets: ai_stored_secrets(base)?,
+        secrets: {
+            let mut secrets = ai_stored_secrets(base)?;
+            if is_siwc {
+                if let Some(token) = &credential {
+                    secrets.forms.push(token.clone());
+                    secrets.forms.push(format!("Bearer {token}"));
+                }
+            }
+            secrets
+        },
     })
 }
 
@@ -8034,7 +10749,17 @@ async fn ai_models_list_at(base: &Path, input: &Value) -> Result<Value, String> 
                 json!({ "provider_id": provider_id }),
             )
         })?;
-    let endpoint = format!("{}/models", base_url.trim_end_matches('/'));
+    let is_siwc = provider.get("kind").and_then(Value::as_str) == Some(SIWC_KIND);
+    let endpoint = if is_siwc {
+        SIWC_API_MODELS_ENDPOINT.to_owned()
+    } else {
+        format!("{}/models", base_url.trim_end_matches('/'))
+    };
+    let api_protocol = if is_siwc {
+        "openai-responses"
+    } else {
+        ai_provider_api_protocol(&provider)?
+    };
     ai_validate_request_url(&endpoint)?;
     let target_origin = ai_url_origin(&endpoint);
     let bound_origin = state
@@ -8050,28 +10775,48 @@ async fn ai_models_list_at(base: &Path, input: &Value) -> Result<Value, String> 
             target_origin.as_deref(),
         ));
     }
-    let credential = match ai_keychain_credential(base, &provider_id)? {
-        Some(value) if !value.trim().is_empty() => value,
-        _ => {
-            return Err(structured_ai_error(
-                "missing_credential",
-                &format!("AI 服务商「{provider_id}」还没有配置 API Key。"),
-                Some("先保存 API Key，再读取模型列表；也可以直接手动填写 Model ID。"),
-                json!({ "provider_id": provider_id }),
-            ))
+    let credential = if is_siwc {
+        siwc_access_token_at(base, &provider_id).await?
+    } else {
+        match ai_keychain_credential(base, &provider_id)? {
+            Some(value) if !value.trim().is_empty() => value,
+            _ => {
+                return Err(structured_ai_error(
+                    "missing_credential",
+                    &format!("AI 服务商「{provider_id}」还没有配置 API Key。"),
+                    Some("先保存 API Key，再读取模型列表；也可以直接手动填写 Model ID。"),
+                    json!({ "provider_id": provider_id }),
+                ))
+            }
         }
     };
-    let header = provider
-        .get("auth_header")
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .unwrap_or("authorization")
-        .to_owned();
-    let scheme = provider
-        .get("auth_scheme")
-        .and_then(Value::as_str)
-        .unwrap_or("Bearer");
+    let header = if is_siwc {
+        "authorization".to_owned()
+    } else {
+        provider
+            .get("auth_header")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .unwrap_or(if api_protocol == "anthropic-messages" {
+                "x-api-key"
+            } else {
+                "authorization"
+            })
+            .to_owned()
+    };
+    let scheme = if is_siwc {
+        "Bearer"
+    } else {
+        provider
+            .get("auth_scheme")
+            .and_then(Value::as_str)
+            .unwrap_or(if api_protocol == "anthropic-messages" {
+                ""
+            } else {
+                "Bearer"
+            })
+    };
     // 只保留真正会出现在报文里的凭据形状；短凭据一律不回显 Provider 正文。
     let mut secret_forms: Vec<String> = vec![credential.trim().to_owned()];
     if !scheme.trim().is_empty() {
@@ -8099,21 +10844,22 @@ async fn ai_models_list_at(base: &Path, input: &Value) -> Result<Value, String> 
                 json!({ "reason": ai_error_text_limit(&error.to_string(), AI_ERROR_TEXT_LIMIT) }),
             )
         })?;
-    let response = client
+    let mut request = client
         .get(&endpoint)
         .header("accept", "application/json")
-        .header(header.as_str(), auth_value.as_str())
-        .send()
-        .await
-        .map_err(|error| {
-            ai_transport_error(
-                error,
-                AI_DEFAULT_TIMEOUT_MS,
-                &endpoint,
-                &secrets,
-                &provider_id,
-            )
-        })?;
+        .header(header.as_str(), auth_value.as_str());
+    if api_protocol == "anthropic-messages" {
+        request = request.header("anthropic-version", "2023-06-01");
+    }
+    let response = request.send().await.map_err(|error| {
+        ai_transport_error(
+            error,
+            AI_DEFAULT_TIMEOUT_MS,
+            &endpoint,
+            &secrets,
+            &provider_id,
+        )
+    })?;
     let status = response.status();
     let content_type = response
         .headers()
@@ -8142,7 +10888,11 @@ async fn ai_models_list_at(base: &Path, input: &Value) -> Result<Value, String> 
         ));
     }
     let parsed = serde_json::from_str::<Value>(&text).unwrap_or(Value::Null);
-    let models = ai_model_ids_from_payload(&parsed);
+    let (models, display_names) = if is_siwc {
+        siwc_model_catalog(&parsed)
+    } else {
+        (ai_model_ids_from_payload(&parsed), Map::new())
+    };
     if models.is_empty() {
         return Err(structured_ai_error(
             "provider_error",
@@ -8154,11 +10904,328 @@ async fn ai_models_list_at(base: &Path, input: &Value) -> Result<Value, String> 
     Ok(json!({
         "provider_id": provider_id,
         "models": models,
+        "display_names": display_names,
         "endpoint": endpoint,
     }))
 }
 
+fn ai_provider_auth_parts(
+    provider: &Value,
+    api_protocol: &str,
+) -> Result<(String, String), String> {
+    let default_header = if api_protocol == "anthropic-messages" {
+        "x-api-key"
+    } else {
+        "authorization"
+    };
+    let default_scheme = if api_protocol == "anthropic-messages" {
+        ""
+    } else {
+        "Bearer"
+    };
+    let value = json!({
+        "header": provider.get("auth_header").and_then(Value::as_str).unwrap_or(default_header),
+        "scheme": provider.get("auth_scheme").and_then(Value::as_str).unwrap_or(default_scheme),
+    });
+    ai_normalize_auth(Some(&value))?.ok_or_else(|| ai_invalid_request("AI 鉴权头名称无效。"))
+}
+
+fn ai_credential_scrub(credential: &str, scheme: &str) -> AiSecrets {
+    let raw = credential.trim();
+    let mut forms = vec![raw.to_owned()];
+    if !scheme.trim().is_empty() {
+        forms.push(format!("{} {raw}", scheme.trim()));
+    }
+    AiSecrets {
+        forms,
+        has_short: raw.chars().count() < AI_MIN_EXACT_SECRET_CHARS,
+    }
+}
+
+async fn ai_secure_http_request(
+    endpoint: &str,
+    method: reqwest::Method,
+    headers: &[(String, String)],
+    body: Option<Vec<u8>>,
+    timeout_ms: u64,
+    provider_id: &str,
+    credential: &str,
+    scheme: &str,
+) -> Result<(String, String), String> {
+    let secrets = ai_credential_scrub(credential, scheme);
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_millis(timeout_ms))
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
+        .map_err(|error| {
+            structured_ai_error(
+                "transport_unavailable",
+                "无法初始化 AI 网络客户端。",
+                Some("请重启工作台后重试。"),
+                json!({ "reason": ai_error_text_limit(&error.to_string(), AI_ERROR_TEXT_LIMIT) }),
+            )
+        })?;
+    let mut request = client.request(method, endpoint);
+    for (name, value) in headers {
+        request = request.header(name, value);
+    }
+    if let Some(body) = body {
+        request = request.body(body);
+    }
+    let response = request
+        .send()
+        .await
+        .map_err(|error| ai_transport_error(error, timeout_ms, endpoint, &secrets, provider_id))?;
+    let status = response.status();
+    let content_type = response
+        .headers()
+        .get(reqwest::header::CONTENT_TYPE)
+        .and_then(|value| value.to_str().ok())
+        .unwrap_or("")
+        .to_owned();
+    let bytes = response
+        .bytes()
+        .await
+        .map_err(|error| ai_transport_error(error, timeout_ms, endpoint, &secrets, provider_id))?;
+    let text = String::from_utf8_lossy(&bytes).into_owned();
+    if !status.is_success() {
+        return Err(ai_status_error(
+            status.as_u16(),
+            &text,
+            &secrets,
+            provider_id,
+            endpoint,
+            &content_type,
+        ));
+    }
+    Ok((text, content_type))
+}
+
+async fn ai_models_probe_at(_base: &Path, input: &Value) -> Result<Value, String> {
+    let payload = ai_payload(input, "ai_models_probe")?;
+    let provider = field(&payload, &["provider"])
+        .ok_or_else(|| ai_invalid_request("临时模型探测缺少 Provider 配置。"))?;
+    if !provider.is_object() {
+        return Err(ai_invalid_request("Provider 配置必须是 JSON 对象。"));
+    }
+    if let Some(field_path) = ai_forbidden_field_path(provider, "", ai_credential_field_name) {
+        return Err(structured_ai_error(
+            "invalid_request",
+            "Provider 配置含有禁止的凭据字段。",
+            None,
+            json!({ "field": field_path }),
+        ));
+    }
+    if let Some(field_path) = ai_inline_credential_field(provider, "") {
+        return Err(structured_ai_error(
+            "invalid_request",
+            "Provider 地址含有禁止的密钥查询参数。",
+            None,
+            json!({ "field": field_path }),
+        ));
+    }
+    let api_protocol = ai_provider_api_protocol(provider)?;
+    let base_url = provider
+        .get("base_url")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| ai_invalid_request("还没有填写 Base URL，无法读取模型列表。"))?;
+    let credential = field(&payload, &["temporary_credential"])
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| ai_invalid_request("临时模型探测需要 API Key。"))?;
+    if credential.chars().count() > AI_CREDENTIAL_MAX_CHARS {
+        return Err(ai_invalid_request(
+            "API Key 过长，请确认粘贴的内容是否正确。",
+        ));
+    }
+    let endpoint = format!("{}/models", base_url.trim_end_matches('/'));
+    ai_validate_request_url(&endpoint)?;
+    let (header, scheme) = ai_provider_auth_parts(provider, api_protocol)?;
+    let auth_value = if scheme.is_empty() {
+        credential.to_owned()
+    } else {
+        format!("{scheme} {credential}")
+    };
+    let mut headers = vec![
+        ("accept".into(), "application/json".into()),
+        (header, auth_value),
+    ];
+    if api_protocol == "anthropic-messages" {
+        headers.push(("anthropic-version".into(), "2023-06-01".into()));
+    }
+    let (text, _) = ai_secure_http_request(
+        &endpoint,
+        reqwest::Method::GET,
+        &headers,
+        None,
+        AI_DEFAULT_TIMEOUT_MS,
+        "temporary-probe",
+        credential,
+        &scheme,
+    )
+    .await?;
+    let parsed = serde_json::from_str::<Value>(&text).unwrap_or(Value::Null);
+    let models = ai_model_ids_from_payload(&parsed);
+    if models.is_empty() {
+        return Err(structured_ai_error(
+            "provider_error",
+            "服务商没有返回可识别的模型名。",
+            Some("可以直接手动填写 Model ID。"),
+            json!({ "endpoint": endpoint }),
+        ));
+    }
+    Ok(json!({ "models": models, "endpoint": endpoint }))
+}
+
+async fn ai_connection_test_at(base: &Path, input: &Value) -> Result<Value, String> {
+    let payload = ai_payload(input, "ai_connection_test")?;
+    let provider_id = field(&payload, &["provider_id", "providerId"])
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .unwrap_or("");
+    if provider_id.is_empty() {
+        return Err(ai_invalid_request("请先选择一个 AI 连接。"));
+    }
+    let store = ai_read_provider_store_secure(base)?;
+    let provider = ai_provider_records(&store)
+        .into_iter()
+        .find(|entry| entry.get("id").and_then(Value::as_str) == Some(provider_id))
+        .ok_or_else(|| {
+            structured_ai_error(
+                "not_configured",
+                "请先保存一个 AI 连接。",
+                None,
+                json!({ "provider_id": provider_id }),
+            )
+        })?;
+    let model = provider
+        .get("default_model")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| ai_invalid_request("请先设置默认 Model ID。"))?;
+    let is_siwc = provider.get("kind").and_then(Value::as_str) == Some(SIWC_KIND);
+    let api_protocol = if is_siwc {
+        "openai-responses"
+    } else {
+        ai_provider_api_protocol(&provider)?
+    };
+    let endpoint = if is_siwc {
+        SIWC_API_RESPONSES_ENDPOINT.to_owned()
+    } else {
+        ai_provider_completion_endpoint(&provider)?
+    };
+    ai_validate_request_url(&endpoint)?;
+    let target_origin = ai_url_origin(&endpoint);
+    let bound_origin = store
+        .get("credential_origins")
+        .and_then(Value::as_object)
+        .and_then(|origins| origins.get(provider_id))
+        .and_then(Value::as_str)
+        .and_then(ai_url_origin);
+    if bound_origin.as_deref() != target_origin.as_deref() {
+        return Err(ai_credential_origin_error(
+            provider_id,
+            bound_origin.as_deref(),
+            target_origin.as_deref(),
+        ));
+    }
+    let credential = if is_siwc {
+        siwc_access_token_at(base, provider_id).await?
+    } else {
+        ai_keychain_credential(base, provider_id)?
+            .filter(|value| !value.trim().is_empty())
+            .ok_or_else(|| {
+                structured_ai_error(
+                    "missing_credential",
+                    "该连接还没有保存 API Key。",
+                    Some("先保存 API Key，再测试连接。"),
+                    json!({ "provider_id": provider_id }),
+                )
+            })?
+    };
+    let (header, scheme) = if is_siwc {
+        ("authorization".to_owned(), "Bearer".to_owned())
+    } else {
+        ai_provider_auth_parts(&provider, api_protocol)?
+    };
+    let auth_value = if scheme.is_empty() {
+        credential.clone()
+    } else {
+        format!("{scheme} {credential}")
+    };
+    let (body, accept) = match api_protocol {
+        "openai-responses" => (
+            json!({ "model": model, "input": "Reply with OK.", "max_output_tokens": 8, "store": false, "stream": true }),
+            "text/event-stream",
+        ),
+        "anthropic-messages" => (
+            json!({ "model": model, "messages": [{ "role": "user", "content": "Reply with OK." }], "max_tokens": 8, "stream": false }),
+            "application/json",
+        ),
+        _ => (
+            json!({ "model": model, "messages": [{ "role": "user", "content": "Reply with OK." }], "max_tokens": 8, "stream": false }),
+            "application/json",
+        ),
+    };
+    let mut headers = vec![
+        ("accept".into(), accept.into()),
+        ("content-type".into(), "application/json".into()),
+        (header, auth_value),
+    ];
+    if api_protocol == "anthropic-messages" {
+        headers.push(("anthropic-version".into(), "2023-06-01".into()));
+    }
+    ai_secure_http_request(
+        &endpoint,
+        reqwest::Method::POST,
+        &headers,
+        Some(serde_json::to_vec(&body).map_err(|_| ai_invalid_request("AI 测试请求无法序列化。"))?),
+        AI_DEFAULT_TIMEOUT_MS,
+        provider_id,
+        &credential,
+        &scheme,
+    )
+    .await?;
+    Ok(json!({ "provider_id": provider_id, "model": model, "endpoint": endpoint }))
+}
+
 /// 服务商实际返回的几种模型列表形状：`data[].id` / `models[].id|name` / 纯数组。
+fn siwc_model_catalog(payload: &Value) -> (Vec<String>, Map<String, Value>) {
+    let mut models = Vec::new();
+    let mut display_names = Map::new();
+    if let Some(entries) = payload.get("models").and_then(Value::as_array) {
+        for entry in entries {
+            if entry.get("visibility").and_then(Value::as_str) != Some("list") {
+                continue;
+            }
+            let Some(slug) = entry
+                .get("slug")
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+            else {
+                continue;
+            };
+            if models.iter().any(|existing| existing == slug) {
+                continue;
+            }
+            let display = entry
+                .get("display_name")
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .unwrap_or(slug);
+            models.push(slug.to_owned());
+            display_names.insert(slug.to_owned(), json!(display));
+        }
+    }
+    (models, display_names)
+}
+
 fn ai_model_ids_from_payload(payload: &Value) -> Vec<String> {
     let entries = match payload {
         Value::Array(entries) => entries.clone(),
@@ -8178,6 +11245,7 @@ fn ai_model_ids_from_payload(payload: &Value) -> Vec<String> {
                 .get("id")
                 .or_else(|| map.get("name"))
                 .or_else(|| map.get("model"))
+                .or_else(|| map.get("slug"))
                 .and_then(Value::as_str)
                 .map(|value| value.trim().to_owned()),
             _ => None,
@@ -8195,6 +11263,18 @@ async fn ai_complete_at(
     requests: &AiRequestHandles,
     input: &Value,
 ) -> Result<Value, String> {
+    let payload = ai_payload(input, "ai_complete")?;
+    if let Some(provider_id) = field(&payload, &["provider_id", "providerId"])
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        if siwc_provider_at(base, provider_id).is_ok() {
+            // Always refresh/read only this account's token before building a
+            // request; SIWC never consults the environment or API Key fields.
+            siwc_access_token_at(base, provider_id).await?;
+        }
+    }
     let spec = ai_request_spec(base, input)?;
     let request_id = spec.request_id.clone();
     let (sender, mut receiver) = tauri::async_runtime::channel::<Result<Value, String>>(1);
@@ -8361,10 +11441,31 @@ fn ai_connection_save(app: AppHandle, request: tauri::ipc::Request<'_>) -> Resul
     let provider = field(&payload, &["provider"])
         .cloned()
         .unwrap_or_else(|| Value::Object(payload.clone()));
+    let existing_id = field(
+        provider
+            .as_object()
+            .ok_or_else(|| ai_invalid_request("Provider 配置必须是 JSON 对象。"))?,
+        &["id", "provider_id", "providerId"],
+    )
+    .and_then(Value::as_str)
+    .map(str::trim)
+    .unwrap_or("");
+    let base = ai_store_dir(&app)?;
+    if !existing_id.is_empty() && siwc_provider_at(&base, existing_id).is_ok() {
+        return Err(siwc_error(
+            "invalid_request",
+            "ChatGPT 订阅账户不能改成 API Key 连接；请在订阅账户区域重新授权或退出。",
+        ));
+    }
+    if provider.get("kind").and_then(Value::as_str) == Some(SIWC_KIND) {
+        return Err(siwc_error(
+            "invalid_request",
+            "ChatGPT 订阅账户必须通过系统浏览器完成授权。",
+        ));
+    }
     let confirm_credential_origin = field(&payload, &["confirm_credential_origin"])
         .and_then(Value::as_bool)
         .unwrap_or(false);
-    let base = ai_store_dir(&app)?;
     if confirm_credential_origin {
         ai_connection_save_with_confirmation_at(&base, &provider, true)
     } else {
@@ -8373,10 +11474,17 @@ fn ai_connection_save(app: AppHandle, request: tauri::ipc::Request<'_>) -> Resul
 }
 
 #[tauri::command]
-fn ai_connection_delete(app: AppHandle, request: tauri::ipc::Request<'_>) -> Result<Value, String> {
+async fn ai_connection_delete(
+    app: AppHandle,
+    request: tauri::ipc::Request<'_>,
+) -> Result<Value, String> {
     let payload = strict_payload(&ai_invoke_args(&request), "ai_connection_delete")?;
     let provider_id = required_string(&payload, &["provider_id", "providerId"], "Provider ID")?;
-    ai_connection_delete_at(&ai_store_dir(&app)?, &provider_id)
+    let base = ai_store_dir(&app)?;
+    if siwc_provider_at(&base, &provider_id).is_ok() {
+        let _ = siwc_logout_at(&base, &provider_id).await?;
+    }
+    ai_connection_delete_at(&base, &provider_id)
 }
 
 #[tauri::command]
@@ -8389,16 +11497,73 @@ fn ai_secret_set(app: AppHandle, request: tauri::ipc::Request<'_>) -> Result<Val
 }
 
 #[tauri::command]
-fn ai_secret_delete(app: AppHandle, request: tauri::ipc::Request<'_>) -> Result<Value, String> {
+async fn ai_secret_delete(
+    app: AppHandle,
+    request: tauri::ipc::Request<'_>,
+) -> Result<Value, String> {
     let payload = strict_payload(&ai_invoke_args(&request), "ai_secret_delete")?;
     let provider_id = required_string(&payload, &["provider_id", "providerId"], "Provider ID")?;
-    ai_secret_delete_at(&ai_store_dir(&app)?, &provider_id)
+    let base = ai_store_dir(&app)?;
+    if siwc_provider_at(&base, &provider_id).is_ok() {
+        return siwc_logout_at(&base, &provider_id).await;
+    }
+    ai_secret_delete_at(&base, &provider_id)
+}
+
+#[tauri::command]
+fn ai_subscription_start(
+    app: AppHandle,
+    request: tauri::ipc::Request<'_>,
+) -> Result<Value, String> {
+    let payload = ai_payload(&ai_invoke_args(&request), "ai_subscription_start")?;
+    let provider_id = field(&payload, &["provider_id", "providerId"]).and_then(Value::as_str);
+    siwc_start_at(&ai_store_dir(&app)?, provider_id)
+}
+
+#[tauri::command]
+fn ai_subscription_status(request: tauri::ipc::Request<'_>) -> Result<Value, String> {
+    let payload = strict_payload(&ai_invoke_args(&request), "ai_subscription_status")?;
+    let attempt_id = required_string(&payload, &["attempt_id", "attemptId"], "登录尝试 ID")?;
+    siwc_status_at(&attempt_id)
+}
+
+#[tauri::command]
+fn ai_subscription_cancel(request: tauri::ipc::Request<'_>) -> Result<Value, String> {
+    let payload = strict_payload(&ai_invoke_args(&request), "ai_subscription_cancel")?;
+    let attempt_id = required_string(&payload, &["attempt_id", "attemptId"], "登录尝试 ID")?;
+    siwc_cancel_at(&attempt_id)
+}
+
+#[tauri::command]
+async fn ai_subscription_logout(
+    app: AppHandle,
+    request: tauri::ipc::Request<'_>,
+) -> Result<Value, String> {
+    let payload = strict_payload(&ai_invoke_args(&request), "ai_subscription_logout")?;
+    let provider_id = required_string(&payload, &["provider_id", "providerId"], "Provider ID")?;
+    siwc_logout_at(&ai_store_dir(&app)?, &provider_id).await
 }
 
 #[tauri::command]
 async fn ai_models_list(app: AppHandle, request: tauri::ipc::Request<'_>) -> Result<Value, String> {
     let base = ai_store_dir(&app)?;
     ai_models_list_at(&base, &ai_invoke_args(&request)).await
+}
+
+#[tauri::command]
+async fn ai_models_probe(
+    app: AppHandle,
+    request: tauri::ipc::Request<'_>,
+) -> Result<Value, String> {
+    ai_models_probe_at(&ai_store_dir(&app)?, &ai_invoke_args(&request)).await
+}
+
+#[tauri::command]
+async fn ai_connection_test(
+    app: AppHandle,
+    request: tauri::ipc::Request<'_>,
+) -> Result<Value, String> {
+    ai_connection_test_at(&ai_store_dir(&app)?, &ai_invoke_args(&request)).await
 }
 
 #[tauri::command]
@@ -8452,6 +11617,22 @@ mod tests {
         ));
         fs::create_dir_all(&directory).expect("test directory should be created");
         directory
+    }
+
+    fn test_markdown_payload(source: &Path, blocks: Value, refs: Value) -> Value {
+        let bytes = fs::read(source).expect("Markdown fixture should be readable");
+        json!({
+            "source_hash": sha256_hex(&bytes),
+            "blocks": blocks,
+            "explicitLocalImageRefs": refs,
+        })
+    }
+
+    fn heading_block(raw: &str, text: &str, level: u64) -> Value {
+        json!({
+            "type": "heading", "raw": raw, "text": text, "level": level,
+            "language": null, "checked": null, "imageRefs": []
+        })
     }
 
     #[test]
@@ -9543,6 +12724,27 @@ mod tests {
         response: String,
     ) -> (Result<Value, String>, String) {
         let (port, receiver, server) = serve_once(response);
+        if ai_normalize_auth(payload.get("auth"))
+            .expect("test auth should be valid")
+            .is_some()
+        {
+            let provider_id = payload
+                .get("provider_id")
+                .or_else(|| payload.get("providerId"))
+                .and_then(Value::as_str)
+                .expect("authenticated test request needs a provider id");
+            let provider = json!({
+                "id": provider_id,
+                "label": provider_id,
+                "kind": "openai_compatible",
+                "base_url": format!("http://127.0.0.1:{port}/v1"),
+                "chat_path": "/chat/completions",
+                "auth_header": "authorization",
+                "auth_scheme": "Bearer",
+            });
+            ai_connection_save_with_confirmation_at(base, &provider, true)
+                .expect("test request endpoint should be explicitly configured");
+        }
         payload["url"] = json!(format!("http://127.0.0.1:{port}/v1/chat/completions"));
         let requests = ai_test_handles();
         let result = tauri::async_runtime::block_on(ai_complete_at(base, &requests, &payload));
@@ -9599,6 +12801,11 @@ mod tests {
         let listed = ai_connection_list_at(&base).unwrap();
         assert_eq!(listed["providers"].as_array().unwrap().len(), 1);
         assert_eq!(listed["providers"][0]["label"], json!("DeepSeek 2"));
+        assert_eq!(
+            listed["configured"]["deepseek"],
+            json!(true),
+            "updating connection metadata must preserve the saved credential"
+        );
 
         // 文件权限：凭据只属于当前用户。
         #[cfg(unix)]
@@ -9782,6 +12989,225 @@ mod tests {
             json!(false)
         );
 
+        let _ = fs::remove_dir_all(directory);
+    }
+
+    #[test]
+    fn ai_credentials_require_confirmation_before_cross_origin_reuse() {
+        let directory = test_directory("ai-origin-confirmation");
+        let base = ai_test_base(&directory);
+        let key = "sk-origin-test-credential";
+        ai_connection_save_at(
+            &base,
+            &json!({
+                "id": "origin-test",
+                "label": "Origin Test",
+                "base_url": "https://old.example/v1",
+                "chat_path": "/chat/completions",
+            }),
+        )
+        .expect("initial provider should save");
+        ai_secret_set_at(&base, "origin-test", key).expect("credential should save");
+
+        ai_connection_save_at(
+            &base,
+            &json!({
+                "id": "origin-test",
+                "label": "Origin Test",
+                "base_url": "https://old.example/v2",
+                "chat_path": "/chat/completions",
+            }),
+        )
+        .expect("same-origin path changes do not need another credential confirmation");
+        let denied = ai_connection_save_at(
+            &base,
+            &json!({
+                "id": "origin-test",
+                "label": "Origin Test",
+                "base_url": "https://new.example/v1",
+                "chat_path": "/chat/completions",
+            }),
+        )
+        .expect_err("cross-origin provider changes must require explicit confirmation");
+        assert!(denied.contains("credential_origin_confirmation_required"));
+        assert!(!denied.contains(key));
+        let listing = ai_connection_list_at(&base).expect("provider should remain readable");
+        assert_eq!(
+            listing["providers"][0]["base_url"],
+            json!("https://old.example/v2")
+        );
+        assert_eq!(
+            listing["credential_origins"]["origin-test"],
+            json!("https://old.example")
+        );
+        assert_eq!(
+            ai_keychain_credential(&base, "origin-test")
+                .unwrap()
+                .as_deref(),
+            Some(key),
+            "refusing the domain change must preserve the old credential"
+        );
+
+        let payload = json!({
+            "provider_id": "origin-test",
+            "url": "https://attacker.example/collect",
+            "auth": { "header": "authorization", "scheme": "Bearer" },
+            "body": { "model": "test" },
+        });
+        let pinned = ai_request_spec(&base, &payload).expect("saved endpoint should be used");
+        assert_eq!(pinned.url, "https://old.example/v2/chat/completions");
+        assert!(!pinned.url.contains("attacker.example"));
+
+        // Simulate a stale session or hand-edited metadata bypassing the save
+        // UI. The request boundary must still refuse to send the old Key.
+        let path = base.join(AI_PROVIDERS_FILE);
+        let mut tampered: Value =
+            serde_json::from_slice(&fs::read(&path).expect("provider metadata should exist"))
+                .expect("provider metadata should parse");
+        tampered["providers"][0]["base_url"] = json!("https://attacker.example/v1");
+        fs::write(&path, serde_json::to_vec_pretty(&tampered).unwrap())
+            .expect("test metadata should be writable");
+        let blocked = ai_request_spec(&base, &payload)
+            .err()
+            .expect("stale credential origin must stop the request before auth injection");
+        assert!(blocked.contains("credential_origin_confirmation_required"));
+        assert!(!blocked.contains(key));
+
+        ai_connection_save_with_confirmation_at(&base, &tampered["providers"][0], true)
+            .expect("explicit confirmation should update the saved binding");
+        let listing =
+            ai_connection_list_at(&base).expect("confirmed provider should remain readable");
+        assert_eq!(
+            listing["credential_origins"]["origin-test"],
+            json!("https://attacker.example")
+        );
+        assert_eq!(
+            ai_keychain_credential(&base, "origin-test")
+                .unwrap()
+                .as_deref(),
+            Some(key),
+            "confirmation updates use, not discard, the existing credential"
+        );
+
+        let _ = fs::remove_dir_all(directory);
+    }
+
+    #[test]
+    fn ai_missing_or_invalid_credential_origin_stays_unbound() {
+        let directory = test_directory("ai-unbound-origin-tamper");
+        let base = ai_test_base(&directory);
+        let provider_id = "tampered-origin";
+        let key = "sk-tampered-origin-test";
+        ai_connection_save_at(
+            &base,
+            &json!({
+                "id": provider_id,
+                "label": "Tampered Origin",
+                "base_url": "https://source.example/v1",
+                "chat_path": "/chat/completions",
+            }),
+        )
+        .expect("provider should save");
+        ai_secret_set_at(&base, provider_id, key).expect("credential should save");
+
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("listener should bind");
+        listener
+            .set_nonblocking(true)
+            .expect("listener should be non-blocking");
+        let port = listener
+            .local_addr()
+            .expect("listener should have an address")
+            .port();
+        let destination = format!("http://127.0.0.1:{port}/v1");
+        let path = base.join(AI_PROVIDERS_FILE);
+        let original: Value =
+            serde_json::from_slice(&fs::read(&path).expect("metadata should exist"))
+                .expect("metadata should parse");
+
+        for malformed_binding in [false, true] {
+            let mut tampered = original.clone();
+            tampered["providers"][0]["base_url"] = json!(destination);
+            if malformed_binding {
+                tampered["credential_origins"] = json!({ (provider_id): "not-an-origin" });
+            } else {
+                tampered
+                    .as_object_mut()
+                    .expect("metadata should be an object")
+                    .remove("credential_origins");
+            }
+            fs::write(&path, serde_json::to_vec_pretty(&tampered).unwrap())
+                .expect("tampered metadata should be writable");
+
+            let listed = ai_connection_list_at(&base).expect("provider should remain readable");
+            assert_eq!(listed["configured"][provider_id], json!(true));
+            assert!(listed["credential_origins"].get(provider_id).is_none());
+            assert_eq!(
+                ai_keychain_credential(&base, provider_id)
+                    .expect("credential should remain readable")
+                    .as_deref(),
+                Some(key),
+                "invalid binding data must not delete the saved credential"
+            );
+
+            let save_error = ai_connection_save_at(
+                &base,
+                &json!({
+                    "id": provider_id,
+                    "label": "Tampered Origin",
+                    "base_url": destination,
+                    "chat_path": "/chat/completions",
+                }),
+            )
+            .expect_err("saving the unchanged URL must still require origin confirmation");
+            assert!(save_error.contains("credential_origin_confirmation_required"));
+
+            let blocked = tauri::async_runtime::block_on(ai_complete_at(
+                &base,
+                &ai_test_handles(),
+                &json!({
+                    "request_id": if malformed_binding { "req-invalid-origin" } else { "req-missing-origin" },
+                    "provider_id": provider_id,
+                    "url": "https://renderer.example/collect",
+                    "auth": { "header": "authorization", "scheme": "Bearer" },
+                    "body": { "model": "test", "messages": [] },
+                    "timeout_ms": 100,
+                }),
+            ))
+            .expect_err("an unbound credential must fail before any request is sent");
+            assert!(blocked.contains("credential_origin_confirmation_required"));
+            assert!(!blocked.contains(key));
+            assert!(
+                matches!(
+                    listener.accept(),
+                    Err(error) if error.kind() == std::io::ErrorKind::WouldBlock
+                ),
+                "the destination must receive no request before confirmation"
+            );
+        }
+
+        ai_connection_save_with_confirmation_at(
+            &base,
+            &json!({
+                "id": provider_id,
+                "label": "Tampered Origin",
+                "base_url": destination,
+                "chat_path": "/chat/completions",
+            }),
+            true,
+        )
+        .expect("explicit confirmation should bind the preserved credential");
+        let confirmed = ai_connection_list_at(&base).expect("confirmed provider should list");
+        assert_eq!(
+            confirmed["credential_origins"][provider_id],
+            json!(format!("http://127.0.0.1:{port}"))
+        );
+        assert_eq!(
+            ai_keychain_credential(&base, provider_id)
+                .expect("credential should remain readable")
+                .as_deref(),
+            Some(key),
+            "explicit confirmation must preserve the existing credential"
+        );
         let _ = fs::remove_dir_all(directory);
     }
 
@@ -10420,6 +13846,16 @@ mod tests {
             .local_addr()
             .expect("listener should have an address")
             .port();
+        ai_connection_save_with_confirmation_at(
+            &base,
+            &json!({
+                "id": "local",
+                "base_url": format!("http://127.0.0.1:{port}/v1"),
+                "chat_path": "/chat/completions",
+            }),
+            true,
+        )
+        .expect("test endpoint should be explicitly configured");
         let stop = Arc::new(AtomicBool::new(false));
         let server_stop = Arc::clone(&stop);
         let server = thread::spawn(move || {
@@ -10504,6 +13940,16 @@ mod tests {
     fn ai_complete_requires_a_stored_credential_when_auth_is_requested() {
         let directory = test_directory("ai-missing-credential");
         let base = ai_test_base(&directory);
+        ai_connection_save_at(
+            &base,
+            &json!({
+                "id": "deepseek",
+                "label": "DeepSeek",
+                "base_url": "https://api.deepseek.com/v1",
+                "chat_path": "/chat/completions",
+            }),
+        )
+        .expect("provider metadata should be configured first");
         let requests = ai_test_handles();
         let error = tauri::async_runtime::block_on(ai_complete_at(
             &base,
@@ -10526,8 +13972,10 @@ mod tests {
         );
         assert!(!error.contains("Bearer"), "错误里不得出现注入头: {error}");
         assert!(
-            !base.join(AI_PROVIDERS_FILE).exists(),
-            "只读凭据不得创建存储文件"
+            ai_keychain_credential(&base, "deepseek")
+                .expect("secure credential lookup should work")
+                .is_none(),
+            "missing-credential errors must not create or return a credential"
         );
         let _ = fs::remove_dir_all(directory);
     }
@@ -10833,8 +14281,12 @@ mod tests {
         );
         let unauthorized = unauthorized.expect_err("401 必须失败");
         assert!(
-            unauthorized.contains("\"missing_credential\""),
+            unauthorized.contains("\"authentication_failed\""),
             "got: {unauthorized}"
+        );
+        assert!(
+            unauthorized.contains("已保存凭据"),
+            "401 should explain that the provider rejected the configured authentication"
         );
         assert!(!unauthorized.contains("sk-status-test-key"));
 
@@ -10948,6 +14400,16 @@ mod tests {
             .local_addr()
             .expect("listener should have an address")
             .port();
+        ai_connection_save_with_confirmation_at(
+            &base,
+            &json!({
+                "id": "local",
+                "base_url": format!("http://127.0.0.1:{port}/v1"),
+                "chat_path": "/chat/completions",
+            }),
+            true,
+        )
+        .expect("test endpoint should be explicitly configured");
         let stop = Arc::new(AtomicBool::new(false));
         let server_stop = Arc::clone(&stop);
         let server = thread::spawn(move || {
@@ -11025,6 +14487,662 @@ mod tests {
         let _ = fs::remove_dir_all(directory);
     }
 
+    #[test]
+    fn ai_protocols_post_to_the_saved_loopback_endpoints_with_protocol_auth() {
+        for (index, (protocol, expected_path, header, scheme, response)) in [
+            ("openai-completions", "/v1/chat/completions", "authorization", "Bearer", http_response("200 OK", "application/json", "{\"choices\":[{\"message\":{\"content\":\"OK\"}}]}")),
+            ("openai-responses", "/v1/responses", "authorization", "Bearer", http_response("200 OK", "text/event-stream", "data: {\"type\":\"response.output_text.delta\",\"delta\":\"OK\"}\n\ndata: [DONE]\n\n")),
+            ("anthropic-messages", "/v1/messages", "x-api-key", "", http_response("200 OK", "application/json", "{\"model\":\"test\",\"content\":[{\"type\":\"text\",\"text\":\"OK\"}]}")),
+        ].into_iter().enumerate() {
+            let directory = test_directory(&format!("ai-protocol-{index}"));
+            let base = ai_test_base(&directory);
+            let (port, receiver, server) = serve_once(response);
+            let provider_id = format!("protocol-{index}");
+            let provider = json!({
+                "id": provider_id,
+                "label": provider_id,
+                "kind": "openai_compatible",
+                "api_protocol": protocol,
+                "base_url": format!("http://127.0.0.1:{port}/v1"),
+                "chat_path": "/chat/completions",
+                "auth_header": header,
+                "auth_scheme": scheme,
+                "default_model": "test-model",
+            });
+            ai_connection_save_at(&base, &provider).expect("protocol provider should save");
+            let key = format!("sk-protocol-{index}-test-key-8abcdef");
+            ai_secret_set_at(&base, &provider_id, &key).expect("protocol key should save");
+            let auth = json!({ "header": "renderer-controlled", "scheme": "wrong" });
+            let body = match protocol {
+                "openai-responses" => json!({ "model": "test-model", "input": "hello", "store": false, "stream": true }),
+                "anthropic-messages" => json!({ "model": "test-model", "messages": [{"role":"user","content":"hello"}], "max_tokens": 8 }),
+                _ => json!({ "model": "test-model", "messages": [{"role":"user","content":"hello"}] }),
+            };
+            let result = tauri::async_runtime::block_on(ai_complete_at(
+                &base,
+                &ai_test_handles(),
+                &json!({
+                    "request_id": format!("req-protocol-{index}"),
+                    "provider_id": provider_id,
+                    "url": "https://attacker.invalid/ignore",
+                    "auth": auth,
+                    "headers": { "content-type": "application/json" },
+                    "body": body,
+                    "timeout_ms": 5000,
+                }),
+            )).expect("protocol request to loopback should succeed");
+            assert_eq!(result["status"], json!(200));
+            let request = receiver.recv_timeout(Duration::from_secs(5)).expect("local server should receive the request");
+            server.join().expect("local server should stop");
+            let lowered = request.to_ascii_lowercase();
+            assert!(lowered.starts_with(&format!("post {expected_path}")), "wrong saved protocol path: {request}");
+            let auth_value = if scheme.is_empty() { key.clone() } else { format!("{scheme} {key}") }.to_ascii_lowercase();
+            assert!(lowered.contains(&format!("{header}: {auth_value}")), "saved protocol auth header must be used: {request}");
+            assert!(!lowered.contains("attacker.invalid"), "renderer URL must not override the saved endpoint");
+            assert!(!request.split_once("\r\n\r\n").map(|(_, body)| body.contains(&key)).unwrap_or(true), "credential must not appear in request body");
+            if protocol == "openai-responses" {
+                assert!(lowered.contains("accept: text/event-stream"), "Responses must negotiate streaming");
+                assert!(request.contains("\"store\":false"), "Responses must disable storage");
+            }
+            if protocol == "anthropic-messages" {
+                assert!(lowered.contains("anthropic-version: 2023-06-01"), "Anthropic must send its version header");
+            }
+            let _ = fs::remove_dir_all(directory);
+        }
+    }
+
+    fn siwc_test_account(
+        base: &Path,
+        provider_id: &str,
+        subject: &str,
+        access: &str,
+        refresh: &str,
+        expires_at: u64,
+    ) {
+        let client_id = format!("client-{provider_id}");
+        let claims = SiwcIdClaims {
+            iss: SIWC_ISSUER.into(),
+            sub: subject.into(),
+            aud: json!(client_id),
+            exp: unix_seconds() + 3600,
+            nonce: Some("test-nonce".into()),
+            email: Some(format!("{provider_id}@example.test")),
+        };
+        let credential = SiwcCredential {
+            client_id: client_id.clone(),
+            subject: subject.into(),
+            email: format!("{provider_id}@example.test"),
+            host_id: "urn:uuid:test-host".into(),
+            id_token: "test-id-token".into(),
+            access_token: access.into(),
+            refresh_token: refresh.into(),
+            scopes: siwc_scopes(
+                "openid profile email offline_access resource.invoke chatgpt.tokens.use.direct",
+            ),
+            expires_at,
+        };
+        siwc_save_account(
+            base,
+            provider_id,
+            &client_id,
+            "urn:uuid:test-host",
+            &claims,
+            &credential,
+        )
+        .expect("synthetic test account should be saved");
+    }
+
+    fn serve_once_gated(
+        response: String,
+    ) -> (
+        u16,
+        tokio::sync::oneshot::Receiver<String>,
+        std::sync::mpsc::Sender<()>,
+        thread::JoinHandle<()>,
+    ) {
+        let listener =
+            std::net::TcpListener::bind("127.0.0.1:0").expect("loopback listener should bind");
+        let port = listener
+            .local_addr()
+            .expect("listener should have an address")
+            .port();
+        let (request_tx, request_rx) = tokio::sync::oneshot::channel();
+        let (release_tx, release_rx) = std::sync::mpsc::channel();
+        let server = thread::spawn(move || {
+            let Ok((mut stream, _)) = listener.accept() else {
+                return;
+            };
+            let _ = stream.set_read_timeout(Some(Duration::from_secs(5)));
+            let mut buffer = Vec::new();
+            let mut chunk = [0_u8; 4096];
+            loop {
+                match stream.read(&mut chunk) {
+                    Ok(0) => break,
+                    Ok(read) => {
+                        buffer.extend_from_slice(&chunk[..read]);
+                        let text = String::from_utf8_lossy(&buffer);
+                        if let Some(position) = text.find("\r\n\r\n") {
+                            let length = text[..position]
+                                .lines()
+                                .find_map(|line| {
+                                    let (name, value) = line.split_once(':')?;
+                                    name.eq_ignore_ascii_case("content-length")
+                                        .then(|| value.trim().parse::<usize>().ok())
+                                        .flatten()
+                                })
+                                .unwrap_or(0);
+                            if buffer.len() >= position + 4 + length {
+                                break;
+                            }
+                        }
+                    }
+                    Err(_) => return,
+                }
+            }
+            let _ = request_tx.send(String::from_utf8_lossy(&buffer).into_owned());
+            let _ = release_rx.recv_timeout(Duration::from_secs(5));
+            let _ = stream.write_all(response.as_bytes());
+        });
+        (port, request_rx, release_tx, server)
+    }
+
+    #[test]
+    fn siwc_refresh_is_deduplicated_and_credentials_are_account_isolated() {
+        let directory = test_directory("siwc-refresh-isolation");
+        let base = ai_test_base(&directory);
+        siwc_test_account(
+            &base,
+            "chatgpt-account-a",
+            "subject-a",
+            "old-access-a",
+            "refresh-a",
+            0,
+        );
+        siwc_test_account(
+            &base,
+            "chatgpt-account-b",
+            "subject-b",
+            "old-access-b",
+            "refresh-b",
+            0,
+        );
+        let body_a = r#"{"access_token":"new-access-a","refresh_token":"new-refresh-a","token_type":"Bearer","expires_in":3600,"scope":"openid profile email offline_access resource.invoke chatgpt.tokens.use.direct"}"#;
+        let body_b = r#"{"access_token":"new-access-b","refresh_token":"new-refresh-b","token_type":"Bearer","expires_in":3600,"scope":"openid profile email offline_access resource.invoke chatgpt.tokens.use.direct"}"#;
+        let (port_a, receiver_a, server_a) =
+            serve_once(http_response("200 OK", "application/json", body_a));
+        let (port_b, receiver_b, server_b) =
+            serve_once(http_response("200 OK", "application/json", body_b));
+        let endpoint_a = format!("http://127.0.0.1:{port_a}/token");
+        let endpoint_b = format!("http://127.0.0.1:{port_b}/token");
+        let result = tauri::async_runtime::block_on(async {
+            let (a1, a2, b) = tokio::join!(
+                siwc_access_token_with_endpoint(&base, "chatgpt-account-a", &endpoint_a),
+                siwc_access_token_with_endpoint(&base, "chatgpt-account-a", &endpoint_a),
+                siwc_access_token_with_endpoint(&base, "chatgpt-account-b", &endpoint_b),
+            );
+            (a1, a2, b)
+        });
+        assert_eq!(
+            result.0.expect("first refresh should succeed"),
+            "new-access-a"
+        );
+        assert_eq!(
+            result
+                .1
+                .expect("coalesced refresh should reuse saved token"),
+            "new-access-a"
+        );
+        assert_eq!(
+            result
+                .2
+                .expect("independent account refresh should succeed"),
+            "new-access-b"
+        );
+        let request_a = receiver_a
+            .recv_timeout(Duration::from_secs(5))
+            .expect("one request should refresh account A");
+        let request_b = receiver_b
+            .recv_timeout(Duration::from_secs(5))
+            .expect("one request should refresh account B");
+        server_a.join().expect("account A server should stop");
+        server_b.join().expect("account B server should stop");
+        assert!(request_a.starts_with("POST /token"));
+        assert!(
+            request_a.contains("refresh_token=refresh-a")
+                && request_a.contains("client_id=client-chatgpt-account-a")
+        );
+        assert!(
+            request_b.contains("refresh_token=refresh-b")
+                && request_b.contains("client_id=client-chatgpt-account-b")
+        );
+        let stored_a = siwc_parse_credential(
+            &ai_keychain_credential(&base, "chatgpt-account-a")
+                .unwrap()
+                .unwrap(),
+        )
+        .unwrap();
+        let stored_b = siwc_parse_credential(
+            &ai_keychain_credential(&base, "chatgpt-account-b")
+                .unwrap()
+                .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(stored_a.refresh_token, "new-refresh-a");
+        assert_eq!(stored_b.refresh_token, "new-refresh-b");
+        assert_eq!(
+            siwc_provider_at(&base, "chatgpt-account-a").unwrap()["siwc_identity"],
+            "subject-a"
+        );
+        assert_eq!(
+            siwc_provider_at(&base, "chatgpt-account-b").unwrap()["siwc_identity"],
+            "subject-b"
+        );
+        let _ = fs::remove_dir_all(directory);
+    }
+
+    #[test]
+    fn siwc_logout_revokes_then_erases_only_the_selected_account() {
+        let directory = test_directory("siwc-logout-isolation");
+        let base = ai_test_base(&directory);
+        siwc_test_account(
+            &base,
+            "chatgpt-account-a",
+            "subject-a",
+            "access-a",
+            "refresh-a",
+            unix_seconds() + 3600,
+        );
+        siwc_test_account(
+            &base,
+            "chatgpt-account-b",
+            "subject-b",
+            "access-b",
+            "refresh-b",
+            unix_seconds() + 3600,
+        );
+        let (port, receiver, server) =
+            serve_once(http_response("200 OK", "application/json", "{}"));
+        let endpoint = format!("http://127.0.0.1:{port}/revoke");
+        let result = tauri::async_runtime::block_on(siwc_logout_with_endpoint(
+            &base,
+            "chatgpt-account-a",
+            Some(&endpoint),
+        ))
+        .expect("logout should clear the local account after revocation");
+        assert_eq!(result["remote_revoked"], true);
+        assert!(ai_keychain_credential(&base, "chatgpt-account-a")
+            .unwrap()
+            .is_none());
+        assert!(ai_keychain_credential(&base, "chatgpt-account-b")
+            .unwrap()
+            .is_some());
+        let request = receiver
+            .recv_timeout(Duration::from_secs(5))
+            .expect("revoke request should reach loopback");
+        server.join().expect("revocation server should stop");
+        assert!(request.starts_with("POST /revoke"));
+        assert!(
+            request.contains("token=refresh-a")
+                && request.contains("client_id=client-chatgpt-account-a")
+        );
+        assert!(
+            !request.contains("access-a"),
+            "logout must revoke the refresh token, not send the access token"
+        );
+        assert_eq!(
+            siwc_provider_at(&base, "chatgpt-account-a").unwrap()["kind"],
+            SIWC_KIND
+        );
+        assert!(siwc_cached_access_token_at(&base, "chatgpt-account-a")
+            .unwrap_err()
+            .contains("missing_credential"));
+        let _ = fs::remove_dir_all(directory);
+    }
+
+    #[test]
+    fn siwc_logout_waits_for_refresh_and_cannot_be_undone_by_it() {
+        let directory = test_directory("siwc-logout-refresh-race");
+        let base = ai_test_base(&directory);
+        siwc_test_account(
+            &base,
+            "chatgpt-race-account",
+            "subject-race",
+            "old-access",
+            "old-refresh",
+            0,
+        );
+        let refreshed = r#"{"access_token":"rotated-access","refresh_token":"rotated-refresh","token_type":"Bearer","expires_in":3600,"scope":"openid profile email offline_access resource.invoke chatgpt.tokens.use.direct"}"#;
+        let (token_port, token_request, release_token, token_server) =
+            serve_once_gated(http_response("200 OK", "application/json", refreshed));
+        let (revoke_port, revoke_receiver, revoke_server) =
+            serve_once(http_response("200 OK", "application/json", "{}"));
+        let token_endpoint = format!("http://127.0.0.1:{token_port}/token");
+        let revoke_endpoint = format!("http://127.0.0.1:{revoke_port}/revoke");
+        let result = tauri::async_runtime::block_on(async {
+            let refresh = tokio::spawn({
+                let base = base.clone();
+                let endpoint = token_endpoint.clone();
+                async move {
+                    siwc_access_token_with_endpoint(&base, "chatgpt-race-account", &endpoint).await
+                }
+            });
+            let refresh_request = token_request
+                .await
+                .expect("refresh request should reach gated server");
+            let logout = tokio::spawn({
+                let base = base.clone();
+                let endpoint = revoke_endpoint.clone();
+                async move {
+                    siwc_logout_with_endpoint(&base, "chatgpt-race-account", Some(&endpoint)).await
+                }
+            });
+            tokio::task::yield_now().await;
+            release_token
+                .send(())
+                .expect("refresh server should be released");
+            (
+                refresh_request,
+                refresh.await.expect("refresh task should finish"),
+                logout.await.expect("logout task should finish"),
+            )
+        });
+        assert!(result.0.contains("old-refresh"));
+        assert_eq!(
+            result.1.expect("refresh completes before queued logout"),
+            "rotated-access"
+        );
+        let logged_out = result.2.expect("logout should complete after refresh");
+        assert_eq!(logged_out["logged_out"], true);
+        let revoke_request = revoke_receiver
+            .recv_timeout(Duration::from_secs(5))
+            .expect("rotated credential should be revoked");
+        token_server.join().expect("refresh server should stop");
+        revoke_server.join().expect("revocation server should stop");
+        assert!(
+            revoke_request.contains("token=rotated-refresh"),
+            "logout must observe the completed rotation"
+        );
+        assert!(
+            ai_keychain_credential(&base, "chatgpt-race-account")
+                .unwrap()
+                .is_none(),
+            "a late refresh must not recreate credentials after logout"
+        );
+        let _ = fs::remove_dir_all(directory);
+    }
+
+    #[test]
+    fn siwc_cancel_terminates_callback_and_status_never_contains_credentials() {
+        let attempt_id = format!("siwc-test-{}", native_id("cancel"));
+        let attempt = Arc::new(Mutex::new(SiwcAttempt {
+            view: SiwcAttemptView {
+                attempt_id: attempt_id.clone(),
+                status: "pending".into(),
+                provider_id: None,
+                message: Some("waiting".into()),
+            },
+            cancelled: false,
+        }));
+        siwc_attempts()
+            .lock()
+            .unwrap()
+            .insert(attempt_id.clone(), attempt.clone());
+        let listener = Arc::new(
+            std::net::TcpListener::bind("127.0.0.1:0").expect("callback listener should bind"),
+        );
+        let callback_listener = listener.clone();
+        let callback_attempt = attempt.clone();
+        let callback = thread::spawn(move || {
+            siwc_read_callback(callback_listener.as_ref(), &callback_attempt)
+        });
+        let status = siwc_status_at(&attempt_id).expect("attempt status should be readable");
+        let encoded_status = serde_json::to_string(&status).unwrap();
+        assert!(
+            !encoded_status.contains("access_token")
+                && !encoded_status.contains("authorization_code")
+        );
+        assert_eq!(siwc_cancel_at(&attempt_id).unwrap()["cancelled"], true);
+        assert!(callback
+            .join()
+            .expect("callback thread should stop")
+            .unwrap_err()
+            .contains("subscription_cancelled"));
+        assert_eq!(siwc_status_at(&attempt_id).unwrap()["status"], "cancelled");
+        assert_eq!(
+            siwc_cancel_at(&attempt_id).unwrap()["cancelled"],
+            false,
+            "terminal cancellation should be idempotent"
+        );
+        siwc_attempts().lock().unwrap().remove(&attempt_id);
+    }
+
+    #[test]
+    fn siwc_id_token_requires_rs256_issuer_audience_nonce_and_expiry() {
+        const PRIVATE_KEY: &str = "-----BEGIN PRIVATE KEY-----\nMIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQDOnLVhzqwpWddi\nYsQzk6GOsLbLhZuCELK3b/Kr84S2ICjIkRu7Hmy9KYwwkjycys/rPG1FnLyfpWMr\nQzZOQHKVFhpSLRtzPGxWiltC0XlBOXlewb+a4NQNGfQUDk/WiOHByQHhEmts2c2I\nrgBYCFx9M0YYCbXSYAwrQfO5nL0cVXVLUYG3cLej9aEq+6MKVXQu8dSDKy7fuFZj\nP6/3zWluImqOBE6am45SZ8Az6+l8ZNFn6Ut2xxRYS95rfCOUfGFdLTjwuWNuOCzT\nTKsYEjasTv/2gjLwbhK/2exzauu53oxIzPvgRRQmKUMWO6G0yeskFDwVQorqd4UQ\nf1YtKYwLAgMBAAECggEAAl7p9eVZNGBDiG15st3OzMRaVJuD3UozwscWEcMJks1r\nqmF/3/XJaaJAaY5EA8iP+jMHTfUudOaA7M4ooV0781n9k1PRLNFUrOmJgorEyWrP\nabbva+eIh1303wYLBHstm/uieeKsOOOG6DqW5muyI/2ioEP8Qh24BgcLtOWHhfuv\nw8ijxJcfGyVr1QVPdaSNusq+wXgImOujRKu17T5GZO7ZbOeOaG0LTYnvqWRnDM2t\nVy6GuFyC66UJLBpAK0CeRKDmjr//Gfc6634aL2zWTbehbyxJQsVho6N4N+uNaJa5\nXG/05FGL/kex/lK8vjdmIZnJSDZx/A5pxep3unhqgQKBgQDyl1eMxD10u1g/hgbr\nTcOs4zUFtR/+GtmRHbcPD+8hOPBZfflIjpUzwScXncrktv+xEcjw9m8uv3P0CNtf\nYlb7y0Qg542AnXHZSQn8fSX5zAgORR5FMKUcQEP/3uH5WFDRTQetFJDA6ZDE+4s9\npH7XzCmmsBoKbnnIzGNgorHJXwKBgQDaCEOkMNrapbY9aKbv7Dl7Q2fa/MD0h4N4\n6UkbIlpSAmOlkm6pdQ/6XnKiAa58MLjSbVIWy3+hdXQ7syo0tJn8S2KP/Avvw7nE\n/wTVkxXcr/WH4zAJTd0/rt4kniUXGVaZOfXgZ3hN2Uwk6A6qjCjqJuxTWlt/ofvA\nPTf+wOMA1QKBgDeK2Ru8rol0f28D47+qLVv/JVuqLaoDQb8M+6WyM0D7BWSoCBRJ\nuPWBis7IbPTSxVYoSUaKVchxQz4jbP64yEucLXwPKAHDipaCN4wcpz47Lbj+sECN\nM7B1Mlx6DmkFhHN3XIOPStkwYNoI8cdqSzRjZUHp3fx3cOC9kx9EAMqnAoGAem9d\nnJwaqeGYfs9/vwcGGGP3tA9vQ2G9wG4wMV6PHbJdxqJ+JgaonE3hTXxoQTES+IeP\nK2HHICHWzZeEwegQ+I5UoMpG4bMlZKxYSJ66Dh15YX+AgBkLfzFxaVqtNVVzPcRA\ngG1aL00w5yCw67CdYS/OUdhRvVB3ELLP+OzUDKkCgYEAnBLxi0BjtJGQG3xwOT6/\nTYCBtSK7gWsP8fLCvZdvtwc6Um+PmQkLXZVaeyRulDX6KddNYvFLcJ/HAbDDNM5g\nk/4hF8efPjNBX5xnakaS/VRbmkdnotdx+yGTh8g2rTFQGyYZwSDSbaevJtE22L2R\njkRLk3IFNmcm8qtrTsLIwjk=\n-----END PRIVATE KEY-----\n";
+        let jwks: jsonwebtoken::jwk::JwkSet = serde_json::from_value(json!({"keys":[{
+            "kty":"RSA", "kid":"siwc-test-key", "use":"sig", "alg":"RS256",
+            "n":"zpy1Yc6sKVnXYmLEM5OhjrC2y4WbghCyt2_yq_OEtiAoyJEbux5svSmMMJI8nMrP6zxtRZy8n6VjK0M2TkBylRYaUi0bczxsVopbQtF5QTl5XsG_muDUDRn0FA5P1ojhwckB4RJrbNnNiK4AWAhcfTNGGAm10mAMK0HzuZy9HFV1S1GBt3C3o_WhKvujClV0LvHUgysu37hWYz-v981pbiJqjgROmpuOUmfAM-vpfGTRZ-lLdscUWEvea3wjlHxhXS048Lljbjgs00yrGBI2rE7_9oIy8G4Sv9nsc2rrud6MSMz74EUUJilDFjuhtMnrJBQ8FUKK6neFEH9WLSmMCw",
+            "e":"AQAB"
+        }]})).expect("fixture JWKS should parse");
+        let encode = |issuer: &str, audience: Value, nonce: &str, exp: u64| {
+            let mut header = jsonwebtoken::Header::new(jsonwebtoken::Algorithm::RS256);
+            header.kid = Some("siwc-test-key".into());
+            jsonwebtoken::encode(&header, &json!({"iss":issuer,"sub":"user-123","aud":audience,"exp":exp,"nonce":nonce,"email":"test@example.test"}),
+                &jsonwebtoken::EncodingKey::from_rsa_pem(PRIVATE_KEY.as_bytes()).unwrap()).expect("fixture token should sign")
+        };
+        let valid = encode(
+            SIWC_ISSUER,
+            json!("client-123"),
+            "nonce-123",
+            unix_seconds() + 60,
+        );
+        let claims = siwc_validate_id_token(&valid, &jwks, "client-123", "nonce-123")
+            .expect("valid RS256 identity should pass");
+        assert_eq!(claims.sub, "user-123");
+        assert!(siwc_validate_id_token(
+            &encode(
+                SIWC_ISSUER,
+                json!("other-client"),
+                "nonce-123",
+                unix_seconds() + 60
+            ),
+            &jwks,
+            "client-123",
+            "nonce-123"
+        )
+        .is_err());
+        assert!(siwc_validate_id_token(
+            &encode(
+                "https://attacker.invalid",
+                json!("client-123"),
+                "nonce-123",
+                unix_seconds() + 60
+            ),
+            &jwks,
+            "client-123",
+            "nonce-123"
+        )
+        .is_err());
+        assert!(siwc_validate_id_token(
+            &encode(
+                SIWC_ISSUER,
+                json!("client-123"),
+                "wrong-nonce",
+                unix_seconds() + 60
+            ),
+            &jwks,
+            "client-123",
+            "nonce-123"
+        )
+        .is_err());
+        assert!(siwc_validate_id_token(
+            &encode(
+                SIWC_ISSUER,
+                json!("client-123"),
+                "nonce-123",
+                unix_seconds() - 60
+            ),
+            &jwks,
+            "client-123",
+            "nonce-123"
+        )
+        .is_err());
+        let mut hs_header = jsonwebtoken::Header::new(jsonwebtoken::Algorithm::HS256);
+        hs_header.kid = Some("siwc-test-key".into());
+        let hs_token = jsonwebtoken::encode(&hs_header, &json!({"iss":SIWC_ISSUER,"sub":"user-123","aud":"client-123","exp":unix_seconds()+60,"nonce":"nonce-123"}), &jsonwebtoken::EncodingKey::from_secret(b"fake-test-key")).unwrap();
+        assert!(siwc_validate_id_token(&hs_token, &jwks, "client-123", "nonce-123").is_err());
+        assert!(siwc_has_usage_scope(&siwc_scopes(
+            "openid profile chatgpt.tokens.use.direct"
+        )));
+        assert!(!siwc_has_usage_scope(&siwc_scopes(
+            "openid profile resource.invoke"
+        )));
+    }
+
+    #[test]
+    fn siwc_model_visibility_and_responses_requests_use_only_the_selected_account_token() {
+        let (models, names) = siwc_model_catalog(&json!({"models":[
+            {"slug":"gpt-visible","display_name":"Visible GPT","visibility":"list"},
+            {"slug":"gpt-hidden","display_name":"Hidden GPT","visibility":"hide"},
+            {"slug":"gpt-unlisted","display_name":"Unlisted GPT","visibility":"unlisted"}
+        ]}));
+        assert_eq!(models, vec!["gpt-visible"]);
+        assert_eq!(names["gpt-visible"], "Visible GPT");
+
+        let directory = test_directory("siwc-responses-binding");
+        let base = ai_test_base(&directory);
+        siwc_test_account(
+            &base,
+            "chatgpt-account-a",
+            "subject-a",
+            "access-a",
+            "refresh-a",
+            unix_seconds() + 3600,
+        );
+        siwc_test_account(
+            &base,
+            "chatgpt-account-b",
+            "subject-b",
+            "access-b",
+            "refresh-b",
+            unix_seconds() + 3600,
+        );
+        let build = |provider_id: &str| {
+            ai_request_spec(&base, &json!({
+            "request_id": format!("request-{provider_id}"),
+            "provider_id": provider_id,
+            "url": "https://attacker.invalid/ignore",
+            "auth": {"header":"x-renderer-auth","scheme":"wrong"},
+            "headers": {"content-type":"application/json", "accept":"application/json"},
+            "body": {"model":"gpt-test", "input":"Reply with OK.", "store":true, "stream":false},
+            "timeout_ms": 5000
+        })).expect("subscription requests should be assembled from the selected saved account")
+        };
+        let spec_a = build("chatgpt-account-a");
+        let spec_b = build("chatgpt-account-b");
+        assert_eq!(spec_a.url, SIWC_API_RESPONSES_ENDPOINT);
+        assert_eq!(spec_b.url, SIWC_API_RESPONSES_ENDPOINT);
+        assert_eq!(
+            spec_a.auth_header.as_ref().unwrap(),
+            &("authorization".into(), "Bearer access-a".into())
+        );
+        assert_eq!(
+            spec_b.auth_header.as_ref().unwrap(),
+            &("authorization".into(), "Bearer access-b".into())
+        );
+        for spec in [spec_a, spec_b] {
+            let body: Value = serde_json::from_slice(&spec.body).unwrap();
+            assert_eq!(body["store"], false);
+            assert_eq!(body["stream"], true);
+            assert!(spec
+                .headers
+                .iter()
+                .any(|(name, value)| name.eq_ignore_ascii_case("accept")
+                    && value == "text/event-stream"));
+            assert!(!spec.url.contains("attacker.invalid"));
+        }
+        let _ = fs::remove_dir_all(directory);
+    }
+
+    #[test]
+    fn ai_model_probe_is_transient_and_connection_test_sends_only_a_small_fixed_prompt() {
+        let directory = test_directory("ai-probe-test");
+        let base = ai_test_base(&directory);
+        let temporary_key = "sk-temporary-probe-key-88abcdef";
+        let (port, receiver, server) = serve_once(http_response(
+            "200 OK",
+            "application/json",
+            "{\"models\":[{\"slug\":\"gpt-test\"}]}",
+        ));
+        let probe = tauri::async_runtime::block_on(ai_models_probe_at(
+            &base,
+            &json!({
+                "provider": { "id": "unsaved", "api_protocol": "anthropic-messages", "base_url": format!("http://127.0.0.1:{port}/v1"), "auth_header": "x-api-key", "auth_scheme": "" },
+                "temporary_credential": temporary_key,
+            }),
+        )).expect("temporary model probe should succeed");
+        assert_eq!(probe["models"], json!(["gpt-test"]));
+        let request = receiver
+            .recv_timeout(Duration::from_secs(5))
+            .expect("probe should reach loopback");
+        server.join().expect("probe server should stop");
+        let lowered = request.to_ascii_lowercase();
+        assert!(lowered.starts_with("get /v1/models"));
+        assert!(lowered.contains(&format!("x-api-key: {temporary_key}")));
+        assert!(lowered.contains("anthropic-version: 2023-06-01"));
+        assert!(
+            !base.join(AI_PROVIDERS_FILE).exists(),
+            "probe must not persist provider metadata"
+        );
+        assert!(
+            !request
+                .split_once("\r\n\r\n")
+                .map(|(_, body)| body.contains(temporary_key))
+                .unwrap_or(true),
+            "probe key must only appear in the HTTP header"
+        );
+
+        let (port, receiver, server) = serve_once(http_response(
+            "200 OK",
+            "application/json",
+            "{\"content\":[]}",
+        ));
+        let provider = json!({
+            "id": "connection-test",
+            "api_protocol": "openai-responses",
+            "base_url": format!("http://127.0.0.1:{port}/v1"),
+            "auth_header": "authorization",
+            "auth_scheme": "Bearer",
+            "default_model": "gpt-test",
+        });
+        ai_connection_save_at(&base, &provider).expect("test provider should save");
+        let key = "sk-connection-test-88abcdef";
+        ai_secret_set_at(&base, "connection-test", key).expect("test key should save");
+        let result = tauri::async_runtime::block_on(ai_connection_test_at(
+            &base,
+            &json!({ "provider_id": "connection-test" }),
+        ))
+        .expect("connection test should succeed");
+        assert_eq!(result["model"], json!("gpt-test"));
+        let request = receiver
+            .recv_timeout(Duration::from_secs(5))
+            .expect("test request should reach loopback");
+        server.join().expect("test server should stop");
+        let lowered = request.to_ascii_lowercase();
+        assert!(lowered.starts_with("post /v1/responses"));
+        assert!(lowered.contains(&format!("authorization: bearer {key}")));
+        assert!(
+            request.contains("Reply with OK."),
+            "connection test must use its fixed non-course prompt"
+        );
+        assert!(request.contains("\"store\":false") && request.contains("\"max_output_tokens\":8"));
+        assert!(
+            !base.join(AI_EXECUTIONS_FILE).exists(),
+            "connection test must not create an execution record"
+        );
+        let _ = fs::remove_dir_all(directory);
+    }
+
     /* ------------------------------------------------------------------ *
      * V1-T04 folder_scan — native mirror of Deno scanFolder (§§29, 38)
      * ------------------------------------------------------------------ */
@@ -11086,7 +15204,7 @@ mod tests {
     }
 
     #[test]
-    fn folder_scan_walks_nested_folders_and_tags_roles_without_writing_project_json() {
+    fn folder_scan_lists_direct_children_and_skips_managed_entries() {
         let root = test_directory("folder-scan-nested");
         fs::create_dir_all(root.join("01-基础")).expect("stage dir");
         fs::create_dir_all(root.join("02-进阶")).expect("stage dir");
@@ -11098,6 +15216,12 @@ mod tests {
         fs::write(root.join("总体说明.pdf"), [6_u8]).expect("pdf");
         fs::write(root.join("notes.txt"), "txt").expect("txt");
         fs::write(root.join("weird.bin"), "bin").expect("bin");
+        fs::write(root.join("project.lock"), "lock").expect("lock");
+        fs::write(root.join("credentials.json"), "secret metadata").expect("credentials");
+        fs::create_dir_all(root.join("target")).expect("build output");
+        fs::create_dir_all(root.join(".workspace")).expect("workspace metadata");
+        fs::create_dir_all(root.join(".git")).expect("Git metadata");
+        fs::write(root.join(".env.production"), "PRIVATE_VALUE=hidden").expect("credentials");
 
         let before = folder_scan_fingerprint(&root);
         let report = folder_scan(Some(root.to_string_lossy().into_owned()), None, None)
@@ -11119,27 +15243,18 @@ mod tests {
         assert_eq!(stage["kind"], json!("directory"));
         assert_eq!(stage["suggested_role"], json!("stage"));
 
-        let lesson = folder_scan_entry(&report, "01-基础/导论.md").expect("markdown");
-        assert_eq!(lesson["suggested_role"], json!("lesson"));
-        assert_eq!(lesson["mime"], json!("text/markdown"));
-        assert!(lesson["size"].as_u64().unwrap_or(0) > 0);
+        assert!(
+            folder_scan_entry(&report, "01-基础/导论.md").is_none(),
+            "mapping scan must not inspect stage contents"
+        );
 
         assert_eq!(
             folder_scan_entry(&report, "notes.txt").unwrap()["suggested_role"],
             json!("lesson")
         );
-        assert_eq!(
-            folder_scan_entry(&report, "01-基础/intro.png").unwrap()["suggested_role"],
-            json!("asset")
-        );
-        assert_eq!(
-            folder_scan_entry(&report, "02-进阶/demo.mp4").unwrap()["suggested_role"],
-            json!("asset")
-        );
-        assert_eq!(
-            folder_scan_entry(&report, "01-基础/大纲.docx").unwrap()["suggested_role"],
-            json!("reference")
-        );
+        assert!(folder_scan_entry(&report, "01-基础/intro.png").is_none());
+        assert!(folder_scan_entry(&report, "02-进阶/demo.mp4").is_none());
+        assert!(folder_scan_entry(&report, "01-基础/大纲.docx").is_none());
         assert_eq!(
             folder_scan_entry(&report, "总体说明.pdf").unwrap()["suggested_role"],
             json!("reference")
@@ -11149,12 +15264,28 @@ mod tests {
             json!("unsupported"),
             "unknown type must be tagged, not crash"
         );
+        assert!(folder_scan_entry(&report, "project.lock").is_none());
+        assert!(folder_scan_entry(&report, "credentials.json").is_none());
+        assert!(folder_scan_entry(&report, "target").is_none());
+        assert!(folder_scan_entry(&report, ".workspace").is_none());
+        assert!(folder_scan_entry(&report, ".git").is_none());
+        assert!(folder_scan_entry(&report, ".env.production").is_none());
+        assert!(report["warnings"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|warning| {
+                warning
+                    .as_str()
+                    .unwrap_or_default()
+                    .contains("project.lock")
+            }));
 
         let _ = fs::remove_dir_all(root);
     }
 
     #[test]
-    fn folder_scan_isolates_unreadable_entries_without_failing_the_tree() {
+    fn folder_scan_lists_directory_without_reading_its_contents() {
         let root = test_directory("folder-scan-unreadable");
         let locked = root.join("locked");
         fs::write(root.join("ok.md"), "# ok\n").expect("readable sibling");
@@ -11174,12 +15305,8 @@ mod tests {
         let ok = folder_scan_entry(&report, "ok.md").expect("readable sibling must remain");
         assert_eq!(ok["suggested_role"], json!("lesson"));
 
-        let locked_entry = folder_scan_entry(&report, "locked").expect("degraded directory row");
-        assert!(
-            locked_entry.get("error").and_then(Value::as_str).is_some()
-                || locked_entry["suggested_role"] == json!("unsupported"),
-            "unreadable entry must be degraded: {locked_entry}"
-        );
+        let locked_entry = folder_scan_entry(&report, "locked").expect("directory row");
+        assert_eq!(locked_entry["kind"], json!("directory"));
         assert!(
             folder_scan_entry(&report, "locked/secret.md").is_none(),
             "contents under an unreadable directory must not be required"
@@ -11309,9 +15436,10 @@ mod tests {
     }
 
     #[test]
-    fn folder_read_preview_marks_pdf_and_docx_as_reference_without_reading_as_body() {
+    fn folder_read_preview_shows_pdf_and_docx_without_mutating_the_project() {
         let root = test_directory("folder-preview-ref");
-        fs::write(root.join("总体说明.pdf"), [9_u8, 9]).expect("pdf");
+        let pdf_bytes = b"%PDF-1.4\npreview fixture";
+        fs::write(root.join("总体说明.pdf"), pdf_bytes).expect("pdf");
         fs::write(root.join("大纲.docx"), b"docx-bytes").expect("docx");
         let before = folder_scan_fingerprint(&root);
 
@@ -11321,10 +15449,15 @@ mod tests {
             Some("总体说明.pdf".into()),
         )
         .expect("pdf preview");
-        assert_eq!(pdf["preview_kind"], json!("reference"));
-        assert_eq!(pdf["note"], json!("作为参考文件导入"));
+        assert_eq!(pdf["preview_kind"], json!("pdf"));
+        assert!(pdf["note"].is_null());
         assert!(pdf["text"].is_null());
-        assert!(pdf["bytes_base64"].is_null());
+        assert_eq!(
+            BASE64
+                .decode(pdf["bytes_base64"].as_str().unwrap_or(""))
+                .expect("PDF preview bytes"),
+            pdf_bytes
+        );
 
         let docx = folder_read_preview(
             Some(root.to_string_lossy().into_owned()),
@@ -11333,14 +15466,14 @@ mod tests {
         )
         .expect("docx preview");
         assert_eq!(docx["preview_kind"], json!("reference"));
-        assert_eq!(docx["note"], json!("作为参考文件导入"));
+        assert_eq!(docx["note"], json!("参考文件 · 仅显示文件信息"));
         assert!(docx["text"].is_null());
         assert!(docx["bytes_base64"].is_null());
 
         assert_eq!(
             folder_scan_fingerprint(&root),
             before,
-            "reference preview is metadata-only"
+            "preview reads must not mutate the scanned files"
         );
         assert!(!root.join("project.json").exists());
         let _ = fs::remove_dir_all(root);
@@ -11361,6 +15494,44 @@ mod tests {
             "got: {err}"
         );
         let _ = fs::remove_dir_all(root);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn folder_read_preview_rejects_intermediate_symlink_escape() {
+        let root = test_directory("folder-preview-symlink-root");
+        let outside = test_directory("folder-preview-symlink-out");
+        fs::create_dir_all(root.join("images")).expect("images dir");
+        fs::write(root.join("images/local.png"), [1_u8, 2, 3]).expect("local image");
+        fs::write(outside.join("secret.png"), [9_u8, 8, 7]).expect("outside image");
+        std::os::unix::fs::symlink(&outside, root.join("external")).expect("external symlink");
+
+        let local = folder_read_preview(
+            Some(root.to_string_lossy().into_owned()),
+            None,
+            Some("images/local.png".into()),
+        )
+        .expect("in-root image preview");
+        assert_eq!(local["preview_kind"], json!("image"));
+        assert!(!local["bytes_base64"].as_str().unwrap_or("").is_empty());
+
+        let escaped = folder_read_preview(
+            Some(root.to_string_lossy().into_owned()),
+            None,
+            Some("external/secret.png".into()),
+        )
+        .expect("unsafe preview is reported as unsupported");
+        assert!(
+            escaped["error"].as_str().unwrap_or("").contains("符号链接"),
+            "got: {escaped}"
+        );
+        assert!(
+            escaped["bytes_base64"].is_null(),
+            "outside bytes must not be returned"
+        );
+
+        let _ = fs::remove_dir_all(root);
+        let _ = fs::remove_dir_all(outside);
     }
 
     #[test]
@@ -11463,7 +15634,15 @@ mod tests {
                     "suggested": "lesson",
                     "mapping": "lesson",
                     "selected": true,
-                    "is_suggestion": true
+                    "is_suggestion": true,
+                    "parsed_markdown": test_markdown_payload(
+                        &root.join("01-基础/导论.md"),
+                        json!([
+                            heading_block("# 导论\n", "导论", 1),
+                            { "type": "paragraph", "raw": "正文\n", "text": "正文", "level": null, "language": null, "checked": null, "imageRefs": [] }
+                        ]),
+                        json!([]),
+                    )
                 },
                 {
                     "relative_path": "01-基础/intro.png",
@@ -11539,6 +15718,834 @@ mod tests {
     }
 
     #[test]
+    fn folder_adopt_warns_for_missing_markdown_images_and_keeps_the_original_reference() {
+        let root = test_directory("folder-adopt-missing-image");
+        fs::create_dir_all(root.join("images")).expect("images");
+        let markdown = concat!(
+            "# Lesson\n\n",
+            "![present](images/present.png)\n\n",
+            "![missing](images/missing.png)\n"
+        );
+        fs::write(root.join("lesson.md"), markdown).expect("markdown");
+        fs::write(root.join("images/present.png"), [1_u8, 2, 3]).expect("present image");
+        let blocks = json!([
+            heading_block("# Lesson\n", "Lesson", 1),
+            {
+                "type": "paragraph", "raw": "![present](images/present.png)\n",
+                "text": "![present](images/present.png)", "level": null, "language": null,
+                "checked": null,
+                "imageRefs": [{ "href": "images/present.png", "title": null, "alt": "present", "tokenIndex": 0, "occurrence": 0 }]
+            },
+            {
+                "type": "paragraph", "raw": "![missing](images/missing.png)\n",
+                "text": "![missing](images/missing.png)", "level": null, "language": null,
+                "checked": null,
+                "imageRefs": [{ "href": "images/missing.png", "title": null, "alt": "missing", "tokenIndex": 1, "occurrence": 0 }]
+            }
+        ]);
+        let refs = json!([
+            { "href": "images/present.png", "title": null, "alt": "present", "tokenIndex": 0, "occurrence": 0, "blockIndex": 1 },
+            { "href": "images/missing.png", "title": null, "alt": "missing", "tokenIndex": 1, "occurrence": 0, "blockIndex": 2 }
+        ]);
+        let plan = json!({
+            "root": root.to_string_lossy(), "confirmed": true,
+            "items": [{
+                "relative_path": "lesson.md", "kind": "file", "mapping": "lesson", "selected": true,
+                "parsed_markdown": test_markdown_payload(&root.join("lesson.md"), blocks, refs)
+            }]
+        });
+
+        let result =
+            folder_adopt(plan, None, None).expect("missing refs should not reject the lesson");
+        let data = &result["data"];
+        assert_eq!(data["assets"].as_array().unwrap().len(), 1);
+        assert_eq!(data["asset_usages"].as_array().unwrap().len(), 1);
+        assert!(result["warnings"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|warning| {
+                warning
+                    .as_str()
+                    .unwrap_or_default()
+                    .contains("images/missing.png")
+            }));
+        assert!(
+            data["blocks"].as_array().unwrap().iter().any(|block| {
+                block["content"]
+                    .as_str()
+                    .unwrap_or_default()
+                    .contains("images/missing.png")
+            }),
+            "unresolved Markdown reference stays in the imported source block"
+        );
+        assert_eq!(
+            fs::read(root.join("lesson.md")).unwrap(),
+            markdown.as_bytes()
+        );
+        if let Ok(entries) = fs::read_dir(root.join(".workspace/adopt-staging")) {
+            assert_eq!(
+                entries.count(),
+                0,
+                "successful transaction leaves no staging data"
+            );
+        }
+        let _ = project_close(root.to_string_lossy().into_owned());
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn folder_adopt_cleans_only_its_staging_when_a_later_markdown_ref_escapes() {
+        let root = test_directory("folder-adopt-staging-rollback");
+        fs::create_dir_all(root.join("images")).expect("images");
+        fs::create_dir_all(root.join(".workspace/adopt-staging")).expect("staging parent");
+        fs::write(root.join(".workspace/adopt-staging/legacy.keep"), b"old").expect("legacy stage");
+        let markdown = "![present](images/present.png)\n\n![escape](../../outside.png)\n";
+        fs::write(root.join("lesson.md"), markdown).expect("markdown");
+        fs::write(root.join("images/present.png"), [4_u8, 5, 6]).expect("present image");
+        let blocks = json!([
+            {
+                "type": "paragraph", "raw": "![present](images/present.png)\n",
+                "text": "![present](images/present.png)", "level": null, "language": null,
+                "checked": null,
+                "imageRefs": [{ "href": "images/present.png", "title": null, "alt": "present", "tokenIndex": 0, "occurrence": 0 }]
+            },
+            {
+                "type": "paragraph", "raw": "![escape](../../outside.png)\n",
+                "text": "![escape](../../outside.png)", "level": null, "language": null,
+                "checked": null,
+                "imageRefs": [{ "href": "../../outside.png", "title": null, "alt": "escape", "tokenIndex": 1, "occurrence": 0 }]
+            }
+        ]);
+        let refs = json!([
+            { "href": "images/present.png", "title": null, "alt": "present", "tokenIndex": 0, "occurrence": 0, "blockIndex": 0 },
+            { "href": "../../outside.png", "title": null, "alt": "escape", "tokenIndex": 1, "occurrence": 0, "blockIndex": 1 }
+        ]);
+        let plan = json!({
+            "root": root.to_string_lossy(), "confirmed": true,
+            "items": [{
+                "relative_path": "lesson.md", "kind": "file", "mapping": "lesson", "selected": true,
+                "parsed_markdown": test_markdown_payload(&root.join("lesson.md"), blocks, refs)
+            }]
+        });
+
+        let error =
+            folder_adopt(plan, None, None).expect_err("path escape must fail the transaction");
+        assert!(error.contains("超出所选目录"), "got: {error}");
+        assert!(
+            !root.join("project.json").exists(),
+            "failed transaction writes no manifest"
+        );
+        assert!(
+            !root.join("assets").exists(),
+            "staged assets are not promoted on failure"
+        );
+        let remaining: Vec<String> = fs::read_dir(root.join(".workspace/adopt-staging"))
+            .expect("old staging parent survives")
+            .filter_map(Result::ok)
+            .filter_map(|entry| entry.file_name().into_string().ok())
+            .collect();
+        assert_eq!(
+            remaining,
+            vec!["legacy.keep"],
+            "only the owned transaction staging is removed"
+        );
+        assert_eq!(
+            fs::read(root.join("lesson.md")).unwrap(),
+            markdown.as_bytes()
+        );
+        assert_eq!(
+            fs::read(root.join("images/present.png")).unwrap(),
+            [4_u8, 5, 6]
+        );
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn folder_append_preserves_existing_project_and_rolls_back_failed_commit() {
+        let target = test_directory("folder-append-target");
+        fs::write(target.join("existing.txt"), "已有正文\n").expect("existing text");
+        fs::write(target.join("old.png"), [8_u8, 7, 6]).expect("existing image");
+        let initial = json!({
+            "root": target.to_string_lossy(),
+            "confirmed": true,
+            "confirmed_at": "2026-01-01T00:00:00.000Z",
+            "items": [
+                { "relative_path": "existing.txt", "kind": "file", "mapping": "lesson", "selected": true },
+                { "relative_path": "old.png", "kind": "file", "mapping": "asset", "selected": true }
+            ]
+        });
+        let created = folder_adopt(initial, None, None).expect("initial project");
+        let project_id = created["data"]["project"]["id"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        let existing_item_id = created["data"]["content_items"][0]["id"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        let existing_block_id = created["data"]["blocks"][0]["id"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        let old_asset = created["data"]["assets"][0].clone();
+        let old_asset_id = old_asset["id"].as_str().unwrap().to_owned();
+        let old_asset_path = old_asset["storage_path"].as_str().unwrap().to_owned();
+        let old_asset_bytes = fs::read(target.join(&old_asset_path)).expect("old managed asset");
+
+        // Seed one existing pagination page so append can prove it is retained.
+        let mut project = read_project_value(&target).expect("read initial project");
+        project["layout_instances"] = json!([{
+            "id": "layout-preserved", "content_item_id": existing_item_id,
+            "template_id": null, "schema_version": "1.0.0", "name": "已有分页",
+            "mode": "grid", "pagination_mode": "paged",
+            "page_size": { "preset": "16:9", "width_pt": 960.0, "height_pt": 540.0 },
+            "grid_definition": { "columns": [1], "rows": [1] }, "settings": {},
+            "created_at": "2026-01-01T00:00:00.000Z", "updated_at": "2026-01-01T00:00:00.000Z"
+        }]);
+        project["layout_pages"] = json!([{
+            "id": "page-preserved", "layout_instance_id": "layout-preserved",
+            "title": "原有页面", "order_index": 0,
+            "grid_definition": { "columns": [1], "rows": [1] },
+            "created_at": "2026-01-01T00:00:00.000Z", "updated_at": "2026-01-01T00:00:00.000Z"
+        }]);
+        write_project_value_unlocked(&target, &project).expect("save existing page fixture");
+        let before_items = project["content_items"].clone();
+        let before_blocks = project["blocks"].clone();
+        let before_assets = project["assets"].clone();
+        let before_layouts = project["layout_instances"].clone();
+        let before_pages = project["layout_pages"].clone();
+
+        let source = test_directory("folder-append-source");
+        fs::create_dir_all(source.join("images")).expect("images");
+        fs::write(
+            source.join("lesson.md"),
+            "# 新课\n\n![图](images/used.png)\n",
+        )
+        .expect("markdown");
+        fs::write(source.join("images/used.png"), [1_u8, 2, 3, 4]).expect("used image");
+        fs::write(source.join("images/unselected.png"), [9_u8, 9, 9]).expect("unused image");
+        let parsed_blocks = json!([
+            heading_block("# 新课\n", "新课", 1),
+            {
+                "type": "paragraph", "raw": "![图](images/used.png)\n",
+                "text": "![图](images/used.png)", "level": null, "language": null, "checked": null,
+                "imageRefs": [{ "href": "images/used.png", "title": null, "alt": "图", "tokenIndex": 0, "occurrence": 0 }]
+            }
+        ]);
+        let refs = json!([{
+            "href": "images/used.png", "title": null, "alt": "图",
+            "tokenIndex": 0, "occurrence": 0, "blockIndex": 1
+        }]);
+        let plan = json!({
+            "root": source.to_string_lossy(), "confirmed": true,
+            "confirmed_at": "2026-01-01T00:00:00.000Z",
+            "items": [{
+                "relative_path": "lesson.md", "kind": "file", "mapping": "lesson", "selected": true,
+                "destination": { "kind": "existing_lesson", "content_item_id": existing_item_id },
+                "parsed_markdown": test_markdown_payload(&source.join("lesson.md"), parsed_blocks.clone(), refs.clone())
+            }]
+        });
+        let appended = folder_append(plan, target.to_string_lossy().into_owned(), None)
+            .expect("append markdown with explicit image dependency");
+        let data = &appended["data"];
+        assert_eq!(data["project"]["id"], json!(project_id));
+        assert_eq!(data["project"]["title"], project["project"]["title"]);
+        assert_eq!(
+            data["content_items"].as_array().unwrap().len(),
+            1,
+            "explicit existing lesson target appends instead of creating a duplicate lesson"
+        );
+        assert_eq!(data["content_items"][0]["id"], before_items[0]["id"]);
+        assert_eq!(data["content_items"][0]["title"], before_items[0]["title"]);
+        assert_eq!(
+            data["content_items"][0]["description"],
+            before_items[0]["description"]
+        );
+        assert!(data["blocks"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|block| block["id"] == json!(existing_block_id)));
+        for existing in before_blocks.as_array().unwrap() {
+            assert!(
+                data["blocks"].as_array().unwrap().contains(existing),
+                "existing blocks stay unchanged"
+            );
+        }
+        for existing in before_assets.as_array().unwrap() {
+            assert!(
+                data["assets"].as_array().unwrap().contains(existing),
+                "existing assets stay unchanged"
+            );
+        }
+        assert_eq!(data["assets"].as_array().unwrap().len(), 2);
+        assert!(data["assets"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|asset| asset["id"] == json!(old_asset_id)));
+        assert_eq!(data["layout_instances"], before_layouts);
+        assert_eq!(data["layout_pages"], before_pages);
+        let imported_block = data["blocks"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|block| block["settings"]["markdown_assets"].is_array())
+            .expect("parsed Markdown block keeps its image-to-asset map");
+        let dependency_asset = imported_block["settings"]["markdown_assets"][0]["asset_id"]
+            .as_str()
+            .unwrap();
+        let content_id = data["documents"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|document| document["id"] == imported_block["document_id"])
+            .unwrap()["content_item_id"]
+            .as_str()
+            .unwrap();
+        assert!(data["asset_usages"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|usage| usage["asset_id"] == json!(dependency_asset)
+                && usage["content_item_id"] == json!(content_id)
+                && usage["block_id"] == imported_block["id"]));
+        assert_eq!(
+            fs::read(target.join(&old_asset_path)).unwrap(),
+            old_asset_bytes
+        );
+        assert_eq!(
+            fs::read(source.join("lesson.md")).unwrap(),
+            b"# \xe6\x96\xb0\xe8\xaf\xbe\n\n![\xe5\x9b\xbe](images/used.png)\n"
+        );
+        assert_eq!(
+            fs::read(source.join("images/used.png")).unwrap(),
+            [1_u8, 2, 3, 4]
+        );
+        assert_eq!(
+            fs::read(source.join("images/unselected.png")).unwrap(),
+            [9_u8, 9, 9]
+        );
+        assert_eq!(
+            data["assets"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .filter(|asset| asset["checksum"] == json!(sha256_hex(&[9_u8, 9, 9])))
+                .count(),
+            0,
+            "unreferenced neighboring files are not imported"
+        );
+
+        // Provenance lives on Project.settings, so deleting the compatibility copy
+        // from the first imported block must not make the same source append twice.
+        let mut without_provenance_block =
+            read_project_value(&target).expect("read appended project");
+        assert!(
+            without_provenance_block["project"]["settings"]["markdown_import_sources"]
+                .as_array()
+                .is_some_and(|ledger| ledger.iter().any(|entry| {
+                    entry["source_hash"]
+                        == json!(sha256_hex(&fs::read(source.join("lesson.md")).unwrap()))
+                })),
+            "project ledger records Markdown provenance"
+        );
+        without_provenance_block["blocks"]
+            .as_array_mut()
+            .unwrap()
+            .retain(|block| {
+                block
+                    .get("settings")
+                    .and_then(|settings| settings.get("markdown_import"))
+                    .is_none()
+            });
+        write_project_value_unlocked(&target, &without_provenance_block)
+            .expect("remove only block-level compatibility provenance");
+
+        // Same bytes under a different filename are recognized by source SHA and skipped by default.
+        fs::copy(source.join("lesson.md"), source.join("renamed.md")).expect("same-content rename");
+        let blocks_before_duplicate = without_provenance_block["blocks"].as_array().unwrap().len();
+        let duplicate_plan = json!({
+            "root": source.to_string_lossy(), "confirmed": true,
+            "items": [{
+                "relative_path": "renamed.md", "kind": "file", "mapping": "lesson", "selected": true,
+                "destination": { "kind": "existing_lesson", "content_item_id": existing_item_id },
+                "parsed_markdown": test_markdown_payload(&source.join("renamed.md"), parsed_blocks.clone(), refs.clone())
+            }]
+        });
+        let duplicate = folder_append(duplicate_plan, target.to_string_lossy().into_owned(), None)
+            .expect("duplicate Markdown should be safely skipped");
+        assert_eq!(
+            duplicate["data"]["blocks"].as_array().unwrap().len(),
+            blocks_before_duplicate
+        );
+        assert_eq!(
+            duplicate["data"]["content_items"].as_array().unwrap().len(),
+            1
+        );
+        assert!(duplicate["warnings"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|warning| {
+                warning.as_str().unwrap_or_default().contains("SHA-256")
+                    && warning.as_str().unwrap_or_default().contains("默认跳过")
+            }));
+
+        // A changed file at the same canonical source path is skipped until the user explicitly opts in.
+        fs::write(source.join("lesson.md"), "# 改版\n").expect("changed source version");
+        let revision_blocks = json!([heading_block("# 改版\n", "改版", 1)]);
+        let changed_plan = json!({
+            "root": source.to_string_lossy(), "confirmed": true,
+            "items": [{
+                "relative_path": "lesson.md", "kind": "file", "mapping": "lesson", "selected": true,
+                "destination": { "kind": "existing_lesson", "content_item_id": existing_item_id },
+                "parsed_markdown": test_markdown_payload(&source.join("lesson.md"), revision_blocks.clone(), json!([]))
+            }]
+        });
+        let changed = folder_append(changed_plan, target.to_string_lossy().into_owned(), None)
+            .expect("changed source should be safely skipped by default");
+        assert_eq!(
+            changed["data"]["blocks"].as_array().unwrap().len(),
+            blocks_before_duplicate
+        );
+        assert!(changed["warnings"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|warning| {
+                warning
+                    .as_str()
+                    .unwrap_or_default()
+                    .contains("来源路径已有较旧导入")
+            }));
+        let explicit_revision = json!({
+            "root": source.to_string_lossy(), "confirmed": true,
+            "items": [{
+                "relative_path": "lesson.md", "kind": "file", "mapping": "lesson", "selected": true,
+                "destination": { "kind": "existing_lesson", "content_item_id": existing_item_id },
+                "allow_duplicate": true,
+                "parsed_markdown": test_markdown_payload(&source.join("lesson.md"), revision_blocks, json!([]))
+            }]
+        });
+        let revised = folder_append(
+            explicit_revision,
+            target.to_string_lossy().into_owned(),
+            None,
+        )
+        .expect("explicitly acknowledged source revision should append");
+        assert_eq!(
+            revised["data"]["content_items"].as_array().unwrap().len(),
+            1
+        );
+        assert!(
+            revised["data"]["blocks"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|block| { block["content"] == json!("已有正文") }),
+            "pre-existing edited lesson content is not overwritten"
+        );
+        assert!(
+            revised["data"]["blocks"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|block| { block["content"] == json!("改版") }),
+            "explicit source revision is appended to the selected lesson"
+        );
+        assert_eq!(
+            revised["data"]["layout_pages"], before_pages,
+            "all existing pages remain unchanged after append"
+        );
+
+        // After an acknowledged v2 import, a v3 warning must refer to v2, not v1.
+        let after_v2 = read_project_value(&target).expect("read v2 ledger");
+        let v2_hash = after_v2["project"]["settings"]["markdown_import_sources"]
+            .as_array()
+            .unwrap()
+            .last()
+            .unwrap()["source_hash"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        fs::write(source.join("lesson.md"), "# 第三版\n").expect("write third source revision");
+        let v3_plan = json!({
+            "root": source.to_string_lossy(), "confirmed": true,
+            "items": [{
+                "relative_path": "lesson.md", "kind": "file", "mapping": "lesson", "selected": true,
+                "destination": { "kind": "existing_lesson", "content_item_id": existing_item_id },
+                "parsed_markdown": test_markdown_payload(&source.join("lesson.md"), json!([heading_block("# 第三版\n", "第三版", 1)]), json!([]))
+            }]
+        });
+        let skipped_v3 = folder_append(v3_plan, target.to_string_lossy().into_owned(), None)
+            .expect("third source version should default to skip");
+        assert_eq!(
+            skipped_v3["data"]["blocks"].as_array().unwrap().len(),
+            revised["data"]["blocks"].as_array().unwrap().len()
+        );
+        assert!(
+            skipped_v3["warnings"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|warning| {
+                    let text = warning.as_str().unwrap_or_default();
+                    text.contains("来源路径已有较旧导入")
+                        && text.contains(&v2_hash.chars().take(12).collect::<String>())
+                }),
+            "the changed-source warning must cite the latest v2 SHA"
+        );
+
+        // Deleting the lesson leaves the project-level source ledger intact. A repeat
+        // defaults to skip, while an explicit choice may create a new lesson.
+        let mut deleted_lesson = read_project_value(&target).expect("read revised project");
+        let document_ids: HashSet<String> = deleted_lesson["documents"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|document| document["content_item_id"] == json!(existing_item_id))
+            .filter_map(|document| document["id"].as_str().map(ToOwned::to_owned))
+            .collect();
+        let block_ids: HashSet<String> = deleted_lesson["blocks"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|block| document_ids.contains(block["document_id"].as_str().unwrap_or("")))
+            .filter_map(|block| block["id"].as_str().map(ToOwned::to_owned))
+            .collect();
+        let layout_ids: HashSet<String> = deleted_lesson["layout_instances"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|layout| layout["content_item_id"] == json!(existing_item_id))
+            .filter_map(|layout| layout["id"].as_str().map(ToOwned::to_owned))
+            .collect();
+        deleted_lesson["content_items"]
+            .as_array_mut()
+            .unwrap()
+            .retain(|item| item["id"] != json!(existing_item_id));
+        deleted_lesson["documents"]
+            .as_array_mut()
+            .unwrap()
+            .retain(|document| !document_ids.contains(document["id"].as_str().unwrap_or("")));
+        deleted_lesson["blocks"]
+            .as_array_mut()
+            .unwrap()
+            .retain(|block| !document_ids.contains(block["document_id"].as_str().unwrap_or("")));
+        deleted_lesson["asset_usages"]
+            .as_array_mut()
+            .unwrap()
+            .retain(|usage| {
+                usage["content_item_id"] != json!(existing_item_id)
+                    && !block_ids.contains(usage["block_id"].as_str().unwrap_or(""))
+            });
+        deleted_lesson["requirements"]
+            .as_array_mut()
+            .unwrap()
+            .retain(|requirement| {
+                requirement["content_item_id"] != json!(existing_item_id)
+                    && !block_ids.contains(requirement["anchor_block_id"].as_str().unwrap_or(""))
+            });
+        deleted_lesson["placements"]
+            .as_array_mut()
+            .unwrap()
+            .retain(|placement| {
+                !layout_ids.contains(placement["layout_instance_id"].as_str().unwrap_or(""))
+                    && !block_ids.contains(placement["block_id"].as_str().unwrap_or(""))
+            });
+        deleted_lesson["layout_sections"]
+            .as_array_mut()
+            .unwrap()
+            .retain(|section| {
+                !layout_ids.contains(section["layout_instance_id"].as_str().unwrap_or(""))
+            });
+        deleted_lesson["layout_pages"]
+            .as_array_mut()
+            .unwrap()
+            .retain(|page| !layout_ids.contains(page["layout_instance_id"].as_str().unwrap_or("")));
+        deleted_lesson["layout_instances"]
+            .as_array_mut()
+            .unwrap()
+            .retain(|layout| layout["content_item_id"] != json!(existing_item_id));
+        deleted_lesson["groups"]
+            .as_array_mut()
+            .unwrap()
+            .retain(|group| !document_ids.contains(group["document_id"].as_str().unwrap_or("")));
+        deleted_lesson["status_assignments"]
+            .as_array_mut()
+            .unwrap()
+            .retain(|assignment| assignment["content_item_id"] != json!(existing_item_id));
+        deleted_lesson["publications"]
+            .as_array_mut()
+            .unwrap()
+            .retain(|publication| publication["content_item_id"] != json!(existing_item_id));
+        assert!(deleted_lesson["project"]["settings"]["markdown_import_sources"].is_array());
+        write_project_value_unlocked(&target, &deleted_lesson)
+            .expect("save deleted lesson fixture");
+        let deleted_duplicate = json!({
+            "root": source.to_string_lossy(), "confirmed": true,
+            "items": [{
+                "relative_path": "renamed.md", "kind": "file", "mapping": "lesson", "selected": true,
+                "destination": { "kind": "unassigned_lesson" },
+                "parsed_markdown": test_markdown_payload(&source.join("renamed.md"), parsed_blocks.clone(), refs.clone())
+            }]
+        });
+        let skipped_deleted_target = folder_append(
+            deleted_duplicate,
+            target.to_string_lossy().into_owned(),
+            None,
+        )
+        .expect("deleted lesson source should be recognized and skipped");
+        assert_eq!(
+            skipped_deleted_target["data"]["content_items"]
+                .as_array()
+                .unwrap()
+                .len(),
+            0
+        );
+        assert_eq!(
+            skipped_deleted_target["data"]["blocks"]
+                .as_array()
+                .unwrap()
+                .len(),
+            0
+        );
+        assert!(skipped_deleted_target["warnings"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|warning| {
+                warning
+                    .as_str()
+                    .unwrap_or_default()
+                    .contains("目标课时已删除")
+            }));
+        let explicit_reimport = json!({
+            "root": source.to_string_lossy(), "confirmed": true,
+            "items": [{
+                "relative_path": "renamed.md", "kind": "file", "mapping": "lesson", "selected": true,
+                "destination": { "kind": "unassigned_lesson" }, "allow_duplicate": true,
+                "parsed_markdown": test_markdown_payload(&source.join("renamed.md"), parsed_blocks.clone(), refs.clone())
+            }]
+        });
+        let reimported_deleted_lesson = folder_append(
+            explicit_reimport,
+            target.to_string_lossy().into_owned(),
+            None,
+        )
+        .expect("explicit reimport after lesson deletion");
+        assert_eq!(
+            reimported_deleted_lesson["data"]["content_items"]
+                .as_array()
+                .unwrap()
+                .len(),
+            1
+        );
+        fs::write(source.join("lesson.md"), "# 删除目标后的新版本\n")
+            .expect("write changed source after target deletion");
+        let deleted_target_revision = json!({
+            "root": source.to_string_lossy(), "confirmed": true,
+            "items": [{
+                "relative_path": "lesson.md", "kind": "file", "mapping": "lesson", "selected": true,
+                "destination": { "kind": "unassigned_lesson" }, "allow_duplicate": true,
+                "parsed_markdown": test_markdown_payload(&source.join("lesson.md"), json!([heading_block("# 删除目标后的新版本\n", "删除目标后的新版本", 1)]), json!([]))
+            }]
+        });
+        let reimported_deleted_revision = folder_append(
+            deleted_target_revision,
+            target.to_string_lossy().into_owned(),
+            None,
+        )
+        .expect("explicit changed-source reimport after lesson deletion");
+        assert!(
+            reimported_deleted_revision["warnings"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|warning| {
+                    let text = warning.as_str().unwrap_or_default();
+                    text.contains("曾删除课时") && text.contains("按当前目标新建或追加")
+                }),
+            "explicit changed-source handling must describe the deleted target accurately"
+        );
+
+        // A forged/stale parser payload cannot commit a lesson after its source changed.
+        let bad_source = test_directory("folder-append-bad-hash");
+        fs::write(bad_source.join("bad.md"), "# changed\n").expect("bad source");
+        let manifest_before_bad_hash = fs::read(target.join("project.json")).unwrap();
+        let bad_plan = json!({
+            "root": bad_source.to_string_lossy(), "confirmed": true,
+            "items": [{
+                "relative_path": "bad.md", "kind": "file", "mapping": "lesson", "selected": true,
+                "parsed_markdown": { "source_hash": "00", "blocks": [heading_block("# old\n", "old", 1)], "explicitLocalImageRefs": [] }
+            }]
+        });
+        assert!(folder_append(bad_plan, target.to_string_lossy().into_owned(), None).is_err());
+        assert_eq!(
+            fs::read(target.join("project.json")).unwrap(),
+            manifest_before_bad_hash
+        );
+        assert_eq!(fs::read(bad_source.join("bad.md")).unwrap(), b"# changed\n");
+        // A matching source hash still cannot authorize a page-forged reference to a
+        // same-root private-looking neighbor that is absent from the source AST.
+        fs::write(bad_source.join("credentials.png"), [6_u8, 6, 6]).expect("private neighbor");
+        let manifest_before_forged_ref = fs::read(target.join("project.json")).unwrap();
+        let forged_blocks = json!([{
+            "type": "paragraph", "raw": "# changed\n", "text": "# changed",
+            "level": null, "language": null, "checked": null,
+            "imageRefs": [{ "href": "credentials.png", "title": null, "alt": "x", "tokenIndex": 0, "occurrence": 0 }]
+        }]);
+        let forged_refs = json!([{
+            "href": "credentials.png", "title": null, "alt": "x",
+            "tokenIndex": 0, "occurrence": 0, "blockIndex": 0
+        }]);
+        let forged_plan = json!({
+            "root": bad_source.to_string_lossy(), "confirmed": true,
+            "items": [{
+                "relative_path": "bad.md", "kind": "file", "mapping": "lesson", "selected": true,
+                "parsed_markdown": test_markdown_payload(&bad_source.join("bad.md"), forged_blocks, forged_refs)
+            }]
+        });
+        assert!(
+            folder_append(forged_plan, target.to_string_lossy().into_owned(), None)
+                .expect_err("source AST must reject a forged same-root dependency")
+                .contains("解析结果不一致")
+        );
+        assert_eq!(
+            fs::read(target.join("project.json")).unwrap(),
+            manifest_before_forged_ref
+        );
+        assert_eq!(
+            fs::read(bad_source.join("credentials.png")).unwrap(),
+            [6_u8, 6, 6]
+        );
+        assert_eq!(
+            read_project_value(&target).unwrap()["assets"]
+                .as_array()
+                .unwrap()
+                .len(),
+            2
+        );
+
+        // External edits block the final manifest commit; this transaction removes only its
+        // newly promoted media and keeps the external manifest, old assets, and sources intact.
+        let failure_source = test_directory("folder-append-failed-commit-source");
+        fs::create_dir_all(failure_source.join("images")).expect("failure images");
+        fs::write(failure_source.join("fail.md"), "![图](images/fail.png)\n").expect("failure md");
+        fs::write(failure_source.join("images/fail.png"), [5_u8, 4, 3, 2]).expect("failure image");
+        let mut externally_changed =
+            read_project_value(&target).expect("read project before external edit");
+        externally_changed["project"]["description"] = json!("external modification");
+        let external_bytes =
+            (serde_json::to_string_pretty(&externally_changed).unwrap() + "\n").into_bytes();
+        fs::write(target.join("project.json"), &external_bytes).expect("external edit");
+        let assets_before_failure: Vec<String> = fs::read_dir(target.join("assets"))
+            .unwrap()
+            .filter_map(Result::ok)
+            .filter_map(|entry| entry.file_name().into_string().ok())
+            .collect();
+        let failing_blocks = json!([{
+            "type": "paragraph", "raw": "![图](images/fail.png)\n", "text": "![图](images/fail.png)",
+            "level": null, "language": null, "checked": null,
+            "imageRefs": [{ "href": "images/fail.png", "title": null, "alt": "图", "tokenIndex": 0, "occurrence": 0 }]
+        }]);
+        let failing_refs = json!([{
+            "href": "images/fail.png", "title": null, "alt": "图", "tokenIndex": 0,
+            "occurrence": 0, "blockIndex": 0
+        }]);
+        let failing_plan = json!({
+            "root": failure_source.to_string_lossy(), "confirmed": true,
+            "items": [{
+                "relative_path": "fail.md", "kind": "file", "mapping": "lesson", "selected": true,
+                "parsed_markdown": test_markdown_payload(&failure_source.join("fail.md"), failing_blocks, failing_refs)
+            }]
+        });
+        assert!(folder_append(failing_plan, target.to_string_lossy().into_owned(), None).is_err());
+        assert_eq!(
+            fs::read(target.join("project.json")).unwrap(),
+            external_bytes
+        );
+        assert_eq!(
+            fs::read(target.join(&old_asset_path)).unwrap(),
+            old_asset_bytes
+        );
+        let assets_after_failure: Vec<String> = fs::read_dir(target.join("assets"))
+            .unwrap()
+            .filter_map(Result::ok)
+            .filter_map(|entry| entry.file_name().into_string().ok())
+            .collect();
+        assert_eq!(assets_after_failure, assets_before_failure);
+        assert_eq!(
+            fs::read(failure_source.join("fail.md")).unwrap(),
+            b"![\xe5\x9b\xbe](images/fail.png)\n"
+        );
+        assert_eq!(
+            fs::read(failure_source.join("images/fail.png")).unwrap(),
+            [5_u8, 4, 3, 2]
+        );
+        assert_eq!(
+            fs::read_dir(target.join(".workspace/adopt-staging"))
+                .unwrap()
+                .count(),
+            0
+        );
+
+        let _ = project_close(target.to_string_lossy().into_owned());
+        let _ = fs::remove_dir_all(target);
+        let _ = fs::remove_dir_all(source);
+        let _ = fs::remove_dir_all(bad_source);
+        let _ = fs::remove_dir_all(failure_source);
+    }
+
+    #[test]
+    fn native_markdown_ref_check_handles_gfm_nested_lists_references_and_code() {
+        let source = concat!(
+            "![inline](images/shared.png)\n\n",
+            "```markdown\n![code](credentials.png)\n```\n\n",
+            "![reference][photo]\n\n[photo]: images/reference.png\n\n",
+            "- outer\n  - ![nested](images/nested.png)\n\n",
+            "| image |\n| --- |\n| ![table](images/shared.png) |\n",
+            "`![inline code](ignored.png)`\n",
+        );
+        let refs = json!([
+            { "href": "images/shared.png", "tokenIndex": 0, "occurrence": 0, "blockIndex": 0 },
+            { "href": "images/reference.png", "tokenIndex": 1, "occurrence": 0, "blockIndex": 1 },
+            { "href": "images/nested.png", "tokenIndex": 2, "occurrence": 0, "blockIndex": 2 },
+            { "href": "images/shared.png", "tokenIndex": 3, "occurrence": 1, "blockIndex": 3 }
+        ]);
+        let blocks = json!([
+            { "imageRefs": [{ "href": "images/shared.png", "tokenIndex": 0, "occurrence": 0 }] },
+            { "imageRefs": [{ "href": "images/reference.png", "tokenIndex": 1, "occurrence": 0 }] },
+            { "imageRefs": [{ "href": "images/nested.png", "tokenIndex": 2, "occurrence": 0 }] },
+            { "imageRefs": [{ "href": "images/shared.png", "tokenIndex": 3, "occurrence": 1 }] }
+        ]);
+        verify_markdown_image_refs(&source, &blocks, refs.as_array().unwrap())
+            .expect("GFM images, references and nested list refs should match; code remains inert");
+    }
+
+    #[test]
+    fn adding_media_without_context_preserves_existing_asset_usages() {
+        let existing = json!({
+            "id": "usage-existing",
+            "asset_id": "asset-existing",
+            "content_item_id": "lesson-existing",
+            "block_id": null,
+            "layout_instance_id": null,
+            "role": "content"
+        });
+        let mut project = json!({ "asset_usages": [existing.clone()] });
+        let input = Map::<String, Value>::new();
+
+        let usage = append_asset_usage(&mut project, &input, "asset-library-only")
+            .expect("library-only import has no usage validation to perform");
+
+        assert!(usage.is_none());
+        assert_eq!(project["asset_usages"], json!([existing]));
+    }
+
+    #[test]
     fn folder_adopt_rejects_unconfirmed_plan() {
         let root = test_directory("folder-adopt-unconfirmed");
         fs::write(root.join("a.md"), "# a\n").expect("md");
@@ -11588,7 +16595,12 @@ mod tests {
                     "suggested": "lesson",
                     "mapping": "lesson",
                     "selected": true,
-                    "is_suggestion": true
+                    "is_suggestion": true,
+                    "parsed_markdown": test_markdown_payload(
+                        &root.join("readme.md"),
+                        json!([heading_block("# hi\n", "hi", 1)]),
+                        json!([]),
+                    )
                 }
             ]
         });
@@ -11752,7 +16764,12 @@ mod tests {
                     "suggested": "lesson",
                     "mapping": "lesson",
                     "selected": true,
-                    "is_suggestion": true
+                    "is_suggestion": true,
+                    "parsed_markdown": test_markdown_payload(
+                        &root.join("keep.md"),
+                        json!([heading_block("# keep\n", "keep", 1)]),
+                        json!([]),
+                    )
                 },
                 {
                     "relative_path": "skip.png",
@@ -11846,12 +16863,18 @@ pub fn run() {
             import_confirm,
             folder_scan,
             folder_read_preview,
+            folder_preview_source,
+            folder_read_source,
+            folder_markdown_image_status,
             folder_adopt,
+            folder_append,
             course_seed_create,
             blueprint_build,
             asset_import,
             asset_read,
+            asset_preview_source,
             select_file,
+            select_files,
             select_folder,
             select_export_path,
             export_preflight,
@@ -11868,7 +16891,13 @@ pub fn run() {
             ai_connection_delete,
             ai_secret_set,
             ai_secret_delete,
+            ai_subscription_start,
+            ai_subscription_status,
+            ai_subscription_cancel,
+            ai_subscription_logout,
             ai_models_list,
+            ai_models_probe,
+            ai_connection_test,
             ai_complete,
             ai_cancel,
             ai_execution_append,

@@ -24,7 +24,6 @@ export interface WorkbenchSession {
   ai_scope?: "course" | "lesson" | "block";
   ai_provider_id?: string;
   ai_model?: string;
-  ai_settings_open?: boolean;
   collapsed_stage_ids?: string[];
   left_collapsed: boolean;
   right_collapsed: boolean;
@@ -49,7 +48,6 @@ export interface NativeReaderSession {
   ai_scope?: "course" | "lesson" | "block";
   ai_provider_id?: string;
   ai_model?: string;
-  ai_settings_open?: boolean;
   collapsed_stage_ids?: string[];
   left_collapsed: boolean;
   right_collapsed: boolean;
@@ -109,6 +107,10 @@ export type BridgeCommandName =
   | "ai.connection.list"
   | "ai.connection.save"
   | "ai.connection.delete"
+  | "ai.subscription.start"
+  | "ai.subscription.status"
+  | "ai.subscription.cancel"
+  | "ai.subscription.logout"
   | "ai.models.list"
   | "ai.secret.set"
   | "ai.secret.delete"

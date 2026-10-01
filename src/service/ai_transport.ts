@@ -33,11 +33,23 @@ export interface AiProviderConfig {
   kind?: string;
   base_url?: string;
   chat_path?: string;
+  api_protocol?: string;
   auth_header?: string;
   auth_scheme?: string;
   default_model?: string;
   models?: string[];
   [field: string]: unknown;
+}
+
+function rejectNativeOnlySubscription(provider: AiProviderConfig | null | undefined): void {
+  if (provider?.kind === "openai_chatgpt_subscription") {
+    throw error(
+      "subscription_native_only",
+      "ChatGPT 订阅登录需要 macOS 桌面版的系统浏览器回调和系统钥匙串。",
+      "Sign in with ChatGPT is supported by the native Tauri runtime only",
+      { recoverable: false, recommended_action: "请在 macOS 桌面版 Workbench 的 AI 设置中管理订阅账户。", details: {} },
+    );
+  }
 }
 
 export interface AiConnectionList {
@@ -65,6 +77,12 @@ export interface AiRequestInput {
   body?: unknown;
   timeout_ms?: number;
 }
+
+const AI_API_PROTOCOLS = [
+  "openai-completions",
+  "openai-responses",
+  "anthropic-messages",
+] as const;
 
 export type AiFetch = (
   input: string | URL | Request,
@@ -568,7 +586,7 @@ export function normalizeProviderConfig(value: unknown): AiProviderConfig {
   }
   const cloned = cloneJsonValue(JSON.parse(serialized)) as AiProviderConfig;
   const normalized: AiProviderConfig = { ...cloned, id: providerId };
-  for (const field of ["label", "kind", "base_url", "chat_path"] as const) {
+  for (const field of ["label", "kind", "base_url", "chat_path", "api_protocol"] as const) {
     const candidate = normalized[field];
     if (candidate !== undefined && typeof candidate !== "string") {
       throw invalidRequest(
@@ -576,6 +594,21 @@ export function normalizeProviderConfig(value: unknown): AiProviderConfig {
         `Provider field ${field} must be a string`,
       );
     }
+  }
+  const protocol = normalized.api_protocol || "openai-completions";
+  if (!AI_API_PROTOCOLS.includes(protocol as typeof AI_API_PROTOCOLS[number])) {
+    throw invalidRequest(
+      "服务商 API 协议无效。",
+      `Unsupported AI API protocol: ${protocol}`,
+    );
+  }
+  normalized.api_protocol = protocol;
+  if (normalized.api_protocol === "anthropic-messages") {
+    if (!normalized.auth_header) normalized.auth_header = "x-api-key";
+    if (normalized.auth_scheme === undefined) normalized.auth_scheme = "";
+  } else {
+    if (!normalized.auth_header) normalized.auth_header = "authorization";
+    if (normalized.auth_scheme === undefined) normalized.auth_scheme = "Bearer";
   }
   for (const field of ["auth_header", "auth_scheme", "default_model"] as const) {
     const candidate = normalized[field];
@@ -898,6 +931,7 @@ export class AiTransport {
     const candidate = wrapped ? input.provider : input;
     const confirmCredentialOrigin = wrapped && input.confirm_credential_origin === true;
     const normalized = normalizeProviderConfig(candidate);
+    rejectNativeOnlySubscription(normalized);
     this.assertWritable();
     const state = await this.readProviders();
     const index = state.providers.findIndex((entry) =>
@@ -977,6 +1011,7 @@ export class AiTransport {
     }
     const state = await this.readProviders();
     const provider = state.providers.find((entry) => entry.id === key);
+    rejectNativeOnlySubscription(provider);
     const origin = normalizedOrigin(provider?.base_url);
     // Keychain write happens before metadata only-write. If metadata fails,
     // the key remains recoverable and no plaintext fallback is created.
@@ -1034,6 +1069,7 @@ export class AiTransport {
         "ai.models.list requires a saved provider",
       );
     }
+    rejectNativeOnlySubscription(provider);
     const baseUrl = String(provider.base_url || "").trim();
     if (!baseUrl) {
       throw invalidRequest(
@@ -1059,14 +1095,11 @@ export class AiTransport {
     if (!boundOrigin || boundOrigin !== url.origin) {
       throw providerOriginConfirmationError(providerId, boundOrigin, url.origin);
     }
-    const header = typeof provider.auth_header === "string" && provider.auth_header.trim()
-      ? provider.auth_header.trim()
-      : "authorization";
-    const scheme = typeof provider.auth_scheme === "string" ? provider.auth_scheme : "Bearer";
-    const headers: Record<string, string> = {
-      accept: "application/json",
-      [header]: scheme ? `${scheme} ${credential}` : credential,
-    };
+    const scheme = provider.auth_scheme || "";
+    const headers = providerAuthHeaders(provider, credential, "application/json");
+    if (provider.api_protocol === "anthropic-messages") {
+      headers["anthropic-version"] = "2023-06-01";
+    }
     const schemeOnWire = typeof provider.auth_scheme === "string" ? provider.auth_scheme : "";
     const result = await this.send({
       requestId: id(),
@@ -1096,6 +1129,96 @@ export class AiTransport {
     return { provider_id: providerId, models, endpoint: url.toString() };
   }
 
+  /** One-shot model discovery for an unsaved address and a typed temporary key. */
+  async probeAiModels(input: unknown): Promise<{ models: string[]; endpoint: string }> {
+    if (!isPlainRecord(input) || !isPlainRecord(input.provider)) {
+      throw invalidRequest("临时模型探测参数无效。", "ai.models.probe expects provider and temporary_credential");
+    }
+    const provider = normalizeProviderConfig({ ...input.provider, id: "temporary-probe" });
+    const baseUrl = String(provider.base_url || "").trim();
+    const credential = typeof input.temporary_credential === "string"
+      ? input.temporary_credential.trim()
+      : "";
+    if (!baseUrl || !credential) {
+      throw invalidRequest("临时模型探测需要 Base URL 和 API Key。", "ai.models.probe missing base_url or key");
+    }
+    const url = assertTransportUrl(modelListUrl(baseUrl));
+    const scheme = provider.auth_scheme || "";
+    const headers = providerAuthHeaders(provider, credential, "application/json");
+    if (provider.api_protocol === "anthropic-messages") {
+      headers["anthropic-version"] = "2023-06-01";
+    }
+    const result = await this.send({
+      requestId: id(),
+      providerId: "temporary-probe",
+      url,
+      headers,
+      body: "",
+      method: "GET",
+      timeoutMs: normalizeTimeout(input.timeout_ms),
+      signal: null,
+      secrets: credentialScrubList(credential, scheme),
+      dropProviderExcerpt: credential.length < MIN_EXACT_SECRET_CHARS,
+    });
+    const models = modelIdsFromPayload(result.body);
+    if (!models.length) {
+      throw error("provider_error", "服务商没有返回可识别的模型名。", "Temporary model probe returned no model ids", {
+        recoverable: true,
+        recommended_action: "可以直接手动填写 Model ID。",
+        details: { endpoint: url.toString() },
+      });
+    }
+    return { models, endpoint: url.toString() };
+  }
+
+  /** Send a tiny user-triggered request without creating an execution record. */
+  async testAiConnection(input: unknown): Promise<{ provider_id: string; model: string; endpoint: string }> {
+    const providerId = isPlainRecord(input) && typeof input.provider_id === "string"
+      ? input.provider_id.trim()
+      : "";
+    const state = await this.readProviders();
+    const provider = state.providers.find((entry) => entry.id === providerId);
+    if (!provider) throw notConfigured("请先保存一个 AI 连接。", "ai.connection.test requires a saved provider");
+    rejectNativeOnlySubscription(provider);
+    const model = String(provider.default_model || "").trim();
+    if (!model) throw invalidRequest("请先设置默认 Model ID。", "ai.connection.test requires default_model");
+    const credential = await this.credentialStore.get(providerId);
+    if (!credential) throw error("missing_credential", `AI 服务商「${providerId}」还没有配置 API Key。`, "No credential stored for connection test", {
+      recoverable: true,
+      recommended_action: "先保存 API Key，再测试连接。",
+      details: { provider_id: providerId },
+    });
+    const endpoint = providerCompletionUrl(provider);
+    const url = assertTransportUrl(endpoint);
+    const boundOrigin = state.credential_origins[providerId] || null;
+    if (boundOrigin !== url.origin) throw providerOriginConfirmationError(providerId, boundOrigin, url.origin);
+    const protocol = provider.api_protocol || "openai-completions";
+    const body = protocol === "openai-responses"
+      ? { model, input: "Reply with OK.", max_output_tokens: 8, store: false, stream: true }
+      : protocol === "anthropic-messages"
+      ? { model, messages: [{ role: "user", content: "Reply with OK." }], max_tokens: 8, stream: false }
+      : { model, messages: [{ role: "user", content: "Reply with OK." }], max_tokens: 8, stream: false };
+    const scheme = provider.auth_scheme || "";
+    const headers = providerAuthHeaders(
+      provider,
+      credential,
+      protocol === "openai-responses" ? "text/event-stream" : "application/json",
+    );
+    if (protocol === "anthropic-messages") headers["anthropic-version"] = "2023-06-01";
+    await this.send({
+      requestId: id(),
+      providerId,
+      url,
+      headers,
+      body: JSON.stringify(body),
+      timeoutMs: normalizeTimeout(isPlainRecord(input) ? input.timeout_ms : undefined),
+      signal: null,
+      secrets: credentialScrubList(credential, scheme),
+      dropProviderExcerpt: credential.trim().length < MIN_EXACT_SECRET_CHARS,
+    });
+    return { provider_id: providerId, model, endpoint: url.toString() };
+  }
+
   /**
    * Design §3 `ai.complete`: one HTTPS POST with the stored credential injected
    * as the configured auth header.  Failures are structured `ServiceError`s so
@@ -1119,6 +1242,7 @@ export class AiTransport {
     const provider = providerId
       ? state.providers.find((entry) => entry.id === providerId)
       : undefined;
+    rejectNativeOnlySubscription(provider);
     const storedCredential = providerId
       ? await this.credentialStore.get(providerId)
       : null;
@@ -1131,6 +1255,11 @@ export class AiTransport {
       ? this.resolveRequestUrl({ ...candidate, url: "" }, state)
       : this.resolveRequestUrl(candidate, state);
     const url = assertTransportUrl(rawUrl);
+    if (provider?.api_protocol === "anthropic-messages") {
+      headers["anthropic-version"] = "2023-06-01";
+    } else if (provider?.api_protocol === "openai-responses") {
+      headers.accept = "text/event-stream";
+    }
     // Scrub from the system-stored credential, not only from the injected
     // header: a saved base_url can carry a key in its query string.
     const scheme = auth?.scheme ||
@@ -1307,11 +1436,7 @@ export class AiTransport {
         "ai.complete has no url and no saved provider base_url",
       );
     }
-    const chatPath = typeof provider?.chat_path === "string"
-      ? provider.chat_path.trim()
-      : "";
-    if (!chatPath) return baseUrl;
-    return `${baseUrl.replace(/\/+$/, "")}/${chatPath.replace(/^\/+/, "")}`;
+    return providerCompletionUrl(provider!);
   }
 
   private async send(request: {
@@ -1915,6 +2040,33 @@ export function modelListUrl(baseUrl: string): string {
   return `${baseUrl.replace(/\/+$/, "")}/models`;
 }
 
+function providerCompletionUrl(provider: AiProviderConfig): string {
+  const base = String(provider.base_url || "").trim().replace(/\/+$/, "");
+  const protocol = provider.api_protocol || "openai-completions";
+  const path = protocol === "openai-responses"
+    ? "/responses"
+    : protocol === "anthropic-messages"
+    ? "/messages"
+    : String(provider.chat_path || "/chat/completions").trim();
+  const suffix = path.replace(/^\/+/, "");
+  return base.endsWith(`/${suffix}`) ? base : `${base}/${suffix}`;
+}
+
+function providerAuthHeaders(
+  provider: AiProviderConfig,
+  credential: string,
+  accept: string,
+): Record<string, string> {
+  const header = provider.auth_header?.trim() ||
+    (provider.api_protocol === "anthropic-messages" ? "x-api-key" : "authorization");
+  const scheme = provider.auth_scheme ??
+    (provider.api_protocol === "anthropic-messages" ? "" : "Bearer");
+  return {
+    accept,
+    [header]: scheme ? `${scheme} ${credential}` : credential,
+  };
+}
+
 /**
  * Model ids out of the shapes OpenAI-compatible providers actually return:
  * `{ data: [{ id }] }`, `{ models: [{ id | name }] }`, or a bare array.
@@ -1930,7 +2082,7 @@ export function modelIdsFromPayload(payload: unknown): string[] {
   const ids = entries.map((entry) => {
     if (typeof entry === "string") return entry.trim();
     if (!isPlainRecord(entry)) return "";
-    const value = entry.id ?? entry.name ?? entry.model;
+    const value = entry.id ?? entry.name ?? entry.model ?? entry.slug;
     return typeof value === "string" ? value.trim() : "";
   }).filter((value) => value.length > 0);
   return [...new Set(ids)].sort((left, right) => left.localeCompare(right));

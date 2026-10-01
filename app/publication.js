@@ -1,4 +1,5 @@
 // @ts-check
+import { markdownSemantics } from "./markdown.js";
 /** @typedef {import("../src/domain/types.ts").ProjectData} ProjectData */
 /** @typedef {import("../src/domain/types.ts").Asset} Asset */
 /** @typedef {import("../src/domain/types.ts").Block} Block */
@@ -21,8 +22,10 @@
 /** @typedef {{x_pt: number, y_pt: number, width_pt: number, height_pt: number}} PageRect */
 /** @typedef {Pick<LayoutPage, "layout_instance_id" | "grid_definition"> & {id: string | null, title?: string, order_index?: number}} ProjectionPageSource */
 /** @typedef {{id: string, type: Asset["type"], title: string, filename: string, output_path: string, mime_type: string, source_url: string | null, inline: boolean}} PublicationMedia */
-/** @typedef {{id: string, type: BlockType, text: string, heading_level: number | null, media: PublicationMedia | null}} PublicationBlock */
-/** @typedef {{placement_id: string, block_id: string, kind: BlockType, text: string, heading_level: number | null, rect: PageRect, style: {alignment: JsonObject, fit_mode: string, padding: JsonObject, z_index: number, font_size_pt: number, line_height: number}, media: PublicationMedia | null}} PublicationPageItem */
+/** @typedef {{type:"text",text:string}|{type:"break"}|{type:"code",text:string}|{type:"image",asset_id:string|null,alt:string,title:string|null}|{type:"link",href:string,title:string|null,children:PublicationInline[]}|{type:"strong"|"em"|"del",children:PublicationInline[]}} PublicationInline */
+/** @typedef {{type:"paragraph"|"callout",children:PublicationInline[]}|{type:"heading",level:number,children:PublicationInline[]}|{type:"quote",children:PublicationSemanticBlock[]}|{type:"list",ordered:boolean,start:number,items:Array<{checked:boolean|null,children:PublicationSemanticBlock[]}>}|{type:"code",text:string,language:string|null}|{type:"divider"}|{type:"table",align:Array<string|null>,header:PublicationInline[][],rows:PublicationInline[][][]}} PublicationSemanticBlock */
+/** @typedef {{id: string, type: BlockType, text: string, heading_level: number | null, media: PublicationMedia | null, rich_text: PublicationSemanticBlock[], inline_media: PublicationMedia[]}} PublicationBlock */
+/** @typedef {{placement_id: string, block_id: string, kind: BlockType, text: string, heading_level: number | null, rich_text: PublicationSemanticBlock[], inline_media: PublicationMedia[], rect: PageRect, style: {alignment: JsonObject, fit_mode: string, padding: JsonObject, z_index: number, font_size_pt: number, line_height: number}, media: PublicationMedia | null}} PublicationPageItem */
 /** @typedef {{page_id: string | null, title: string, order: number, logical_width_pt: number, logical_height_pt: number, items: PublicationPageItem[]}} PublicationPage */
 /** @typedef {{layout_instance_id: string, mode: LayoutMode, name: string, pagination_mode: "continuous" | "paged", page_size: LayoutPageSize, sections: string[], pages: PublicationPage[], unplaced_block_ids: string[], placed_block_ids: string[]}} PublicationLayout */
 /** @typedef {{code: "legacy_grid_sections_require_pagination", layout_instance_id: string, section_ids: string[], includes_unsectioned: boolean, message: string}} PublicationProjectionNotice */
@@ -254,8 +257,38 @@ export function resolvePageItemStyle(block, placement) {
   };
 }
 
-/** @param {Block} block @param {PublicationMedia | null} media @returns {PublicationBlock} */
-function blockProjection(block, media) {
+/** @param {ProjectData} data @param {Block} block @returns {{rich_text:PublicationSemanticBlock[],inline_media:PublicationMedia[]}} */
+function blockSemantics(data, block) {
+  const inlineMedia = new Map();
+  const mappedAssets = Array.isArray(block.settings?.markdown_assets)
+    ? block.settings.markdown_assets
+    : [];
+  const richText = markdownSemantics(textOf(block.content), {
+    blockType: block.type,
+    headingLevel: Number(block.settings?.level) || 2,
+    resolveImage(href) {
+      const mapping = /** @type {{asset_id?:string}|null} */ (
+        mappedAssets.find((candidate) =>
+          isRecord(candidate) && !Array.isArray(candidate) &&
+            /** @type {Record<string, any>} */ (candidate).href === href
+        ) ?? null
+      );
+      const mappedAssetId = String(mapping?.asset_id ?? "");
+      const asset = data.assets.find((candidate) =>
+        candidate.id === mappedAssetId && !candidate.archived &&
+        (candidate.type === "image" || candidate.type === "gif")
+      );
+      if (!asset) return null;
+      inlineMedia.set(asset.id, mediaFor(asset, true));
+      return { asset_id: asset.id };
+    },
+  });
+  return { rich_text: richText, inline_media: [...inlineMedia.values()] };
+}
+
+/** @param {ProjectData} data @param {Block} block @param {PublicationMedia | null} media @returns {PublicationBlock} */
+function blockProjection(data, block, media) {
+  const semantic = blockSemantics(data, block);
   return {
     id: block.id,
     type: block.type,
@@ -264,6 +297,7 @@ function blockProjection(block, media) {
       ? Math.max(1, Math.min(6, Number(block.settings?.level) || 2))
       : null,
     media,
+    ...semantic,
   };
 }
 
@@ -278,6 +312,7 @@ function lessonProjection(data, item, options, notices) {
   const projectedBlocks = [];
   const blockById = new Map(blocks.map((block) => [block.id, block]));
   const mediaByBlockId = new Map();
+  const semanticsByBlockId = new Map();
   for (const block of blocks) {
     if (block.type === "placeholder" || layoutOnly.has(block.id)) continue;
     const asset = MEDIA_BLOCKS.has(block.type)
@@ -287,7 +322,10 @@ function lessonProjection(data, item, options, notices) {
       inlineIds.add(asset.id);
       mediaByBlockId.set(block.id, mediaFor(asset, true));
     }
-    projectedBlocks.push(blockProjection(block, mediaByBlockId.get(block.id) ?? null));
+    const projection = blockProjection(data, block, mediaByBlockId.get(block.id) ?? null);
+    projectedBlocks.push(projection);
+    semanticsByBlockId.set(block.id, projection);
+    for (const media of projection.inline_media) inlineIds.add(media.id);
   }
   const usedIds = new Set(data.asset_usages.filter((usage) =>
     usage.content_item_id === item.id
@@ -343,6 +381,7 @@ function lessonProjection(data, item, options, notices) {
           const block = blockById.get(geometryItem.block_id);
           if (!block || block.type === "placeholder" || layoutOnly.has(block.id)) return [];
           const media = mediaByBlockId.get(block.id) ?? null;
+          const semantic = semanticsByBlockId.get(block.id);
           const placement = allPlacements.find((p) => p.id === geometryItem.placement_id);
           return [{
             placement_id: geometryItem.placement_id,
@@ -352,6 +391,8 @@ function lessonProjection(data, item, options, notices) {
             heading_level: block.type === "heading"
               ? Math.max(1, Math.min(6, Number(block.settings?.level) || 2))
               : null,
+            rich_text: semantic?.rich_text ?? [],
+            inline_media: semantic?.inline_media ?? [],
             rect: geometryItem.rect,
             style: {
               ...resolvePageItemStyle(block, placement),
@@ -422,6 +463,8 @@ function lessonProjection(data, item, options, notices) {
               heading_level: block.type === "heading"
                 ? Math.max(1, Math.min(6, Number(block.settings?.level) || 2))
                 : null,
+              rich_text: semanticsByBlockId.get(block.id)?.rich_text ?? [],
+              inline_media: semanticsByBlockId.get(block.id)?.inline_media ?? [],
               rect: geometryItem.rect,
               style: {
                 ...resolvePageItemStyle(block, placement),
@@ -499,6 +542,7 @@ export function buildPublicationProjection(data, options = {}) {
   for (const lesson of lessons) {
     for (const block of lesson.blocks) {
       if (block.media) mediaById.set(block.media.id, block.media);
+      for (const media of block.inline_media) mediaById.set(media.id, media);
     }
     for (const media of lesson.attachments) mediaById.set(media.id, media);
   }

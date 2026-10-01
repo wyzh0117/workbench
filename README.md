@@ -88,8 +88,7 @@ DISTRIBUTION STATE = PARTIAL
 BLOCKER            = 缺正式 macOS signing / notarization credentials
 ```
 
-- **已完成**：正式 Release 构建（非 Debug）、Universal（Apple Silicon + Intel）DMG、
-  GitHub Release、固定 latest 直链、SHA-256 校验。
+- **已有公开版**：v0.2.2 正式 Release、Universal（Apple Silicon + Intel）DMG、固定 latest 直链与 SHA-256 校验；v0.2.3 Universal DMG 已本地构建，Release 与 sidecar 尚待发布。
 - **当前可见性**：仓库为 **public**，Release 页面与 latest 直链对匿名访问者可用。
 - **未完成**：Developer ID Application 签名与 Apple 公证（notarization / stapling）。
   本机 `security find-identity -v -p codesigning` 返回 0 valid identities，没有可用的
@@ -114,15 +113,20 @@ BLOCKER            = 缺正式 macOS signing / notarization credentials
 - V1-T04 — Workspace Explorer & Existing-Folder Adoption：**VERIFIED**
 - V1-T05 — Paged Canvas & Pagination：**VERIFIED**
 - V1-T06 — Layout-aware Export & PPTX：**VERIFIED**
-- 当前交接：V1-T05/T06 验收完成；下一步由用户 dogfood
-- 当前状态：**VERIFIED — V1 ACTIVE**
-- 产品状态：**DOGFOOD READY — ROUND 3**
-- 分发状态：**PARTIAL**（DMG / Release / 固定直链已完成；签名与公证未完成）
+- 当前交接：**V1 补充反馈（2026-09-30）/ v0.2.3 发布准备**
+- 当前状态：**V1 ACTIVE；v0.2.3 候选进入发布准备**（T01–T06 的 VERIFIED 为历史任务结论）
+- 产品状态：**PARTIAL**；候选可进入发布流程，但 GIF 动画在本机 WKWebView 未观察到，在线服务及若干精确交互/尺寸仍未验收，不作整体 VERIFIED 或 DOGFOOD READY 结论
+- 分发状态：**PARTIAL**（0.2.3 Universal DMG 已本地构建；v0.2.3 Release 与 sidecar 尚未公开；当前制品为 ad-hoc signed，无 `TeamIdentifier`，`spctl --assess --type execute` 为 `rejected`，未做 Developer ID 签名或公证）
 - V0 状态：**V0 CLOSED；V0-T01 / V0-T02 / V0-T03 / V0-T04 全部 VERIFIED**
-- NEXT ACTION：用户 dogfood；不创建 V1-T07，不关闭 V1
+- 最新公开版本仍为 [`v0.2.2`](https://github.com/wyzh0117/workbench/releases/tag/v0.2.2)（workflow run `36539271460`）；本地目标版本为 `0.2.3`，尚未发布。已发布 tag 与 DMG 保持冻结。
+- NEXT ACTION：复核 Universal DMG 与 SHA-256 sidecar、完成匿名下载/Release 检查后发布 v0.2.3；保留下方已说明的验收限制。不创建 V1-T07，不关闭 V1
 
-T05/T06 自动化检查为 346/346，Rust 检查 78/78。页面恢复修复已在隔离桌面项目上连续两次重启验证；T05/T06 的 Universal app 恢复了 page 3。原生 PDF smoke 输出一页 960×540 pt，正确包含第 3 页标题与正文。PowerPoint 已打开三页 PPTX 且未触发 Repair，并在副本中验证文字与图片可编辑。三页、两张图片的 Static Web 样例已通过独立 Chrome `file://` 阅读检查。V1-T05/T06 已 VERIFIED；下一步由用户 dogfood。当前 latest public release 为 `v0.2.1`；tag-triggered run `36325086880` 成功。公开 Universal DMG SHA-256：`ca151a578065939f6c2e0dfa4f23955faee5f512c6833ccbe4931a68bf66817c`，匿名下载与 `.sha256` sidecar 校验一致。`v0.2.0` 失败 tag 保持冻结且没有 Release/资产。分发包为 ad-hoc signed，未做 Apple Developer ID 签名或公证。
-- 分发剩余工作（后续候选任务，等用户批准后再启动）：签名 / 公证 / 安装 smoke
+2026-10-01 候选验收：preview4 PDF/PPTX 原生检查通过，PPTX 在 PowerPoint 中可打开且文字、图片可编辑。preview6–9 对编辑、追加、分页、设置、窄屏工具栏、Markdown/图片/PDF 预览及视频完成了多项原生走查；最终源码自动化为 Deno 389/389、Rust 95/95，`deno task check` 与 `cargo fmt --check` 通过。QA-only 诊断脚本及 HTML 引用已删除，清理后的 Universal app+DMG 生产构建成功，`hdiutil verify` 通过，架构 x86_64+arm64。preview9 验证 GIF Blob 487B、MIME、GIF89a 与 fixture SHA 一致，独立 IMG 从同字节加载为 160×90；但本机 WKWebView 中 modal 与独立 IMG 在 2.65 秒内都只观察到红帧，动画未通过/未闭环，不能归因于源文件损坏。最终无诊断 QA 轻抽检确认正文聚焦行显示自己的 +/⋯ 操作，顶部设置进入 AI 模型管理且课程地图可达。preview8 窄屏工具栏可读；精确 1024/字体缩放、指针拖动取消及在线 SIWC/Provider 请求未验证。原生 GUI 观察来自 QA 快照，未在正式包上重复完整 GUI 套件。53 项明确文件已暂存，尚未提交、打 tag 或发布；latest public release 仍为 v0.2.2。正式 DMG 为 ad-hoc signed、无 `TeamIdentifier`，`spctl --assess --type execute` 返回 `rejected`；未做 Developer ID 签名/公证。preview6–9 为隔离 QA 包，不是发布物。详见 [v0.2.3 验收报告](docs/V1_Feedback_Import_Rendering_AI_Settings_2026-09-30_Acceptance_Report.md)。
+
+T05/T06 自动化检查为 346/346，Rust 检查 78/78；这些是 §38 历史验收证据。页面恢复修复已在隔离桌面项目上连续两次重启验证；T05/T06 的 Universal app 恢复了 page 3。原生 PDF smoke 输出一页 960×540 pt，正确包含第 3 页标题与正文。PowerPoint 已打开三页 PPTX 且未触发 Repair，并在副本中验证文字与图片可编辑。三页、两张图片的 Static Web 样例已通过独立 Chrome `file://` 阅读检查。此前 `v0.2.1` 由 tag-triggered run `36325086880` 成功发布；其公开 Universal DMG SHA-256 为 `ca151a578065939f6c2e0dfa4f23955faee5f512c6833ccbe4931a68bf66817c`，匿名下载与 `.sha256` sidecar 校验一致。`v0.2.0` 失败 tag 保持冻结且没有 Release/资产。当前公开版本及 `v0.2.2` 分发状态见上方；DMG 为 ad-hoc signed，未做 Apple Developer ID 签名或公证。
+
+2026-09-29 本地验证属于 v0.2.2 的历史快照，不代表当前 v0.2.3 候选：当时的 Deno 357/357 与 Rust AI 定向 32/32 在后续导入改动前运行；原生 smoke 覆盖 PDF、图片/GIF、音视频、Markdown、课程地图、Undo/Redo 与导入素材副作用。真实在线 Provider 调用未验证。当前候选状态和逐项验收以本节上方摘要及 v0.2.3 验收报告为准。
+- 分发剩余工作：按用户已授权范围发布 v0.2.3；Developer ID 签名、公证与签名版安装 smoke 需在取得 Apple 分发凭据后另行完成
 
 ---
 

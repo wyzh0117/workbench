@@ -33,12 +33,30 @@ export interface PublicationMedia {
   source_url: string | null;
   inline: boolean;
 }
+export type PublicationInline =
+  | { type: "text"; text: string }
+  | { type: "break" }
+  | { type: "code"; text: string }
+  | { type: "image"; asset_id: string | null; alt: string; title: string | null }
+  | { type: "link"; href: string; title: string | null; children: PublicationInline[] }
+  | { type: "strong" | "em" | "del"; children: PublicationInline[] };
+export type PublicationSemanticBlock =
+  | { type: "paragraph" | "callout"; children: PublicationInline[] }
+  | { type: "heading"; level: number; children: PublicationInline[] }
+  | { type: "quote"; children: PublicationSemanticBlock[] }
+  | { type: "list"; ordered: boolean; start: number; items: Array<{ checked: boolean | null; children: PublicationSemanticBlock[] }> }
+  | { type: "code"; text: string; language: string | null }
+  | { type: "divider" }
+  | { type: "table"; align: Array<string | null>; header: PublicationInline[][]; rows: PublicationInline[][][] };
 export interface PublicationBlock {
   id: string;
   type: BlockType;
   text: string;
   heading_level: number | null;
   media: PublicationMedia | null;
+  /** Kept alongside text for backwards compatibility. */
+  rich_text: PublicationSemanticBlock[];
+  inline_media: PublicationMedia[];
 }
 export interface PublicationPageItem {
   placement_id: string;
@@ -56,6 +74,8 @@ export interface PublicationPageItem {
     line_height: number;
   };
   media: PublicationMedia | null;
+  rich_text: PublicationSemanticBlock[];
+  inline_media: PublicationMedia[];
 }
 export interface PublicationPage {
   page_id: string | null;

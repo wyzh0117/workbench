@@ -159,6 +159,7 @@ import {
  * @property {"openai_compatible" | "fake"} kind
  * @property {string} base_url
  * @property {string} chat_path
+ * @property {string} [api_protocol]
  * @property {string} auth_header
  * @property {string} auth_scheme
  * @property {string} default_model
@@ -1556,6 +1557,7 @@ export const AI_PROVIDER_PRESETS = [
     id: "deepseek",
     label: "DeepSeek",
     kind: "openai_compatible",
+    api_protocol: "openai-completions",
     base_url: "https://api.deepseek.com",
     chat_path: "/chat/completions",
     auth_header: "authorization",
@@ -1568,6 +1570,7 @@ export const AI_PROVIDER_PRESETS = [
     id: "doubao",
     label: "火山方舟（豆包）",
     kind: "openai_compatible",
+    api_protocol: "openai-completions",
     base_url: "https://ark.cn-beijing.volces.com/api/v3",
     chat_path: "/chat/completions",
     auth_header: "authorization",
@@ -1584,6 +1587,7 @@ export const AI_PROVIDER_PRESETS = [
     id: "openai",
     label: "OpenAI",
     kind: "openai_compatible",
+    api_protocol: "openai-completions",
     base_url: "https://api.openai.com/v1",
     chat_path: "/chat/completions",
     auth_header: "authorization",
@@ -1596,6 +1600,7 @@ export const AI_PROVIDER_PRESETS = [
     id: "custom",
     label: "自定义（OpenAI 兼容）",
     kind: "openai_compatible",
+    api_protocol: "openai-completions",
     base_url: "",
     chat_path: "/chat/completions",
     auth_header: "authorization",
@@ -1679,7 +1684,7 @@ function resolvePreset(value) {
  *   wants_changes?: boolean,
  *   base_url?: string,
  * }} input
- * @returns {{ provider_id: string, url: string, headers: Record<string, string>, body: Record<string, any>, response_kind: "chat", auth: { header: string, scheme: string } }}
+ * @returns {{ provider_id: string, api_protocol: string, url: string, headers: Record<string, string>, body: Record<string, any>, response_kind: string, auth: { header: string, scheme: string } }}
  */
 export function buildAiProviderCall(input) {
   const request = recordOf(input);
@@ -1715,34 +1720,89 @@ export function buildAiProviderCall(input) {
   }
 
   const payload = promptPayloadFor(request.context, request.instruction);
-  /** @type {Record<string, any>} */
-  const body = {
-    model,
-    messages: [
-      { role: "system", content: payload.system },
-      { role: "user", content: payload.user },
-    ],
-    stream: false,
-    temperature: 0.2,
+  const protocol = String(preset.api_protocol || "openai-completions");
+  if (![
+    "openai-completions",
+    "openai-responses",
+    "anthropic-messages",
+  ].includes(protocol)) {
+    throw new AiFailure("invalid_request", `不支持的 API 协议：${protocol}`, { recoverable: false });
+  }
+  const endpoint = (/** @type {string} */ path) => {
+    const suffix = String(path || "").replace(/^\/+/, "");
+    return baseUrl.endsWith(`/${suffix}`) ? baseUrl : `${baseUrl}/${suffix}`;
   };
-  if (request.wants_changes === true) {
-    body.response_format = { type: "json_object" };
+  /** @type {Record<string, string>} */
+  const headers = {
+    "content-type": "application/json",
+    "accept": protocol === "openai-responses" ? "text/event-stream" : "application/json",
+    "x-workbench-auth": preset.id,
+    "x-workbench-provider": preset.id,
+  };
+  let url;
+  /** @type {Record<string, any>} */
+  let body;
+  let responseKind;
+  let auth;
+  if (protocol === "openai-completions") {
+    url = endpoint(String(preset.chat_path || "/chat/completions"));
+    body = {
+      model,
+      messages: [
+        { role: "system", content: payload.system },
+        { role: "user", content: payload.user },
+      ],
+      stream: false,
+      temperature: 0.2,
+    };
+    if (request.wants_changes === true) body.response_format = { type: "json_object" };
+    responseKind = "chat";
+    auth = {
+      header: preset.auth_header || "authorization",
+      scheme: typeof preset.auth_scheme === "string" ? preset.auth_scheme : "Bearer",
+    };
+  } else if (protocol === "openai-responses") {
+    url = endpoint("/responses");
+    body = {
+      model,
+      instructions: payload.system,
+      input: [{ role: "user", content: [{ type: "input_text", text: payload.user }] }],
+      store: false,
+      stream: true,
+    };
+    if (request.wants_changes === true) body.text = { format: { type: "json_object" } };
+    responseKind = "responses";
+    auth = {
+      header: preset.auth_header || "authorization",
+      scheme: typeof preset.auth_scheme === "string" ? preset.auth_scheme : "Bearer",
+    };
+  } else {
+    url = endpoint("/messages");
+    headers["anthropic-version"] = "2023-06-01";
+    body = {
+      model,
+      system: payload.system,
+      messages: [{ role: "user", content: payload.user }],
+      max_tokens: 4096,
+      temperature: 0.2,
+      stream: false,
+    };
+    responseKind = "anthropic";
+    auth = {
+      header: preset.auth_header || "x-api-key",
+      scheme: typeof preset.auth_scheme === "string" ? preset.auth_scheme : "",
+    };
   }
 
   return {
-    // Only the fields the transport contract needs: never the whole preset,
-    // which also carries UI-only metadata.
+    // Only fields the transport contract needs cross the bridge.
     provider_id: preset.id,
-    url: `${baseUrl}${preset.chat_path || "/chat/completions"}`,
-    headers: {
-      "content-type": "application/json",
-      "accept": "application/json",
-      "x-workbench-auth": preset.id,
-      "x-workbench-provider": preset.id,
-    },
+    api_protocol: protocol,
+    url,
+    headers,
     body,
-    response_kind: "chat",
-    auth: { header: preset.auth_header, scheme: preset.auth_scheme },
+    response_kind: responseKind,
+    auth,
   };
 }
 
@@ -1800,7 +1860,7 @@ function contentText(value) {
 
 /**
  * @param {unknown} chunk
- * @param {{ content: string, model: string, finish: string, usage: JsonValue }} state
+ * @param {{ content: string, model: string, finish: string, usage: JsonValue, completed: boolean, responsesCompleted: boolean, failed: boolean, incomplete: boolean, sawDone: boolean }} state
  */
 function accumulateChunk(chunk, state) {
   const record = recordOf(chunk);
@@ -1812,23 +1872,80 @@ function accumulateChunk(chunk, state) {
   const choice = recordOf(choices[0]);
   if (typeof choice.finish_reason === "string" && choice.finish_reason) {
     state.finish = choice.finish_reason;
+    state.completed = true;
   }
   const delta = contentText(recordOf(choice.delta).content);
   const message = contentText(recordOf(choice.message).content);
   const plain = contentText(choice.text);
-  state.content += delta || message || plain;
+  const anthropic = contentText(record.content);
+  const responseOutput = typeof record.output_text === "string"
+    ? record.output_text
+    : Array.isArray(record.output)
+    ? record.output.flatMap((item) => Array.isArray(item?.content) ? item.content : [])
+      .filter((item) => item?.type === "output_text" && typeof item.text === "string")
+      .map((item) => item.text).join("")
+    : "";
+  const eventType = stringOf(record.type);
+  if (eventType === "[DONE]") state.sawDone = true;
+  if (eventType === "response.output_text.delta") {
+    state.content += stringOf(record.delta);
+  } else if (eventType === "response.output_text.done" && !state.content) {
+    state.content = stringOf(record.text);
+  } else {
+    state.content += delta || message || plain || anthropic || responseOutput;
+  }
+  if (typeof record.stop_reason === "string" && record.stop_reason) state.finish = record.stop_reason;
+  if (eventType === "response.completed" && record.response) {
+    const response = recordOf(record.response);
+    if (typeof response.model === "string" && response.model) state.model = response.model;
+    if (!state.content) {
+      state.content = typeof response.output_text === "string"
+        ? response.output_text
+        : Array.isArray(response.output)
+        ? response.output.flatMap((item) => Array.isArray(item?.content) ? item.content : [])
+          .filter((item) => item?.type === "output_text" && typeof item.text === "string")
+          .map((item) => item.text).join("")
+        : "";
+    }
+    if (response.usage && typeof response.usage === "object") {
+      state.usage = /** @type {JsonValue} */ (structuredClone(response.usage));
+    }
+    if (response.status === "incomplete") {
+      state.incomplete = true;
+      state.finish = "incomplete";
+    } else if (response.status === "failed") {
+      state.failed = true;
+      state.finish = "failed";
+    } else {
+      state.completed = true;
+      state.responsesCompleted = true;
+      state.finish = "completed";
+    }
+  }
+  if (eventType === "response.incomplete" || record.status === "incomplete") {
+    state.incomplete = true;
+    state.finish = "incomplete";
+  }
+  if (eventType === "response.failed" || eventType === "error" || record.status === "failed") {
+    state.failed = true;
+    state.finish = "failed";
+  }
 }
 
 /**
  * @param {string} text
- * @param {{ content: string, model: string, finish: string, usage: JsonValue }} state
+ * @param {{ content: string, model: string, finish: string, usage: JsonValue, completed: boolean, responsesCompleted: boolean, failed: boolean, incomplete: boolean, sawDone: boolean }} state
  */
 function accumulateSse(text, state) {
   for (const rawLine of text.split(/\r?\n/)) {
     const line = rawLine.trim();
     if (!line.startsWith("data:")) continue;
     const payload = line.slice(5).trim();
-    if (!payload || payload === "[DONE]") continue;
+    if (!payload) continue;
+    if (payload === "[DONE]") {
+      state.sawDone = true;
+      continue;
+    }
     try {
       accumulateChunk(JSON.parse(payload), state);
     } catch {
@@ -1882,8 +1999,8 @@ export function normalizeAiProviderResponse(preset, transportResult) {
     contentType.includes("event-stream") ||
     (bodyIsString && /** @type {string} */ (body).trimStart().startsWith("data:"));
 
-  /** @type {{ content: string, model: string, finish: string, usage: JsonValue }} */
-  const state = { content: "", model: "", finish: "", usage: null };
+  /** @type {{ content: string, model: string, finish: string, usage: JsonValue, completed: boolean, responsesCompleted: boolean, failed: boolean, incomplete: boolean, sawDone: boolean }} */
+  const state = { content: "", model: "", finish: "", usage: null, completed: false, responsesCompleted: false, failed: false, incomplete: false, sawDone: false };
 
   if (Array.isArray(body)) {
     for (const chunk of body) accumulateChunk(chunk, state);
@@ -1905,6 +2022,34 @@ export function normalizeAiProviderResponse(preset, transportResult) {
       }
     }
     accumulateChunk(parsed, state);
+  }
+
+  if (state.failed) {
+    throw new AiFailure(
+      "provider_error",
+      `${providerLabel} 未能完成本次响应。请稍后重试。`,
+    );
+  }
+  if (state.incomplete) {
+    throw new AiFailure(
+      "malformed_response",
+      `${providerLabel} 返回了未完成的响应，无法安全使用。请缩小上下文后重试。`,
+    );
+  }
+  if (streamHint) {
+    const protocol = resolvePreset(preset)?.api_protocol || "openai-completions";
+    if (protocol === "openai-responses" && !state.responsesCompleted) {
+      throw new AiFailure(
+        "malformed_response",
+        `${providerLabel} 的 Responses 流没有完整结束，未使用部分结果。请重试。`,
+      );
+    }
+    if (protocol === "openai-completions" && !state.completed && !state.sawDone) {
+      throw new AiFailure(
+        "malformed_response",
+        `${providerLabel} 的流式响应意外结束，未使用部分结果。请重试。`,
+      );
+    }
   }
 
   const text = state.content.trim();

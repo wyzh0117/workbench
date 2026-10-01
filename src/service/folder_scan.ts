@@ -5,7 +5,8 @@
  * or read file contents into Canonical. Symlink roots/children are rejected or
  * skipped; a single unreadable entry degrades without failing the tree.
  */
-import { basename, extname, isAbsolute, join, normalize, relative } from "node:path";
+import { basename, dirname, extname, isAbsolute, join, normalize, relative } from "node:path";
+import { sha256Bytes } from "../domain/util.ts";
 
 export type ScanKind = "directory" | "file";
 
@@ -78,6 +79,44 @@ const ASSET_EXTENSIONS: Record<string, string> = {
   ".ogg": "audio/ogg",
 };
 
+const MANAGED_IMPORT_NAMES = new Set([
+  "project.json",
+  "project.json.bak",
+  "project.json.backup",
+  "project.lock",
+  "project.lock.guard",
+  "providers.json",
+  "providers.bak",
+  "credentials.json",
+  ".workspace",
+  ".git",
+  ".svn",
+  ".hg",
+  "node_modules",
+  "vendor",
+  "target",
+  "dist",
+  "build",
+  "out",
+  "coverage",
+  ".next",
+  ".cache",
+  ".env",
+  "id_rsa",
+  "id_ed25519",
+  "backups",
+  "backup",
+]);
+
+function isManagedImportName(name: string): boolean {
+  const lower = name.toLowerCase();
+  return MANAGED_IMPORT_NAMES.has(lower) ||
+    /^\.env(?:\.|$)/.test(lower) ||
+    /(?:credential|secret|token|api[-_]?key)/.test(lower) ||
+    /\.(?:pem|key|p12|pfx|orig|old|swp)$/.test(lower) ||
+    /(?:\.bak|\.backup|\.lock|\.tmp|~)$/.test(lower);
+}
+
 function extension(name: string): string {
   return extname(name).toLowerCase();
 }
@@ -125,6 +164,20 @@ function toRelative(root: string, path: string): string {
   return rel;
 }
 
+async function hasSymlinkComponent(root: string, relativePath: string): Promise<boolean> {
+  let cursor = root;
+  for (const part of relativePath.replaceAll("\\", "/").split("/").filter(Boolean)) {
+    cursor = join(cursor, part);
+    try {
+      if ((await Deno.lstat(cursor)).isSymlink) return true;
+    } catch (caught) {
+      if (caught instanceof Deno.errors.NotFound) return false;
+      throw caught;
+    }
+  }
+  return false;
+}
+
 async function assertScanRoot(root: string): Promise<string> {
   const normalized = normalize(root);
   if (!normalized || !isAbsolute(normalized)) {
@@ -165,7 +218,7 @@ function degrade(
 }
 
 /**
- * Recursively scan `root` into a flat list of ScanResult rows.
+ * Scan the immediate children of `root` into a flat list of ScanResult rows.
  * Read-only: never creates project.json or mutates user files.
  */
 export async function scanFolder(root: string): Promise<FolderScanReport> {
@@ -219,6 +272,9 @@ export async function scanFolder(root: string): Promise<FolderScanReport> {
           size: null,
           suggested_role: suggestedRoleForDirectory(relativePath),
         });
+        // Import mapping never expands a selected folder into all of its
+        // descendants. Users can choose that folder as a new root explicitly.
+        return;
       }
 
       let children: Deno.DirEntry[];
@@ -247,6 +303,12 @@ export async function scanFolder(root: string): Promise<FolderScanReport> {
 
       children.sort((left, right) => left.name.localeCompare(right.name, "zh"));
       for (const child of children) {
+        if (isManagedImportName(child.name)) {
+          warnings.push(
+            `${relativePath ? `${relativePath}/` : ""}${child.name}: 已跳过工作台管理文件或构建目录`,
+          );
+          continue;
+        }
         if (child.name.startsWith(".")) continue;
         if (child.isSymlink) {
           warnings.push(
@@ -310,6 +372,7 @@ export type FolderPreviewKind =
   | "image"
   | "video"
   | "audio"
+  | "pdf"
   | "reference"
   | "unsupported"
   | "directory";
@@ -321,9 +384,24 @@ export interface FolderPreviewResult {
   preview_kind: FolderPreviewKind;
   text: string | null;
   bytes_base64: string | null;
-  /** Set for PDF/DOCX (no full parser) or other non-editable references. */
+  /** Set for DOCX and other non-editable references. */
   note: string | null;
   error?: string | null;
+}
+
+export interface FolderSourceResult {
+  relative_path: string;
+  size: number;
+  sha256: string;
+  text: string;
+}
+
+export interface MarkdownImageStatus {
+  status: "present" | "missing" | "unsafe" | "error";
+  relative_path: string | null;
+  size: number | null;
+  mime: string | null;
+  message?: string;
 }
 
 const PREVIEW_TEXT_LIMIT = 512 * 1024;
@@ -349,12 +427,8 @@ function previewKindForName(name: string, mime: string | null): FolderPreviewKin
   if (lowerMime.startsWith("audio/") || /^\.(mp3|wav|m4a|ogg)$/i.test(extension(name))) {
     return "audio";
   }
-  if (
-    WORD_EXTENSIONS.has(extension(name)) ||
-    extension(name) === ".pdf" ||
-    lowerMime === "application/pdf" ||
-    /word|document/.test(lowerMime)
-  ) {
+  if (extension(name) === ".pdf" || lowerMime === "application/pdf") return "pdf";
+  if (WORD_EXTENSIONS.has(extension(name)) || /word|document/.test(lowerMime)) {
     return "reference";
   }
   return "unsupported";
@@ -362,7 +436,8 @@ function previewKindForName(name: string, mime: string | null): FolderPreviewKin
 
 /**
  * Read-only preview payload for one path under a previously scanned root.
- * Does not write Canonical / project.json. PDF/DOCX return file info + note.
+ * Does not write Canonical / project.json. PDFs return bounded bytes for a
+ * controlled viewer; DOCX stays a metadata-only reference until parsed safely.
  */
 export async function readFolderPreview(
   root: string,
@@ -376,6 +451,32 @@ export async function readFolderPreview(
   const absolute = join(resolvedRoot, ...rel.split("/").filter(Boolean));
   // Ensure the resolved path stays inside the scan root.
   toRelative(resolvedRoot, absolute);
+
+  try {
+    if (await hasSymlinkComponent(resolvedRoot, rel)) {
+      return {
+        relative_path: rel,
+        mime: null,
+        size: null,
+        preview_kind: "unsupported",
+        text: null,
+        bytes_base64: null,
+        note: null,
+        error: "已跳过符号链接，避免越过所选文件夹",
+      };
+    }
+  } catch (caught) {
+    return {
+      relative_path: rel,
+      mime: mimeFor(basename(absolute)),
+      size: null,
+      preview_kind: "unsupported",
+      text: null,
+      bytes_base64: null,
+      note: null,
+      error: `无法读取：${caught instanceof Error ? caught.message : String(caught)}`,
+    };
+  }
 
   let stat: Deno.FileInfo;
   try {
@@ -428,7 +529,7 @@ export async function readFolderPreview(
       preview_kind: "reference",
       text: null,
       bytes_base64: null,
-      note: "作为参考文件导入",
+      note: "参考文件 · 仅显示文件信息",
     };
   }
   if (kind === "unsupported") {
@@ -443,8 +544,7 @@ export async function readFolderPreview(
     };
   }
 
-  const limit = kind === "text" ? PREVIEW_TEXT_LIMIT : PREVIEW_MEDIA_LIMIT;
-  if (size != null && size > limit) {
+  if (size === 0) {
     return {
       relative_path: rel,
       mime,
@@ -452,8 +552,24 @@ export async function readFolderPreview(
       preview_kind: kind,
       text: null,
       bytes_base64: null,
-      note: "文件过大，无法在资源浏览器内预览",
-      error: "文件过大，无法在资源浏览器内预览",
+      note: null,
+      error: "文件为空，无法预览",
+    };
+  }
+
+  const limit = kind === "text" ? PREVIEW_TEXT_LIMIT : PREVIEW_MEDIA_LIMIT;
+  if (size != null && size > limit) {
+    const limitLabel = kind === "text" ? "512 KiB" : "16 MiB";
+    const message = `文件超过单文件预览上限（${limitLabel}），无法在资源浏览器内读取`;
+    return {
+      relative_path: rel,
+      mime,
+      size,
+      preview_kind: kind,
+      text: null,
+      bytes_base64: null,
+      note: message,
+      error: message,
     };
   }
 
@@ -485,6 +601,19 @@ export async function readFolderPreview(
     };
   }
 
+  if (kind === "pdf" && new TextDecoder().decode(bytes.subarray(0, 5)) !== "%PDF-") {
+    return {
+      relative_path: rel,
+      mime,
+      size: bytes.byteLength,
+      preview_kind: kind,
+      text: null,
+      bytes_base64: null,
+      note: null,
+      error: "PDF 文件内容无效或已损坏，无法预览",
+    };
+  }
+
   return {
     relative_path: rel,
     mime,
@@ -494,4 +623,139 @@ export async function readFolderPreview(
     bytes_base64: encodeBase64(bytes),
     note: null,
   };
+}
+
+/** Revalidate a scanned video path for a short-lived, ranged preview source. */
+export async function resolveFolderVideoSource(
+  root: string,
+  relativePath: string,
+): Promise<{ path: string; mime: string; size: number }> {
+  const resolvedRoot = await assertScanRoot(root);
+  const rel = String(relativePath || "").replaceAll("\\", "/");
+  const parts = rel.split("/");
+  if (!rel || rel.includes("\0") || isAbsolute(rel) || parts.some((part) => !part || part === "." || part === "..")) {
+    throw new Error("预览路径无效");
+  }
+  const absolute = join(resolvedRoot, ...parts);
+  toRelative(resolvedRoot, absolute);
+  let cursor = resolvedRoot;
+  for (const part of parts) {
+    cursor = join(cursor, part);
+    if ((await Deno.lstat(cursor)).isSymlink) throw new Error("视频来源包含符号链接");
+  }
+  const stat = await Deno.stat(absolute);
+  if (!stat.isFile) throw new Error("视频来源不是文件");
+  const mime = mimeFor(basename(absolute)) || "application/octet-stream";
+  if (previewKindForName(basename(absolute), mime) !== "video" || !mime.startsWith("video/")) {
+    throw new Error("该文件不是受支持的视频格式");
+  }
+  const realRoot = await Deno.realPath(resolvedRoot);
+  const realTarget = await Deno.realPath(absolute);
+  if (realTarget !== realRoot && !realTarget.startsWith(`${realRoot}/`)) {
+    throw new Error("视频来源超出所选文件夹");
+  }
+  const realStat = await Deno.stat(realTarget);
+  if (!realStat.isFile) throw new Error("视频来源不是文件");
+  return { path: realTarget, mime, size: realStat.size };
+}
+
+/** Read one explicitly selected text source for the shared Markdown parser. */
+export async function readFolderSource(
+  root: string,
+  relativePath: string,
+): Promise<FolderSourceResult> {
+  const resolvedRoot = await assertScanRoot(root);
+  const rel = String(relativePath || "").replaceAll("\\", "/");
+  const parts = rel.split("/").filter(Boolean);
+  if (!parts.length || rel.includes("\0") || isAbsolute(rel) || parts.some((part) => part === ".." || part === ".")) {
+    throw new Error("导入源路径无效");
+  }
+  const absolute = join(resolvedRoot, ...parts);
+  toRelative(resolvedRoot, absolute);
+  if (await hasSymlinkComponent(resolvedRoot, rel)) {
+    throw new Error("导入源路径包含符号链接");
+  }
+  const stat = await Deno.stat(absolute);
+  if (!stat.isFile) throw new Error("导入源必须是文件");
+  const bytes = await Deno.readFile(absolute);
+  const text = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+  return {
+    relative_path: rel,
+    size: bytes.byteLength,
+    sha256: await sha256Bytes(bytes),
+    text,
+  };
+}
+
+export async function inspectMarkdownImage(
+  root: string,
+  markdownRelativePath: string,
+  href: string,
+): Promise<MarkdownImageStatus> {
+  const resolvedRoot = await assertScanRoot(root);
+  const markdownRel = String(markdownRelativePath || "").replaceAll("\\", "/");
+  const sourceParts = markdownRel.split("/");
+  if (!markdownRel || markdownRel.includes("\0") || isAbsolute(markdownRel) || sourceParts.some((part) => !part || part === "." || part === "..")) {
+    return { status: "unsafe", relative_path: null, size: null, mime: null, message: "Markdown源路径无效" };
+  }
+  const sourcePath = join(resolvedRoot, ...sourceParts);
+  try {
+    if (await hasSymlinkComponent(resolvedRoot, markdownRel)) {
+      return { status: "unsafe", relative_path: null, size: null, mime: null, message: "Markdown源路径包含符号链接" };
+    }
+    if (!(await Deno.stat(sourcePath)).isFile) {
+      return { status: "unsafe", relative_path: null, size: null, mime: null, message: "Markdown源必须是文件" };
+    }
+  } catch (caught) {
+    if (caught instanceof Deno.errors.NotFound) {
+      return { status: "error", relative_path: null, size: null, mime: null, message: "Markdown源文件不存在" };
+    }
+    return { status: "error", relative_path: null, size: null, mime: null, message: "无法检查Markdown源文件" };
+  }
+
+  const rawHref = String(href || "").trim();
+  const imagePath = rawHref.split(/[?#]/, 1)[0] || "";
+  let decoded: string;
+  try {
+    decoded = decodeURIComponent(imagePath);
+  } catch {
+    return { status: "unsafe", relative_path: null, size: null, mime: null, message: "图片路径编码无效" };
+  }
+  if (
+    !decoded || decoded.startsWith("/") || decoded.startsWith("\\") ||
+    decoded.includes("\\") || decoded.includes("\0") || decoded.includes(":") ||
+    /^[a-z][a-z\d+.-]*:/i.test(decoded)
+  ) {
+    return { status: "unsafe", relative_path: null, size: null, mime: null, message: "仅允许所选文件夹内的本地图片" };
+  }
+  const relativePath = normalize(join(dirname(markdownRel), decoded)).replaceAll("\\", "/");
+  if (!relativePath || relativePath === "." || relativePath === ".." || relativePath.startsWith("../") || isAbsolute(relativePath)) {
+    return { status: "unsafe", relative_path: null, size: null, mime: null, message: "图片引用超出所选文件夹" };
+  }
+  const absolute = join(resolvedRoot, ...relativePath.split("/"));
+  toRelative(resolvedRoot, absolute);
+  try {
+    if (await hasSymlinkComponent(resolvedRoot, relativePath)) {
+      return { status: "unsafe", relative_path: relativePath, size: null, mime: null, message: "图片依赖不能经过符号链接" };
+    }
+  } catch (caught) {
+    if (caught instanceof Deno.errors.NotFound) {
+      return { status: "missing", relative_path: relativePath, size: null, mime: mimeFor(basename(absolute)) };
+    }
+    return { status: "error", relative_path: relativePath, size: null, mime: mimeFor(basename(absolute)), message: "无法检查图片依赖" };
+  }
+  try {
+    const canonical = await Deno.realPath(absolute);
+    toRelative(await Deno.realPath(resolvedRoot), canonical);
+    const stat = await Deno.stat(canonical);
+    if (!stat.isFile) {
+      return { status: "unsafe", relative_path: relativePath, size: null, mime: mimeFor(basename(absolute)), message: "图片依赖不是文件" };
+    }
+    return { status: "present", relative_path: relativePath, size: stat.size, mime: mimeFor(basename(absolute)) };
+  } catch (caught) {
+    if (caught instanceof Deno.errors.NotFound) {
+      return { status: "missing", relative_path: relativePath, size: null, mime: mimeFor(basename(absolute)) };
+    }
+    return { status: "error", relative_path: relativePath, size: null, mime: mimeFor(basename(absolute)), message: "无法检查图片依赖" };
+  }
 }

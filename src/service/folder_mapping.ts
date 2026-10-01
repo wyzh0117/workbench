@@ -16,6 +16,51 @@ export type MappingRole =
   | "reference"
   | "ignore";
 
+export type ImportMappingDestination =
+  | { kind: "unassigned_lesson" }
+  | { kind: "existing_stage"; stage_id: string }
+  | { kind: "existing_lesson"; content_item_id: string };
+
+export type MarkdownImageDependencyStatus =
+  | "present"
+  | "missing"
+  | "outside_root"
+  | "remote_or_unsafe";
+
+export interface MarkdownImageDependency {
+  href: string;
+  title: string | null;
+  alt: string | null;
+  tokenIndex: number;
+  occurrence: number;
+  blockIndex: number;
+  status: MarkdownImageDependencyStatus;
+}
+
+export interface MarkdownDependencyPreview {
+  state: "loading" | "ready" | "error";
+  source_hash: string | null;
+  fingerprint?: string;
+  counts?: {
+    total: number;
+    local_readable: number;
+    missing: number;
+    outside_root: number;
+    remote_or_unsafe: number;
+  };
+  images?: MarkdownImageDependency[];
+  error?: string;
+}
+
+export interface MarkdownSourceMatch {
+  state: "same_content" | "changed_source";
+  content_item_id: string;
+  title: string;
+  source_path: string;
+  previous_hash: string;
+  target_deleted?: boolean;
+}
+
 export interface ImportMappingItem {
   relative_path: string;
   kind: ScanKind;
@@ -30,6 +75,10 @@ export interface ImportMappingItem {
   /** Always true for rows born from scan suggestions. */
   is_suggestion: true;
   error?: string | null;
+  destination?: ImportMappingDestination | null;
+  markdown_dependency_preview?: MarkdownDependencyPreview | null;
+  markdown_source_match?: MarkdownSourceMatch | null;
+  allow_duplicate?: boolean;
 }
 
 export interface ImportMappingPlan {
@@ -84,7 +133,22 @@ function clonePlan(plan: ImportMappingPlan): ImportMappingPlan {
     root: plan.root,
     confirmed: plan.confirmed,
     confirmed_at: plan.confirmed_at,
-    items: plan.items.map((item) => ({ ...item })),
+    items: plan.items.map((item) => ({
+      ...item,
+      destination: item.destination ? { ...item.destination } : null,
+      markdown_dependency_preview: item.markdown_dependency_preview
+        ? {
+          ...item.markdown_dependency_preview,
+          counts: item.markdown_dependency_preview.counts
+            ? { ...item.markdown_dependency_preview.counts }
+            : undefined,
+          images: item.markdown_dependency_preview.images?.map((image) => ({ ...image })),
+        }
+        : null,
+      markdown_source_match: item.markdown_source_match
+        ? { ...item.markdown_source_match }
+        : null,
+    })),
   };
 }
 
@@ -112,9 +176,21 @@ export function buildImportMappingPlan(
         selected,
         is_suggestion: true,
         error: entry.error ?? null,
+        destination: suggested === "lesson" ? { kind: "unassigned_lesson" } : null,
+        markdown_dependency_preview: null,
+        markdown_source_match: null,
+        allow_duplicate: false,
       };
     })
     .filter((item) => item.relative_path.length > 0);
+  for (const item of items) {
+    if (item.mapping !== "lesson") continue;
+    const hasMappedStageParent = items.some((candidate) =>
+      candidate.kind === "directory" && candidate.selected && candidate.mapping === "stage" &&
+      item.relative_path.startsWith(`${candidate.relative_path}/`)
+    );
+    item.destination = hasMappedStageParent ? null : { kind: "unassigned_lesson" };
+  }
 
   return {
     root: String(root || ""),
@@ -137,6 +213,11 @@ export function setImportMappingSelected(
   for (const item of next.items) {
     if (item.relative_path === path) {
       item.selected = Boolean(selected);
+      if (item.selected && item.mapping === "lesson" && /\.(md|markdown)$/i.test(item.relative_path)) {
+        item.markdown_dependency_preview = null;
+        item.markdown_source_match = null;
+        item.allow_duplicate = false;
+      }
       break;
     }
   }
@@ -167,6 +248,60 @@ export function setImportMappingRole(
       item.mapping = mapping;
       if (mapping === "ignore") item.selected = false;
       else if (!item.selected) item.selected = true;
+      if (mapping === "lesson") {
+        const hasMappedStageParent = next.items.some((candidate) =>
+          candidate.kind === "directory" && candidate.selected && candidate.mapping === "stage" &&
+          item.relative_path.startsWith(`${candidate.relative_path}/`)
+        );
+        item.destination = hasMappedStageParent ? null : (item.destination || { kind: "unassigned_lesson" });
+      } else {
+        item.destination = null;
+        item.markdown_dependency_preview = null;
+        item.markdown_source_match = null;
+        item.allow_duplicate = false;
+      }
+      break;
+    }
+  }
+  return next;
+}
+
+/** Assign an explicit destination to a lesson row; persistence validates the target. */
+export function setImportMappingDestination(
+  plan: ImportMappingPlan,
+  relativePath: string,
+  destination: ImportMappingDestination | null | { kind: "folder_structure" },
+): ImportMappingPlan {
+  const path = String(relativePath || "").replaceAll("\\", "/");
+  const next = clonePlan(plan);
+  next.confirmed = false;
+  next.confirmed_at = null;
+  for (const item of next.items) {
+    if (item.relative_path === path && item.mapping === "lesson") {
+      item.destination = destination?.kind === "folder_structure"
+        ? null
+        : destination
+        ? { ...destination }
+        : null;
+      break;
+    }
+  }
+  return next;
+}
+
+/** Explicitly acknowledge importing a Markdown source match as a new copy. */
+export function setImportMappingAllowDuplicate(
+  plan: ImportMappingPlan,
+  relativePath: string,
+  allow: boolean,
+): ImportMappingPlan {
+  const path = String(relativePath || "").replaceAll("\\", "/");
+  const next = clonePlan(plan);
+  next.confirmed = false;
+  next.confirmed_at = null;
+  for (const item of next.items) {
+    if (item.relative_path === path && item.mapping === "lesson") {
+      item.allow_duplicate = Boolean(allow);
       break;
     }
   }

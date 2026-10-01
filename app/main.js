@@ -9,6 +9,8 @@
  */
 
 import { PROJECT_FILE_PICKER } from "./constants.js";
+import { markdownFromEditable } from "./markdown.js";
+import { parseMarkdown } from "./markdown.js";
 import { createSerialQueue, recoveryWarning } from "./recovery.js";
 import {
   MEDIA_BLOCK_TYPES,
@@ -30,12 +32,20 @@ import {
 } from "./authoring.js";
 import {
   AssetPreviewCache,
+  buildMarkdownDependencyPreview,
   buildImportMappingPlan,
   confirmImportMappingPlan,
+  decodeVideoFrame,
   esc,
   explorerPreviewKind,
   explorerUrlForBytes,
+  loadImage,
+  mappingRowClickToggles,
+  staticImagePoster,
+  stopPreviewMedia,
   setImportMappingRole as applyImportMappingRole,
+  setImportMappingAllowDuplicate as applyImportMappingAllowDuplicate,
+  setImportMappingDestination as applyImportMappingDestination,
   setImportMappingSelected as applyImportMappingSelected,
 } from "./canvas.js";
 import { createViews } from "./views.js";
@@ -65,6 +75,7 @@ import {
   AiFailure,
   FakeAiConnector,
   HttpAiConnector,
+  aiProviderDescriptors,
   aiProviderPreset,
   applyAiChangeDraft,
   assembleAiContext,
@@ -88,7 +99,6 @@ const SESSION_READER_KEYS = [
   "ai_scope",
   "ai_provider_id",
   "ai_model",
-  "ai_settings_open",
   "left_collapsed",
   "right_collapsed",
   "collapsed_stage_ids",
@@ -123,12 +133,14 @@ const NATIVE_PROJECT_COMMANDS = new Set([
   "project.reload",
   "project.merge",
   "project.resolve",
+  "folder.append",
   "import.preview",
   "import.confirm",
   "course.seed.create",
   "blueprint.build",
   "asset.import",
   "asset.read",
+  "asset.preview_source",
   "snapshot.create",
   "snapshot.restore",
   "export.preflight",
@@ -138,6 +150,14 @@ const NATIVE_PROJECT_COMMANDS = new Set([
 const clone = (value) => structuredClone(value);
 const uid = () => crypto.randomUUID();
 const now = () => new Date().toISOString();
+function oneShotMediaRelease(url) {
+  let released = false;
+  return () => {
+    if (released) return;
+    released = true;
+    void fetch(url, { method: "DELETE" }).catch(() => {});
+  };
+}
 const nextRevision = (previous) => {
   const previousMs = Date.parse(previous || "");
   const currentMs = Date.now();
@@ -361,12 +381,21 @@ class DesktopBridge {
       [
         "asset.import",
         "asset.read",
+        "asset.preview_source",
         "publication.record",
         "course.seed.create",
         "blueprint.build",
       ].includes(command)
     ) {
       return { input: { ...input, project_dir: projectDir } };
+    }
+    if (command === "folder.append") {
+      const { duplicate_choice: duplicateChoice, ...rest } = input;
+      return {
+        ...rest,
+        projectDir,
+        ...(duplicateChoice === undefined ? {} : { duplicateChoice }),
+      };
     }
     return { ...input, project_dir: projectDir };
   }
@@ -459,11 +488,16 @@ class DesktopBridge {
       "import.confirm": "import_confirm",
       "folder.scan": "folder_scan",
       "folder.read_preview": "folder_read_preview",
+      "folder.preview_source": "folder_preview_source",
+      "folder.read_source": "folder_read_source",
+      "folder.markdown_image_status": "folder_markdown_image_status",
       "folder.adopt": "folder_adopt",
+      "folder.append": "folder_append",
       "course.seed.create": "course_seed_create",
       "blueprint.build": "blueprint_build",
       "asset.import": "asset_import",
       "asset.read": "asset_read",
+      "asset.preview_source": "asset_preview_source",
       "snapshot.create": "create_snapshot",
       "snapshot.restore": "restore_snapshot",
       "export.preflight": "export_preflight",
@@ -487,6 +521,12 @@ class DesktopBridge {
       "ai.secret.delete": "ai_secret_delete",
       "ai.complete": "ai_complete",
       "ai.models.list": "ai_models_list",
+      "ai.models.probe": "ai_models_probe",
+      "ai.connection.test": "ai_connection_test",
+      "ai.subscription.start": "ai_subscription_start",
+      "ai.subscription.status": "ai_subscription_status",
+      "ai.subscription.cancel": "ai_subscription_cancel",
+      "ai.subscription.logout": "ai_subscription_logout",
       "ai.cancel": "ai_cancel",
       "ai.execution.append": "ai_execution_append",
       "ai.execution.list": "ai_execution_list",
@@ -501,6 +541,16 @@ class DesktopBridge {
     const invoke = globalThis.__TAURI__?.core?.invoke;
     if (!invoke) return null;
     return nativePath(await this.invokePicker(invoke, "select_file", {}));
+  }
+  async selectFiles() {
+    const invoke = globalThis.__TAURI__?.core?.invoke;
+    if (!invoke) return [];
+    const result = parseNativeValue(await this.invokePicker(invoke, "select_files", {}));
+    if (Array.isArray(result)) return result.map(nativePath).filter(Boolean);
+    if (result?.status === "selected" && Array.isArray(result.paths)) {
+      return result.paths.map(nativePath).filter(Boolean);
+    }
+    return [];
   }
   /** `project.open` for the directory currently selected on this bridge. */
   async openProject() {
@@ -619,6 +669,43 @@ class DesktopBridge {
       throw this.bridgeError(payload, "素材不可读");
     }
     return new Uint8Array(await response.arrayBuffer());
+  }
+  async previewAssetVideoSource(assetId) {
+    if (this.isNative()) {
+      const path = await this.invoke("asset.preview_source", { asset_id: assetId });
+      const convertFileSrc = globalThis.__TAURI__?.core?.convertFileSrc;
+      if (typeof convertFileSrc !== "function") throw new Error("当前桌面壳不支持受控视频预览");
+      return { url: convertFileSrc(path), release: () => {} };
+    }
+    const response = await fetch(`${this.apiBase}/media-source`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ asset_id: assetId }),
+    });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok || payload.error) throw this.bridgeError(payload, "视频不可读");
+    const url = new URL(payload.url, globalThis.location?.href || "http://localhost/").href;
+    return { url, release: oneShotMediaRelease(url) };
+  }
+  async previewFolderVideoSource(root, relativePath) {
+    if (this.isNative()) {
+      const path = await this.invoke("folder.preview_source", {
+        root,
+        relativePath,
+      });
+      const convertFileSrc = globalThis.__TAURI__?.core?.convertFileSrc;
+      if (typeof convertFileSrc !== "function") throw new Error("当前桌面壳不支持受控视频预览");
+      return { url: convertFileSrc(path), release: () => {} };
+    }
+    const response = await fetch(`${this.apiBase}/media-source`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ root, relative_path: relativePath }),
+    });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok || payload.error) throw this.bridgeError(payload, "视频不可读");
+    const url = new URL(payload.url, globalThis.location?.href || "http://localhost/").href;
+    return { url, release: oneShotMediaRelease(url) };
   }
   async exportProject(format, project, preset, outputPath = "", contentItemId = null, options = {}) {
     const nextPreset = { ...(preset || { name: format, output_type: format, platform: "通用", page_mode: "single", settings: {} }) };
@@ -1080,6 +1167,7 @@ class WorkbenchStore {
       lastExport: null,
       snapshot: false,
       gridEditing: false,
+      paginationEditing: false,
       layoutPageId: null,
       layoutZoom: "fit",
       movingPlacementTargetPageId: null,
@@ -1111,6 +1199,7 @@ class WorkbenchStore {
       aiProviderId: "fake",
       aiModel: "",
       aiSettingsOpen: false,
+      aiSubscriptionAttempt: null,
       aiInclude: { requirements: true, assets: true, completion: true, nearby: true },
       aiContext: null,
       aiContextOpen: false,
@@ -1155,6 +1244,9 @@ class WorkbenchStore {
       explorerPreview: null,
       /** V1-T04 mapping preview plan (§§30–31). UI-only until Task 12 apply. */
       importMappingPlan: null,
+      importMappingError: "",
+      importMode: "adopt",
+      importingMapping: false,
     };
     this.tabs = [];
     this.history = [];
@@ -1246,7 +1338,6 @@ class WorkbenchStore {
       ai_scope: this.ui.aiScope,
       ai_provider_id: this.ui.aiProviderId,
       ai_model: this.ui.aiModel,
-      ai_settings_open: this.ui.aiSettingsOpen === true,
       left_collapsed: this.ui.leftCollapsed,
       right_collapsed: this.ui.rightCollapsed,
       collapsed_stage_ids: [...this.ui.collapsedStageIds],
@@ -1274,7 +1365,6 @@ class WorkbenchStore {
       ai_scope: "lesson",
       ai_provider_id: "fake",
       ai_model: "",
-      ai_settings_open: false,
       left_collapsed: false,
       right_collapsed: false,
       collapsed_stage_ids: [],
@@ -1343,9 +1433,6 @@ class WorkbenchStore {
         ? value.ai_provider_id.trim()
         : defaults.ai_provider_id,
       ai_model: typeof value.ai_model === "string" ? value.ai_model.trim() : defaults.ai_model,
-      ai_settings_open: typeof value.ai_settings_open === "boolean"
-        ? value.ai_settings_open
-        : defaults.ai_settings_open,
       left_collapsed: Boolean(value.left_collapsed),
       right_collapsed: Boolean(value.right_collapsed),
       collapsed_stage_ids: Array.isArray(value.collapsed_stage_ids)
@@ -1374,7 +1461,7 @@ class WorkbenchStore {
     this.ui.aiScope = value.ai_scope || "lesson";
     this.ui.aiProviderId = value.ai_provider_id || "fake";
     this.ui.aiModel = value.ai_model || "";
-    this.ui.aiSettingsOpen = Boolean(value.ai_settings_open);
+    this.ui.aiSettingsOpen = false;
     this.ui.leftCollapsed = Boolean(value.left_collapsed);
     this.ui.rightCollapsed = Boolean(value.right_collapsed);
     this.ui.collapsedStageIds = Array.isArray(value.collapsed_stage_ids)
@@ -1643,7 +1730,7 @@ class WorkbenchStore {
     }
     this.notify();
   }
-  commit(label, mutation) {
+  commit(label, mutation, { notify = true } = {}) {
     const before = clone(this.data);
     const selectionBefore = this.ui.selectedBlockId;
     mutation(this.data);
@@ -1653,7 +1740,13 @@ class WorkbenchStore {
     if (this.history.length > 50) this.history.shift();
     this.future = [];
     this.scheduleSave();
-    this.notify();
+    if (notify) this.notify();
+  }
+  recordExternalCommit(label, before, selection = this.ui.selectedBlockId) {
+    if (!before) return;
+    this.history.push({ label, before: clone(before), after: clone(this.data), selection });
+    if (this.history.length > 50) this.history.shift();
+    this.future = [];
   }
   markDirty() { this.data.project.updated_at = nextRevision(this.data.project.updated_at); this.scheduleSave(); this.notify(); }
   /**
@@ -1771,8 +1864,8 @@ class WorkbenchStore {
       .find((entry) => entry && entry.id === id) || null;
     const descriptor = { ...base };
     if (saved) {
-      for (const key of ["label", "base_url", "chat_path", "auth_header", "auth_scheme", "default_model"]) {
-        if (typeof saved[key] === "string" && saved[key]) descriptor[key] = saved[key];
+      for (const key of ["label", "base_url", "chat_path", "api_protocol", "auth_header", "auth_scheme", "default_model", "kind"]) {
+        if (typeof saved[key] === "string" && (saved[key] || key === "auth_scheme")) descriptor[key] = saved[key];
       }
       descriptor.models = [...new Set([
         ...(Array.isArray(saved.models)
@@ -1783,8 +1876,9 @@ class WorkbenchStore {
     }
     // V0 knows exactly two connector kinds: the offline fake and the
     // OpenAI-compatible HTTP transport.
-    descriptor.kind = id === "fake" ? "fake" : "openai_compatible";
+    descriptor.kind = id === "fake" ? "fake" : (saved?.kind || "openai_compatible");
     descriptor.requires_credential = id !== "fake";
+    if (id !== "fake" && !descriptor.api_protocol) descriptor.api_protocol = "openai-completions";
     return descriptor;
   }
   /** The model id a run would use, resolved the same way the panel shows it. */
@@ -1895,6 +1989,10 @@ class WorkbenchStore {
     this.ui.aiProviderForm = null;
     this.ui.aiError = null;
     this.scheduleSessionSave();
+    if (this.ui.aiSettingsOpen && providerId !== "fake") {
+      this.aiEditProvider(providerId, { preserveSelection: true });
+      return;
+    }
     this.notify();
   }
   aiSetModel(model) {
@@ -2346,6 +2444,9 @@ class WorkbenchStore {
       label: descriptor.label,
       base_url: descriptor.base_url,
       chat_path: descriptor.chat_path,
+      api_protocol: descriptor.api_protocol || "openai-completions",
+      auth_header: descriptor.auth_header,
+      auth_scheme: descriptor.auth_scheme,
       default_model: descriptor.default_model,
       models: Array.isArray(descriptor.models) ? descriptor.models : [],
       isNew: false,
@@ -2359,8 +2460,7 @@ class WorkbenchStore {
     // 设置 always opens (or refreshes) the form.  It used to toggle shut on a
     // second click, which closed the address/key fields exactly when the user
     // was looking for them.
-    this.ui.focusField = this.ui.aiConfigured?.[descriptor.id] ? "" : "ai-secret";
-    this.scheduleSessionSave();
+    this.ui.focusField = "ai-provider-label";
     this.notify();
   }
   aiCreateConnection() {
@@ -2376,6 +2476,9 @@ class WorkbenchStore {
       kind: "openai_compatible",
       base_url: "",
       chat_path: "/chat/completions",
+      api_protocol: "openai-completions",
+      auth_header: "authorization",
+      auth_scheme: "Bearer",
       default_model: "",
       models: [],
       isNew: true,
@@ -2387,17 +2490,96 @@ class WorkbenchStore {
     this.ui.aiModelsError = "";
     this.ui.aiSettingsOpen = true;
     this.ui.focusField = "ai-provider-label";
-    this.scheduleSessionSave();
     this.notify();
   }
   aiToggleSettings() {
-    this.ui.aiSettingsOpen = !this.ui.aiSettingsOpen;
-    if (this.ui.aiSettingsOpen && !this.ui.aiProviderForm) {
-      this.aiEditProvider(this.ui.aiProviderId);
-      return;
+    if (this.ui.aiSettingsOpen) return this.aiCloseSettings();
+    this.ui.aiSettingsOpen = true;
+    if (!this.ui.aiProviderForm) {
+      const selected = (this.ui.aiProviders || []).find((entry) => entry?.id === this.ui.aiProviderId);
+      if (selected?.kind !== "openai_chatgpt_subscription") this.aiEditProvider(this.ui.aiProviderId, { preserveSelection: true });
     }
-    this.scheduleSessionSave();
     this.notify();
+  }
+  aiCloseSettings() {
+    for (const input of root.querySelectorAll?.("[data-ai-secret], [data-ai-temporary-secret]") || []) {
+      input.value = "";
+    }
+    this.ui.aiSettingsOpen = false;
+    this.ui.aiProviderForm = null;
+    this.ui.aiConnectionTestStatus = null;
+    this.ui.focusField = "";
+    this.notify();
+  }
+  async aiSubscriptionStart(providerId = "") {
+    if (!this.bridge.isNative()) {
+      this.ui.aiSubscriptionAttempt = { status: "unavailable", message: "订阅登录需要 macOS 桌面版。" };
+      this.notify();
+      return false;
+    }
+    if (this.ui.aiSubscriptionAttempt?.status === "pending") return false;
+    try {
+      const result = await this.bridge.command("ai.subscription.start", providerId ? { provider_id: providerId } : {});
+      this.ui.aiSubscriptionAttempt = result;
+      this.notify();
+      void this.aiPollSubscription(String(result?.attempt_id || ""));
+      return true;
+    } catch (error) {
+      const failure = this.aiFailureFrom(error);
+      this.ui.aiSubscriptionAttempt = { status: "error", message: failure.message };
+      this.notify();
+      return false;
+    }
+  }
+  async aiPollSubscription(attemptId) {
+    if (!attemptId) return;
+    for (let count = 0; count < 320; count++) {
+      await new Promise((resolve) => setTimeout(resolve, 1000));
+      try {
+        const result = await this.bridge.command("ai.subscription.status", { attempt_id: attemptId });
+        this.ui.aiSubscriptionAttempt = result;
+        this.notify();
+        if (result?.status !== "pending") {
+          if (result?.status === "connected") await this.aiLoadProviders();
+          return;
+        }
+      } catch (error) {
+        this.ui.aiSubscriptionAttempt = { status: "error", message: this.aiFailureFrom(error).message };
+        this.notify();
+        return;
+      }
+    }
+  }
+  async aiSubscriptionCancel() {
+    const attemptId = String(this.ui.aiSubscriptionAttempt?.attempt_id || "");
+    if (!attemptId) return false;
+    try {
+      await this.bridge.command("ai.subscription.cancel", { attempt_id: attemptId });
+      this.ui.aiSubscriptionAttempt = { attempt_id: attemptId, status: "cancelled", message: "登录已取消" };
+      this.notify();
+      return true;
+    } catch (error) {
+      this.ui.aiSubscriptionAttempt = { attempt_id: attemptId, status: "error", message: this.aiFailureFrom(error).message };
+      this.notify();
+      return false;
+    }
+  }
+  async aiSubscriptionLogout(providerId) {
+    const id = String(providerId || "").trim();
+    if (!id) return false;
+    try {
+      const result = await this.bridge.command("ai.subscription.logout", { provider_id: id });
+      await this.aiLoadProviders();
+      this.ui.toast = result?.remote_revoked
+        ? "已退出 ChatGPT 订阅账户并确认撤销远程会话"
+        : "已清除本机订阅会话；远程撤销未确认，可在 ChatGPT 设置中断开 Workbench";
+      this.notify();
+      return true;
+    } catch (error) {
+      this.ui.toast = `退出订阅账户失败：${this.aiFailureFrom(error).message}`;
+      this.notify();
+      return false;
+    }
   }
   async aiDeleteConnection(providerId) {
     const id = String(providerId || "").trim();
@@ -2429,6 +2611,10 @@ class WorkbenchStore {
     const baseUrl = String(
       (root.querySelector("[data-ai-base-url]") || {}).value || form.base_url || "",
     ).trim();
+    const apiProtocol = String(
+      (root.querySelector("[data-ai-api-protocol]") || {}).value || form.api_protocol || "openai-completions",
+    );
+    const temporaryKey = String(root.querySelector("[data-ai-secret]")?.value || "").trim();
     if (!providerId || providerId === "fake") {
       this.ui.toast = "离线连接器没有模型列表可以读取。";
       this.notify();
@@ -2443,32 +2629,48 @@ class WorkbenchStore {
     }
     const savedProvider = (Array.isArray(this.ui.aiProviders) ? this.ui.aiProviders : [])
       .find((entry) => entry && entry.id === providerId) || null;
-    if (!savedProvider || String(savedProvider.base_url || "").trim() !== baseUrl) {
-      this.ui.aiModelsError = "请先保存当前服务地址；跨域更改会提示确认 Key 的使用域名";
-      this.ui.aiModelSource = "manual";
-      this.ui.focusField = "ai-base-url";
-      this.notify();
-      return [];
-    }
-    if (this.ui.aiConfigured && this.ui.aiConfigured[providerId] === false) {
-      this.ui.aiModelsError = "还没有保存 API Key（读取模型需要密钥）";
+    const sameSavedEndpoint = savedProvider &&
+      String(savedProvider.base_url || "").trim() === baseUrl &&
+      String(savedProvider.api_protocol || "openai-completions") === apiProtocol;
+    const useSavedCredential = sameSavedEndpoint && this.ui.aiConfigured?.[providerId] === true;
+    if (!useSavedCredential && !temporaryKey) {
+      this.ui.aiModelsError = "输入临时 API Key 以探测未保存的地址，或先保存连接和密钥";
       this.ui.aiModelSource = "manual";
       this.ui.focusField = "ai-secret";
       this.notify();
       return [];
     }
+    // A key used only for this discovery request is never retained for a later
+    // render, even when the request fails.
+    if (!useSavedCredential) {
+      const secretInput = root.querySelector("[data-ai-secret]");
+      if (secretInput) secretInput.value = "";
+    }
     this.ui.aiModelsBusy = true;
     this.ui.aiModelsError = "";
     this.notify();
     let models = [];
+    let displayNames = {};
     try {
-      // Both shells answer this command: the desktop shell performs the GET in
-      // Rust, the browser shell through the local service.  Neither hands the
-      // key back to the page.
-      const result = await this.bridge.command("ai.models.list", {
-        provider_id: providerId,
-      });
+      const result = useSavedCredential
+        ? await this.bridge.command("ai.models.list", { provider_id: providerId })
+        : await this.bridge.command("ai.models.probe", {
+          provider: {
+            id: providerId,
+            label: String(form.label || providerId),
+            kind: "openai_compatible",
+            base_url: baseUrl,
+            chat_path: String(form.chat_path || "/chat/completions"),
+            api_protocol: apiProtocol,
+            auth_header: apiProtocol === "anthropic-messages" ? "x-api-key" : "authorization",
+            auth_scheme: apiProtocol === "anthropic-messages" ? "" : "Bearer",
+          },
+          temporary_credential: temporaryKey,
+        });
       models = Array.isArray(result && result.models) ? result.models : [];
+      displayNames = result?.display_names && typeof result.display_names === "object"
+        ? Object.fromEntries(Object.entries(result.display_names).filter(([, label]) => typeof label === "string"))
+        : {};
     } catch (error) {
       this.ui.aiModelsBusy = false;
       this.ui.aiModelsError = this.aiFailureFrom(error).message;
@@ -2487,6 +2689,7 @@ class WorkbenchStore {
       return [];
     }
     this.ui.aiModelOptions = models;
+    this.ui.aiModelLabels = displayNames;
     this.ui.aiModelSource = "remote";
     this.ui.aiModelsError = "";
     if (!models.includes(this.ui.aiChosenModel)) this.ui.aiChosenModel = models[0];
@@ -2501,6 +2704,45 @@ class WorkbenchStore {
     this.ui.aiManualModel = "";
     if (this.ui.aiProviderForm) this.ui.aiProviderForm.default_model = model;
     this.notify();
+  }
+  async aiTestConnection() {
+    const form = this.ui.aiProviderForm || {};
+    const providerId = String(form.id || this.ui.aiProviderId || "").trim();
+    const saved = (this.ui.aiProviders || []).find((provider) => provider?.id === providerId);
+    const current = {
+      base_url: String(root.querySelector("[data-ai-base-url]")?.value || form.base_url || "").trim(),
+      api_protocol: String(root.querySelector("[data-ai-api-protocol]")?.value || form.api_protocol || "openai-completions"),
+      default_model: String(root.querySelector("[data-ai-model-manual]")?.value || this.ui.aiChosenModel || form.default_model || "").trim(),
+    };
+    if (!saved ||
+      String(saved.base_url || "").trim() !== current.base_url ||
+      String(saved.api_protocol || "openai-completions") !== current.api_protocol ||
+      String(saved.default_model || "") !== current.default_model) {
+      this.ui.aiConnectionTestStatus = { state: "error", message: "请先保存当前 Base URL、协议和默认模型，再测试连接。" };
+      this.notify();
+      return false;
+    }
+    if (this.ui.aiConfigured?.[providerId] !== true) {
+      this.ui.aiConnectionTestStatus = { state: "error", message: "先保存 API Key，再运行连接测试。" };
+      this.notify();
+      return false;
+    }
+    this.ui.aiConnectionTestStatus = { state: "busy", message: "正在发送最小测试请求…" };
+    this.notify();
+    try {
+      const result = await this.bridge.command("ai.connection.test", { provider_id: providerId });
+      this.ui.aiConnectionTestStatus = {
+        state: "ok",
+        message: `连接成功：${String(result?.model || current.default_model)}（固定短提示，不读取课程内容）`,
+      };
+      this.notify();
+      return true;
+    } catch (error) {
+      const failure = this.aiFailureFrom(error);
+      this.ui.aiConnectionTestStatus = { state: "error", message: failure.message };
+      this.notify();
+      return false;
+    }
   }
   /** Save a provider's address / model names.  Never a credential. */
   aiOriginForCredential(value) {
@@ -2526,14 +2768,19 @@ class WorkbenchStore {
     }
     const existing = (Array.isArray(this.ui.aiProviders) ? this.ui.aiProviders : [])
       .find((entry) => entry && entry.id === id) || null;
+    const protocol = ["openai-completions", "openai-responses", "anthropic-messages"]
+      .includes(String(input.api_protocol || this.ui.aiProviderForm?.api_protocol || existing?.api_protocol || "openai-completions"))
+      ? String(input.api_protocol || this.ui.aiProviderForm?.api_protocol || existing?.api_protocol || "openai-completions")
+      : "openai-completions";
     const provider = {
       id,
       label: String(input.label || id).trim() || id,
-      kind: "openai_compatible",
+      kind: existing?.kind || "openai_compatible",
       base_url: String(input.base_url || "").trim(),
       chat_path: String(input.chat_path || (existing && existing.chat_path) || "/chat/completions"),
-      auth_header: String((existing && existing.auth_header) || "authorization"),
-      auth_scheme: String((existing && existing.auth_scheme) || "Bearer"),
+      api_protocol: protocol,
+      auth_header: protocol === "anthropic-messages" ? "x-api-key" : "authorization",
+      auth_scheme: protocol === "anthropic-messages" ? "" : "Bearer",
       default_model: String(input.default_model || "").trim(),
       models: Array.isArray(input.models)
         ? input.models.map((model) => String(model).trim()).filter(Boolean)
@@ -2574,6 +2821,9 @@ class WorkbenchStore {
       label: provider.label,
       base_url: provider.base_url,
       chat_path: provider.chat_path,
+      api_protocol: provider.api_protocol,
+      auth_header: provider.auth_header,
+      auth_scheme: provider.auth_scheme,
       default_model: provider.default_model,
       models: provider.models,
     };
@@ -3216,6 +3466,7 @@ class WorkbenchStore {
     this.notify();
   }
   commitNativeProject(project, reader) {
+    this.clearExplorerPreview();
     this.assetPreview.clear();
     this.data = project;
     this.trackProjectIdentity();
@@ -3270,10 +3521,15 @@ class WorkbenchStore {
    * Picks a folder and runs a read-only scan. Must not call project.create or
    * project.open, and must not write project.json (adoption is Task 12).
    */
-  async importExistingFolderFromPicker() {
+  async importExistingFolderFromPicker(mode = "adopt") {
     if (!this.bridge.isNative()) {
       this.ui.toast =
         "导入已有文件夹需要在桌面应用中选择文件夹。你也可以先「新建课程」或「打开现有项目」。";
+      this.notifyChrome();
+      return;
+    }
+    if (mode === "append" && !this.data?.project?.id) {
+      this.ui.toast = "请先打开或新建要追加资料的课程项目。";
       this.notifyChrome();
       return;
     }
@@ -3285,14 +3541,14 @@ class WorkbenchStore {
         this.notifyChrome();
         return;
       }
-      await this.importExistingFolder(dir);
+      await this.importExistingFolder(dir, mode);
     } catch (error) {
       this.ui.toast = userFacingError(error, "无法扫描文件夹。当前项目没有改变，请重试。");
       this.notify();
     }
   }
   /** Read-only scan of an absolute folder. Stores ScanResult in UI state only. */
-  async importExistingFolder(dir) {
+  async importExistingFolder(dir, mode = "adopt") {
     const root = String(dir || "").trim();
     if (!root) {
       this.ui.toast = "没有选择文件夹。请再试一次「导入已有文件夹」。";
@@ -3305,8 +3561,10 @@ class WorkbenchStore {
         throw new Error("文件夹扫描没有返回可用结果。请重试，或选择其他文件夹。");
       }
       const resolvedRoot = report.root || root;
+      this.ui.importMode = mode === "append" ? "append" : "adopt";
       this.ui.folderScan = report;
       this.ui.importFolderRoot = resolvedRoot;
+      this.ui.importMappingError = "";
       this.ui.explorerFilter = "";
       this.ui.explorerSelected = null;
       this.ui.explorerPreview = null;
@@ -3354,84 +3612,433 @@ class WorkbenchStore {
     // Keep in-progress edits for this root; rebuild only when missing or stale.
     if (!existing || existing.root !== root) {
       this.ui.importMappingPlan = buildImportMappingPlan(root, report.entries);
+      this.ui.importMappingError = "";
     }
     this.ui.route = "mapping";
     this.ui.screen = "project";
     this.ui.toast = "这是映射建议，不是最终事实。可勾选、修改后，再单独确认导入计划。";
     this.scheduleSessionSave();
     this.notify();
+    void this.refreshMarkdownDependencyPreviews();
   }
   setImportMappingSelected(relativePath, selected) {
     if (!this.ui.importMappingPlan) return;
+    this.ui.importMappingError = "";
+    this.ui.importMappingNeedsReview = false;
     this.ui.importMappingPlan = applyImportMappingSelected(
       this.ui.importMappingPlan,
       relativePath,
       selected,
     );
     this.notify();
+    void this.refreshMarkdownDependencyPreviews();
   }
   setImportMappingRole(relativePath, role) {
     if (!this.ui.importMappingPlan) return;
+    this.ui.importMappingError = "";
+    this.ui.importMappingNeedsReview = false;
     this.ui.importMappingPlan = applyImportMappingRole(
       this.ui.importMappingPlan,
       relativePath,
       role,
     );
     this.notify();
+    void this.refreshMarkdownDependencyPreviews();
+  }
+  setImportMappingDestination(relativePath, value) {
+    if (!this.ui.importMappingPlan) return;
+    const [kind, id] = String(value || "").split(/:(.*)/s, 2);
+    const destination = kind === "existing_stage" && id
+      ? { kind, stage_id: id }
+      : kind === "existing_lesson" && id
+      ? { kind, content_item_id: id }
+      : kind === "folder_structure"
+      ? { kind }
+      : { kind: "unassigned_lesson" };
+    this.ui.importMappingError = "";
+    this.ui.importMappingNeedsReview = false;
+    this.ui.importMappingPlan = applyImportMappingDestination(
+      this.ui.importMappingPlan,
+      relativePath,
+      destination,
+    );
+    this.notify();
+  }
+  setImportMappingAllowDuplicate(relativePath, allow) {
+    if (!this.ui.importMappingPlan) return;
+    this.ui.importMappingError = "";
+    this.ui.importMappingPlan = applyImportMappingAllowDuplicate(
+      this.ui.importMappingPlan,
+      relativePath,
+      allow,
+    );
+    this.notify();
+  }
+  findMarkdownSourceMatch(sourceHash, sourceRoot, relativePath) {
+    if (this.ui.importMode !== "append") return null;
+    const normalizePath = (value) => String(value || "")
+      .replaceAll("\\", "/")
+      .replace(/\/$/, "");
+    const root = normalizePath(sourceRoot);
+    const byDocument = new Map(
+      (this.data.documents || []).map((document) => [document.id, document.content_item_id]),
+    );
+    const ledger = this.data.project.settings?.markdown_import_sources;
+    if (Array.isArray(ledger)) {
+      let changedLedgerEntry = null;
+      let changedLedgerImportedAt = "";
+      for (const source of ledger) {
+        if (!source || typeof source !== "object" || Array.isArray(source)) continue;
+        const contentItemId = String(source.content_item_id || "");
+        const contentItem = this.data.content_items.find((item) => item.id === contentItemId);
+        if (contentItem && (contentItem.project_id !== this.data.project.id || contentItem.type !== "lesson")) continue;
+        const priorRoot = normalizePath(source.source_root);
+        const priorPath = String(source.relative_path || "").replaceAll("\\", "/");
+        const priorHash = String(source.source_hash || "");
+        if (!contentItemId || !priorRoot || !priorPath || !/^[a-f0-9]{64}$/i.test(priorHash)) continue;
+        const match = {
+          content_item_id: contentItemId,
+          title: contentItem?.title || String(source.title || "已删除的课时"),
+          source_path: `${priorRoot}/${priorPath}`,
+          previous_hash: priorHash,
+          target_deleted: !contentItem,
+        };
+        if (priorHash === sourceHash) return { state: "same_content", ...match };
+        if (priorRoot === root && priorPath === relativePath) {
+          const importedAt = String(source.imported_at || "");
+          if (!changedLedgerEntry || importedAt >= changedLedgerImportedAt) {
+            changedLedgerEntry = { state: "changed_source", ...match };
+            changedLedgerImportedAt = importedAt;
+          }
+        }
+      }
+      if (changedLedgerEntry) return changedLedgerEntry;
+    }
+    let changedSource = null;
+    for (const block of this.data.blocks || []) {
+      const provenance = block.settings?.markdown_import;
+      if (!provenance || typeof provenance !== "object" || Array.isArray(provenance)) continue;
+      const contentItemId = byDocument.get(block.document_id);
+      const contentItem = this.data.content_items.find((item) => item.id === contentItemId);
+      if (!contentItem || contentItem.project_id !== this.data.project.id || contentItem.type !== "lesson") continue;
+      const priorRoot = normalizePath(provenance.source_root);
+      const priorPath = String(provenance.relative_path || "").replaceAll("\\", "/");
+      const priorHash = String(provenance.source_hash || "");
+      const sourcePath = `${priorRoot}/${priorPath}`;
+      if (priorHash === sourceHash) {
+        return {
+          state: "same_content",
+          content_item_id: contentItem.id,
+          title: contentItem.title,
+          source_path: sourcePath,
+          previous_hash: priorHash,
+          target_deleted: false,
+        };
+      }
+      if (priorRoot === root && priorPath === relativePath) {
+        changedSource ||= {
+          state: "changed_source",
+          content_item_id: contentItem.id,
+          title: contentItem.title,
+          source_path: sourcePath,
+          previous_hash: priorHash,
+          target_deleted: false,
+        };
+      }
+    }
+    return changedSource;
+  }
+  async refreshMarkdownDependencyPreviews({ beforeConfirm = false } = {}) {
+    const plan = this.ui.importMappingPlan;
+    if (!plan) return { ready: false, changed: false };
+    const generation = (this.importMarkdownPreviewGeneration || 0) + 1;
+    this.importMarkdownPreviewGeneration = generation;
+    const isMarkdownLesson = (item) => item.selected && item.mapping === "lesson" &&
+      /\.(md|markdown)$/i.test(item.relative_path || "");
+    const rows = plan.items.filter(isMarkdownLesson);
+    if (!rows.length) return { ready: true, changed: false };
+    const previous = new Map(rows.map((item) => [
+      item.relative_path,
+      item.markdown_dependency_preview,
+    ]));
+    const previousMatches = new Map(rows.map((item) => [item.relative_path, item.markdown_source_match]));
+    const next = clone(plan);
+    for (const item of next.items) {
+      if (isMarkdownLesson(item)) {
+        item.markdown_dependency_preview = {
+          ...item.markdown_dependency_preview,
+          state: "loading",
+          error: undefined,
+        };
+      }
+    }
+    this.ui.importMappingPlan = next;
+    this.notify();
+    let changed = false;
+    let failed = false;
+    for (const item of next.items.filter(isMarkdownLesson)) {
+      if (generation !== this.importMarkdownPreviewGeneration) {
+        return { ready: false, changed: false, cancelled: true };
+      }
+      try {
+        const source = await this.bridge.command("folder.read_source", {
+          root: next.root,
+          relativePath: item.relative_path,
+        });
+        if (typeof source?.text !== "string" || !/^[a-f0-9]{64}$/i.test(source.sha256 || "")) {
+          throw new Error("Markdown源文件无法安全读取或校验。");
+        }
+        const parsed = parseMarkdown(source.text);
+        const statusByHref = {};
+        for (const href of new Set(parsed.explicitLocalImageRefs.map((ref) => ref.href))) {
+          const dependency = await this.bridge.command("folder.markdown_image_status", {
+            root: next.root,
+            markdownRelativePath: item.relative_path,
+            href,
+          });
+          if (dependency?.status === "present" || dependency?.status === "missing") {
+            statusByHref[href] = dependency.status;
+          } else if (dependency?.status === "unsafe") {
+            statusByHref[href] = "outside_root";
+          } else {
+            throw new Error(dependency?.message || `无法检查图片依赖：${href}`);
+          }
+        }
+        const preview = buildMarkdownDependencyPreview(source.sha256, parsed, statusByHref);
+        const baseline = previous.get(item.relative_path);
+        if (beforeConfirm && (
+          baseline?.state !== "ready" || baseline.fingerprint !== preview.fingerprint
+        )) changed = true;
+        item.markdown_dependency_preview = preview;
+        const match = this.findMarkdownSourceMatch(source.sha256, next.root, item.relative_path);
+        const previousMatch = previousMatches.get(item.relative_path);
+        const sameMatch = match && previousMatch && match.state === previousMatch.state &&
+          match.content_item_id === previousMatch.content_item_id && match.previous_hash === previousMatch.previous_hash;
+        item.markdown_source_match = match;
+        item.allow_duplicate = Boolean(sameMatch && item.allow_duplicate);
+        item.parsed_markdown = {
+          source_hash: source.sha256,
+          blocks: parsed.blocks,
+          explicitLocalImageRefs: parsed.explicitLocalImageRefs,
+        };
+      } catch (error) {
+        failed = true;
+        item.markdown_dependency_preview = {
+          state: "error",
+          source_hash: null,
+          error: userFacingError(error, "无法检查此 Markdown 的图片依赖，请重试。"),
+        };
+        delete item.parsed_markdown;
+      }
+    }
+    if (generation !== this.importMarkdownPreviewGeneration) {
+      return { ready: false, changed: false, cancelled: true };
+    }
+    this.ui.importMappingPlan = next;
+    this.ui.importMappingNeedsReview = beforeConfirm && changed;
+    this.notify();
+    return { ready: !failed, changed };
+  }
+  async retryMarkdownDependencyPreviews() {
+    this.ui.importMappingError = "";
+    await this.refreshMarkdownDependencyPreviews();
+  }
+  async importSelectedFilesFromPicker() {
+    if (!this.bridge.isNative() || !this.data?.project?.id) {
+      this.ui.toast = "请先打开课程项目，再从项目概览选择要追加的文件。";
+      this.notifyChrome();
+      return;
+    }
+    try {
+      const paths = await this.bridge.selectFiles();
+      if (!paths.length) return;
+      const parents = [...new Set(paths.map((path) => pathParts(path).output_dir))];
+      if (parents.length !== 1) {
+        throw new Error("多选文件目前要求来自同一文件夹。请分批选择不同文件夹中的资料。");
+      }
+      const root = parents[0];
+      const entries = paths.map((path) => {
+        const filename = filenameFromPath(path);
+        const extension = filename.split(".").pop()?.toLowerCase() || "";
+        const suggested_role = /^(md|markdown|txt|text)$/.test(extension)
+          ? "lesson"
+          : /^(pdf|doc|docx|odt|rtf)$/.test(extension)
+          ? "reference"
+          : /^(png|jpe?g|gif|webp|svg|avif|mp4|webm|mov|m4v|mp3|wav|m4a|ogg)$/.test(extension)
+          ? "asset"
+          : "unsupported";
+        return {
+          path,
+          relative_path: filename,
+          kind: "file",
+          mime: mimeForFilename(filename),
+          size: null,
+          suggested_role,
+        };
+      });
+      this.ui.importMode = "append";
+      this.ui.folderScan = { root, entries, warnings: [], errors: [] };
+      this.ui.importFolderRoot = root;
+      this.ui.importMappingPlan = buildImportMappingPlan(root, entries);
+      this.ui.importMappingError = "";
+      this.ui.route = "mapping";
+      this.ui.screen = "project";
+      this.ui.toast = `已选择 ${entries.length} 个文件。仅这些文件及 Markdown 明确引用的本地图片会进入映射计划。`;
+      this.scheduleSessionSave();
+      this.notify();
+      void this.refreshMarkdownDependencyPreviews();
+    } catch (error) {
+      this.ui.toast = userFacingError(error, "文件选择没有完成，当前课程没有改变。请重试。");
+      this.notify();
+    }
   }
   /**
    * Confirm collects the editable plan into UI state (§31).
    * Does not write project.json / Canonical — call applyFolderAdoption next.
    */
-  confirmImportMapping() {
+  async confirmImportMapping() {
     if (!this.ui.importMappingPlan) {
       this.ui.toast = "没有可确认的映射计划。请先打开映射预览。";
       this.notifyChrome();
       return;
     }
+    if (this.importInFlight) return;
+    const preview = await this.refreshMarkdownDependencyPreviews({ beforeConfirm: true });
+    if (!preview.ready) {
+      this.ui.importMappingError = "Markdown图片依赖预览还未完成或有文件无法检查。请修正后重试。";
+      this.ui.toast = this.ui.importMappingError;
+      this.notify();
+      return;
+    }
+    if (preview.changed) {
+      this.ui.importMappingError = "Markdown源文件或图片依赖自上次预览后发生变化。请先核对更新后的预览，再次确认。";
+      this.ui.toast = this.ui.importMappingError;
+      this.notify();
+      return;
+    }
+    this.ui.importMappingError = "";
+    this.ui.importMappingNeedsReview = false;
     this.ui.importMappingPlan = confirmImportMappingPlan(this.ui.importMappingPlan);
-    const selected = this.ui.importMappingPlan.items.filter((item) => item.selected).length;
-    this.ui.toast =
-      `已确认导入计划（${selected} 项）。请再点「写入课程项目」完成原地接管。`;
-    this.scheduleSessionSave();
-    this.notify();
+    await this.applyFolderAdoption();
   }
-  /**
-   * Strategy A apply (§§32–35): consume confirmed ui.importMappingPlan,
-   * write project.json + .workspace in the folder, copy media to assets/.
-   */
+  async prepareParsedMarkdownPlan(plan) {
+    const next = clone(plan);
+    for (const item of next.items || []) {
+      if (!item.selected || item.mapping !== "lesson" || !/\.(md|markdown)$/i.test(item.relative_path || "")) continue;
+      const preview = item.markdown_dependency_preview;
+      if (preview?.state !== "ready" || !/^[a-f0-9]{64}$/i.test(preview.source_hash || "")) {
+        throw new Error("Markdown图片依赖尚未通过映射预览检查；请返回预览后重新确认。");
+      }
+      let source;
+      try {
+        source = await this.bridge.command("folder.read_source", {
+          root: next.root,
+          relativePath: item.relative_path,
+        });
+      } catch {
+        throw new Error(
+          "无法读取所选 Markdown 源文件。导入尚未写入课程项目；请确认源文件仍存在、可读取且为 UTF-8 后重试。",
+        );
+      }
+      if (typeof source?.text !== "string" || !/^[a-f0-9]{64}$/i.test(source.sha256 || "")) {
+        throw new Error(
+          "无法安全解析所选 Markdown 源文件。导入尚未写入课程项目；请确认源文件仍存在、可读取且为 UTF-8 后重试。",
+        );
+      }
+      if (source.sha256 !== preview.source_hash) {
+        throw new Error("Markdown源文件在确认后发生变化。导入未写入；请重新打开映射预览并再次确认。");
+      }
+      const parsed = parseMarkdown(source.text);
+      item.parsed_markdown = {
+        source_hash: source.sha256,
+        blocks: parsed.blocks,
+        explicitLocalImageRefs: parsed.explicitLocalImageRefs,
+      };
+    }
+    return next;
+  }
+  /** Confirm and execute the selected import plan as one user action. */
   async applyFolderAdoption() {
     const plan = this.ui.importMappingPlan;
     if (!plan) {
-      this.ui.toast = "没有可接管的映射计划。请先打开映射预览并确认。";
+      this.ui.toast = "没有可执行的映射计划。请先打开映射预览。";
       this.notifyChrome();
       return;
     }
     if (!plan.confirmed) {
-      this.ui.toast = "请先确认导入计划，再写入课程项目。";
+      this.ui.toast = "请先确认导入计划。";
       this.notifyChrome();
       return;
     }
+    if (this.importInFlight) return;
+    const appending = this.ui.importMode === "append";
+    if (appending && !await this.flush()) {
+      this.ui.importMappingPlan = { ...plan, confirmed: false, confirmed_at: null };
+      this.ui.importMappingError =
+        "追加前保存没有完成，课程内容没有改变。请先修复保存问题，再重新确认追加。";
+      this.ui.toast = this.ui.importMappingError;
+      this.notify();
+      return;
+    }
+    this.importInFlight = true;
+    this.ui.importingMapping = true;
+    this.ui.importMappingError = "";
+    this.notify();
+    let createdRoot = "";
+    let importCommitted = false;
+    let appendBefore = null;
+    let appendSelection = null;
+    let appendHistoryRecorded = false;
     try {
-      const result = await this.bridge.command("folder.adopt", { plan });
+      const executablePlan = await this.prepareParsedMarkdownPlan(plan);
+      if (appending) {
+        // The successful flush above establishes the undo baseline; take the
+        // snapshot at the last safe point before the external Canonical write.
+        appendBefore = clone(this.data);
+        appendSelection = this.ui.selectedBlockId;
+      }
+      const result = await this.bridge.command(appending ? "folder.append" : "folder.adopt", {
+        plan: executablePlan,
+      });
       const adopted = result?.data || result?.value?.data || result;
       if (!adopted || !adopted.project) {
         throw new Error("文件夹接管没有返回可用的课程项目。");
       }
+      importCommitted = true;
       const root = String(result?.root || plan.root || this.ui.importFolderRoot || "").trim();
-      const targetData = migrateUiProject(adopted);
-      if (root && typeof this.bridge.setProjectDir === "function") {
-        this.bridge.setProjectDir(root);
-      }
-      if (this.bridge.isNative && this.bridge.isNative()) {
-        this.markNativeLease(root);
-        const targetSession = this.targetSession(targetData, root, "map");
-        this.commitNativeProject(
-          targetData,
-          this.normalizeReaderState(targetData, targetSession, "map"),
-        );
+      createdRoot = root;
+      if (appending) {
+        if (adopted.project.id !== this.data.project.id) {
+          throw new Error("追加结果中的项目身份与当前课程不一致；已写入的数据需要重新载入确认。");
+        }
+        this.data = migrateUiProject(adopted);
+        this.trackProjectIdentity();
+        this.recordExternalCommit("追加文件夹资料", appendBefore, appendSelection);
+        appendHistoryRecorded = Boolean(appendBefore);
+        await this.persistSession(this.session());
+      } else if (this.bridge.isNative() && root) {
+        this.ui.pendingAdoptedProjectRoot = root;
+        const opened = await this.openProject(root, { reopen: true });
+        if (this.data.project?.id !== adopted.project.id) {
+          this.ui.pendingAdoptedProjectRoot = root;
+          this.ui.route = "mapping";
+          this.ui.screen = "project";
+          this.ui.importMappingError =
+            "课程项目已经创建，但打开步骤未完成。请重新打开已创建的课程；不要再次导入。";
+          this.ui.toast = this.ui.importMappingError;
+          this.notify();
+          return;
+        }
+        this.ui.pendingAdoptedProjectRoot = null;
+        // openProject reports a failed session/navigation transition by
+        // retaining the prior project identity.
+        void opened;
       } else {
-        this.applyNewProject(targetData);
+        this.data = migrateUiProject(adopted);
+        this.ui.screen = "project";
+        this.ui.route = "map";
+        this.trackProjectIdentity();
+        await this.persistSession(this.session());
       }
       const stages = Array.isArray(result?.stage_ids) ? result.stage_ids.length : (this.data.stages || []).length;
       const lessons = Array.isArray(result?.content_item_ids)
@@ -3439,28 +4046,79 @@ class WorkbenchStore {
         : (this.data.content_items || []).length;
       const assets = Array.isArray(result?.asset_ids) ? result.asset_ids.length : (this.data.assets || []).length;
       const reused = Array.isArray(result?.reused_asset_ids) ? result.reused_asset_ids.length : 0;
-      const parts = [`已原地接管并写入课程项目`];
+      const parts = [appending ? `已追加到「${this.data.project.title}」` : `已原地接管并写入课程项目`];
       if (stages) parts.push(`${stages} 个阶段`);
       if (lessons) parts.push(`${lessons} 篇课文`);
       if (assets) parts.push(`${assets} 个素材`);
       if (reused) parts.push(`${reused} 个素材已按 checksum 复用`);
-      const successToast = `${parts.join(" · ")}。原文件未移动或删除。`;
+      const warnings = Array.isArray(result?.warnings)
+        ? result.warnings.filter((warning) => typeof warning === "string" && warning.trim())
+        : [];
+      const warningSummary = warnings.length
+        ? ` 注意：${warnings.slice(0, 2).join("；")}${warnings.length > 2 ? `；另有 ${warnings.length - 2} 项提醒` : ""}`
+        : "";
       this.ui.route = "map";
       this.scheduleSessionSave();
+      this.ui.importMappingError = "";
+      this.ui.toast = `${parts.join(" · ")}。原文件未移动或删除。${warningSummary}`;
       this.notify();
-      // applyNewProject refreshes AI side files asynchronously; keep the
-      // adoption success toast authoritative over soft AI read failures.
-      queueMicrotask(() => {
-        this.ui.toast = successToast;
-        this.notifyChrome();
-      });
     } catch (error) {
-      // Adoption may have staged or partially promoted managed copies under
-      // .workspace/adopt-staging or assets/; originals are never moved/deleted.
-      this.ui.toast = userFacingError(
-        error,
-        "无法完成课程项目写入。原文件未被移动或删除；若已产生 assets/ 或暂存文件，请检查后重试。",
-      );
+      const raw = String(error?.message || error || "");
+      if (appending && importCommitted) {
+        try {
+          const current = await this.bridge.readProject();
+          if (this.isProjectData(current)) {
+            this.data = migrateUiProject(current);
+            if (
+              !appendHistoryRecorded && appendBefore &&
+              this.data.project.id === appendBefore.project.id
+            ) {
+              this.recordExternalCommit("追加文件夹资料", appendBefore, appendSelection);
+              appendHistoryRecorded = true;
+            }
+          }
+        } catch { /* the successful disk commit is authoritative; reload can recover the view */ }
+        this.ui.route = "mapping";
+        this.ui.importMappingError =
+          "资料已经写入当前课程，但界面刷新没有完成。请返回课程地图核对内容；不要再次追加。";
+        this.ui.toast = this.ui.importMappingError;
+      } else if (/课程项目已写入|项目已创建/.test(raw)) {
+        this.ui.pendingAdoptedProjectRoot = createdRoot || plan.root;
+        this.ui.route = "mapping";
+        this.ui.screen = "project";
+        this.ui.importMappingError =
+          "课程项目已经创建，但后续步骤未完成。请重新打开已创建的课程；不要再次导入。";
+        this.ui.toast = this.ui.importMappingError;
+      } else {
+        this.ui.importMappingPlan = { ...plan, confirmed: false, confirmed_at: null };
+        this.ui.importMappingError = userFacingError(
+          error,
+          "无法完成课程项目写入。原文件未移动或删除；请检查所选文件和映射后重新确认。",
+        );
+        this.ui.toast = this.ui.importMappingError;
+      }
+      this.notify();
+    } finally {
+      this.importInFlight = false;
+      this.ui.importingMapping = false;
+      this.scheduleSessionSave();
+      this.notify();
+    }
+  }
+  async retryOpenAdoptedProject() {
+    const root = String(this.ui.pendingAdoptedProjectRoot || "").trim();
+    if (!root || !this.bridge.isNative()) return;
+    await this.openProject(root, { reopen: true });
+    if (this.bridge.projectDir === root && this.hasNativeLease(root)) {
+      this.ui.pendingAdoptedProjectRoot = null;
+      this.ui.importMappingError = "";
+      this.ui.toast = `已打开《${this.data.project.title}》`;
+      this.notify();
+    } else {
+      this.ui.pendingAdoptedProjectRoot = root;
+      this.ui.importMappingError =
+        "课程项目已经创建，但暂时无法打开。请确认所选文件夹仍可访问后重试；不要再次导入。";
+      this.ui.toast = this.ui.importMappingError;
       this.notify();
     }
   }
@@ -3480,11 +4138,27 @@ class WorkbenchStore {
     this.scheduleSessionSave();
     this.notify();
   }
+  clearExplorerPreview() {
+    this.explorerPreviewGeneration = (this.explorerPreviewGeneration || 0) + 1;
+    stopPreviewMedia(globalThis.document?.querySelector?.(".explorer-preview-body"));
+    try { this.ui.explorerPreview?.release?.(); } catch { /* source may already be expired */ }
+    const markdownUrls = Object.values(this.explorerMarkdownImageUrls || {}).map((value) =>
+      typeof value === "string" ? value : value?.url
+    );
+    this.explorerMarkdownImageUrls = {};
+    for (const url of [this.ui.explorerPreview?.url, this.ui.explorerPreview?.posterUrl, ...markdownUrls]) {
+      if (typeof url !== "string" || !url.startsWith("blob:")) continue;
+      try { URL.revokeObjectURL(url); } catch { /* already released */ }
+    }
+    this.ui.explorerPreview = null;
+  }
   /**
    * Select a ScanResult row and load a non-blank preview (§28).
    * UI-only: never writes Canonical / mapping confirm.
    */
   async selectExplorerEntry(relativePath) {
+    this.clearExplorerPreview();
+    const previewGeneration = this.explorerPreviewGeneration;
     const path = String(relativePath || "");
     const report = this.ui.folderScan;
     const root = this.ui.importFolderRoot || report?.root || "";
@@ -3493,7 +4167,6 @@ class WorkbenchStore {
       : null;
     this.ui.explorerSelected = path || null;
     if (!entry) {
-      this.ui.explorerPreview = null;
       this.scheduleSessionSave();
       this.notify();
       return;
@@ -3525,7 +4198,7 @@ class WorkbenchStore {
         preview_kind: "reference",
         text: null,
         url: null,
-        note: "作为参考文件导入",
+        note: "参考文件 · 仅显示文件信息",
         failed: false,
         size: entry.size,
         mime: entry.mime,
@@ -3557,26 +4230,162 @@ class WorkbenchStore {
       this.notify();
       return;
     }
+    const ownedUrls = [];
+    const ownedReleases = [];
+    const markdownImageUrls = {};
+    const isStale = () => this.explorerPreviewGeneration !== previewGeneration ||
+      this.ui.explorerSelected !== path;
+    const releaseOwned = () => {
+      for (const owned of ownedUrls) { try { URL.revokeObjectURL(owned); } catch { /* already released */ } }
+      for (const release of ownedReleases) { try { release(); } catch { /* already released */ } }
+    };
     try {
-      const preview = await this.bridge.command("folder.read_preview", {
-        root,
-        relative_path: path,
-      });
-      if (this.ui.explorerSelected !== path) return;
+      const preview = kind === "video"
+        ? { preview_kind: kind, mime: entry.mime, size: entry.size }
+        : await this.bridge.command("folder.read_preview", {
+          root,
+          relativePath: path,
+        });
+      if (this.explorerPreviewGeneration !== previewGeneration ||
+        this.ui.explorerSelected !== path) return;
       let url = null;
-      if (preview?.bytes_base64 && (kind === "image" || kind === "video" || kind === "audio")) {
+      let posterUrl = null;
+      let durationSeconds = null;
+      if (kind === "video") {
+        const source = await this.bridge.previewFolderVideoSource(root, path);
+        if (typeof source?.release === "function") ownedReleases.push(source.release);
+        url = source.url;
+        const frame = await decodeVideoFrame(url);
+        posterUrl = frame.posterUrl;
+        durationSeconds = frame.durationSeconds;
+        if (posterUrl?.startsWith("blob:")) ownedUrls.push(posterUrl);
+      } else if (preview?.bytes_base64 &&
+        (kind === "image" || kind === "video" || kind === "audio" || kind === "pdf")) {
         const binary = atob(String(preview.bytes_base64));
         const bytes = new Uint8Array(binary.length);
         for (let index = 0; index < binary.length; index += 1) {
           bytes[index] = binary.charCodeAt(index);
         }
         url = explorerUrlForBytes(bytes, preview.mime || entry.mime);
+        if (url.startsWith("blob:")) ownedUrls.push(url);
+        if (kind === "image") {
+          await loadImage(url);
+          if (/\.gif$/i.test(path) || String(preview.mime || "").toLowerCase() === "image/gif") {
+            posterUrl = await staticImagePoster(bytes, preview.mime || "image/gif");
+            if (posterUrl.startsWith("blob:")) ownedUrls.push(posterUrl);
+          }
+        } else if (kind === "video") {
+          const frame = await decodeVideoFrame(url);
+          posterUrl = frame.posterUrl;
+          durationSeconds = frame.durationSeconds;
+          if (posterUrl?.startsWith("blob:")) ownedUrls.push(posterUrl);
+        }
       }
+      if (preview?.preview_kind === "text" && typeof preview.text === "string" &&
+        /\.(md|markdown)$/i.test(path)) {
+        const references = [...new Set(parseMarkdown(preview.text).explicitLocalImageRefs.map((ref) => ref.href))];
+        const allowedMimes = new Set(["image/png", "image/jpeg", "image/gif", "image/webp", "image/avif"]);
+        let totalBytes = 0;
+        for (const [index, href] of references.entries()) {
+          if (index >= 32) {
+            markdownImageUrls[href] = { error: "图片引用过多，最多预览 32 张" };
+            continue;
+          }
+          try {
+            const dependency = await this.bridge.command("folder.markdown_image_status", {
+              root,
+              markdownRelativePath: path,
+              href,
+            });
+            if (isStale()) {
+              releaseOwned();
+              return;
+            }
+            if (dependency?.status !== "present") {
+              markdownImageUrls[href] = {
+                error: dependency?.status === "missing"
+                  ? "找不到本地图片"
+                  : dependency?.status === "unsafe"
+                  ? "图片路径超出来源目录或不可安全读取"
+                  : "无法安全检查图片",
+              };
+              continue;
+            }
+            const relativePath = String(dependency.relative_path || "");
+            const mime = String(dependency.mime || "").toLowerCase();
+            const size = Number(dependency.size);
+            if (!relativePath || relativePath.startsWith("/") || relativePath.split("/").some((part) => part === "..") ||
+              !allowedMimes.has(mime)) {
+              markdownImageUrls[href] = { error: "图片路径或格式不适用于安全预览" };
+              continue;
+            }
+            if (!Number.isFinite(size) || size < 0 || size > 16 * 1024 * 1024 || totalBytes + size > 16 * 1024 * 1024) {
+              markdownImageUrls[href] = { error: "图片超过 16 MiB 文件预览限制" };
+              continue;
+            }
+            const image = await this.bridge.command("folder.read_preview", { root, relativePath });
+            if (isStale()) {
+              releaseOwned();
+              return;
+            }
+            if (image?.preview_kind !== "image" || !image.bytes_base64 ||
+              String(image.mime || "").toLowerCase() !== mime) {
+              markdownImageUrls[href] = { error: "图片文件已改变或无法读取" };
+              continue;
+            }
+            const binary = atob(String(image.bytes_base64));
+            const bytes = new Uint8Array(binary.length);
+            for (let byte = 0; byte < binary.length; byte += 1) bytes[byte] = binary.charCodeAt(byte);
+            if (bytes.length > 16 * 1024 * 1024 || totalBytes + bytes.length > 16 * 1024 * 1024) {
+              markdownImageUrls[href] = { error: "图片超过 16 MiB 文件预览限制" };
+              continue;
+            }
+            const imageUrl = explorerUrlForBytes(bytes, mime);
+            if (imageUrl.startsWith("blob:")) ownedUrls.push(imageUrl);
+            try {
+              await loadImage(imageUrl);
+              if (mime === "image/gif") {
+                const poster = await staticImagePoster(bytes, mime);
+                if (poster.startsWith("blob:")) ownedUrls.push(poster);
+                if (imageUrl.startsWith("blob:")) {
+                  URL.revokeObjectURL(imageUrl);
+                  ownedUrls.splice(ownedUrls.indexOf(imageUrl), 1);
+                }
+                markdownImageUrls[href] = { url: poster };
+              } else {
+                markdownImageUrls[href] = { url: imageUrl };
+              }
+              totalBytes += bytes.length;
+            } catch {
+              if (imageUrl.startsWith("blob:")) {
+                URL.revokeObjectURL(imageUrl);
+                ownedUrls.splice(ownedUrls.indexOf(imageUrl), 1);
+              }
+              markdownImageUrls[href] = { error: "图片解码失败，文件可能已损坏" };
+            }
+          } catch {
+            if (isStale()) {
+              releaseOwned();
+              return;
+            }
+            markdownImageUrls[href] = { error: "无法安全读取图片" };
+          }
+        }
+      }
+      if (isStale()) {
+        releaseOwned();
+        return;
+      }
+      this.explorerMarkdownImageUrls = markdownImageUrls;
+      const release = ownedReleases.pop() || null;
       this.ui.explorerPreview = {
         relative_path: path,
         preview_kind: preview?.preview_kind || kind,
         text: typeof preview?.text === "string" ? preview.text : null,
         url,
+        release,
+        posterUrl,
+        durationSeconds,
         note: preview?.note || null,
         failed: Boolean(preview?.error),
         loading: false,
@@ -3586,7 +4395,11 @@ class WorkbenchStore {
       };
       this.notify();
     } catch (error) {
-      if (this.ui.explorerSelected !== path) return;
+      if (isStale()) {
+        releaseOwned();
+        return;
+      }
+      releaseOwned();
       this.ui.explorerPreview = {
         relative_path: path,
         preview_kind: kind,
@@ -4076,9 +4889,12 @@ class WorkbenchStore {
   }
   /** Return to the launcher without releasing the active project lease. */
   returnToLauncher() {
+    stopPreviewMedia(globalThis.document);
+    this.clearExplorerPreview();
     this.ui.screen = "launcher";
     this.ui.palette = this.ui.capture = this.ui.preflight = this.ui.snapshot = false;
     this.ui.assetPicker = null;
+    this.ui.assetImagePreviewId = null;
     this.notify();
   }
   enterProject() {
@@ -4119,6 +4935,7 @@ class WorkbenchStore {
     this.ui.route = "editor";
     this.ui.focusRequirementId = null;
     this.ui.selectedBlockId = null;
+    this.ui.paginationEditing = false;
     this.ui.propertyTarget = null;
     this.ui.gridEditing = false;
     this.ui.assetPicker = null;
@@ -4195,6 +5012,11 @@ class WorkbenchStore {
   }
   setMode(mode, options = {}) {
     if (!["writing", "structure", "layout", "preview"].includes(mode)) return;
+    if (mode !== "layout") {
+      this.ui.paginationEditing = false;
+      this.ui.gridEditing = false;
+      this.ui.movingPlacementTargetPageId = null;
+    }
     this.ui.mode = mode;
     const tab = this.tabs.find((candidate) => candidate.content_item_id === this.ui.activeId);
     if (tab) tab.mode = mode;
@@ -4211,6 +5033,9 @@ class WorkbenchStore {
     // structure page links here to change order, and landing on the editor
     // with the layout hidden would be a dead end.
     this.ui.mode = "layout";
+    this.ui.paginationEditing = false;
+    this.ui.gridEditing = false;
+    this.ui.movingPlacementTargetPageId = null;
     this.scheduleSessionSave();
     if (!this.layout(item)) {
       this.createLayout(mode);
@@ -4400,7 +5225,7 @@ class WorkbenchStore {
    * caret is never destroyed; the history entry is then created from the value
    * typing started from, which keeps undo meaningful.
    */
-  recordBlockTextEdit(blockId, before, value) {
+  recordBlockTextEdit(blockId, before, value, { notify = true } = {}) {
     const block = this.data.blocks.find((candidate) => candidate.id === blockId);
     if (!block) return;
     const previous = textOf(before);
@@ -4422,7 +5247,7 @@ class WorkbenchStore {
       if (document) document.updated_at = now();
       const item = data.content_items.find((candidate) => candidate.document_id === target.document_id);
       if (item) item.updated_at = now();
-    });
+    }, { notify });
   }
   renameLesson(id, title) {
     const next = String(title ?? "").trim();
@@ -5346,6 +6171,14 @@ class WorkbenchStore {
     this.ui.paginationConversionPreview = false;
     this.ui.pageSizePreview = null;
     this.scheduleSessionSave();
+    this.notify();
+  }
+  togglePaginationEditing() {
+    if (this.layout()?.pagination_mode !== "paged") return;
+    this.ui.paginationEditing = !this.ui.paginationEditing;
+    this.ui.gridEditing = false;
+    this.ui.movingPlacementTargetPageId = null;
+    this.ui.movingPlacementId = null;
     this.notify();
   }
   addLayoutPage() {
@@ -6886,6 +7719,36 @@ function render() {
 function installEditorGuards() {
   const target = globalThis.document;
   if (!target || typeof target.addEventListener !== "function") return;
+  let deferredRenderScheduled = false;
+  let deferredEditField = null;
+  const finishCompositionRender = (field) => {
+    deferredEditField = field || deferredEditField;
+    if (deferredRenderScheduled) return;
+    deferredRenderScheduled = true;
+    queueMicrotask(() => {
+      deferredRenderScheduled = false;
+      if (!renderQueued) {
+        deferredEditField = null;
+        return;
+      }
+      const editField = deferredEditField;
+      deferredEditField = null;
+      renderQueued = false;
+      // Let the field's compositionend/input listeners serialize the committed
+      // text before a queued render can detach it and lose the undo baseline.
+      if (editField?.dataset?.editProperty === "text") {
+        // Compose into one undo entry but let this guard perform the single
+        // render after the composition event has reached its target listeners.
+        flushPendingEdit(editField, { notify: false });
+        render();
+      } else if (editField?.dataset?.editProperty) {
+        const historyBefore = store.history.length;
+        flushPendingEdit(editField);
+        // A changed title commits through store.notify(), which already renders.
+        if (store.history.length === historyBefore) render();
+      } else render();
+    });
+  };
   const owns = (node) => {
     try {
       return Boolean(node) && (typeof root?.contains !== "function" || root.contains(node));
@@ -6898,19 +7761,13 @@ function installEditorGuards() {
   }, true);
   target.addEventListener("compositionend", (event) => {
     if (event.target === composingField) composingField = null;
-    if (renderQueued) {
-      renderQueued = false;
-      render();
-    }
+    if (renderQueued) finishCompositionRender(event.target);
   }, true);
   // Leaving the field ends the deferred render as well (a modal may have closed
   // or the field may have been removed while composing).
   target.addEventListener("focusout", (event) => {
     if (event.target === composingField) composingField = null;
-    if (renderQueued) {
-      renderQueued = false;
-      render();
-    }
+    if (renderQueued) finishCompositionRender(event.target);
   }, true);
 }
 
@@ -6953,7 +7810,7 @@ function autosizeBlockFields(scope = root) {
   }
 }
 
-function flushPendingEdit(element) {
+function flushPendingEdit(element, { notify = true } = {}) {
   if (!element) return;
   // A render detaches the field and browsers may report that as a blur.  The
   // pending value is already in canonical data; the history entry is recorded
@@ -6969,7 +7826,10 @@ function flushPendingEdit(element) {
     store.recordBlockTextEdit(
       element.dataset.blockId,
       typeof baseline === "string" ? baseline : block.content,
-      element.value,
+      element.isContentEditable || element.dataset.richEditor === "true"
+        ? markdownFromEditable(element)
+        : element.value,
+      { notify },
     );
   } else if (scope === "title") {
     store.renameLesson(block.id, element.value);
@@ -6988,19 +7848,84 @@ function handleAction(action, element, event) {
     }
   }
   switch (action) {
+    case "toggle-markdown-source": {
+      const blockId = String(element.dataset.id || "");
+      if (!blockId) return;
+      const editor = [...root.querySelectorAll("[data-rich-editor]")].find((candidate) =>
+        candidate.dataset.blockId === blockId
+      );
+      const source = [...root.querySelectorAll("textarea[data-block-id]")].find((candidate) =>
+        candidate.dataset.blockId === blockId && candidate.classList.contains("markdown-source-field")
+      );
+      if (editor) flushPendingEdit(editor);
+      if (source) flushPendingEdit(source);
+      store.ui.markdownSourceBlockId = store.ui.markdownSourceBlockId === blockId ? null : blockId;
+      store.notify();
+      return;
+    }
+    case "markdown-format": {
+      const blockId = String(element.dataset.id || "");
+      const editor = [...root.querySelectorAll("[data-rich-editor]")].find((candidate) =>
+        candidate.dataset.blockId === blockId
+      );
+      if (!editor) return;
+      const command = {
+        bold: "bold",
+        italic: "italic",
+        strike: "strikeThrough",
+      }[element.dataset.format || ""];
+      if (!command || typeof document.execCommand !== "function") return;
+      if (document.activeElement !== editor) editor.focus();
+      document.execCommand(command, false);
+      editor.dispatchEvent(new Event("input", { bubbles: true }));
+      return;
+    }
     case "close-overlay":
+      {
+        const modal = root.querySelector(".asset-media-preview-modal");
+        stopPreviewMedia(modal);
+        modal?.querySelectorAll?.("img[data-animated-preview]").forEach((image) =>
+          image.removeAttribute("src")
+        );
+      }
       store.ui.palette = store.ui.capture = store.ui.preflight = store.ui.snapshot = false;
       store.ui.assetPicker = null;
       store.ui.assetImagePreviewId = null;
       store.notify();
       return;
     case "open-asset-image": {
+      const modal = root.querySelector(".asset-media-preview-modal");
+      stopPreviewMedia(modal);
+      modal?.querySelectorAll?.("img[data-animated-preview]").forEach((image) =>
+        image.removeAttribute("src")
+      );
       const asset = store.data.assets.find((candidate) =>
         candidate.id === element.dataset.asset && !candidate.archived
       );
       if (!asset) return;
       store.ui.assetImagePreviewId = asset.id;
       store.notify();
+      return;
+    }
+    case "play-asset-video":
+    case "play-explorer-video": {
+      const video = element.closest(".asset-video-stage, .explorer-media-card")
+        ?.querySelector("video");
+      if (!video) return;
+      const playButton = video.parentElement?.querySelector(".asset-video-play");
+      const syncPlayButton = () => {
+        if (playButton) playButton.style.display = video.paused ? "flex" : "none";
+      };
+      if (playButton && !playButton.dataset.playStateBound) {
+        video.addEventListener("playing", syncPlayButton);
+        video.addEventListener("pause", syncPlayButton);
+        video.addEventListener("ended", syncPlayButton);
+        playButton.dataset.playStateBound = "true";
+      }
+      void video.play().then(syncPlayButton).catch(() => {
+        syncPlayButton();
+        store.say("视频无法播放，请检查编码格式或文件内容。");
+      });
       return;
     }
     case "retry-asset-preview":
@@ -7022,6 +7947,8 @@ function handleAction(action, element, event) {
     case "open-file": if (store.bridge.isNative()) void store.selectAndImportAsset(); else root.querySelector("[data-project-file]")?.click(); return;
     case "open-project-dir": void store.openProjectFromPicker(); return;
     case "import-folder": void store.importExistingFolderFromPicker(); return;
+    case "append-files": void store.importSelectedFilesFromPicker(); return;
+    case "append-folder": void store.importExistingFolderFromPicker("append"); return;
     case "explorer-select": void store.selectExplorerEntry(element.dataset.path || ""); return;
     case "explorer-toggle":
       event.stopPropagation();
@@ -7030,10 +7957,32 @@ function handleAction(action, element, event) {
     case "import-folder-again": void store.importExistingFolderFromPicker(); return;
     case "open-import-mapping": store.openImportMappingPreview(); return;
     case "confirm-import-mapping": store.confirmImportMapping(); return;
+    case "refresh-markdown-dependencies": void store.retryMarkdownDependencyPreviews(); return;
+    case "retry-open-adopted-project": void store.retryOpenAdoptedProject(); return;
     case "apply-folder-adoption": void store.applyFolderAdoption(); return;
     case "toggle-left": store.ui.leftCollapsed = !store.ui.leftCollapsed; store.scheduleSessionSave(); store.notify(); return;
     case "toggle-right": store.ui.rightCollapsed = !store.ui.rightCollapsed; store.scheduleSessionSave(); store.notify(); return;
-    case "route": store.ui.route = element.dataset.route; store.scheduleSessionSave(); store.notify(); return;
+    case "route": {
+      const nextRoute = String(element.dataset.route || "");
+      const previousRoute = store.ui.route;
+      if (nextRoute !== previousRoute) {
+        stopPreviewMedia(root);
+        root.querySelectorAll?.("img[data-animated-preview]").forEach((image) =>
+          image.removeAttribute("src")
+        );
+        store.ui.assetImagePreviewId = null;
+        if (previousRoute === "explorer") store.clearExplorerPreview();
+        store.ui.route = nextRoute;
+        store.scheduleSessionSave();
+        if (nextRoute === "explorer" && store.ui.explorerSelected) {
+          void store.selectExplorerEntry(store.ui.explorerSelected);
+        } else store.notify();
+      }
+      return;
+    }
+    case "explorer-retry":
+      if (store.ui.explorerSelected) void store.selectExplorerEntry(store.ui.explorerSelected);
+      return;
     case "open-workbench": store.openWorkbench(); return;
     case "open-item": store.openItem(element.dataset.id); return;
     case "prev-lesson": store.navigateLesson("previous"); return;
@@ -7140,6 +8089,9 @@ function handleAction(action, element, event) {
     case "move-block": store.moveBlock(element.dataset.id, element.dataset.direction); return;
     case "delete-block": store.deleteBlock(element.dataset.id); return;
     case "layout-mode": store.setLayoutMode(element.dataset.layoutMode); return;
+    case "toggle-pagination-edit":
+      store.togglePaginationEditing();
+      return;
     case "pagination-conversion": store.beginPaginationConversion(); return;
     case "cancel-pagination-conversion": store.cancelPaginationConversion(); return;
     case "confirm-pagination-conversion": store.confirmPaginationConversion(); return;
@@ -7282,6 +8234,12 @@ function handleAction(action, element, event) {
     case "ai-create-connection": store.aiCreateConnection(); return;
     case "ai-delete-connection": void store.aiDeleteConnection(element.dataset.id); return;
     case "ai-toggle-settings": store.aiToggleSettings(); return;
+    case "ai-close-settings": store.aiCloseSettings(); return;
+    case "ai-settings-backdrop": store.aiCloseSettings(); return;
+    case "ai-subscription-start": void store.aiSubscriptionStart(element.dataset.id || ""); return;
+    case "ai-subscription-cancel": void store.aiSubscriptionCancel(); return;
+    case "ai-subscription-logout": void store.aiSubscriptionLogout(element.dataset.id || ""); return;
+    case "ai-test-connection": void store.aiTestConnection(); return;
     case "ai-save-provider": {
       const read = (selector) => root.querySelector(selector)?.value ?? "";
       // The model actually used is the manual Model ID when filled, otherwise
@@ -7299,6 +8257,7 @@ function handleAction(action, element, event) {
         id: store.ui.aiProviderForm?.id || store.ui.aiProviderId,
         label: read("[data-ai-provider-label]"),
         base_url: read("[data-ai-base-url]"),
+        api_protocol: read("[data-ai-api-protocol]") || "openai-completions",
         default_model: chosen,
         models,
       });
@@ -7397,6 +8356,7 @@ function scheduleToastDismissal() {
 function dismissBlockOverflowMenu(restoreFocus = false) {
   const active = activeBlockOverflowMenu;
   if (!active) return;
+  active.details.closest?.("article.block")?.classList.remove("menu-open");
   activeBlockOverflowMenu = null;
   closeActiveBlockOverflowMenu = null;
   active.doc.removeEventListener("pointerdown", active.onOutside, true);
@@ -7422,6 +8382,7 @@ function showBlockOverflowMenu(details) {
   const summary = details.querySelector("summary");
   const menu = details.querySelector(".block-more-menu");
   if (!doc?.body || !summary || !menu) return;
+  details.closest?.("article.block")?.classList.add("menu-open");
   details.open = true;
   summary.setAttribute("aria-haspopup", "menu");
   summary.setAttribute("aria-expanded", "true");
@@ -7513,6 +8474,9 @@ function bindEvents() {
       else showBlockOverflowMenu(details);
     });
   });
+  root.querySelectorAll(".markdown-inline-toolbar button").forEach((button) => {
+    button.addEventListener("mousedown", (event) => event.preventDefault());
+  });
 
   // P2-1: the manual Model ID is a first-class choice.  Typing in it updates the
   // "将要使用的模型" line in place — no re-render, so the caret and IME survive —
@@ -7539,6 +8503,15 @@ function bindEvents() {
     manualModel.addEventListener("input", syncModelPreview);
     manualModel.addEventListener("change", syncModelPreview);
   }
+  const modelSearch = root.querySelector("[data-ai-model-search]");
+  if (modelSearch) {
+    modelSearch.addEventListener("input", () => {
+      const query = String(modelSearch.value || "").trim().toLowerCase();
+      for (const chip of root.querySelectorAll("[data-ai-model-list] .ai-model-chip")) {
+        chip.hidden = query !== "" && !String(chip.textContent || "").toLowerCase().includes(query);
+      }
+    });
+  }
 
   // P2-4: a grid block is operated with the mouse — left click selects it for
   // moving, right click takes it off the canvas.  The action buttons inside the
@@ -7547,6 +8520,7 @@ function bindEvents() {
     const placementId = element.dataset.placement;
     const blockId = element.dataset.structureBlock;
     element.addEventListener("click", (event) => {
+      if (element.dataset.pageReadonly === "true") return;
       if (event.target.closest?.(".placement-actions")) return;
       if (store.ui.movingPlacementId === placementId) {
         store.cancelMovePlacement();
@@ -7555,6 +8529,7 @@ function bindEvents() {
       store.startMovePlacement(placementId);
     });
     element.addEventListener("contextmenu", (event) => {
+      if (element.dataset.pageReadonly === "true") return;
       event.preventDefault();
       const block = store.data.blocks.find((candidate) => candidate.id === blockId);
       store.unplaceBlock(blockId);
@@ -7563,6 +8538,26 @@ function bindEvents() {
       store.ui.toast = `已把「${block ? blockLabel(block.type) : "这块内容"}」移出网格，回到「还没有放进网格的正文」`;
       store.notify();
     });
+  });
+
+  root.querySelectorAll("[data-rich-editor]").forEach((element) => {
+    const sync = (event) => {
+      if (event?.isComposing) return;
+      const block = store.data.blocks.find((candidate) => candidate.id === element.dataset.blockId);
+      if (!block) return;
+      block.content = markdownFromEditable(element);
+      element.dataset.empty = String(!block.content.trim());
+      store.markPendingEdit();
+    };
+    element.addEventListener("input", sync);
+    element.addEventListener("change", sync);
+    element.addEventListener("compositionend", sync);
+    element.addEventListener("focus", () => {
+      const block = store.data.blocks.find((candidate) => candidate.id === element.dataset.blockId);
+      if (block) element.dataset.editBaseline = block.content;
+      store.selectBlock(element.dataset.blockId, { force: true, soft: true });
+    });
+    element.addEventListener("blur", () => flushPendingEdit(element));
   });
 
   // Block text: update in place, then record one history entry on blur.
@@ -7776,9 +8771,29 @@ function bindEvents() {
       store.setImportMappingSelected(element.dataset.path || "", Boolean(element.checked));
     });
   });
+  root.querySelectorAll("tr[data-mapping-row]").forEach((row) => {
+    row.addEventListener("click", (event) => {
+      const target = event.target;
+      if (!(target instanceof Element) || !mappingRowClickToggles(target)) return;
+      store.setImportMappingSelected(
+        row.dataset.path || "",
+        row.dataset.selected !== "true",
+      );
+    });
+  });
   root.querySelectorAll("select[data-mapping-role]").forEach((element) => {
     element.addEventListener("change", () => {
       store.setImportMappingRole(element.dataset.path || "", element.value || "ignore");
+    });
+  });
+  root.querySelectorAll("select[data-mapping-destination]").forEach((element) => {
+    element.addEventListener("change", () => {
+      store.setImportMappingDestination(element.dataset.path || "", element.value || "unassigned_lesson");
+    });
+  });
+  root.querySelectorAll("input[data-mapping-duplicate]").forEach((element) => {
+    element.addEventListener("change", () => {
+      store.setImportMappingAllowDuplicate(element.dataset.path || "", Boolean(element.checked));
     });
   });
 
@@ -8015,6 +9030,7 @@ function bindPointerReorder(handle, source, sourceId, {
   if (!handle || !source || !sourceId) return;
   handle.addEventListener("pointerdown", (event) => {
     if (event.button != null && event.button !== 0) return;
+    event.preventDefault?.();
     const pointerId = event.pointerId;
     const projectId = store.data.project?.id;
     const route = store.ui.route;
@@ -8247,6 +9263,10 @@ document.addEventListener("keydown", (event) => {
   }
   if (event.key === "Escape" && store.ui.movingPlacementId) {
     store.cancelMovePlacement();
+    return;
+  }
+  if (event.key === "Escape" && store.ui.aiSettingsOpen) {
+    store.aiCloseSettings();
     return;
   }
   if (event.key === "Escape" && (store.ui.palette || store.ui.capture || store.ui.preflight || store.ui.snapshot || store.ui.assetPicker)) {

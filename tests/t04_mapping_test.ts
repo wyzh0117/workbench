@@ -2,11 +2,13 @@
  * V1-T04 Task 11 — Import mapping preview + user confirmation UI.
  *
  * Spec: package §§30–31, 34. Suggestions are 建议 not 事实.
- * Preview ≠ Confirm. Confirm collects the plan but must not write Canonical.
+ * Preview ≠ Confirm. The mapping helper collects the plan; the current UI confirm
+ * also executes the authorized import and is covered in t04_adoption_test.ts.
  */
 import { createEmptyProjectData } from "../src/domain/index.ts";
 import type { ProjectData } from "../src/domain/types.ts";
 import type { ScanResult } from "../src/service/folder_scan.ts";
+import { mappingRowClickToggles } from "../app/canvas.js";
 import {
   buildImportMappingPlan,
   confirmImportMappingPlan,
@@ -20,6 +22,18 @@ import {
 function assert(condition: unknown, message: string): asserts condition {
   if (!condition) throw new Error(message);
 }
+
+Deno.test("mapping row details/summary clicks do not toggle the row selection", () => {
+  const summaryTarget = {
+    closest(selector: string) {
+      return selector.split(",").map((part) => part.trim()).includes("summary")
+        ? summaryTarget
+        : null;
+    },
+  };
+  assert(!mappingRowClickToggles(summaryTarget), "details summary should only expand its dependency list");
+  assert(mappingRowClickToggles({ closest: () => null }), "clicking row background should still toggle selection");
+});
 
 let importCounter = 0;
 
@@ -290,6 +304,22 @@ async function bootStore() {
           errors: [],
         };
       }
+      if (name === "folder.read_source") {
+        const text = "# 导论\n第一课正文\n";
+        const digest = new Uint8Array(await crypto.subtle.digest(
+          "SHA-256",
+          new TextEncoder().encode(text),
+        ));
+        return {
+          relative_path: String(input.relativePath || "01-基础/导论.md"),
+          size: new TextEncoder().encode(text).length,
+          sha256: [...digest].map((byte) => byte.toString(16).padStart(2, "0")).join(""),
+          text,
+        };
+      }
+      if (name === "folder.markdown_image_status") {
+        return { status: "present", relative_path: "images/fixture.png", size: 1, mime: "image/png" };
+      }
       if (name === "folder.read_preview") {
         return {
           relative_path: String(input.relative_path || ""),
@@ -388,8 +418,7 @@ Deno.test("mapping preview UI labels 建议; deselect and edit; confirm is separ
     assert(html.includes("建议"), "edited preview still labeled 建议");
 
     const beforeConfirm = JSON.stringify(store.data);
-    store.confirmImportMapping();
-    const confirmed = store.ui.importMappingPlan as ImportMappingPlan;
+    const confirmed = confirmImportMappingPlan(edited);
     assert(confirmed.confirmed === true, "confirm collects/marks the plan");
     assert(
       byPath(confirmed).get("01-基础/导论.md")?.mapping === "source",

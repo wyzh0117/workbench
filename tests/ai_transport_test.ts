@@ -67,6 +67,46 @@ function jsonResponse(payload: unknown, status = 200): Response {
   });
 }
 
+function localAiServer() {
+  const calls: Array<{
+    method: string;
+    path: string;
+    headers: Headers;
+    body: string;
+  }> = [];
+  const server = Deno.serve(
+    { hostname: "127.0.0.1", port: 0 },
+    async (request) => {
+      const body = request.method === "GET" ? "" : await request.text();
+      const url = new URL(request.url);
+      calls.push({ method: request.method, path: url.pathname, headers: request.headers, body });
+      if (url.pathname.endsWith("/models")) {
+        return jsonResponse({ data: [{ id: "test-model" }] });
+      }
+      if (url.pathname.endsWith("/responses")) {
+        return new Response([
+          'data: {"type":"response.output_text.delta","delta":"OK"}',
+          "",
+          'data: {"type":"response.completed","response":{"model":"test-model","usage":{"total_tokens":1}}}',
+          "",
+          "data: [DONE]",
+          "",
+        ].join("\n"), { headers: { "content-type": "text/event-stream" } });
+      }
+      if (url.pathname.endsWith("/messages")) {
+        return jsonResponse({ model: "test-model", content: [{ type: "text", text: "OK" }] });
+      }
+      return jsonResponse({ choices: [{ message: { content: "OK" } }] });
+    },
+  );
+  const address = server.addr as Deno.NetAddr;
+  return {
+    calls,
+    baseUrl: `http://127.0.0.1:${address.port}/v1`,
+    close: () => server.shutdown(),
+  };
+}
+
 /** A transport that never answers until the request is aborted. */
 function hangingFetch(onStarted: () => void = () => {}): AiFetch {
   return (_input, init) =>
@@ -123,6 +163,10 @@ async function filesContaining(
 
 /** Store the credential `COMPLETE_INPUT` expects to have injected. */
 async function seedCredential(desktop: DesktopService): Promise<void> {
+  const connection = await desktop.commands.execute("ai.connection.save", {
+    provider: PROVIDER,
+  });
+  assert(!connection.error, "the provider connection must save before its key");
   const stored = await desktop.commands.execute("ai.secret.set", {
     provider_id: "deepseek",
     value: CREDENTIAL,
@@ -177,6 +221,10 @@ async function withDesktop(
 
 Deno.test("ai connections round-trip without ever returning the credential", async () => {
   await withDesktop(async ({ desktop }) => {
+    const saved = await desktop.commands.execute("ai.connection.save", {
+      provider: PROVIDER,
+    });
+    assert(!saved.error, "the provider must be saved before its key");
     const stored = await desktop.commands.execute("ai.secret.set", {
       provider_id: "deepseek",
       value: CREDENTIAL,
@@ -200,13 +248,6 @@ Deno.test("ai connections round-trip without ever returning the credential", asy
       "audit metadata must not contain the credential",
     );
 
-    const saved = await desktop.commands.execute("ai.connection.save", {
-      provider: PROVIDER,
-    });
-    assert(
-      !saved.error,
-      `ai.connection.save failed: ${JSON.stringify(saved.error)}`,
-    );
     const savedProvider = (saved.value as { provider: { id: string } }).provider;
     assert(savedProvider.id === "deepseek", "the saved provider must come back");
 
@@ -223,6 +264,16 @@ Deno.test("ai connections round-trip without ever returning the credential", asy
     assert(
       list.configured.deepseek === true,
       "credential presence must be reported as a boolean",
+    );
+    const updated = await desktop.commands.execute("ai.connection.save", {
+      provider: { ...PROVIDER, label: "DeepSeek renamed" },
+    });
+    assert(!updated.error, "updating connection metadata must succeed");
+    const afterUpdate = await desktop.commands.execute("ai.connection.list", {});
+    assert(
+      (afterUpdate.value as { configured: Record<string, boolean> }).configured
+        .deepseek === true,
+      "updating connection metadata must preserve the saved credential",
     );
     assert(
       !Object.prototype.hasOwnProperty.call(list, "credentials"),
@@ -525,6 +576,153 @@ Deno.test("ai.complete posts once with the injected auth header and normalises b
   }, { fetch: stub });
 });
 
+Deno.test("stored credentials never cross origins through renderer URLs or stale metadata", async () => {
+  const { fetch: stub, calls } = stubFetch(() =>
+    jsonResponse({ data: [{ id: "model-a" }] })
+  );
+  await withDesktop(async ({ desktop, aiHome }) => {
+    const provider = {
+      ...PROVIDER,
+      base_url: "https://source.example/v1",
+      chat_path: "/chat/completions",
+    };
+    const saved = await desktop.commands.execute("ai.connection.save", { provider });
+    assert(!saved.error, "the source provider should save");
+    const keySaved = await desktop.commands.execute("ai.secret.set", {
+      provider_id: provider.id,
+      value: CREDENTIAL,
+    });
+    assert(!keySaved.error, "the source credential should save");
+
+    const changed = await desktop.commands.execute("ai.connection.save", {
+      provider: { ...provider, base_url: "https://destination.example/v1" },
+    });
+    assert(
+      changed.error?.code === "credential_origin_confirmation_required",
+      "cross-origin URL edits must stop until the user confirms credential use",
+    );
+
+    const complete = await desktop.commands.execute("ai.complete", {
+      ...COMPLETE_INPUT,
+      provider_id: provider.id,
+      url: "https://destination.example/collect",
+    });
+    assert(!complete.error, "an authenticated request should use its saved endpoint");
+    assert(
+      String(calls[0]?.input) === "https://source.example/v1/chat/completions",
+      "renderer-supplied completion URLs must not redirect the saved credential",
+    );
+
+    const models = await desktop.commands.execute("ai.models.list", {
+      provider_id: provider.id,
+      base_url: "https://destination.example/v1",
+    });
+    assert(!models.error, "model discovery should use the saved provider URL");
+    assert(
+      String(calls[1]?.input) === "https://source.example/v1/models",
+      "renderer-supplied model URLs must not redirect the saved credential",
+    );
+    assert(
+      calls.every((call) => new URL(String(call.input)).origin === "https://source.example"),
+      "no request before confirmation may reach the destination origin",
+    );
+
+    const providerPath = aiHome + "/providers.json";
+    const metadata = JSON.parse(await Deno.readTextFile(providerPath));
+    metadata.providers[0].base_url = "https://destination.example/v1";
+    await Deno.writeTextFile(providerPath, JSON.stringify(metadata));
+    const staleComplete = await desktop.commands.execute("ai.complete", {
+      ...COMPLETE_INPUT,
+      provider_id: provider.id,
+      url: "https://destination.example/collect",
+    });
+    assert(
+      staleComplete.error?.code === "credential_origin_confirmation_required",
+      "stale or migrated metadata must keep the previously bound origin authoritative",
+    );
+    const staleModels = await desktop.commands.execute("ai.models.list", {
+      provider_id: provider.id,
+      base_url: "https://destination.example/v1",
+    });
+    assert(
+      staleModels.error?.code === "credential_origin_confirmation_required",
+      "model discovery must stop after a persisted URL changes without confirmation",
+    );
+    assert(calls.length === 2, "blocked origin changes must not issue network requests");
+    const listed = await desktop.commands.execute("ai.connection.list", {});
+    assert(
+      (listed.value as { credential_origins: Record<string, string> })
+        .credential_origins[provider.id] === "https://source.example",
+      "the old credential binding must remain intact after blocked changes",
+    );
+
+    for (const binding of ["missing", "invalid"] as const) {
+      const tampered = JSON.parse(await Deno.readTextFile(providerPath));
+      tampered.providers[0].base_url = "https://destination.example/v1";
+      if (binding === "missing") {
+        delete tampered.credential_origins;
+      } else {
+        tampered.credential_origins = { [provider.id]: "not-an-origin" };
+      }
+      await Deno.writeTextFile(providerPath, JSON.stringify(tampered));
+
+      const unboundListing = await desktop.commands.execute("ai.connection.list", {});
+      const listedValue = unboundListing.value as {
+        configured: Record<string, boolean>;
+        credential_origins: Record<string, string>;
+      };
+      assert(listedValue.configured[provider.id], "tampering must not delete the stored Key");
+      assert(
+        !listedValue.credential_origins[provider.id],
+        `${binding} origin data must remain unbound after reading metadata`,
+      );
+
+      const sameUrlSave = await desktop.commands.execute("ai.connection.save", {
+        provider: { ...provider, base_url: "https://destination.example/v1" },
+      });
+      assert(
+        sameUrlSave.error?.code === "credential_origin_confirmation_required",
+        `${binding} binding must require explicit confirmation even when the URL is unchanged`,
+      );
+      const unboundComplete = await desktop.commands.execute("ai.complete", {
+        ...COMPLETE_INPUT,
+        provider_id: provider.id,
+        url: "https://destination.example/collect",
+      });
+      const unboundModels = await desktop.commands.execute("ai.models.list", {
+        provider_id: provider.id,
+        base_url: "https://destination.example/v1",
+      });
+      assert(
+        unboundComplete.error?.code === "credential_origin_confirmation_required" &&
+          unboundModels.error?.code === "credential_origin_confirmation_required",
+        `${binding} binding must block both completion and model discovery`,
+      );
+      assert(calls.length === 2, `${binding} binding must produce zero requests to the destination`);
+    }
+
+    const confirmed = await desktop.commands.execute("ai.connection.save", {
+      provider: { ...provider, base_url: "https://destination.example/v1" },
+      confirm_credential_origin: true,
+    });
+    assert(!confirmed.error, "explicit confirmation should bind the preserved Key to the destination");
+    const confirmedListing = await desktop.commands.execute("ai.connection.list", {});
+    assert(
+      (confirmedListing.value as { credential_origins: Record<string, string> })
+        .credential_origins[provider.id] === "https://destination.example",
+      "confirmation should bind the Key to the saved destination origin",
+    );
+    const confirmedModels = await desktop.commands.execute("ai.models.list", {
+      provider_id: provider.id,
+    });
+    assert(!confirmedModels.error, "model discovery should resume after explicit binding");
+    assert(
+      String(calls[2]?.input) === "https://destination.example/v1/models",
+      "confirmed model discovery should reach only the bound destination",
+    );
+  }, { fetch: stub });
+});
+
 Deno.test("ai.complete returns streams as raw text and unparsable JSON as text", async () => {
   const stream = stubFetch(() =>
     new Response('data: {"delta":"hi"}\n\ndata: [DONE]\n\n', {
@@ -585,7 +783,7 @@ Deno.test("ai.complete maps provider HTTP failures to design error codes", async
     )
   );
   const expected: Array<[number, string]> = [
-    [401, "missing_credential"],
+    [401, "authentication_failed"],
     [403, "permission_denied"],
     [429, "rate_limited"],
     [400, "provider_error"],
@@ -646,6 +844,17 @@ Deno.test("a provider echoing the credential cannot leak it into results, diagno
 
   await withDesktop(async ({ desktop, directory }) => {
     await seedCredential(desktop);
+    const customConnection = await desktop.commands.execute("ai.connection.save", {
+      provider: {
+        id: "local-custom",
+        label: "Custom",
+        base_url: "https://custom.example.com/v1",
+        chat_path: "/chat/completions",
+        auth_header: "x-api-key",
+        auth_scheme: "",
+      },
+    });
+    assert(!customConnection.error, "the custom provider connection must save");
     const credentialForCustom = await desktop.commands.execute("ai.secret.set", {
       provider_id: "local-custom",
       value: CREDENTIAL,
@@ -684,6 +893,7 @@ Deno.test("a provider echoing the credential cannot leak it into results, diagno
         ...COMPLETE_INPUT,
         request_id: "leak-url",
         url: `https://api.deepseek.com/chat/completions?api_key=${CREDENTIAL}`,
+        auth: null,
       }),
     });
 
@@ -747,7 +957,7 @@ Deno.test("a provider echoing the credential cannot leak it into results, diagno
     const logPath = desktop.diagnostics.path;
     const log = await Deno.readTextFile(logPath);
     assert(
-      log.includes("missing_credential") &&
+      log.includes("authentication_failed") &&
         log.includes("transport_unavailable"),
       "the diagnostics log must actually have recorded these failures",
     );
@@ -792,6 +1002,7 @@ Deno.test("AiTransport scrubs the credential from every thrown failure", async (
       fetch: stub,
       credential_store: new MemorySecretStore(),
     });
+    await transport.saveConnection({ provider: PROVIDER });
     await transport.setCredential("deepseek", CREDENTIAL);
     let thrown: unknown = null;
     try {
@@ -867,7 +1078,7 @@ Deno.test("encoded, escaped and fragmented credential echoes are redacted", asyn
       });
       results.push(result);
       assert(
-        result.error?.code === "missing_credential",
+        result.error?.code === "authentication_failed",
         `${name} must still fail with the provider's status`,
       );
       for (const form of forms) {
@@ -994,6 +1205,10 @@ Deno.test("a short credential drops the whole provider excerpt", async () => {
     // `e` occurs all over the provider body: an unguarded exact replace would
     // turn `{"error":…` into `{"[REDACTED]rror":…`.  Instead, no provider text
     // is kept at all while such a credential is stored.
+    const connection = await desktop.commands.execute("ai.connection.save", {
+      provider: PROVIDER,
+    });
+    assert(!connection.error, "the provider connection must save");
     const stored = await desktop.commands.execute("ai.secret.set", {
       provider_id: "deepseek",
       value: "e",
@@ -1004,7 +1219,7 @@ Deno.test("a short credential drops the whole provider excerpt", async () => {
       request_id: "short-key",
     });
     assert(
-      result.error?.code === "missing_credential",
+      result.error?.code === "authentication_failed",
       "the provider status must still map",
     );
     const details = result.error?.details as {
@@ -1101,6 +1316,10 @@ Deno.test("a lowercase digit-free key cannot slip through reversed", async () =>
     )
   );
   await withDesktop(async ({ desktop }) => {
+    const connection = await desktop.commands.execute("ai.connection.save", {
+      provider: PROVIDER,
+    });
+    assert(!connection.error, "the provider connection must save");
     const stored = await desktop.commands.execute("ai.secret.set", {
       provider_id: "deepseek",
       value: key,
@@ -1238,6 +1457,11 @@ Deno.test("ai.complete refuses unsafe urls and unconfigured or keyless providers
       "only the loopback request may reach fetch",
     );
 
+    const ghostConnection = await desktop.commands.execute("ai.connection.save", {
+      provider: { ...PROVIDER, id: "ghost" },
+    });
+    assert(!ghostConnection.error, "the keyless provider metadata must save");
+
     const missingCredential = await desktop.commands.execute("ai.complete", {
       ...COMPLETE_INPUT,
       provider_id: "ghost",
@@ -1256,7 +1480,7 @@ Deno.test("ai.complete refuses unsafe urls and unconfigured or keyless providers
     );
 
     const notConfigured = await desktop.commands.execute("ai.complete", {
-      provider_id: "ghost",
+      provider_id: "ghost-unknown",
       body: {},
     });
     assert(
@@ -1817,8 +2041,8 @@ Deno.test("AiTransport honours an injected ai_home and tolerates an empty projec
       ),
       "listing records before any project exists must return an empty list",
     );
-    await transport.setCredential("deepseek", CREDENTIAL);
     await transport.saveConnection({ provider: PROVIDER });
+    await transport.setCredential("deepseek", CREDENTIAL);
     assert(
       await pathExists(join(aiHome, "providers.json")),
       "ai_home must receive providers.json",
@@ -1840,5 +2064,124 @@ Deno.test("AiTransport honours an injected ai_home and tolerates an empty projec
       undefined
     );
     await Deno.remove(aiHome, { recursive: true }).catch(() => undefined);
+  }
+});
+
+Deno.test("saved protocol adapters reach a local HTTP service with isolated auth and bodies", async () => {
+  const server = localAiServer();
+  try {
+    await withDesktop(async ({ desktop }) => {
+      const cases = [
+        { protocol: "openai-completions", path: "/v1/chat/completions", header: "authorization", scheme: "Bearer" },
+        { protocol: "openai-responses", path: "/v1/responses", header: "authorization", scheme: "Bearer" },
+        { protocol: "anthropic-messages", path: "/v1/messages", header: "x-api-key", scheme: "" },
+      ] as const;
+      for (const [index, item] of cases.entries()) {
+        const id = `protocol-${index}`;
+        const provider = {
+          id,
+          label: id,
+          kind: "openai_compatible",
+          api_protocol: item.protocol,
+          base_url: server.baseUrl,
+          chat_path: "/chat/completions",
+          auth_header: item.header,
+          auth_scheme: item.scheme,
+          default_model: "test-model",
+        };
+        const saved = await desktop.commands.execute("ai.connection.save", { provider });
+        assert(!saved.error, `saving ${item.protocol} must succeed`);
+        const key = `sk-${id}-secret-98abcdef`;
+        const set = await desktop.commands.execute("ai.secret.set", { provider_id: id, value: key });
+        assert(!set.error, `saving ${item.protocol} key must succeed`);
+
+        const models = await desktop.commands.execute("ai.models.list", { provider_id: id });
+        assert(!models.error, `${item.protocol} model discovery should succeed`);
+        assert(
+          (models.value as { models: string[] }).models.includes("test-model"),
+          `${item.protocol} should parse model IDs`,
+        );
+        const modelCall = server.calls.at(-1)!;
+        assert(modelCall.method === "GET" && modelCall.path === "/v1/models", "model discovery must use the saved base URL");
+        assert(modelCall.headers.get(item.header) === (item.scheme ? `${item.scheme} ${key}` : key), "model discovery must use protocol-specific auth");
+
+        const complete = await desktop.commands.execute("ai.complete", {
+          request_id: `req-${id}`,
+          provider_id: id,
+          url: "https://attacker.invalid/ignored",
+          auth: { header: item.header, scheme: item.scheme },
+          headers: { "content-type": "application/json" },
+          body: item.protocol === "openai-responses"
+            ? { model: "test-model", input: "hello", store: false, stream: true }
+            : item.protocol === "anthropic-messages"
+            ? { model: "test-model", messages: [{ role: "user", content: "hello" }], max_tokens: 12 }
+            : { model: "test-model", messages: [{ role: "user", content: "hello" }] },
+          timeout_ms: 5000,
+        });
+        assert(!complete.error, `${item.protocol} generation transport should succeed`);
+        const call = server.calls.at(-1)!;
+        assert(call.method === "POST" && call.path === item.path, `${item.protocol} must use its own endpoint`);
+        assert(call.headers.get(item.header) === (item.scheme ? `${item.scheme} ${key}` : key), `${item.protocol} credential must be injected by transport`);
+        assert(!call.body.includes(key), "credentials must never be copied into request bodies");
+        assert(!String(call.path).includes("attacker"), "authenticated requests must ignore renderer URLs");
+        if (item.protocol === "openai-responses") {
+          assert(JSON.parse(call.body).store === false, "Responses generation must not store provider data");
+        }
+        if (item.protocol === "anthropic-messages") {
+          assert(call.headers.get("anthropic-version") === "2023-06-01", "Anthropic must send its version header");
+        }
+      }
+    });
+  } finally {
+    await server.close();
+  }
+});
+
+Deno.test("temporary model probes and explicit connection tests do not persist secrets or executions", async () => {
+  const server = localAiServer();
+  const temporaryKey = "sk-temporary-probe-key-88abcdef";
+  try {
+    await withDesktop(async ({ desktop, aiHome, credentialStore }) => {
+      const probe = await desktop.commands.execute("ai.models.probe", {
+        provider: {
+          id: "unsaved",
+          label: "Unsaved",
+          api_protocol: "anthropic-messages",
+          base_url: server.baseUrl,
+          auth_header: "x-api-key",
+          auth_scheme: "",
+        },
+        temporary_credential: temporaryKey,
+      });
+      assert(!probe.error, "temporary discovery should work without saving the provider");
+      assert(server.calls.at(-1)?.headers.get("x-api-key") === temporaryKey, "probe should use the temporary key only for this request");
+      const connectionList = await desktop.commands.execute("ai.connection.list", {});
+      assert((connectionList.value as { providers: unknown[] }).providers.length === 0, "probe must not save its provider metadata");
+      assert(!(await pathExists(join(aiHome, "providers.json"))), "probe must not create provider storage");
+      assert(!JSON.stringify(desktop.audit.list()).includes(temporaryKey), "probe audit must not contain the temporary key");
+
+      const provider = {
+        id: "test-connection",
+        label: "Test connection",
+        api_protocol: "openai-responses",
+        base_url: server.baseUrl,
+        auth_header: "authorization",
+        auth_scheme: "Bearer",
+        default_model: "test-model",
+      };
+      assert(!(await desktop.commands.execute("ai.connection.save", { provider })).error, "connection config should save");
+      assert(!(await desktop.commands.execute("ai.secret.set", { provider_id: provider.id, value: CREDENTIAL })).error, "connection key should save");
+      const tested = await desktop.commands.execute("ai.connection.test", { provider_id: provider.id });
+      assert(!tested.error, "explicit connection test should make a real small request");
+      const call = server.calls.at(-1)!;
+      assert(call.method === "POST" && call.path === "/v1/responses", "connection test should use the saved protocol endpoint");
+      const body = JSON.parse(call.body);
+      assert(body.store === false && body.stream === true && body.max_output_tokens === 8, "connection test must be a minimal non-storing Responses request");
+      assert((await credentialStore.get(provider.id)) === CREDENTIAL, "testing should not alter the saved key");
+      assert(!(await pathExists(join(aiHome, "executions.json"))), "connection tests are not AI content executions");
+      assert(!JSON.stringify(tested).includes(CREDENTIAL), "connection test result must not echo the key");
+    });
+  } finally {
+    await server.close();
   }
 });

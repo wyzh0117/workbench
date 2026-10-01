@@ -102,6 +102,9 @@ async function bootStore() {
     writes: 0,
     sessions: [] as unknown[],
     scans: [] as unknown[],
+    videoByteReads: 0,
+    mediaSourceCreates: 0,
+    mediaSourceReleases: 0,
   };
   const root = {
     innerHTML: "",
@@ -188,6 +191,7 @@ async function bootStore() {
           };
         }
         if (relative.endsWith(".mp4")) {
+          state.videoByteReads += 1;
           return {
             relative_path: relative,
             mime: "video/mp4",
@@ -201,14 +205,21 @@ async function bootStore() {
         return {
           relative_path: relative,
           mime: "application/pdf",
-          size: 1,
-          preview_kind: "reference",
+          size: 25,
+          preview_kind: "pdf",
           text: null,
-          bytes_base64: null,
-          note: "作为参考文件导入",
+          bytes_base64: btoa("%PDF-1.4\npreview fixture"),
+          note: null,
         };
       }
       throw new Error(`unexpected command ${name}`);
+    },
+    previewFolderVideoSource: async () => {
+      state.mediaSourceCreates += 1;
+      return {
+        url: "http://localhost:4173/api/media/opaque-video-token",
+        release: () => { state.mediaSourceReleases += 1; },
+      };
     },
   };
   const store = new (WorkbenchStore as new (bridge: unknown) => {
@@ -216,6 +227,7 @@ async function bootStore() {
     ui: Record<string, unknown>;
     importExistingFolder: (dir: string) => Promise<void>;
     selectExplorerEntry: (relativePath: string) => Promise<void> | void;
+    clearExplorerPreview: () => void;
     setExplorerFilter: (query: string) => void;
     toggleExplorerExpanded: (relativePath: string) => void;
     notify: () => void;
@@ -307,7 +319,7 @@ Deno.test("filename filter matches names only, not file contents", () => {
   assert(byContent.length === 0, "full-text style queries must not match");
 });
 
-Deno.test("explorerPreviewKind covers text image video and reference", () => {
+Deno.test("explorerPreviewKind covers text image video PDF and references", () => {
   const byPath = new Map(sampleEntries().map((entry) => [entry.relative_path, entry]));
   assert(explorerPreviewKind(byPath.get("01-基础/导论.md")!) === "text", "md → text");
   assert(explorerPreviewKind(byPath.get("notes.txt")!) === "text", "txt → text");
@@ -318,8 +330,8 @@ Deno.test("explorerPreviewKind covers text image video and reference", () => {
     "docx → reference",
   );
   assert(
-    explorerPreviewKind(byPath.get("总体说明.pdf")!) === "reference",
-    "pdf → reference",
+    explorerPreviewKind(byPath.get("总体说明.pdf")!) === "pdf",
+    "pdf → pdf preview",
   );
   assert(
     explorerPreviewKind(byPath.get("01-基础")!) === "directory",
@@ -394,18 +406,24 @@ Deno.test("explorer view renders tree filter and non-blank preview kinds", async
     store.ui.explorerSelected = "总体说明.pdf";
     store.ui.explorerPreview = {
       relative_path: "总体说明.pdf",
-      preview_kind: "reference",
+      preview_kind: "pdf",
       text: null,
-      url: null,
-      note: "作为参考文件导入",
+      url: "blob:pdf-first-page",
+      note: null,
       failed: false,
     };
     html = createViews(store).shellView() as string;
-    assert(html.includes("作为参考文件导入"), "PDF/DOCX must say 作为参考文件导入");
+    assert(html.includes("<iframe") && html.includes("application/pdf") || html.includes("PDF 第一页"), "PDF must render a controlled inline preview");
     assert(
-      html.includes("总体说明.pdf") || html.includes("PDF") || html.includes("参考"),
-      "reference preview must show file info",
+      html.includes("总体说明.pdf") || html.includes("PDF"),
+      "PDF preview must show file information",
     );
+    await store.selectExplorerEntry("总体说明.pdf");
+    const loadedPdf = store.ui.explorerPreview as Record<string, unknown>;
+    assert(loadedPdf.preview_kind === "pdf", "selected PDF receives a PDF preview payload");
+    assert(typeof loadedPdf.url === "string", "selected PDF bytes become a controlled viewer URL");
+    html = createViews(store).shellView() as string;
+    assert(html.includes("<iframe"), "selected PDF renders in a controlled viewer");
     assert(state.writes === 0, "preview must not write Canonical");
   } finally {
     restore();
@@ -436,6 +454,94 @@ Deno.test("explorer filter and expand stay in UI workspace state, not Canonical"
       "mapping confirm apply is out of scope",
     );
   } finally {
+    restore();
+  }
+});
+
+Deno.test("large folder videos use a releasable range source instead of preview bytes", async () => {
+  const { store, state, restore } = await bootStore();
+  const runtime = globalThis as typeof globalThis & { document?: unknown };
+  const previousDocument = runtime.document;
+  const listeners = new Map<string, Array<{ callback: (event: Event) => void; once: boolean }>>();
+  let frameCallback: ((now: number, metadata: { mediaTime: number }) => void) | null = null;
+  const video = {
+    muted: false,
+    playsInline: false,
+    preload: "",
+    readyState: 2,
+    videoWidth: 640,
+    videoHeight: 360,
+    duration: 2,
+    currentTime: 0,
+    src: "",
+    framePresented: false,
+    requestVideoFrameCallback(callback: (now: number, metadata: { mediaTime: number }) => void) {
+      frameCallback = callback;
+      return 1;
+    },
+    cancelVideoFrameCallback() {},
+    addEventListener(type: string, callback: (event: Event) => void, options?: AddEventListenerOptions) {
+      const current = listeners.get(type) || [];
+      current.push({ callback, once: Boolean(options?.once) });
+      listeners.set(type, current);
+    },
+    removeEventListener(type: string, callback: (event: Event) => void) {
+      listeners.set(type, (listeners.get(type) || []).filter((entry) => entry.callback !== callback));
+    },
+    pause() {},
+    removeAttribute(name: string) { if (name === "src") this.src = ""; },
+    load() {
+      if (!this.src) return;
+      queueMicrotask(() => {
+        for (const type of ["loadedmetadata", "loadeddata"]) {
+          const current = listeners.get(type) || [];
+          for (const entry of [...current]) {
+            entry.callback(new Event(type));
+            if (entry.once) this.removeEventListener(type, entry.callback);
+          }
+        }
+        video.framePresented = true;
+        frameCallback?.(0, { mediaTime: 0 });
+      });
+    },
+  };
+  runtime.document = {
+    querySelector: () => null,
+    querySelectorAll: () => [],
+    addEventListener: () => {},
+    createElement: (tag: string) => tag === "video"
+      ? video
+      : {
+        width: 0,
+        height: 0,
+        getContext: () => ({
+          drawImage: () => {},
+          getImageData: (_x: number, _y: number, width: number, height: number) => {
+            const data = new Uint8ClampedArray(width * height * 4);
+            for (let index = 3; index < data.length; index += 4) data[index] = 255;
+            return { data };
+          },
+        }),
+        toBlob: (callback: (blob: Blob | null) => void) => callback(new Blob(["poster"], { type: "image/png" })),
+      },
+  };
+  try {
+    await store.importExistingFolder("/tmp/course");
+    const report = store.ui.folderScan as { entries: Array<{ relative_path: string; size: number | null }> };
+    const largeVideo = report.entries.find((entry) => entry.relative_path === "02-进阶/demo.mp4");
+    if (!largeVideo) throw new Error("video fixture must exist");
+    largeVideo.size = 17 * 1024 * 1024;
+    await store.selectExplorerEntry("02-进阶/demo.mp4");
+    const preview = store.ui.explorerPreview as Record<string, unknown>;
+    assert(preview.url === "http://localhost:4173/api/media/opaque-video-token", "large videos receive a controlled stream URL");
+    assert(preview.failed === false && preview.loading === false, "poster decoding should finish");
+    assert(state.videoByteReads === 0, "large video bytes must never be requested as a preview blob");
+    assert(state.mediaSourceCreates === 1, "one opaque source should be created for the selected video");
+    store.clearExplorerPreview();
+    assert(state.mediaSourceReleases === 1, "closing the preview must revoke its browser-service token");
+    assert(state.writes === 0, "video preview must not mutate project data");
+  } finally {
+    runtime.document = previousDocument;
     restore();
   }
 });

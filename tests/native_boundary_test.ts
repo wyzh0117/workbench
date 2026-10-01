@@ -304,19 +304,35 @@ Deno.test("native shell exposes explicit project and high-level workflows", () =
     "native session and launcher must use the folder picker instead of manual paths",
   );
   assert(
+    (() => {
+      const importStart = app.indexOf("async importNativeFiles(paths)");
+      const importEnd = app.indexOf("async selectAndImportAsset()", importStart);
+      const insertStart = app.indexOf("async insertAsset(assetId, options = {})");
+      const insertEnd = app.indexOf("detachAsset(blockId, assetId)", insertStart);
+      const mediaImport = app.slice(importStart, importEnd);
+      const explicitInsert = app.slice(insertStart, insertEnd);
+      return importStart >= 0 && importEnd > importStart &&
+        insertStart >= 0 && insertEnd > insertStart &&
+        mediaImport.includes('this.bridge.command("asset.import"') &&
+        !mediaImport.includes("assetContext(") &&
+        !mediaImport.includes("content_item_id:") &&
+        explicitInsert.includes("插入素材：") &&
+        explicitInsert.includes("data.asset_usages.push({ id: uid()") &&
+        explicitInsert.includes("content_item_id: item.id");
+    })() &&
     app.includes('"select_file"') &&
+      app.includes('"select_files"') &&
       app.includes('"select_export_path"') &&
       app.includes('this.nativeInvoke("clear_recovery_journal"') &&
       app.includes('listen("tauri://drag-drop"') &&
       app.includes("source_path: sourcePath") &&
-      app.includes("const context = this.assetContext()") &&
       app.includes("md|markdown") &&
       app.includes("if (!await this.flush())") &&
       app.includes("this.decodeBytes(await invoke") &&
       app.includes("content_item_id: contentItemId") &&
       app.includes("文件导入没有完成") &&
       (app + shared).includes(".webm,.mov,.m4v"),
-    "native picker, drag/drop, recovery cleanup and contextual asset import must stay in the UI boundary",
+    "native picker, drag/drop, recovery cleanup, unlinked media import and explicit insertion usage must stay in the UI boundary",
   );
   assert(
     app.includes("const clearResult = await this.bridge.clearRecoveryJournal()") &&
@@ -473,11 +489,11 @@ Deno.test("folder.adopt native IPC uses flat { plan } like folder.scan (no input
     !(parameters.length === 1 && /^input:\s*Value$/.test(parameters[0]!)),
     "folder_adopt must not be a single input: Value command requiring { input: … } nesting",
   );
-  // applyFolderAdoption / bridge.command send { plan } directly.
+  // Adoption stays flat; append adds only the currently open project target.
   assert(
-    app.includes('command("folder.adopt"') &&
-      app.includes("{ plan }"),
-    "UI apply must invoke folder.adopt with a flat { plan } payload",
+    app.includes('this.bridge.command(appending ? "folder.append" : "folder.adopt"') &&
+      app.includes("plan: executablePlan"),
+    "UI apply must select adopt/append explicitly and send the confirmed plan flat",
   );
   const nestedBlock = app.slice(
     app.indexOf("    // These commands take one `input: Value` struct"),

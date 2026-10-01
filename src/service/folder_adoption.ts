@@ -5,8 +5,8 @@
  * Copies confirmed media into assets/. Never moves/renames/deletes originals.
  * Requires ImportMappingPlan.confirmed === true.
  */
-import { basename, dirname, extname, join, normalize } from "node:path";
-import { addAsset } from "../domain/assets.ts";
+import { basename, dirname, extname, isAbsolute, join, normalize, relative } from "node:path";
+import { addAsset, addAssetUsage } from "../domain/assets.ts";
 import { addStage } from "../domain/course.ts";
 import { appendBlock, createDocument } from "../domain/document.ts";
 import { createEmptyProjectData } from "../domain/store.ts";
@@ -16,6 +16,7 @@ import type {
   BlockType,
   ContentItem,
   JsonObject,
+  JsonValue,
   ProjectData,
   SourceMaterialKind,
 } from "../domain/types.ts";
@@ -24,9 +25,11 @@ import { createInboxItem } from "../domain/workflow.ts";
 import type {
   ImportMappingItem,
   ImportMappingPlan,
+  ImportMappingDestination,
   MappingRole,
 } from "./folder_mapping.ts";
 import { ProjectDirectoryStore } from "./storage.ts";
+import { parseMarkdown } from "../../app/markdown.js";
 
 export interface FolderAdoptionOptions {
   /** Existing project to extend; default creates empty project in plan.root. */
@@ -37,6 +40,8 @@ export interface FolderAdoptionOptions {
   duplicate_choice?: "existing" | "copy" | "cancel";
   /** When true, mutate data + copy assets but skip project.json write. */
   skip_project_write?: boolean;
+  /** Persist through the caller's active project lease before promoting assets. */
+  persist_project?: (data: ProjectData) => Promise<void>;
 }
 
 export interface FolderAdoptionResult {
@@ -178,8 +183,53 @@ function isIncluded(item: ImportMappingItem): boolean {
 
 function absPath(root: string, relativePath: string): string {
   const rel = relativePath.replaceAll("\\", "/");
-  if (rel.includes("..")) throw new Error("导入路径不能包含 ..");
-  return join(normalize(root), ...rel.split("/").filter(Boolean));
+  const parts = rel.split("/").filter(Boolean);
+  if (!parts.length || isAbsolute(rel) || parts.some((part) => part === ".." || part === ".")) {
+    throw new Error("导入路径必须位于所选文件夹内");
+  }
+  const candidate = normalize(join(root, ...parts));
+  const escaped = relative(normalize(root), candidate);
+  if (escaped === ".." || escaped.startsWith(`..${Deno.build.os === "windows" ? "\\" : "/"}`) || isAbsolute(escaped)) {
+    throw new Error("导入路径必须位于所选文件夹内");
+  }
+  return candidate;
+}
+
+async function sourceFilePath(root: string, relativePath: string): Promise<string> {
+  const candidate = absPath(root, relativePath);
+  let current = normalize(root);
+  for (const part of relative(normalize(root), candidate).split(/[\\/]/).filter(Boolean)) {
+    current = join(current, part);
+    const stat = await Deno.lstat(current);
+    if (stat.isSymlink) throw new Error("导入路径包含符号链接");
+  }
+  const resolvedRoot = await Deno.realPath(root);
+  const resolved = await Deno.realPath(candidate);
+  const escaped = relative(resolvedRoot, resolved);
+  if (escaped === ".." || escaped.startsWith(`..${Deno.build.os === "windows" ? "\\" : "/"}`) || isAbsolute(escaped)) {
+    throw new Error("导入路径超出所选文件夹");
+  }
+  return resolved;
+}
+
+async function markdownImagePath(
+  sourceRoot: string,
+  markdownPath: string,
+  href: string,
+): Promise<string> {
+  const imagePath = String(href || "").split(/[?#]/, 1)[0] || "";
+  let decoded = imagePath;
+  try {
+    decoded = decodeURIComponent(imagePath);
+  } catch {
+    throw new Error("图片路径编码无效");
+  }
+  if (!decoded || decoded.startsWith("//") || isAbsolute(decoded) || /^[a-z][a-z\d+.-]*:/i.test(decoded)) {
+    throw new Error("仅允许所选文件夹内的本地图片");
+  }
+  const markdownDir = dirname(markdownPath.replaceAll("\\", "/"));
+  const joined = normalize(join(markdownDir === "." ? "" : markdownDir, decoded));
+  return await sourceFilePath(sourceRoot, joined.replaceAll("\\", "/"));
 }
 
 function parentStageId(
@@ -206,10 +256,23 @@ async function projectJsonExists(root: string): Promise<boolean> {
 }
 
 async function ensureWorkspace(root: string): Promise<void> {
-  await Deno.mkdir(join(root, ".workspace"), { recursive: true });
-  await Deno.mkdir(join(root, ".workspace", "adopt-staging"), {
-    recursive: true,
-  });
+  for (const path of [join(root, ".workspace"), join(root, ".workspace", "adopt-staging")]) {
+    await ensureManagedDirectory(path);
+  }
+}
+
+async function ensureManagedDirectory(path: string): Promise<void> {
+  try {
+    const stat = await Deno.lstat(path);
+    if (stat.isSymlink || !stat.isDirectory) throw new Error(`导入管理目录不安全：${path}`);
+  } catch (caught) {
+    if (!(caught instanceof Deno.errors.NotFound)) throw caught;
+    await Deno.mkdir(path).catch(async (error) => {
+      if (!(error instanceof Deno.errors.AlreadyExists)) throw error;
+      const stat = await Deno.lstat(path);
+      if (stat.isSymlink || !stat.isDirectory) throw new Error(`导入管理目录不安全：${path}`);
+    });
+  }
 }
 
 async function copyManagedAsset(
@@ -232,6 +295,7 @@ async function copyManagedAsset(
 async function cleanupStaging(
   root: string,
   staged: Array<{ staging: string; final: string }>,
+  stagingRoot: string,
 ): Promise<void> {
   for (const pair of staged) {
     try {
@@ -241,9 +305,7 @@ async function cleanupStaging(
     }
   }
   try {
-    await Deno.remove(join(root, ".workspace", "adopt-staging"), {
-      recursive: true,
-    });
+    await Deno.remove(join(root, ...stagingRoot.split("/")), { recursive: true });
   } catch {
     // ignore
   }
@@ -252,29 +314,40 @@ async function cleanupStaging(
 async function promoteStaging(
   root: string,
   staged: Array<{ staging: string; final: string }>,
-): Promise<void> {
-  await Deno.mkdir(join(root, "assets"), { recursive: true });
-  for (const pair of staged) {
-    const from = join(root, ...pair.staging.split("/"));
-    const to = join(root, ...pair.final.split("/"));
-    await Deno.mkdir(dirname(to), { recursive: true });
-    try {
-      await Deno.rename(from, to);
-    } catch {
-      await Deno.copyFile(from, to);
-      try {
-        await Deno.remove(from);
-      } catch {
-        // ignore
-      }
-    }
-  }
+): Promise<string[]> {
+  if (!staged.length) return [];
+  await ensureManagedDirectory(join(root, "assets"));
+  const promoted: string[] = [];
   try {
-    await Deno.remove(join(root, ".workspace", "adopt-staging"), {
-      recursive: true,
-    });
-  } catch {
-    // ignore
+    for (const pair of staged) {
+      const from = join(root, ...pair.staging.split("/"));
+      const to = join(root, ...pair.final.split("/"));
+      await ensureManagedDirectory(dirname(to));
+      const bytes = await Deno.readFile(from);
+      const output = await Deno.open(to, { write: true, createNew: true });
+      promoted.push(pair.final);
+      try {
+        let offset = 0;
+        while (offset < bytes.length) offset += await output.write(bytes.subarray(offset));
+      } finally {
+        output.close();
+      }
+      await Deno.remove(from);
+    }
+    return promoted;
+  } catch (caught) {
+    await removePromoted(root, promoted);
+    throw caught;
+  }
+}
+
+async function removePromoted(root: string, paths: string[]): Promise<void> {
+  for (const path of paths) {
+    try {
+      await Deno.remove(join(root, ...path.split("/")));
+    } catch {
+      // Best effort: only remove this transaction's UUID-owned files.
+    }
   }
 }
 
@@ -285,6 +358,7 @@ function createLesson(
     stage_id: string | null;
     text: string;
     format: "markdown" | "text";
+    blocks?: Array<{ type: BlockType; content: string; settings?: JsonObject }>;
   },
 ): ContentItem {
   const contentId = id();
@@ -314,7 +388,7 @@ function createLesson(
   };
   data.content_items.push(content);
   initializeContentStatuses(data, content.id);
-  for (const block of parseBlocks(input.text, input.format)) {
+  for (const block of input.blocks ?? parseBlocks(input.text, input.format)) {
     appendBlock(
       data,
       content.id,
@@ -324,6 +398,102 @@ function createLesson(
     );
   }
   return content;
+}
+
+function markdownSourceMatch(
+  data: ProjectData,
+  sourceRoot: string,
+  relativePath: string,
+  checksum: string,
+): {
+  state: "same_content" | "changed_source";
+  item: ContentItem | null;
+  title: string;
+  sourcePath: string;
+  previousHash: string;
+} | null {
+  const ledger = data.project.settings?.markdown_import_sources;
+  if (Array.isArray(ledger)) {
+    let changedLedgerEntry: ReturnType<typeof markdownSourceMatch> = null;
+    let changedLedgerImportedAt = "";
+    for (const candidate of ledger) {
+      if (!candidate || typeof candidate !== "object" || Array.isArray(candidate)) continue;
+      const source = candidate as JsonObject;
+      const importedRoot = typeof source.source_root === "string" ? source.source_root : "";
+      const importedPath = typeof source.relative_path === "string" ? source.relative_path : "";
+      const importedHash = typeof source.source_hash === "string" ? source.source_hash : "";
+      const itemId = typeof source.content_item_id === "string" ? source.content_item_id : "";
+      if (!itemId || !importedRoot || !importedPath || !/^[a-f0-9]{64}$/i.test(importedHash)) continue;
+      const item = data.content_items.find((entry) => entry.id === itemId) ?? null;
+      if (item && (item.project_id !== data.project.id || item.type !== "lesson")) continue;
+      const match = {
+        state: "changed_source" as const,
+        item,
+        title: item?.title || (typeof source.title === "string" ? source.title : "已删除的课时"),
+        sourcePath: `${importedRoot}/${importedPath}`,
+        previousHash: importedHash,
+      };
+      if (importedHash === checksum) {
+        return { ...match, state: "same_content" };
+      }
+      if (importedRoot === sourceRoot && importedPath === relativePath) {
+        const importedAt = typeof source.imported_at === "string" ? source.imported_at : "";
+        if (!changedLedgerEntry || importedAt >= changedLedgerImportedAt) {
+          changedLedgerEntry = match;
+          changedLedgerImportedAt = importedAt;
+        }
+      }
+    }
+    if (changedLedgerEntry) return changedLedgerEntry;
+  }
+  const contentByDocument = new Map(
+    data.documents.map((document) => [document.id, document.content_item_id]),
+  );
+  let changedSource: ReturnType<typeof markdownSourceMatch> = null;
+  for (const block of data.blocks) {
+    const value = block.settings?.markdown_import;
+    if (!value || typeof value !== "object" || Array.isArray(value)) continue;
+    const source = value as JsonObject;
+    const importedRoot = typeof source.source_root === "string" ? source.source_root : "";
+    const importedPath = typeof source.relative_path === "string" ? source.relative_path : "";
+    const importedHash = typeof source.source_hash === "string" ? source.source_hash : "";
+    const itemId = contentByDocument.get(block.document_id);
+    const item = data.content_items.find((candidate) => candidate.id === itemId);
+    if (!item || item.project_id !== data.project.id || item.type !== "lesson") continue;
+    const sourcePath = `${importedRoot}/${importedPath}`;
+    if (importedHash === checksum) {
+      return { state: "same_content", item, title: item.title, sourcePath, previousHash: importedHash };
+    }
+    if (importedRoot === sourceRoot && importedPath === relativePath) {
+      changedSource ??= { state: "changed_source", item, title: item.title, sourcePath, previousHash: importedHash };
+    }
+  }
+  return changedSource;
+}
+
+function lessonDestination(
+  data: ProjectData,
+  destination: ImportMappingDestination | null | undefined,
+  folderStageId: string | null,
+): { item: ContentItem | null; stageId: string | null } {
+  if (!destination) return { item: null, stageId: folderStageId };
+  if (destination.kind === "unassigned_lesson") return { item: null, stageId: null };
+  if (destination.kind === "existing_stage") {
+    const stage = data.stages.find((candidate) =>
+      candidate.id === destination.stage_id && candidate.project_id === data.project.id && !candidate.archived
+    );
+    if (!stage) throw new Error("导入目标阶段不属于当前课程或已不可用；请刷新目标列表后重试。");
+    return { item: null, stageId: stage.id };
+  }
+  const item = data.content_items.find((candidate) =>
+    candidate.id === destination.content_item_id && candidate.project_id === data.project.id &&
+    candidate.type === "lesson" && !candidate.archived
+  );
+  if (!item) throw new Error("导入目标课时不属于当前课程或已不可用；请刷新目标列表后重试。");
+  if (!data.documents.some((document) => document.id === item.document_id && document.content_item_id === item.id)) {
+    throw new Error("目标课时正文文档无效，无法安全追加。");
+  }
+  return { item, stageId: item.stage_id };
 }
 
 function recordSource(
@@ -353,11 +523,16 @@ export async function confirmFolderAdoption(
   if (!plan || plan.confirmed !== true) {
     throw new Error("只能对已确认的导入计划执行文件夹接管");
   }
-  const root = normalize(String(options.project_root || plan.root || "").trim());
-  if (!root) throw new Error("接管需要有效的文件夹路径");
+  const selectedSourceRoot = normalize(String(plan.root || "").trim());
+  const root = normalize(String(options.project_root || selectedSourceRoot || "").trim());
+  if (!selectedSourceRoot || !root) throw new Error("导入需要有效的源文件夹和课程项目路径");
+  const sourceRoot = await Deno.realPath(selectedSourceRoot);
+  await Deno.stat(sourceRoot).then((stat) => {
+    if (!stat.isDirectory) throw new Error("导入源必须是文件夹");
+  });
 
   // Match native: never silently overwrite an existing Canonical project.
-  if (!options.skip_project_write && await projectJsonExists(root)) {
+  if (!options.data && !options.persist_project && !options.skip_project_write && await projectJsonExists(root)) {
     throw new Error(
       "该文件夹已有 project.json，不能重复原地接管。请先打开现有项目。",
     );
@@ -385,7 +560,9 @@ export async function confirmFolderAdoption(
     copied_original_paths: [],
   };
   const staged: Array<{ staging: string; final: string }> = [];
+  const stagingRoot = `.workspace/adopt-staging/${crypto.randomUUID()}`;
 
+  try {
   const included = plan.items.filter(isIncluded);
   const stageByRel = new Map<string, string>();
 
@@ -400,13 +577,14 @@ export async function confirmFolderAdoption(
   }
 
   const duplicateChoice = options.duplicate_choice ?? "existing";
+  await ensureWorkspace(root);
 
   // Pass 2: files
   for (const item of included) {
     if (item.kind !== "file") continue;
     const role: MappingRole = item.mapping;
     const rel = item.relative_path.replaceAll("\\", "/");
-    const sourceAbs = absPath(root, rel);
+    const sourceAbs = await sourceFilePath(sourceRoot, rel);
     const filename = cleanName(basename(rel));
     const fileTitle = entryTitle(rel);
 
@@ -438,13 +616,164 @@ export async function confirmFolderAdoption(
       // TXT is more conservative: still lesson body when user mapped lesson,
       // but parsed as plain text paragraphs.
       const text = new TextDecoder().decode(bytes);
-      const lesson = createLesson(data, {
-        title: fileTitle,
-        stage_id: stageId,
-        text,
-        format: ext === ".txt" ? "text" : format,
+      const parsed = format === "markdown" ? parseMarkdown(text) : null;
+      const expectedHash = item.markdown_dependency_preview?.source_hash;
+      if (parsed && expectedHash && expectedHash !== checksum) {
+        throw new Error(`${rel}: Markdown源文件在确认后发生变化，请重新预览并确认。`);
+      }
+      if (parsed?.warnings.length) result.warnings.push(...parsed.warnings.map((warning) => `${rel}: ${warning}`));
+      const sourceMatch = parsed
+        ? markdownSourceMatch(data, sourceRoot, rel, checksum)
+        : null;
+      if (sourceMatch && !item.allow_duplicate) {
+        result.warnings.push(sourceMatch.state === "same_content"
+          ? `${rel}: SHA-256与${sourceMatch.item ? `已导入课时「${sourceMatch.title}」` : `曾导入来源「${sourceMatch.title}」（目标课时已删除）`}一致；默认跳过，已有编辑内容保持不变。`
+          : `${rel}: 来源路径已有较旧导入「${sourceMatch.title}」${sourceMatch.item ? "" : "（目标课时已删除）"}（SHA-256 ${sourceMatch.previousHash.slice(0, 12)}）；默认跳过以避免静默替换，请明确选择“作为新版本导入”。`);
+        continue;
+      }
+      if (sourceMatch) {
+        result.warnings.push(sourceMatch.state === "same_content"
+          ? sourceMatch.item
+            ? `${rel}: 用户已明确选择再次导入与「${sourceMatch.title}」内容相同的Markdown；原课时正文不会被覆盖。`
+            : `${rel}: 用户已明确重新导入曾删除课时「${sourceMatch.title}」的相同Markdown；按当前目标新建或追加。`
+          : sourceMatch.item
+          ? `${rel}: 用户已明确选择导入来源的新版本；「${sourceMatch.title}」及其编辑内容保持不变。`
+          : `${rel}: 用户已明确导入曾删除课时「${sourceMatch.title}」的来源新版本；按当前目标新建或追加。`);
+      }
+      const refsByBlock = new Map<number, Array<{ href: string; asset_id: string }>>();
+      for (const ref of parsed?.explicitLocalImageRefs ?? []) {
+        let dependencyPath: string;
+        try {
+          dependencyPath = await markdownImagePath(sourceRoot, rel, ref.href);
+        } catch (caught) {
+          if (caught instanceof Deno.errors.NotFound) {
+            result.warnings.push(
+              `${rel}: 图片依赖「${ref.href}」不存在；已保留正文原文，未创建素材。`,
+            );
+            continue;
+          }
+          throw caught;
+        }
+        let dependencyBytes: Uint8Array;
+        try {
+          dependencyBytes = await Deno.readFile(dependencyPath);
+        } catch (caught) {
+          if (caught instanceof Deno.errors.NotFound) {
+            result.warnings.push(
+              `${rel}: 图片依赖「${ref.href}」不存在；已保留正文原文，未创建素材。`,
+            );
+            continue;
+          }
+          throw caught;
+        }
+        const dependencyName = cleanName(basename(dependencyPath));
+        const dependencyId = await importBytesAsAsset(data, root, {
+          filename: dependencyName,
+          bytes: dependencyBytes,
+          checksum: await sha256Bytes(dependencyBytes),
+          mime: mimeFor(dependencyName),
+          sourceAbs: dependencyPath,
+          duplicateChoice,
+          result,
+          staged,
+          stagingRoot,
+        });
+        if (!dependencyId) continue;
+        const list = refsByBlock.get(ref.blockIndex) ?? [];
+        if (!list.some((entry) => entry.href === ref.href)) {
+          list.push({ href: ref.href, asset_id: dependencyId });
+          refsByBlock.set(ref.blockIndex, list);
+        }
+      }
+      const blocks = parsed?.blocks.map((block, index) => {
+        const type: BlockType = block.type === "heading" || block.type === "quote" || block.type === "code" || block.type === "divider"
+          ? block.type
+          : "paragraph";
+        const content = block.type === "heading" || block.type === "quote" || block.type === "code"
+          ? block.text
+          : block.type === "divider" ? "" : block.raw;
+        const settings: JsonObject = {};
+        if (block.type === "heading") settings.level = block.level ?? 2;
+        if (block.type === "code" && block.language) settings.language = block.language;
+        const markdownAssets = refsByBlock.get(index);
+        if (markdownAssets?.length) settings.markdown_assets = markdownAssets;
+        return { type, content, settings };
       });
-      result.content_item_ids.push(lesson.id);
+      let lesson: ContentItem;
+      let importedBlocks = [] as ProjectData["blocks"];
+      if (parsed) {
+        const provenance: JsonObject = {
+          source_root: sourceRoot,
+          relative_path: rel,
+          source_hash: checksum,
+        };
+        const markdownBlocks = blocks ?? [];
+        if (markdownBlocks.length === 0) {
+          markdownBlocks.push({ type: "paragraph", content: "", settings: {} });
+        }
+        const firstMarkdownBlock = markdownBlocks[0];
+        if (!firstMarkdownBlock) throw new Error("Markdown没有可写入的正文区块");
+        firstMarkdownBlock.settings = {
+          ...firstMarkdownBlock.settings,
+          markdown_import: provenance,
+        };
+        const destination = lessonDestination(data, item.destination, stageId);
+        if (destination.item) {
+          lesson = destination.item;
+          const document = data.documents.find((candidate) =>
+            candidate.content_item_id === lesson.id && candidate.id === lesson.document_id
+          );
+          if (!document) throw new Error("目标课时正文文档无效，无法安全追加。");
+          importedBlocks = markdownBlocks.map((block) =>
+            appendBlock(data, lesson.id, block.type, block.content, block.settings)
+          );
+        } else {
+          lesson = createLesson(data, {
+            title: fileTitle,
+            stage_id: destination.stageId,
+            text,
+            format,
+            blocks: markdownBlocks,
+          });
+          importedBlocks = data.blocks.filter((block) => block.document_id === lesson.document_id);
+        }
+        for (const [blockIndex, refs] of refsByBlock) {
+          const block = importedBlocks[blockIndex];
+          if (!block) continue;
+          for (const ref of refs) addAssetUsage(data, ref.asset_id, lesson.id, { block_id: block.id });
+        }
+        const provenanceRows = Array.isArray(data.project.settings.markdown_import_sources)
+          ? data.project.settings.markdown_import_sources as JsonValue[]
+          : [];
+        const alreadyRecorded = provenanceRows.some((entry) =>
+          Boolean(entry && typeof entry === "object" && !Array.isArray(entry) &&
+            entry.source_root === sourceRoot && entry.relative_path === rel &&
+            entry.source_hash === checksum && entry.content_item_id === lesson.id)
+        );
+        if (!alreadyRecorded) {
+          provenanceRows.push({
+            ...provenance,
+            content_item_id: lesson.id,
+            title: lesson.title,
+            imported_at: now(),
+          });
+          data.project.settings.markdown_import_sources = provenanceRows;
+        }
+      } else {
+        const destination = lessonDestination(data, item.destination, stageId);
+        if (destination.item) {
+          lesson = destination.item;
+          appendBlock(data, lesson.id, "paragraph", text);
+        } else {
+          lesson = createLesson(data, {
+            title: fileTitle,
+            stage_id: destination.stageId,
+            text,
+            format: "text",
+          });
+        }
+      }
+      if (!result.content_item_ids.includes(lesson.id)) result.content_item_ids.push(lesson.id);
       continue;
     }
 
@@ -469,6 +798,7 @@ export async function confirmFolderAdoption(
           duplicateChoice,
           result,
           staged,
+          stagingRoot,
         });
         if (assetId) {
           const sourceId = recordSource(
@@ -495,6 +825,7 @@ export async function confirmFolderAdoption(
         result,
         forceType: "document",
         staged,
+        stagingRoot,
       });
       if (assetId) {
         const sourceId = recordSource(
@@ -519,6 +850,7 @@ export async function confirmFolderAdoption(
         duplicateChoice,
         result,
         staged,
+        stagingRoot,
       });
       continue;
     }
@@ -527,43 +859,54 @@ export async function confirmFolderAdoption(
     result.warnings.push(`${rel}: 映射「${role}」在文件上已跳过`);
   }
 
-  if (!options.skip_project_write) {
-    await ensureWorkspace(root);
-    const store = new ProjectDirectoryStore(root);
-    await store.open();
-    let projectWritten = false;
+  if (options.persist_project) {
     try {
-      await store.writeProject(data);
-      projectWritten = true;
+      const promoted = await promoteStaging(root, staged);
       try {
-        await promoteStaging(root, staged);
-      } catch (promoteErr) {
-        // Match Rust folder_adopt: leave staging recoverable after Canonical write.
-        const detail = promoteErr instanceof Error
-          ? promoteErr.message
-          : String(promoteErr);
-        throw new Error(
-          `课程项目已写入，但素材提升失败（${detail}）。原文件未改动；请检查 assets/ 与 .workspace/adopt-staging/`,
-        );
+      await options.persist_project(data);
+      } catch (persistError) {
+        await removePromoted(root, promoted);
+        throw persistError;
       }
     } catch (caught) {
-      if (!projectWritten) {
-        await cleanupStaging(root, staged);
+      await cleanupStaging(root, staged, stagingRoot);
+      throw caught;
+    }
+    await cleanupStaging(root, staged, stagingRoot);
+  } else if (!options.skip_project_write) {
+    const store = new ProjectDirectoryStore(root);
+    await store.open();
+    try {
+      const promoted = await promoteStaging(root, staged);
+      try {
+        await store.writeProject(data);
+      } catch (persistError) {
+        await removePromoted(root, promoted);
+        throw persistError;
       }
+    } catch (caught) {
+      await cleanupStaging(root, staged, stagingRoot);
       throw caught;
     } finally {
       await store.close().catch(() => {});
     }
+    await cleanupStaging(root, staged, stagingRoot);
   } else if (staged.length) {
     try {
       await promoteStaging(root, staged);
     } catch (caught) {
-      await cleanupStaging(root, staged);
+      await cleanupStaging(root, staged, stagingRoot);
       throw caught;
     }
+    await cleanupStaging(root, staged, stagingRoot);
+  } else {
+    await cleanupStaging(root, staged, stagingRoot);
   }
 
   return result;
+  } finally {
+    await cleanupStaging(root, staged, stagingRoot);
+  }
 }
 
 async function importBytesAsAsset(
@@ -579,6 +922,7 @@ async function importBytesAsAsset(
     result: FolderAdoptionResult;
     forceType?: AssetType;
     staged: Array<{ staging: string; final: string }>;
+    stagingRoot: string;
   },
 ): Promise<string | null> {
   const existing = data.assets.find((asset) =>
@@ -603,7 +947,7 @@ async function importBytesAsAsset(
 
   const assetId = id();
   const storagePath = `assets/${assetId}-${input.filename}`;
-  const stagingPath = `.workspace/adopt-staging/${assetId}-${input.filename}`;
+  const stagingPath = `${input.stagingRoot}/${assetId}-${input.filename}`;
   await copyManagedAsset(root, input.sourceAbs, stagingPath, input.bytes);
   input.staged.push({ staging: stagingPath, final: storagePath });
   input.result.copied_files.push(storagePath);

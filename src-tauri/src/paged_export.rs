@@ -693,6 +693,16 @@ pub(crate) fn selected_media_ids(projection: &Value) -> Vec<String> {
                 {
                     ids.insert(id.to_owned());
                 }
+                for media in item
+                    .get("inline_media")
+                    .and_then(Value::as_array)
+                    .into_iter()
+                    .flatten()
+                {
+                    if let Some(id) = media.get("id").and_then(Value::as_str) {
+                        ids.insert(id.to_owned());
+                    }
+                }
             }
         }
     }
@@ -721,11 +731,90 @@ pub(crate) fn selected_media_ids(projection: &Value) -> Vec<String> {
                     ids.insert(id.to_owned());
                 }
             }
+            for media in blocks.into_iter().flatten().flat_map(|block| {
+                block
+                    .get("inline_media")
+                    .and_then(Value::as_array)
+                    .into_iter()
+                    .flatten()
+            }) {
+                if let Some(id) = media.get("id").and_then(Value::as_str) {
+                    ids.insert(id.to_owned());
+                }
+            }
         }
     }
     let mut result = ids.into_iter().collect::<Vec<_>>();
     result.sort();
     result
+}
+
+pub(crate) fn has_simplified_pptx_semantics(projection: &Value) -> bool {
+    fn complex(blocks: &[Value], list_depth: usize) -> bool {
+        blocks.iter().any(|block| {
+            let kind = block.get("type").and_then(Value::as_str).unwrap_or("");
+            if kind == "table" || (kind == "list" && list_depth > 0) {
+                return true;
+            }
+            if let Some(children) = block.get("children").and_then(Value::as_array) {
+                if complex(children, list_depth) {
+                    return true;
+                }
+            }
+            if let Some(items) = block.get("items").and_then(Value::as_array) {
+                for item in items {
+                    if item
+                        .get("children")
+                        .and_then(Value::as_array)
+                        .is_some_and(|children| complex(children, list_depth + 1))
+                    {
+                        return true;
+                    }
+                }
+            }
+            false
+        })
+    }
+    for page in collect_pages(projection) {
+        if page
+            .value
+            .get("items")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .any(|item| {
+                item.get("rich_text")
+                    .and_then(Value::as_array)
+                    .is_some_and(|nodes| complex(nodes, 0))
+            })
+        {
+            return true;
+        }
+    }
+    projection
+        .get("lessons")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .any(|lesson| {
+            let has_pages = lesson
+                .get("layout")
+                .and_then(|layout| layout.get("pages"))
+                .and_then(Value::as_array)
+                .is_some_and(|pages| !pages.is_empty());
+            !has_pages
+                && lesson
+                    .get("blocks")
+                    .and_then(Value::as_array)
+                    .into_iter()
+                    .flatten()
+                    .any(|block| {
+                        block
+                            .get("rich_text")
+                            .and_then(Value::as_array)
+                            .is_some_and(|nodes| complex(nodes, 0))
+                    })
+        })
 }
 
 pub(crate) fn unplaced_block_ids(projection: &Value) -> Vec<String> {
@@ -1111,7 +1200,8 @@ fn render_page_html(
             let content = if let Some(media) = media.filter(|value| !value.is_null()) {
                 render_media_html(media, media_sources, print_mode)
             } else {
-                render_text_html(item, text)
+                render_semantic_html(item, media_sources)
+                    .unwrap_or_else(|| render_text_html(item, text))
             };
             result.push_str(&format!(
                 "<div class=\"placement\" data-block-id=\"{}\" style=\"left:{x:.3}pt;top:{y:.3}pt;width:{width:.3}pt;height:{height:.3}pt;z-index:{z};padding:{padding};text-align:{align};font-size:{font_size:.3}pt;line-height:{line_height};--image-fit:{image_fit}\">{content}</div>",
@@ -1170,10 +1260,14 @@ fn render_flow_lesson(
             if let Some(media) = block.get("media").filter(|value| !value.is_null()) {
                 out.push_str(&render_media_html(media, media_sources, print_mode));
             } else {
-                out.push_str(&render_text_html(
-                    block,
-                    block.get("text").and_then(Value::as_str).unwrap_or(""),
-                ));
+                out.push_str(
+                    &render_semantic_html(block, media_sources).unwrap_or_else(|| {
+                        render_text_html(
+                            block,
+                            block.get("text").and_then(Value::as_str).unwrap_or(""),
+                        )
+                    }),
+                );
             }
         }
     }
@@ -1201,6 +1295,229 @@ fn render_text_html(item: &Value, text: &str) -> String {
     }
 }
 
+fn render_semantic_html(item: &Value, media_sources: &HashMap<String, String>) -> Option<String> {
+    let blocks = item.get("rich_text")?.as_array()?;
+    if blocks.is_empty() {
+        return None;
+    }
+    let inline_media = item.get("inline_media").and_then(Value::as_array);
+    Some(semantic_blocks_html(blocks, inline_media, media_sources))
+}
+
+fn semantic_blocks_html(
+    blocks: &[Value],
+    inline_media: Option<&Vec<Value>>,
+    media_sources: &HashMap<String, String>,
+) -> String {
+    blocks
+        .iter()
+        .map(|block| {
+            let children = || {
+                semantic_blocks_html(
+                    block
+                        .get("children")
+                        .and_then(Value::as_array)
+                        .map(Vec::as_slice)
+                        .unwrap_or(&[]),
+                    inline_media,
+                    media_sources,
+                )
+            };
+            match block.get("type").and_then(Value::as_str).unwrap_or("") {
+                "paragraph" => format!(
+                    "<p>{}</p>",
+                    semantic_inline_html(
+                        block.get("children").and_then(Value::as_array),
+                        inline_media,
+                        media_sources
+                    )
+                ),
+                "heading" => {
+                    let level = block
+                        .get("level")
+                        .and_then(Value::as_u64)
+                        .unwrap_or(2)
+                        .clamp(1, 6);
+                    format!(
+                        "<h{level}>{}</h{level}>",
+                        semantic_inline_html(
+                            block.get("children").and_then(Value::as_array),
+                            inline_media,
+                            media_sources
+                        )
+                    )
+                }
+                "quote" => format!("<blockquote>{}</blockquote>", children()),
+                "callout" => format!(
+                    "<aside class=\"markdown-callout\">{}</aside>",
+                    semantic_inline_html(
+                        block.get("children").and_then(Value::as_array),
+                        inline_media,
+                        media_sources
+                    )
+                ),
+                "list" => {
+                    let ordered = block
+                        .get("ordered")
+                        .and_then(Value::as_bool)
+                        .unwrap_or(false);
+                    let tag = if ordered { "ol" } else { "ul" };
+                    let start = block
+                        .get("start")
+                        .and_then(Value::as_u64)
+                        .unwrap_or(1)
+                        .clamp(1, 999_999);
+                    let start_attr = if ordered && start > 1 {
+                        format!(" start=\"{start}\"")
+                    } else {
+                        String::new()
+                    };
+                    let items = block
+                        .get("items")
+                        .and_then(Value::as_array)
+                        .into_iter()
+                        .flatten()
+                        .map(|item| {
+                            let marker = match item.get("checked").and_then(Value::as_bool) {
+                                Some(true) => "<span class=\"task-marker\">☑ </span>",
+                                Some(false) => "<span class=\"task-marker\">☐ </span>",
+                                None => "",
+                            };
+                            let item_blocks = item
+                                .get("children")
+                                .and_then(Value::as_array)
+                                .map(Vec::as_slice)
+                                .unwrap_or(&[]);
+                            format!(
+                                "<li>{marker}{}</li>",
+                                semantic_blocks_html(item_blocks, inline_media, media_sources)
+                            )
+                        })
+                        .collect::<String>();
+                    format!("<{tag}{start_attr}>{items}</{tag}>")
+                }
+                "code" => format!(
+                    "<pre><code>{}</code></pre>",
+                    esc_html(block.get("text").and_then(Value::as_str).unwrap_or(""))
+                ),
+                "divider" => "<hr>".into(),
+                "table" => {
+                    let align = block.get("align").and_then(Value::as_array);
+                    let render_row = |cells: &[Value], header: bool| {
+                        let tag = if header { "th" } else { "td" };
+                        let cells = cells
+                            .iter()
+                            .enumerate()
+                            .map(|(index, cell)| {
+                                let alignment = align
+                                    .and_then(|items| items.get(index))
+                                    .and_then(Value::as_str);
+                                let style = match alignment {
+                                    Some(alignment @ ("left" | "center" | "right")) => {
+                                        format!(" style=\"text-align:{alignment}\"")
+                                    }
+                                    _ => String::new(),
+                                };
+                                let contents = semantic_inline_html(
+                                    cell.as_array(),
+                                    inline_media,
+                                    media_sources,
+                                );
+                                format!("<{tag}{style}>{contents}</{tag}>")
+                            })
+                            .collect::<String>();
+                        format!("<tr>{cells}</tr>")
+                    };
+                    let header = block
+                        .get("header")
+                        .and_then(Value::as_array)
+                        .map(|cells| render_row(cells, true))
+                        .unwrap_or_default();
+                    let rows = block
+                        .get("rows")
+                        .and_then(Value::as_array)
+                        .into_iter()
+                        .flatten()
+                        .map(|row| {
+                            render_row(row.as_array().map(Vec::as_slice).unwrap_or(&[]), false)
+                        })
+                        .collect::<String>();
+                    format!("<table><thead>{header}</thead><tbody>{rows}</tbody></table>")
+                }
+                _ => String::new(),
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+fn semantic_inline_html(
+    nodes: Option<&Vec<Value>>,
+    inline_media: Option<&Vec<Value>>,
+    media_sources: &HashMap<String, String>,
+) -> String {
+    nodes
+        .into_iter()
+        .flatten()
+        .map(|node| {
+            let children = || {
+                semantic_inline_html(
+                    node.get("children").and_then(Value::as_array),
+                    inline_media,
+                    media_sources,
+                )
+            };
+            match node.get("type").and_then(Value::as_str).unwrap_or("") {
+                "text" => esc_html(node.get("text").and_then(Value::as_str).unwrap_or("")),
+                "break" => "<br>".into(),
+                "code" => format!(
+                    "<code>{}</code>",
+                    esc_html(node.get("text").and_then(Value::as_str).unwrap_or(""))
+                ),
+                "strong" => format!("<strong>{}</strong>", children()),
+                "em" => format!("<em>{}</em>", children()),
+                "del" => format!("<del>{}</del>", children()),
+                "link" => {
+                    let href = node.get("href").and_then(Value::as_str).unwrap_or("");
+                    if (href.starts_with("https://")
+                        || href.starts_with("http://")
+                        || href.starts_with("mailto:"))
+                        && !href.chars().any(char::is_control)
+                        && !href.chars().any(char::is_whitespace)
+                    {
+                        format!(
+                            "<a href=\"{}\" rel=\"noopener noreferrer\">{}</a>",
+                            esc_html(href),
+                            children()
+                        )
+                    } else {
+                        children()
+                    }
+                }
+                "image" => {
+                    let id = node.get("asset_id").and_then(Value::as_str).unwrap_or("");
+                    let alt = esc_html(node.get("alt").and_then(Value::as_str).unwrap_or(""));
+                    let allowed = inline_media.into_iter().flatten().any(|media| {
+                        media.get("id").and_then(Value::as_str) == Some(id)
+                            && matches!(
+                                media.get("type").and_then(Value::as_str),
+                                Some("image" | "gif")
+                            )
+                    });
+                    match (allowed, media_sources.get(id)) {
+                        (true, Some(source)) => format!(
+                            "<img class=\"publication-inline-image\" src=\"{}\" alt=\"{alt}\">",
+                            esc_html(source)
+                        ),
+                        _ => alt,
+                    }
+                }
+                _ => String::new(),
+            }
+        })
+        .collect::<String>()
+}
+
 fn render_media_html(media: &Value, sources: &HashMap<String, String>, print_mode: bool) -> String {
     let id = media.get("id").and_then(Value::as_str).unwrap_or("");
     let kind = media.get("type").and_then(Value::as_str).unwrap_or("other");
@@ -1219,7 +1536,7 @@ fn render_media_html(media: &Value, sources: &HashMap<String, String>, print_mod
 
 fn page_css(size: PageSize) -> String {
     format!(
-        "@page{{size:{:.3}pt {:.3}pt;margin:0}}*{{box-sizing:border-box}}body{{margin:0;color:#20242b;background:#eef0f3;font:12pt/1.45 -apple-system,'PingFang SC','Microsoft YaHei',sans-serif}}main{{display:flex;flex-direction:column;align-items:center;gap:16pt;padding:16pt}}.page{{position:relative;width:{:.3}pt;height:{:.3}pt;overflow:hidden;background:#fff;box-shadow:0 2pt 14pt #0002;break-after:page;page-break-after:always}}.page:last-child{{break-after:auto;page-break-after:auto}}.placement{{position:absolute;overflow:hidden;white-space:pre-wrap;overflow-wrap:anywhere}}.placement p,.placement blockquote,.placement pre{{margin:0}}.placement figure{{display:flex;flex-direction:column;width:100%;height:100%;margin:0}}.placement img,.placement video{{display:block;width:100%;height:100%;min-height:0;object-fit:var(--image-fit,contain)}}.placement figcaption{{flex:0 0 auto;text-align:center;font-size:9pt}}.media-card{{border:1px solid #c9ced6;padding:8pt}}.flow-lesson{{width:min(820px,100%);min-height:{:.3}pt;margin:0 auto;background:#fff;padding:36pt 42pt;break-after:page;page-break-after:always}}.flow-lesson h2{{margin-top:0}}.flow-lesson img,.flow-lesson video{{max-width:100%;height:auto}}.flow-lesson pre{{white-space:pre-wrap}}@media print{{body{{background:#fff}}main{{display:block;padding:0}}.page{{margin:0;box-shadow:none}}.flow-lesson{{width:auto;min-height:0;margin:0}}}}",
+        "@page{{size:{:.3}pt {:.3}pt;margin:0}}*{{box-sizing:border-box}}body{{margin:0;color:#20242b;background:#eef0f3;font:12pt/1.45 -apple-system,'PingFang SC','Microsoft YaHei',sans-serif}}main{{display:flex;flex-direction:column;align-items:center;gap:16pt;padding:16pt}}.page{{position:relative;width:{:.3}pt;height:{:.3}pt;overflow:hidden;background:#fff;box-shadow:0 2pt 14pt #0002;break-after:page;page-break-after:always}}.page:last-child{{break-after:auto;page-break-after:auto}}.placement{{position:absolute;overflow:hidden;white-space:pre-wrap;overflow-wrap:anywhere}}.placement p,.placement blockquote,.placement pre{{margin:0}}.placement figure{{display:flex;flex-direction:column;width:100%;height:100%;margin:0}}.placement img:not(.publication-inline-image),.placement video{{display:block;width:100%;height:100%;min-height:0;object-fit:var(--image-fit,contain)}}.publication-inline-image{{display:inline-block;width:auto;height:auto;max-width:100%;max-height:60pt;object-fit:contain;vertical-align:middle}}.placement figcaption{{flex:0 0 auto;text-align:center;font-size:9pt}}.media-card{{border:1px solid #c9ced6;padding:8pt}}.flow-lesson{{width:min(820px,100%);min-height:{:.3}pt;margin:0 auto;background:#fff;padding:36pt 42pt;break-after:page;page-break-after:always}}.flow-lesson h2{{margin-top:0}}.flow-lesson table{{border-collapse:collapse}}.flow-lesson th,.flow-lesson td{{border:1px solid #c9ced6;padding:4pt}}.markdown-callout{{border-left:3pt solid #175cd3;padding:6pt 10pt;background:#f5f8ff}}.flow-lesson img,.flow-lesson video{{max-width:100%;height:auto}}.flow-lesson pre{{white-space:pre-wrap}}@media print{{body{{background:#fff}}main{{display:block;padding:0}}.page{{margin:0;box-shadow:none}}.flow-lesson{{width:auto;min-height:0;margin:0}}}}",
         size.width, size.height, size.width, size.height, size.height
     )
 }
@@ -1330,8 +1647,56 @@ fn render_slide(
                     next_shape += 1;
                 }
             } else if !text.is_empty() {
-                shapes.push_str(&text_shape(next_shape, text, fitted, item, false));
-                next_shape += 1;
+                let inline_images = semantic_image_refs(item);
+                if inline_images.is_empty() {
+                    shapes.push_str(&text_shape(next_shape, text, fitted, item, false));
+                    next_shape += 1;
+                } else {
+                    let image_band = (fitted.height * 0.32).min(96.0).min(fitted.height * 0.6);
+                    let text_rect = Rect {
+                        height: (fitted.height - image_band).max(1.0),
+                        ..fitted
+                    };
+                    shapes.push_str(&text_shape(next_shape, text, text_rect, item, false));
+                    next_shape += 1;
+                    let columns = (inline_images.len() as f64).sqrt().ceil().max(1.0) as usize;
+                    let rows = inline_images.len().div_ceil(columns);
+                    for (index, (id, alt)) in inline_images.iter().enumerate() {
+                        let (mime, bytes) = media_bytes.get(id).ok_or("Markdown图片素材不存在")?;
+                        let extension = image_extension(mime, bytes)?;
+                        let name = if let Some(name) = image_names.get(id) {
+                            name.clone()
+                        } else {
+                            let name = format!("image-{}.{}", image_names.len() + 1, extension);
+                            media_parts.push((
+                                format!("ppt/media/{name}"),
+                                bytes.clone(),
+                                mime.to_owned(),
+                            ));
+                            image_names.insert(id.clone(), name.clone());
+                            name
+                        };
+                        let rel_id = format!("rId{next_rel}");
+                        next_rel += 1;
+                        relationships.push((
+                            rel_id.clone(),
+                            "http://schemas.openxmlformats.org/officeDocument/2006/relationships/image".into(),
+                            format!("../media/{name}"),
+                        ));
+                        let column = index % columns;
+                        let row = index / columns;
+                        let tile = Rect {
+                            x: fitted.x + fitted.width * column as f64 / columns as f64,
+                            y: fitted.y + text_rect.height + image_band * row as f64 / rows as f64,
+                            width: fitted.width / columns as f64,
+                            height: image_band / rows as f64,
+                        };
+                        let (image_rect, crop) = image_rect_and_crop(tile, bytes, Some("contain"));
+                        shapes
+                            .push_str(&picture_shape(next_shape, &rel_id, image_rect, crop, alt)?);
+                        next_shape += 1;
+                    }
+                }
             }
         }
     }
@@ -1347,6 +1712,81 @@ fn render_slide(
     let rels = relationship_xml(&relationships);
     let _ = slide_number;
     Ok((slide, rels))
+}
+
+fn semantic_image_refs(item: &Value) -> Vec<(String, String)> {
+    fn visit(
+        nodes: &[Value],
+        allowed: &HashMap<String, String>,
+        result: &mut Vec<(String, String)>,
+    ) {
+        for node in nodes {
+            if node.get("type").and_then(Value::as_str) == Some("image") {
+                let id = node.get("asset_id").and_then(Value::as_str).unwrap_or("");
+                if !id.is_empty() && allowed.contains_key(id) {
+                    result.push((
+                        id.to_owned(),
+                        node.get("alt")
+                            .and_then(Value::as_str)
+                            .unwrap_or("图片")
+                            .to_owned(),
+                    ));
+                }
+            }
+            if let Some(children) = node.get("children").and_then(Value::as_array) {
+                visit(children, allowed, result);
+            }
+            if let Some(items) = node.get("items").and_then(Value::as_array) {
+                for item in items {
+                    if let Some(children) = item.get("children").and_then(Value::as_array) {
+                        visit(children, allowed, result);
+                    }
+                }
+            }
+            if let Some(rows) = node.get("rows").and_then(Value::as_array) {
+                for row in rows {
+                    for cell in row.as_array().into_iter().flatten() {
+                        visit(
+                            cell.as_array()
+                                .map(Vec::as_slice)
+                                .unwrap_or(std::slice::from_ref(cell)),
+                            allowed,
+                            result,
+                        );
+                    }
+                }
+            }
+            if let Some(header) = node.get("header").and_then(Value::as_array) {
+                for cell in header {
+                    visit(
+                        cell.as_array()
+                            .map(Vec::as_slice)
+                            .unwrap_or(std::slice::from_ref(cell)),
+                        allowed,
+                        result,
+                    );
+                }
+            }
+        }
+    }
+    let allowed = item
+        .get("inline_media")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter(|media| media.get("type").and_then(Value::as_str) == Some("image"))
+        .filter_map(|media| {
+            media
+                .get("id")
+                .and_then(Value::as_str)
+                .map(|id| (id.to_owned(), id.to_owned()))
+        })
+        .collect::<HashMap<_, _>>();
+    let mut result = Vec::new();
+    if let Some(blocks) = item.get("rich_text").and_then(Value::as_array) {
+        visit(blocks, &allowed, &mut result);
+    }
+    result
 }
 
 fn text_shape(id: u32, text: &str, rect: Rect, item: &Value, caption: bool) -> String {
@@ -1412,10 +1852,12 @@ fn text_shape(id: u32, text: &str, rect: Rect, item: &Value, caption: bool) -> S
         (points * 12_700.0).round() as u64
     };
     let label = esc_xml(if caption { "图片说明" } else { kind });
-    let paragraphs = text
-        .split('\n')
-        .map(|line| format!("<a:p><a:pPr algn=\"{align}\"><a:lnSpc><a:spcPct val=\"{line_height}\"/></a:lnSpc></a:pPr><a:r><a:rPr lang=\"zh-CN\" sz=\"{font_size}\"{bold}{italic}><a:latin typeface=\"{font_face}\"/><a:ea typeface=\"Microsoft YaHei\"/></a:rPr><a:t xml:space=\"preserve\">{}</a:t></a:r><a:endParaRPr lang=\"zh-CN\"/></a:p>", esc_xml(line)))
-        .collect::<String>();
+    let paragraphs = item
+        .get("rich_text")
+        .and_then(Value::as_array)
+        .filter(|nodes| !nodes.is_empty())
+        .map(|nodes| semantic_pptx_paragraphs(nodes, font_size, line_height, align, bold, italic))
+        .unwrap_or_else(|| text.split('\n').map(|line| format!("<a:p><a:pPr algn=\"{align}\"><a:lnSpc><a:spcPct val=\"{line_height}\"/></a:lnSpc></a:pPr><a:r><a:rPr lang=\"zh-CN\" sz=\"{font_size}\"{bold}{italic}><a:latin typeface=\"{font_face}\"/><a:ea typeface=\"Microsoft YaHei\"/></a:rPr><a:t xml:space=\"preserve\">{}</a:t></a:r><a:endParaRPr lang=\"zh-CN\"/></a:p>", esc_xml(line))).collect::<String>());
     let x = to_emu(rect.x);
     let y = to_emu(rect.y);
     let width = to_emu(rect.width.max(1.0));
@@ -1428,6 +1870,243 @@ fn text_shape(id: u32, text: &str, rect: Rect, item: &Value, caption: bool) -> S
         inset("top"),
         inset("bottom")
     )
+}
+
+fn semantic_pptx_paragraphs(
+    blocks: &[Value],
+    font_size: u32,
+    line_height: u32,
+    align: &str,
+    base_bold: &str,
+    base_italic: &str,
+) -> String {
+    fn run(text: &str, size: u32, bold: bool, italic: bool, strike: bool, code: bool) -> String {
+        let bold = if bold { " b=\"1\"" } else { "" };
+        let italic = if italic { " i=\"1\"" } else { "" };
+        let strike = if strike { " strike=\"sngStrike\"" } else { "" };
+        let face = if code { "Menlo" } else { "Aptos" };
+        format!("<a:r><a:rPr lang=\"zh-CN\" sz=\"{size}\"{bold}{italic}{strike}><a:latin typeface=\"{face}\"/><a:ea typeface=\"Microsoft YaHei\"/></a:rPr><a:t xml:space=\"preserve\">{}</a:t></a:r>", esc_xml(text))
+    }
+    fn inline(
+        nodes: &[Value],
+        size: u32,
+        bold: bool,
+        italic: bool,
+        strike: bool,
+        code: bool,
+        out: &mut Vec<String>,
+    ) {
+        for node in nodes {
+            match node.get("type").and_then(Value::as_str).unwrap_or("") {
+                "text" => out.push(run(
+                    node.get("text").and_then(Value::as_str).unwrap_or(""),
+                    size,
+                    bold,
+                    italic,
+                    strike,
+                    code,
+                )),
+                "code" => out.push(run(
+                    node.get("text").and_then(Value::as_str).unwrap_or(""),
+                    size,
+                    bold,
+                    italic,
+                    strike,
+                    true,
+                )),
+                "break" => out.push("<a:br/>".into()),
+                "strong" | "em" | "del" | "link" => {
+                    let kind = node.get("type").and_then(Value::as_str).unwrap_or("");
+                    inline(
+                        node.get("children")
+                            .and_then(Value::as_array)
+                            .map(Vec::as_slice)
+                            .unwrap_or(&[]),
+                        size,
+                        bold || kind == "strong",
+                        italic || kind == "em",
+                        strike || kind == "del",
+                        code,
+                        out,
+                    );
+                }
+                "image" => {
+                    let alt = node.get("alt").and_then(Value::as_str).unwrap_or("图片");
+                    out.push(run(&format!("[{alt}]"), size, bold, italic, strike, code));
+                }
+                _ => {}
+            }
+        }
+    }
+    fn paragraphs(
+        blocks: &[Value],
+        depth: usize,
+        size: u32,
+        base_bold: bool,
+        base_italic: bool,
+        out: &mut Vec<Vec<String>>,
+    ) {
+        for block in blocks {
+            let kind = block.get("type").and_then(Value::as_str).unwrap_or("");
+            match kind {
+                "paragraph" | "heading" | "callout" | "quote" => {
+                    let mut runs = Vec::new();
+                    inline(
+                        block
+                            .get("children")
+                            .and_then(Value::as_array)
+                            .map(Vec::as_slice)
+                            .unwrap_or(&[]),
+                        size,
+                        base_bold || kind == "heading",
+                        base_italic || kind == "quote",
+                        false,
+                        false,
+                        &mut runs,
+                    );
+                    if !runs.is_empty() {
+                        out.push(runs);
+                    }
+                    if kind == "quote" {
+                        paragraphs(
+                            block
+                                .get("children")
+                                .and_then(Value::as_array)
+                                .map(Vec::as_slice)
+                                .unwrap_or(&[]),
+                            depth,
+                            size,
+                            base_bold,
+                            true,
+                            out,
+                        );
+                    }
+                }
+                "list" => {
+                    let ordered = block
+                        .get("ordered")
+                        .and_then(Value::as_bool)
+                        .unwrap_or(false);
+                    let start = block.get("start").and_then(Value::as_u64).unwrap_or(1);
+                    for (index, item) in block
+                        .get("items")
+                        .and_then(Value::as_array)
+                        .into_iter()
+                        .flatten()
+                        .enumerate()
+                    {
+                        let marker = match item.get("checked").and_then(Value::as_bool) {
+                            Some(true) => "☑ ".to_owned(),
+                            Some(false) => "☐ ".to_owned(),
+                            None if ordered => {
+                                format!("{}{}. ", "  ".repeat(depth), start + index as u64)
+                            }
+                            None => format!("{}• ", "  ".repeat(depth)),
+                        };
+                        let mut runs =
+                            vec![run(&marker, size, base_bold, base_italic, false, false)];
+                        let children = item
+                            .get("children")
+                            .and_then(Value::as_array)
+                            .map(Vec::as_slice)
+                            .unwrap_or(&[]);
+                        for child in children {
+                            if child.get("type").and_then(Value::as_str) == Some("list") {
+                                if !runs.is_empty() {
+                                    out.push(runs);
+                                    runs = Vec::new();
+                                }
+                                paragraphs(
+                                    std::slice::from_ref(child),
+                                    depth + 1,
+                                    size,
+                                    base_bold,
+                                    base_italic,
+                                    out,
+                                );
+                            } else {
+                                inline(
+                                    child
+                                        .get("children")
+                                        .and_then(Value::as_array)
+                                        .map(Vec::as_slice)
+                                        .unwrap_or(&[]),
+                                    size,
+                                    base_bold,
+                                    base_italic,
+                                    false,
+                                    false,
+                                    &mut runs,
+                                );
+                            }
+                        }
+                        if !runs.is_empty() {
+                            out.push(runs);
+                        }
+                    }
+                }
+                "code" => {
+                    let text = block.get("text").and_then(Value::as_str).unwrap_or("");
+                    out.push(vec![run(text, size, base_bold, base_italic, false, true)]);
+                }
+                "divider" => out.push(vec![run(
+                    "────────",
+                    size,
+                    base_bold,
+                    base_italic,
+                    false,
+                    false,
+                )]),
+                "table" => {
+                    let render_row = |cells: &[Value]| {
+                        let mut runs = Vec::new();
+                        for (index, cell) in cells.iter().enumerate() {
+                            if index > 0 {
+                                runs.push(run(" | ", size, false, false, false, false));
+                            }
+                            inline(
+                                cell.as_array().map(Vec::as_slice).unwrap_or(&[]),
+                                size,
+                                base_bold,
+                                base_italic,
+                                false,
+                                false,
+                                &mut runs,
+                            );
+                        }
+                        runs
+                    };
+                    if let Some(header) = block.get("header").and_then(Value::as_array) {
+                        out.push(render_row(header));
+                    }
+                    for row in block
+                        .get("rows")
+                        .and_then(Value::as_array)
+                        .into_iter()
+                        .flatten()
+                    {
+                        out.push(render_row(row.as_array().map(Vec::as_slice).unwrap_or(&[])));
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+    let mut paragraphs_out = Vec::new();
+    paragraphs(
+        blocks,
+        0,
+        font_size,
+        base_bold.contains("b=\"1\""),
+        base_italic.contains("i=\"1\""),
+        &mut paragraphs_out,
+    );
+    if paragraphs_out.is_empty() {
+        paragraphs_out.push(vec![run("", font_size, false, false, false, false)]);
+    }
+    paragraphs_out.into_iter().map(|runs| {
+        format!("<a:p><a:pPr algn=\"{align}\"><a:lnSpc><a:spcPct val=\"{line_height}\"/></a:lnSpc></a:pPr>{}<a:endParaRPr lang=\"zh-CN\"/></a:p>", runs.join(""))
+    }).collect()
 }
 
 fn picture_shape(
@@ -1855,6 +2534,65 @@ mod tests {
         assert!(html.contains("left:20.000pt;top:20.000pt"));
         assert!(html.contains("text-align:center;font-size:24.000pt;line-height:1.5"));
         assert!(html.contains("padding:2.000pt 6.000pt 3.000pt 5.000pt"));
+    }
+
+    #[test]
+    fn semantic_export_keeps_editable_runs_and_inline_asset_images() {
+        let mut projection = sample_projection();
+        let inline_media = projection["media"][0].clone();
+        let item = &mut projection["lessons"][0]["layout"]["pages"][0]["items"][0];
+        item["rich_text"] = json!([{
+            "type":"paragraph","children":[
+                {"type":"text","text":"可编辑 "},
+                {"type":"strong","children":[{"type":"text","text":"粗体"}]},
+                {"type":"del","children":[{"type":"text","text":"删除线"}]},
+                {"type":"text","text":" "},
+                {"type":"image","asset_id":"asset-1","alt":"封面","title":null}
+            ]
+        }]);
+        item["inline_media"] = json!([inline_media]);
+        projection["lessons"][0]["layout"]["pages"][0]["items"][1]["media"] = Value::Null;
+        let sources = HashMap::from([("asset-1".into(), "assets/photo.png".into())]);
+        let html = render_html(&projection, &sources, false).expect("semantic HTML should render");
+        assert!(html.contains("<strong>粗体</strong>"));
+        assert!(html
+            .contains("class=\"publication-inline-image\" src=\"assets/photo.png\" alt=\"封面\""));
+        assert_eq!(selected_media_ids(&projection), vec!["asset-1"]);
+        let pdf_html =
+            render_html(&projection, &sources, true).expect("semantic PDF source should render");
+        assert!(
+            pdf_html.contains("<strong>粗体</strong>")
+                && pdf_html.contains("publication-inline-image")
+        );
+
+        let pptx = render_pptx(
+            &projection,
+            &HashMap::from([("asset-1".into(), ("image/png".into(), sample_png()))]),
+        )
+        .expect("semantic PPTX should render");
+        if let Some(path) = std::env::var_os("ACW_PPTX_SEMANTIC_PROBE_PATH") {
+            std::fs::write(path, &pptx).expect("semantic PPTX probe should be written");
+        }
+        let slide =
+            std::str::from_utf8(zip_stored_entry(&pptx, "ppt/slides/slide1.xml").unwrap()).unwrap();
+        assert!(
+            slide.contains("粗体") && slide.contains("b=\"1\""),
+            "inline emphasis should remain editable text runs"
+        );
+        assert!(slide.contains("strike=\"sngStrike\""));
+        assert!(
+            slide.contains("<p:pic>"),
+            "controlled inline image should remain a native picture shape"
+        );
+
+        projection["lessons"][0]["layout"]["pages"][0]["items"][0]["rich_text"] = json!([
+            {"type":"list","ordered":false,"start":1,"items":[{"checked":null,"children":[{"type":"list","ordered":false,"start":1,"items":[]}]}]},
+            {"type":"table","align":[],"header":[],"rows":[]}
+        ]);
+        assert!(
+            has_simplified_pptx_semantics(&projection),
+            "flattened tables and nested lists need a fidelity warning"
+        );
     }
 
     #[test]

@@ -16,6 +16,7 @@ import {
   initializeContentStatuses,
   now,
 } from "../src/domain/index.ts";
+import { renderMarkdown } from "../app/markdown.js";
 import type { ProjectData } from "../src/domain/types.ts";
 
 function assert(condition: unknown, message: string): asserts condition {
@@ -56,16 +57,27 @@ interface NativeStore {
     rightPanel: string;
     route: string;
     toast: unknown;
+    importFolderRoot?: string;
+    folderScan?: { root: string; entries: Array<Record<string, unknown>> };
+    explorerSelected?: string | null;
+    explorerPreview?: Record<string, unknown>;
   };
+  explorerMarkdownImageUrls?: Record<string, unknown>;
   bridge: {
     projectDir: string | null;
     isNative: () => boolean;
     nativeInput: (command: string, args?: Record<string, unknown>) => unknown;
+    command: (name: string, input?: Record<string, unknown>) => Promise<unknown>;
+    previewFolderVideoSource: (root: string, relativePath: string) => Promise<unknown>;
+    previewAssetVideoSource: (assetId: string) => Promise<unknown>;
   };
   hasNativeLease: () => boolean;
   addMapItem: (title?: string) => void;
   enterProject: () => void;
   flush: () => Promise<unknown>;
+  prepareParsedMarkdownPlan: (plan: Record<string, unknown>) => Promise<any>;
+  selectExplorerEntry: (relativePath: string) => Promise<void>;
+  clearExplorerPreview: () => void;
 }
 
 let importCounter = 0;
@@ -102,6 +114,7 @@ async function bootNative(options: {
     session: options.persistedSession ? structuredClone(options.persistedSession) : null,
     sessionWrites: 0,
     calls: [] as BridgeCall[],
+    invokeOverrides: new Map<string, (args: Record<string, unknown>) => unknown>(),
     closeRequested: null as ((event: { preventDefault?: () => void }) => void) | null,
   };
   const root = {
@@ -142,6 +155,7 @@ async function bootNative(options: {
     core: {
       invoke: async (command: string, args: Record<string, unknown> = {}) => {
         state.calls.push({ command, args });
+        if (state.invokeOverrides.has(command)) return await state.invokeOverrides.get(command)!(args);
         switch (command) {
           case "load_session": {
             if (!launchConsumed && options.launchProjectDir) {
@@ -176,10 +190,56 @@ async function bootNative(options: {
             return null;
           case "project_external_status":
             return { changed: false, current: null };
+          case "folder_read_source":
+            return { text: "# Native source\n", sha256: "a".repeat(64) };
+          case "folder_markdown_image_status": {
+            const href = String(args.href || "");
+            if (href === "images/example.png") {
+              return { status: "present", relative_path: "images/example.png", size: 68, mime: "image/png" };
+            }
+            if (href === "images/missing.png") {
+              return { status: "missing", relative_path: null, size: null, mime: null };
+            }
+            if (href === "images/large.png") {
+              return { status: "present", relative_path: "images/large.png", size: 16 * 1024 * 1024 + 1, mime: "image/png" };
+            }
+            return { status: "unsafe", relative_path: null, size: null, mime: null };
+          }
+          case "folder_read_preview":
+            if (args.relativePath === "lesson.md") {
+              return {
+                relative_path: "lesson.md", mime: "text/markdown", size: 200,
+                preview_kind: "text",
+                text: "# Native source\n\n![present](images/example.png)\n\n![missing](images/missing.png)\n\n![large](images/large.png)\n\n![unsafe](../outside.png)\n\n![remote](https://remote.test/image.png)\n",
+                bytes_base64: null, note: null,
+              };
+            }
+            if (args.relativePath === "images/example.png") {
+              return {
+                relative_path: "images/example.png", mime: "image/png", size: 68,
+                preview_kind: "image",
+                bytes_base64: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+a1XcAAAAASUVORK5CYII=",
+                text: null, note: null,
+              };
+            }
+            return {
+              relative_path: "sample.gif",
+              mime: "image/gif",
+              size: 1,
+              preview_kind: "image",
+              text: null,
+              bytes_base64: null,
+              note: null,
+            };
+          case "folder_preview_source":
+            return "/tmp/native-folder-video.mp4";
+          case "asset_preview_source":
+            return "/tmp/native-asset-video.mp4";
           default:
             return null;
         }
       },
+      convertFileSrc: (path: string) => `asset://localhost${path}`,
     },
     window: {
       getCurrentWindow: () => ({
@@ -563,6 +623,178 @@ Deno.test("asset.read carries the nested input the shell expects", async () => {
       "/tmp/native-boot-project",
       "input 必须带项目目录",
     );
+  } finally {
+    restore();
+  }
+});
+
+Deno.test("native import, media, and AI bridge calls match Tauri command argument names", async () => {
+  const { store, state, restore } = await bootNative({
+    project: seededProject(),
+    launchProjectDir: "/tmp/native-bridge-project",
+    persistedSession: { project_dir: "/tmp/native-bridge-project" },
+  });
+  try {
+    const parsed = await store.prepareParsedMarkdownPlan({
+      root: "/tmp/native-bridge-source",
+      items: [{
+        relative_path: "lesson.md",
+        kind: "file",
+        mapping: "lesson",
+        selected: true,
+        markdown_dependency_preview: {
+          state: "ready",
+          source_hash: "a".repeat(64),
+          images: [],
+          counts: { total: 0, local_readable: 0, missing: 0, outside_root: 0, remote_or_unsafe: 0 },
+        },
+      }],
+    });
+    assertEquals(
+      state.calls.find((call) => call.command === "folder_read_source")?.args,
+      { root: "/tmp/native-bridge-source", relativePath: "lesson.md" },
+      "Tauri's default command argument casing requires relativePath",
+    );
+    assert(parsed.items[0].parsed_markdown, "native Markdown must be parsed from the read source");
+
+    const appendPlan = { root: "/tmp/native-bridge-source", confirmed: true, items: [] };
+    await store.bridge.command("folder.append", { plan: appendPlan, duplicate_choice: "keep" });
+    assertEquals(
+      state.calls.find((call) => call.command === "folder_append")?.args,
+      {
+        plan: appendPlan,
+        projectDir: "/tmp/native-bridge-project",
+        duplicateChoice: "keep",
+      },
+      "folder.append's flat Rust parameters must receive Tauri camelCase projectDir",
+    );
+
+    await store.bridge.previewFolderVideoSource("/tmp/native-bridge-source", "clips/large.mp4");
+    assertEquals(
+      state.calls.find((call) => call.command === "folder_preview_source")?.args,
+      { root: "/tmp/native-bridge-source", relativePath: "clips/large.mp4" },
+      "folder.preview_source must receive relativePath",
+    );
+    await store.bridge.command("folder.markdown_image_status", {
+      root: "/tmp/native-bridge-source",
+      markdownRelativePath: "lesson.md",
+      href: "images/example.png",
+    });
+    assertEquals(
+      state.calls.find((call) => call.command === "folder_markdown_image_status")?.args,
+      {
+        root: "/tmp/native-bridge-source",
+        markdownRelativePath: "lesson.md",
+        href: "images/example.png",
+      },
+      "Markdown dependency status must match the native command's camelCase argument names",
+    );
+    store.ui.importFolderRoot = "/tmp/native-preview-root";
+    store.ui.folderScan = {
+      root: "/tmp/native-preview-root",
+      entries: [{ relative_path: "sample.gif", kind: "file", mime: "image/gif", size: 1 }],
+    };
+    await store.selectExplorerEntry("sample.gif");
+    assertEquals(
+      state.calls.find((call) => call.command === "folder_read_preview")?.args,
+      { root: "/tmp/native-preview-root", relativePath: "sample.gif" },
+      "folder.read_preview must receive Tauri's relativePath argument for GIF/PDF/text previews",
+    );
+    assert(!store.ui.explorerPreview?.failed, "a valid native file preview must not fail its path check");
+    await store.bridge.previewAssetVideoSource("video-1");
+    assertEquals(
+      state.calls.find((call) => call.command === "asset_preview_source")?.args,
+      { input: { asset_id: "video-1", project_dir: "/tmp/native-bridge-project" } },
+      "asset.preview_source takes its project-scoped payload under input",
+    );
+
+    const imageHost = globalThis as typeof globalThis & { Image?: unknown };
+    const previousImage = imageHost.Image;
+    class FakeImage {
+      naturalWidth = 1;
+      naturalHeight = 1;
+      onload?: () => void;
+      onerror?: () => void;
+      set src(_value: string) {
+        queueMicrotask(() => this.onload?.());
+      }
+    }
+    imageHost.Image = FakeImage;
+    try {
+      store.ui.importFolderRoot = "/tmp/native-preview-root";
+      store.ui.folderScan = {
+        root: "/tmp/native-preview-root",
+        entries: [{ relative_path: "lesson.md", kind: "file", mime: "text/markdown", size: 200 }],
+      };
+      await store.selectExplorerEntry("lesson.md");
+      const markdownPreview = store.ui.explorerPreview;
+      const markdownText = String(markdownPreview?.text || "");
+      const resolvedImage = store.explorerMarkdownImageUrls?.["images/example.png"] as { url?: string };
+      assert(resolvedImage?.url, "a present local image should receive a safe preview URL");
+      assertEquals(
+        state.calls.find((call) => call.command === "folder_markdown_image_status" &&
+          call.args.root === "/tmp/native-preview-root" && call.args.href === "images/example.png")?.args,
+        { root: "/tmp/native-preview-root", markdownRelativePath: "lesson.md", href: "images/example.png" },
+        "Markdown image status must be scoped to the selected root and source file",
+      );
+      assert(
+        state.calls.some((call) => call.command === "folder_read_preview" && call.args.relativePath === "images/example.png"),
+        "only the validated referenced image should be read through the controlled preview command",
+      );
+      assert(
+        !state.calls.some((call) => call.command === "folder_read_preview" && call.args.relativePath === "images/large.png"),
+        "oversized referenced images must remain placeholders without loading bytes",
+      );
+      assert(
+        !state.calls.some((call) => call.command === "folder_markdown_image_status" && call.args.href === "https://remote.test/image.png"),
+        "remote image URLs must not be fetched",
+      );
+      const html = renderMarkdown(markdownText, {
+        resolveImage: (href) => store.explorerMarkdownImageUrls?.[href] || null,
+      });
+      assert(html.includes(`<img src="${resolvedImage.url}"`), "the Markdown renderer should show the authorized local image");
+      assert(html.includes("找不到本地图片"), "a missing image should retain a readable placeholder");
+      assert(html.includes("16 MiB"), "oversized images should explain the preview limit");
+      assert(html.includes("超出来源目录"), "unsafe paths should stay placeholders");
+
+      let resolveStatus!: (value: unknown) => void;
+      state.invokeOverrides.set("folder_markdown_image_status", () => new Promise((resolve) => {
+        resolveStatus = resolve;
+      }));
+      const staleSelection = store.selectExplorerEntry("lesson.md");
+      await until(() => typeof resolveStatus === "function", "等待资源图片授权检查开始");
+      store.clearExplorerPreview();
+      resolveStatus({ status: "present", relative_path: "images/example.png", size: 68, mime: "image/png" });
+      await staleSelection;
+      assertEquals(
+        store.explorerMarkdownImageUrls,
+        {},
+        "a late dependency response must not repopulate a cleared preview",
+      );
+      assertEquals(
+        state.calls.filter((call) => call.command === "folder_read_preview" && call.args.relativePath === "images/example.png").length,
+        1,
+        "a stale authorization result must not read image bytes",
+      );
+    } finally {
+      imageHost.Image = previousImage;
+    }
+
+    const aiCalls: Array<[string, Record<string, unknown>]> = [
+      ["ai.models.probe", { provider_id: "provider", api_key: "test-only-credential" }],
+      ["ai.connection.test", { provider_id: "saved" }],
+      ["ai.subscription.start", { provider_id: "account" }],
+      ["ai.subscription.status", { attempt_id: "attempt" }],
+      ["ai.subscription.cancel", { attempt_id: "attempt" }],
+      ["ai.subscription.logout", { provider_id: "account" }],
+    ];
+    for (const [name, args] of aiCalls) await store.bridge.command(name, args);
+    for (const [name, expected] of aiCalls) {
+      const command = name.replaceAll(".", "_");
+      const call = state.calls.find((candidate) => candidate.command === command);
+      assert(call, `${name} must map to ${command}`);
+      assertEquals(call.args, expected, `${name} must retain its native payload without project injection`);
+    }
   } finally {
     restore();
   }

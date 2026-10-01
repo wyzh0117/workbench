@@ -151,6 +151,7 @@ export interface ExportIssue {
     | "stale_snapshot"
     | "projection_mismatch"
     | "layout_export_unsupported"
+    | "pdf_inline_images_omitted"
     | "unsupported_format";
   message: string;
   count?: number;
@@ -1468,6 +1469,17 @@ export async function preflightExport(
             asset_id: media.id,
           });
         }
+      }
+      if (
+        target === "pdf" && publicationProjection.media.some((media) =>
+          media.type === "image" || media.type === "gif"
+        )
+      ) {
+        reportIssue(report, {
+          severity: "warning",
+          code: "pdf_inline_images_omitted",
+          message: "当前服务版 PDF 保留可选择文字，但不嵌入图片；请使用 HTML/Web 导出保留图片。",
+        });
       }
     } catch (caught) {
       reportIssue(report, {

@@ -9,6 +9,7 @@ import { createEmptyProjectData } from "../src/domain/index.ts";
 import { validateProjectData } from "../src/domain/store.ts";
 import type { ProjectData } from "../src/domain/types.ts";
 import { courseMap, lessonView } from "../app/authoring.js";
+import { AssetPreviewCache, staticImagePoster, stopPreviewMedia } from "../app/canvas.js";
 
 function assert(condition: unknown, message: string): asserts condition {
   if (!condition) throw new Error(message);
@@ -107,12 +108,15 @@ async function bootStore(bridgeOverrides: Record<string, unknown> = {}) {
     deleteStage: (id: string) => void;
     renameLesson: (id: string, title: string) => void;
     moveLesson: (id: string, direction: string) => void;
+    moveLessonToPosition: (id: string, stageId: string, beforeId?: string | null) => boolean;
     deleteLesson: (id: string) => void;
     openItem: (id: string) => void;
+    selectPropertyTarget: (kind: "project" | "stage", id?: string | null) => void;
     selectBlock: (id: string, options?: Record<string, unknown>) => void;
     addBlock: (type?: string, content?: string, atIndex?: number) => void;
     insertBlockBelow: (id: string) => void;
     editBlockText: (id: string, value: string) => void;
+    recordBlockTextEdit: (id: string, before: unknown, value: string) => void;
     setBlockType: (id: string, type: string) => void;
     setBlockLevel: (id: string, level: unknown) => void;
     moveBlock: (id: string, direction: string) => void;
@@ -174,6 +178,7 @@ async function bootStore(bridgeOverrides: Record<string, unknown> = {}) {
       total: number;
     };
     openPreflight: () => Promise<void>;
+    returnFromPublish: () => void;
     exportCurrent: (format?: string) => Promise<void>;
     acknowledgeExportWarning: (code: string, checked?: boolean) => void;
     publicationCapability: (format?: string) => { status: string; code: string | null };
@@ -184,6 +189,7 @@ async function bootStore(bridgeOverrides: Record<string, unknown> = {}) {
     setMode: (mode: string, options?: Record<string, unknown>) => void;
     openProject: (dir?: string) => Promise<void>;
     flush: () => Promise<boolean>;
+    flushNow: () => Promise<boolean>;
     saveTimer: number;
     initialize: () => Promise<void>;
     notify: () => void;
@@ -472,8 +478,10 @@ Deno.test("pointer reorder session commits canonical order_index via reorderBloc
 async function bootPointerDom() {
   type DocListener = (event: Record<string, unknown>) => void;
   const documentListeners = new Map<string, DocListener[]>();
+  let focusedElement: unknown = null;
   const blockNodes: Array<{
     dataset: { blockId: string };
+    summary: { focus: () => void };
     classList: {
       add: (name: string) => void;
       remove: (name: string) => void;
@@ -547,6 +555,34 @@ async function bootPointerDom() {
     return handle;
   };
 
+  const scrollContainer = {
+    scrollTop: 0,
+    scrollHeight: 600,
+    clientHeight: 100,
+    getBoundingClientRect: () => ({ top: 0, bottom: 100, height: 100 }),
+  };
+  let actionClick: DocListener | null = null;
+  const actionNode: any = {
+    dataset: { action: "select-block", id: "" },
+    addEventListener(type: string, handler: DocListener) {
+      if (type === "click") actionClick = handler;
+    },
+    matches: () => false,
+    closest(selector: string) {
+      return selector === ".block-more-menu" ? {} : null;
+    },
+    fire() {
+      actionClick?.({
+        target: actionNode,
+        stopPropagation() {},
+      });
+    },
+  };
+  const focusField = {
+    focus() { focusedElement = focusField; },
+    select() {},
+  };
+  let currentHtml = "";
   const root: {
     innerHTML: string;
     dataset: Record<string, string>;
@@ -556,12 +592,21 @@ async function bootPointerDom() {
     querySelector: (selector: string) => unknown;
     querySelectorAll: (selector: string) => unknown[];
   } = {
-    innerHTML: "",
+    get innerHTML() { return currentHtml; },
+    set innerHTML(value: string) {
+      currentHtml = value;
+      for (const node of blockNodes) {
+        const summary = { focus() { focusedElement = summary; } };
+        node.summary = summary;
+      }
+    },
     dataset: {},
     classList: classListFor(new Set()),
     addEventListener: () => {},
     contains: () => true,
     querySelector(selector: string) {
+      if (selector === ".center") return scrollContainer;
+      if (selector === '[data-focus-key="menu-test-field"]') return focusField;
       const match = /^article\.block\[data-block-id="([^"]+)"\]$/.exec(selector);
       if (match) {
         return blockNodes.find((node) => node.dataset.blockId === match[1]) ?? null;
@@ -569,6 +614,7 @@ async function bootPointerDom() {
       return null;
     },
     querySelectorAll(selector: string) {
+      if (selector === "[data-action]") return [actionNode];
       if (selector === "article.block[data-block-id]") return blockNodes;
       if (selector === "article.block.drop-before") {
         return blockNodes.filter((node) => node.classList.contains("drop-before"));
@@ -634,6 +680,7 @@ async function bootPointerDom() {
   const store = runtime.__workbench as {
     data: ProjectData;
     ui: Record<string, unknown>;
+    history: unknown[];
     saveTimer: number;
     sessionTimer?: number;
     notify: () => void;
@@ -658,13 +705,14 @@ async function bootPointerDom() {
       const handle = makeHandle();
       const classes = new Set<string>();
       const listeners = new Map<string, DocListener[]>();
-      blockNodes.push({
+      const node = {
         dataset: { blockId: id },
+        summary: { focus() { focusedElement = node.summary; } },
         classList: classListFor(classes),
         getBoundingClientRect: () => ({
-          top: box.top,
+          top: box.top - scrollContainer.scrollTop,
           height: box.height,
-          bottom: box.top + box.height,
+          bottom: box.top + box.height - scrollContainer.scrollTop,
           left: 0,
           right: 120,
           width: 120,
@@ -681,9 +729,14 @@ async function bootPointerDom() {
           );
         },
         querySelector: (selector: string) =>
-          selector === ".block-handle" ? handle : null,
+          selector === ".block-handle"
+            ? handle
+            : selector === "details.block-more > summary"
+            ? node.summary
+            : null,
         handle,
-      });
+      };
+      blockNodes.push(node);
     });
   };
 
@@ -694,8 +747,15 @@ async function bootPointerDom() {
   return {
     store,
     blockNodes,
+    scrollContainer,
     mountBlocks,
     fireDocument,
+    triggerBlockMenuAction(id: string) {
+      actionNode.dataset.id = id;
+      actionNode.fire();
+    },
+    focusedElement: () => focusedElement,
+    focusField,
     restore: () => {
       runtime.document = previous.document;
       runtime.__TAURI__ = previous.tauri;
@@ -1190,8 +1250,19 @@ Deno.test("paged canvas stays finite and editor, preview, and publish show real 
     store.ui.mode = "layout";
     let html = createViews(store).shellView() as string;
     assert(html.includes("data-action=\"select-layout-page\""), "editor renders selectable page identities");
-    assert(html.includes("data-action=\"page-duplicate\""), "editor exposes page duplication");
+    assert(html.includes("data-action=\"toggle-pagination-edit\""), "editor exposes a separate pagination edit toggle");
+    assert(html.includes('data-page-readonly="true"'), "page placements are inert while viewing");
+    assert(!html.includes("data-action=\"page-duplicate\""), "page structure actions stay hidden while viewing");
     assert(html.includes("有限页面"), "editor identifies finite page geometry");
+
+    const togglePaginationEditing = () =>
+      (store as unknown as { togglePaginationEditing: () => void }).togglePaginationEditing();
+    togglePaginationEditing();
+    html = createViews(store).shellView() as string;
+    assert(html.includes("data-action=\"page-duplicate\""), "pagination edit mode exposes page structure actions");
+    assert(html.includes("data-action=\"resize-placement\""), "pagination edit mode exposes placement actions");
+    togglePaginationEditing();
+    assert(store.data.layout_instances.at(-1)!.pagination_mode === "paged", "closing pagination edit mode does not change the saved layout mode");
 
     store.setMode("preview");
     html = createViews(store).shellView() as string;
@@ -1738,6 +1809,31 @@ Deno.test("text edits reach history so undo can revert typing", async () => {
       store.blocks(item)[0]!.content === "原始内容",
       "undo restores the previous text",
     );
+  } finally {
+    restore();
+  }
+});
+
+Deno.test("rich Markdown edits keep block IDs and undo one focus session", async () => {
+  const { store, restore } = await bootStore();
+  try {
+    store.addMapItem("富文本撤销");
+    const item = store.currentItem()!;
+    store.addBlock("paragraph", "原始内容");
+    const block = store.blocks(item)[0]!;
+    const blockId = block.id;
+    const historyBefore = store.history.length;
+
+    // Rich-editor input events update canonical text in place; blur commits the
+    // session once from its focus baseline, regardless of input event count.
+    block.content = "先保留 **格式**";
+    block.content = "完成的 **富文本** 和 ![图](images/a.png)";
+    store.recordBlockTextEdit(blockId, "原始内容", block.content);
+    assert(store.history.length === historyBefore + 1, "one focus session should make one undo entry");
+    assert(store.blocks(item)[0]!.id === blockId, "editing must preserve the canonical block ID");
+    store.undo();
+    assert(store.blocks(item)[0]!.id === blockId, "undo must preserve the canonical block ID");
+    assert(store.blocks(item)[0]!.content === "原始内容", "undo should restore the original source");
   } finally {
     restore();
   }
@@ -2662,4 +2758,506 @@ Deno.test("assetThumb gives non-blank previews for image video markdown and atta
       viewsSource.includes("asset-attachment"),
     "attachment detection must cover PDF/DOCX",
   );
+});
+
+Deno.test("cross-stage lesson move preserves references through one undo and redo", async () => {
+  const { store, restore } = await bootStore();
+  try {
+    store.addMapItem("源第一课");
+    const firstId = store.currentItem()!.id;
+    store.addMapItem("待移动课");
+    const movingId = store.currentItem()!.id;
+    store.addMapItem("目标阶段课");
+    const destinationId = store.currentItem()!.id;
+    store.addStage("目标阶段");
+    const sourceStageId = store.data.content_items.find((item) => item.id === firstId)!.stage_id!;
+    const destinationStage = store.data.stages.find((stage) => stage.title === "目标阶段")!;
+    assert(
+      store.moveLessonToPosition(destinationId, destinationStage.id),
+      "a destination lesson is moved into the new stage",
+    );
+
+    store.openItem(movingId);
+    store.addBlock("paragraph", "跨阶段后仍保留的正文");
+    const item = store.currentItem()!;
+    const body = store.blocks(item)[0]!;
+    store.addBlock("paragraph", "配图位置");
+    const imageBlock = store.blocks(item)[1]!;
+    store.commit("测试素材", (data) => {
+      data.assets.push({
+        id: "asset-move-test",
+        project_id: data.project.id,
+        type: "image",
+        filename: "移动测试.png",
+        storage_path: "assets/move-test.png",
+        mime_type: "image/png",
+        width: null,
+        height: null,
+        duration_ms: null,
+        file_size: 8,
+        checksum: "move-test",
+        title: "移动测试.png",
+        description: "",
+        source_type: "imported",
+        source_url: null,
+        copyright_note: null,
+        created_at: "2026-01-01T00:00:00.000Z",
+        archived: false,
+      });
+    });
+    store.selectBlock(imageBlock.id, { force: true });
+    await store.insertAsset("asset-move-test", { block_id: imageBlock.id });
+    const documentId = item.document_id;
+    const usage = store.data.asset_usages[0]!;
+    const assertReferences = () => {
+      const currentItem = store.data.content_items.find((candidate) => candidate.id === movingId)!;
+      assert(currentItem.document_id === documentId, "lesson keeps its document ID");
+      assert(
+        store.data.documents.find((document) => document.id === documentId)?.content_item_id === movingId,
+        "document still points to the lesson",
+      );
+      assert(
+        store.data.blocks.find((block) => block.id === body.id)?.content === "跨阶段后仍保留的正文",
+        "lesson text and block ID survive",
+      );
+      assert(
+        store.data.blocks.find((block) => block.id === imageBlock.id)?.settings.asset_id === "asset-move-test",
+        "media block still points to its asset",
+      );
+      assert(
+        store.data.asset_usages.some((candidate) =>
+          candidate.id === usage.id && candidate.block_id === imageBlock.id &&
+          candidate.content_item_id === movingId && candidate.asset_id === "asset-move-test"
+        ),
+        "asset usage keeps its references and ID",
+      );
+    };
+    const assertMoved = () => {
+      const moving = store.data.content_items.find((candidate) => candidate.id === movingId)!;
+      const destination = store.data.content_items.find((candidate) => candidate.id === destinationId)!;
+      assert(moving.stage_id === destinationStage.id && moving.code === "S02-01", "moved lesson is renumbered in destination");
+      assert(destination.stage_id === destinationStage.id && destination.code === "S02-02", "destination siblings are renumbered");
+      assert(
+        [moving, destination].sort((a, b) => a.order_index - b.order_index)[0]?.id === movingId,
+        "beforeId determines the destination order",
+      );
+      assertReferences();
+    };
+
+    store.history.length = 0;
+    assert(
+      store.moveLessonToPosition(movingId, destinationStage.id, destinationId),
+      "lesson moves before the existing destination lesson",
+    );
+    assert(store.history.length === 1, "one move creates one undo entry");
+    assertMoved();
+
+    store.undo();
+    const restored = store.data.content_items.find((candidate) => candidate.id === movingId)!;
+    assert(restored.stage_id === sourceStageId && restored.code === "S01-02", "one undo restores source stage and numbering");
+    assert(Number(store.history.length) === 0, "one undo consumes the move entry");
+    assertReferences();
+
+    store.redo();
+    assert(store.history.length === 1, "one redo reapplies the move entry");
+    assertMoved();
+  } finally {
+    restore();
+  }
+});
+
+Deno.test("publish check returns to the lesson editor context", async () => {
+  const { store, state, restore } = await bootStore();
+  try {
+    store.addMapItem("发布来源课程");
+    const sourceId = store.currentItem()!.id;
+    store.ui.screen = "project";
+    store.ui.route = "editor";
+    store.ui.mode = "preview";
+    store.ui.layoutPageId = "source-page";
+
+    let flushNowCalls = 0;
+    const flushNow = store.flushNow.bind(store);
+    store.flushNow = async () => {
+      flushNowCalls += 1;
+      return await flushNow();
+    };
+    const writesBeforePreflight = state.writes;
+    await store.openPreflight();
+    assert(flushNowCalls === 0, "preflight must not force a save");
+    assert(state.writes === writesBeforePreflight, "preflight must not write the project");
+    assert(store.ui.route === "publish" && store.ui.preflight, "preflight opens from the editor");
+    store.returnFromPublish();
+
+    assert(String(store.ui.route) === "editor", "return restores source route");
+    assert(store.ui.activeId === sourceId, "return restores active lesson");
+    assert(store.ui.mode === "preview", "return restores editor mode");
+    assert(store.ui.layoutPageId === "source-page", "return restores source page context");
+  } finally {
+    restore();
+  }
+});
+
+Deno.test("pointercancel, lost capture and Escape cancel reordering without a commit", async () => {
+  const dom = await bootPointerDom();
+  try {
+    dom.store.ui.screen = "project";
+    dom.store.ui.route = "editor";
+    dom.store.ui.mode = "writing";
+    dom.store.addMapItem("拖动取消");
+    dom.store.addBlock("paragraph", "A");
+    dom.store.addBlock("paragraph", "B");
+    dom.store.addBlock("paragraph", "C");
+    const item = dom.store.currentItem()!;
+    const before = dom.store.blocks(item).map((block) => block.id);
+    const historyLength = dom.store.history.length;
+
+    const cancelDrag = (kind: "pointercancel" | "lostpointercapture" | "escape", pointerId: number) => {
+      dom.mountBlocks(before, [
+        { top: 0, height: 100 },
+        { top: 100, height: 100 },
+        { top: 200, height: 100 },
+      ]);
+      dom.store.notify();
+      const source = dom.blockNodes[2]!;
+      let gripDefaultPrevented = false;
+      source.handle.fire("pointerdown", {
+        pointerId,
+        button: 0,
+        clientX: 12,
+        clientY: 250,
+        preventDefault() { gripDefaultPrevented = true; },
+      });
+      assert(gripDefaultPrevented, "drag grip prevents text selection at pointerdown");
+      dom.fireDocument("pointermove", {
+        pointerId,
+        clientX: 12,
+        clientY: 40,
+        preventDefault() {},
+      });
+      assert(source.handle.captured, `${kind} case begins a captured drag`);
+      if (kind === "pointercancel") {
+        dom.fireDocument("pointercancel", { pointerId });
+      } else if (kind === "lostpointercapture") {
+        source.handle.fire("lostpointercapture", { pointerId });
+      } else {
+        dom.fireDocument("keydown", {
+          key: "Escape",
+          preventDefault() {},
+          stopPropagation() {},
+        });
+      }
+      assert(!source.handle.captured, `${kind} releases pointer capture`);
+      assert(dom.store.history.length === historyLength, `${kind} does not create a commit`);
+      assert(
+        dom.store.blocks(item).map((block) => block.id).join(",") === before.join(","),
+        `${kind} leaves block order unchanged`,
+      );
+    };
+
+    cancelDrag("pointercancel", 31);
+    cancelDrag("lostpointercapture", 32);
+    cancelDrag("escape", 33);
+  } finally {
+    dom.restore();
+  }
+});
+
+Deno.test("pointer reorder auto-scrolls at the edge before choosing its target", async () => {
+  const dom = await bootPointerDom();
+  try {
+    dom.store.ui.screen = "project";
+    dom.store.ui.route = "editor";
+    dom.store.ui.mode = "writing";
+    dom.store.addMapItem("滚动边缘");
+    dom.store.addBlock("paragraph", "A");
+    dom.store.addBlock("paragraph", "B");
+    dom.store.addBlock("paragraph", "C");
+    const item = dom.store.currentItem()!;
+    const before = dom.store.blocks(item).map((block) => block.id);
+    dom.mountBlocks(before, [
+      { top: 0, height: 100 },
+      { top: 100, height: 100 },
+      { top: 200, height: 100 },
+    ]);
+    dom.store.notify();
+
+    const source = dom.blockNodes[2]!;
+    source.handle.fire("pointerdown", {
+      pointerId: 41,
+      button: 0,
+      clientX: 12,
+      clientY: 250,
+    });
+    dom.fireDocument("pointermove", {
+      pointerId: 41,
+      clientX: 12,
+      clientY: 90,
+      preventDefault() {},
+    });
+
+    assert(dom.scrollContainer.scrollTop > 0, "dragging at the lower edge scrolls the container");
+    assert(dom.blockNodes[1]!.classList.contains("drop-before"), "target is recalculated after scrolling");
+    dom.fireDocument("pointerup", { pointerId: 41, clientX: 12, clientY: 90 });
+    const after = dom.store.blocks(item).map((block) => block.id);
+    assert(
+      after.join(",") === [before[0], before[2], before[1]].join(","),
+      "edge target remains B after auto-scroll, so C is placed before B",
+    );
+  } finally {
+    dom.restore();
+  }
+});
+
+Deno.test("asset preview drops a late read after switching projects", async () => {
+  const textAsset = (projectId: string) => ({
+    id: "shared-asset",
+    project_id: projectId,
+    type: "document",
+    filename: "notes.md",
+    storage_path: "assets/notes.md",
+    mime_type: "text/markdown",
+    file_size: 1,
+    checksum: projectId,
+    archived: false,
+  });
+  let project = { id: "project-old", assets: [textAsset("project-old")] };
+  let resolveOldRead!: (bytes: Uint8Array) => void;
+  let announceOldReadStarted!: () => void;
+  const oldReadStarted = new Promise<void>((resolve) => announceOldReadStarted = resolve);
+  const cache = new AssetPreviewCache({
+    currentProject: () => project,
+    readAssetBytes: () => project.id === "project-old"
+      ? new Promise<Uint8Array>((resolve) => {
+        resolveOldRead = resolve;
+        announceOldReadStarted();
+      })
+      : Promise.resolve(new TextEncoder().encode("new project")),
+  });
+
+  const oldKey = cache.get("shared-asset")?.key;
+  const oldRead = cache.load("shared-asset");
+  await oldReadStarted;
+  assert(Boolean(oldKey) && cache.isLoading("shared-asset"), "old read starts");
+  project = { id: "project-new", assets: [textAsset("project-new")] };
+  resolveOldRead(new TextEncoder().encode("old project"));
+  await oldRead;
+
+  assert(!cache.entries.has(oldKey!), "late old-project content is discarded");
+  assert(cache.get("shared-asset")?.loading, "new project still needs its own read");
+  await cache.load("shared-asset");
+  assert(cache.get("shared-asset")?.text === "new project", "new project content is cached");
+});
+
+Deno.test("asset preview exposes read failures as a cached failure state", async () => {
+  const project = {
+    id: "project",
+    assets: [{
+      id: "failed-asset",
+      project_id: "project",
+      type: "document",
+      filename: "notes.md",
+      storage_path: "assets/notes.md",
+      mime_type: "text/markdown",
+      file_size: 1,
+      checksum: "failed",
+      archived: false,
+    }],
+  };
+  const cache = new AssetPreviewCache({
+    currentProject: () => project,
+    readAssetBytes: () => Promise.reject(new Error("disk offline")),
+  });
+
+  await cache.load("failed-asset");
+  const preview = cache.get("failed-asset");
+  assert(preview?.failed, "failed read is exposed to the view");
+  assert(preview.error === "disk offline", "failure keeps its useful message");
+});
+
+Deno.test("asset preview bounds concurrent reads and passes the byte cap", async () => {
+  const assets = ["one", "two", "three"].map((id) => ({
+    id,
+    project_id: "project",
+    type: "document",
+    filename: `${id}.txt`,
+    storage_path: `assets/${id}.txt`,
+    mime_type: "text/plain",
+    file_size: 1,
+    checksum: id,
+    archived: false,
+  }));
+  let active = 0;
+  let maxActive = 0;
+  const queued: Array<() => void> = [];
+  const limits: number[] = [];
+  const cache = new AssetPreviewCache({
+    currentProject: () => ({ id: "project", assets }),
+    readAssetBytes: (_assetId: string, maxBytes: number) => {
+      limits.push(maxBytes);
+      active += 1;
+      maxActive = Math.max(maxActive, active);
+      return new Promise<Uint8Array>((resolve) => queued.push(() => {
+        active -= 1;
+        resolve(new TextEncoder().encode("ok"));
+      }));
+    },
+  }, { mediaLimit: 1024, maxConcurrentLoads: 1 });
+  const tasks = assets.map((asset) => cache.load(asset.id));
+  const nextTurn = () => new Promise((resolve) => setTimeout(resolve, 0));
+  await nextTurn();
+  assert(queued.length === 1, "only one bounded read starts at a time");
+  for (let index = 0; index < assets.length; index += 1) {
+    const release = queued[index];
+    assert(release, "the next queued read starts after the current read completes");
+    release();
+    await nextTurn();
+  }
+  await Promise.all(tasks);
+  assert(maxActive === 1, "the concurrency limit is honored");
+  assert(limits.every((limit) => limit === 1024), "the backend receives the byte cap");
+});
+
+Deno.test("GIF thumbnail comes from a static decoded bitmap and releases it", async () => {
+  const globalObject = globalThis as unknown as Record<string, unknown>;
+  const documentDescriptor = Object.getOwnPropertyDescriptor(globalThis, "document");
+  const bitmapDescriptor = Object.getOwnPropertyDescriptor(globalThis, "createImageBitmap");
+  const urlDescriptor = Object.getOwnPropertyDescriptor(URL, "createObjectURL");
+  const bitmap = { width: 2, height: 1, close() { closed = true; } };
+  let closed = false;
+  let drawn: unknown = null;
+  Object.defineProperty(globalThis, "document", {
+    configurable: true,
+    value: {
+      createElement: () => ({
+        width: 0,
+        height: 0,
+        getContext: () => ({ drawImage: (source: unknown) => drawn = source }),
+        toBlob: (callback: (blob: Blob) => void, mime: string) =>
+          callback(new Blob(["thumbnail"], { type: mime })),
+      }),
+    } as unknown,
+  });
+  Object.defineProperty(globalThis, "createImageBitmap", {
+    configurable: true,
+    value: async (source: Blob) => {
+      assert(source.type === "image/gif", "the encoded GIF is decoded as a blob");
+      return bitmap as unknown as ImageBitmap;
+    },
+  });
+  Object.defineProperty(URL, "createObjectURL", {
+    configurable: true,
+    value: () => "blob:gif-first-frame",
+  });
+  try {
+    const url = await staticImagePoster(new Uint8Array([1, 2, 3]));
+    assert(url === "blob:gif-first-frame", "poster URL is returned");
+    assert(drawn === bitmap, "the non-animated ImageBitmap is drawn to the canvas");
+    assert(closed, "the decoder bitmap is released after drawing");
+  } finally {
+    if (documentDescriptor) Object.defineProperty(globalThis, "document", documentDescriptor);
+    else delete globalObject.document;
+    if (bitmapDescriptor) Object.defineProperty(globalThis, "createImageBitmap", bitmapDescriptor);
+    else delete globalObject.createImageBitmap;
+    if (urlDescriptor) Object.defineProperty(URL, "createObjectURL", urlDescriptor);
+    else delete (URL as unknown as Record<string, unknown>).createObjectURL;
+  }
+});
+
+Deno.test("closing a preview stops and resets its media elements", () => {
+  const calls: string[] = [];
+  const video = {
+    currentTime: 4.5,
+    pause: () => calls.push("pause"),
+    removeAttribute: (name: string) => calls.push(`remove:${name}`),
+    load: () => calls.push("load"),
+  };
+  const audio = {
+    currentTime: 2,
+    pause: () => calls.push("audio-pause"),
+    removeAttribute: (name: string) => calls.push(`audio-remove:${name}`),
+    load: () => calls.push("audio-load"),
+  };
+  const scope = { querySelectorAll: () => [video, audio] };
+  assert(stopPreviewMedia(scope) === 2, "both preview players are stopped");
+  assert(video.currentTime === 0 && audio.currentTime === 0, "playback positions reset");
+  assert(calls.join(",") === "pause,remove:src,load,audio-pause,audio-remove:src,audio-load", "each source is detached and reloaded");
+});
+
+Deno.test("property panel follows project and stage targets instead of the active lesson", async () => {
+  const { store, restore } = await bootStore();
+  try {
+    store.addMapItem("当前活跃课时");
+    store.addStage("真实阶段名");
+    const projectTitle = store.data.project.title;
+    const stage = store.data.stages.find((candidate) => candidate.title === "真实阶段名")!;
+    const { createViews } = await import(
+      `../app/views.js?property-target-${importCounter}`
+    );
+
+    store.selectPropertyTarget("project");
+    let html = createViews(store).shellView() as string;
+    assert(
+      html.includes(`data-panel-scope="项目 · ${projectTitle}"`),
+      "project properties use the real project title",
+    );
+
+    store.selectPropertyTarget("stage", stage.id);
+    html = createViews(store).shellView() as string;
+    assert(
+      html.includes(`data-panel-scope="阶段 · ${stage.code} ${stage.title}"`),
+      "stage properties use the selected stage's real code and title",
+    );
+
+    store.ui.activeId = null;
+    store.ui.propertyTarget = null;
+    store.ui.rightPanel = "properties";
+    html = createViews(store).shellView() as string;
+    assert(
+      html.includes(`data-panel-scope="项目 · ${projectTitle}"`),
+      "an empty selection falls back to project properties",
+    );
+    assert(
+      !html.includes('data-panel-scope="课时 ·'),
+      "an empty selection does not claim the current lesson",
+    );
+  } finally {
+    restore();
+  }
+});
+
+Deno.test("block overflow action restores focus to the new summary unless a field was requested", async () => {
+  const dom = await bootPointerDom();
+  try {
+    const store = dom.store as any;
+    store.addMapItem("菜单焦点课");
+    const item = store.currentItem();
+    assert(item, "menu focus test has an active lesson");
+    store.openItem(item.id);
+    store.addBlock("paragraph", "菜单动作");
+    const block = store.blocks(item).at(-1);
+    assert(block, "menu focus test has a source block");
+    dom.mountBlocks([block.id], [{ top: 0, height: 100 }]);
+
+    const sourceNode = dom.blockNodes[0]!;
+    const oldSummary = sourceNode.summary;
+    store.ui.focusField = "";
+    dom.triggerBlockMenuAction(block.id);
+    await Promise.resolve();
+    assert(sourceNode.summary !== oldSummary, "action rendered a new summary");
+    assert(
+      dom.focusedElement() === sourceNode.summary,
+      "focus returns to the corresponding summary in the new DOM",
+    );
+
+    store.ui.focusField = "menu-test-field";
+    dom.triggerBlockMenuAction(block.id);
+    await Promise.resolve();
+    assert(
+      dom.focusedElement() === dom.focusField,
+      "an explicit focusField request wins over summary restoration",
+    );
+  } finally {
+    dom.restore();
+  }
 });

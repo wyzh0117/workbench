@@ -17,7 +17,6 @@ const READER_KEYS = [
   "ai_scope",
   "ai_provider_id",
   "ai_model",
-  "ai_settings_open",
   "left_collapsed",
   "right_collapsed",
   "collapsed_stage_ids",
@@ -257,7 +256,7 @@ function normalizeSession(value: unknown, projectId: string): BrowserReaderSessi
       output[key] = child;
       continue;
     }
-    if (["left_collapsed", "right_collapsed", "ai_settings_open"].includes(key)) {
+    if (["left_collapsed", "right_collapsed"].includes(key)) {
       if (typeof child !== "boolean") return null;
     } else if (
       key === "active_content_item_id" || key === "selected_block_id" ||

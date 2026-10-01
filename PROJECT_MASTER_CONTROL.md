@@ -569,7 +569,7 @@ N1
 >
 > 产品状态：**DOGFOOD READY — ROUND 3；V1 ACTIVE**
 >
-> 分发状态：**PARTIAL / 公开下载可用**（latest public release `v0.2.1` 已发布；Universal DMG 与 SHA-256 sidecar 已匿名下载校验；Developer ID 签名与 Apple 公证仍未完成）
+> 分发状态：**PARTIAL / 公开下载可用**（latest public release `v0.2.2` 已发布；Universal DMG 为 ad-hoc signed，未做 Developer ID 签名与 Apple 公证）
 >
 > Release 边界：**T05/T06 由 `v0.2.1` tag-triggered workflow 成功发布；此前失败的 `v0.2.0` tag 未移动且没有 Release/资产，所有已发布 tags / assets 均保持冻结。`v0.2.1` 源码提交为 `60f697697843a340da3a793f1bbd2165e390f783`；本次文档回写是后续 docs-only 提交，tag 保持指向发布源码提交。**
 >
@@ -3501,16 +3501,16 @@ NEXT ACTION = PAUSE FEATURE DEVELOPMENT
 
 # 38. V1-T05 / V1-T06 — Paged Canvas & Layout-aware Export（VERIFIED）
 
-> 详细状态与证据：`V1-T05_T06_Completion_Report.md`。本节是当前总控摘要；旧 §37 是历史记录。
+> 详细状态与证据：`V1-T05_T06_Completion_Report.md`。本节记录 T05/T06 验收及 `v0.2.1` 发布时的状态；当前发布状态见 §39。
 
-## 38.1 Current Position
+## 38.1 Position at v0.2.1 Publication
 
 ```text
 V1 = ACTIVE
 V1-T05 Paged Canvas & Pagination = VERIFIED
 V1-T06 Layout-aware Export & PPTX = VERIFIED
 NEXT ACTION = USER DOGFOOD; V1 remains ACTIVE; no V1-T07
-Latest public release = v0.2.1
+Latest public release at that time = v0.2.1
 Release source commit = 60f697697843a340da3a793f1bbd2165e390f783
 GitHub Actions run 36325086880 = SUCCESS
 v0.2.0 tag workflow = FAILED before creating a Release; tag stays immutable
@@ -3541,3 +3541,92 @@ Distribution = ad-hoc signed; no Developer ID signature or notarization
 - `v0.2.1` 由 run `36325086880` 成功发布：[GitHub Release](https://github.com/wyzh0117/workbench/releases/tag/v0.2.1)。发布源码 commit 与 peeled tag 均为 `60f697697843a340da3a793f1bbd2165e390f783`；本次 docs-only 回写提交晚于此源码提交，`main` 因此会前进而 Release tag 不移动。
 - Universal DMG 大小 10,857,264 bytes，SHA-256 `ca151a578065939f6c2e0dfa4f23955faee5f512c6833ccbe4931a68bf66817c`。匿名下载文件、公开 `.sha256` sidecar 与 GitHub asset digest 一致；`hdiutil verify` 为 VALID。bundle version `0.2.1`，架构 x86_64 + arm64，ad-hoc signed，无 Apple Developer ID 签名或公证。
 - `v0.2.0` tag-triggered run `36323485548` 因空证书导入失败，未创建 Release 或资产；tag 仍固定于原 commit。V1 保持 ACTIVE，下一步用户 dogfood；不创建 T07。
+
+# 39. V1 实际使用反馈收口（2026-09-28，进行中）
+
+> 当前状态：**IN PROGRESS — V1 ACTIVE**。本记录不创建 V1-T07，不关闭 V1，也不把本轮未完成的真实使用反馈标为 VERIFIED。
+
+## 39.1 Version and Release Boundary
+
+```text
+Local main HEAD: d85c3f7; app version: 0.2.2
+Latest public release: v0.2.2
+Release: https://github.com/wyzh0117/workbench/releases/tag/v0.2.2
+Tag/source commit: d85c3f7
+Successful release workflow run: 36539271460
+Universal DMG: AI-Course-Workbench-macOS.dmg; 10,900,979 bytes
+SHA-256: 3713375ee4501ffda026a335a5a4bd54bc625ed2ef22efa6d35753d80d29a5bc
+Signing: ad-hoc; not notarized; no Apple Developer ID signature
+V0: CLOSED; V1: ACTIVE; V1-T01 through V1-T06: historical VERIFIED records remain unchanged
+Current handoff: V1 actual-use feedback closure (2026-09-28), IN PROGRESS
+```
+
+`v0.2.2` 已公开发布，tag 与 DMG 资产保持冻结；后续修复应使用新版本。本轮工作区里的 tests/ fixture 修改、测试/验收结果与证据、`docs/`、反馈/开发包与计划文件、`deno.lock`，以及 README/PMC 本地状态回写仍未暂存、提交或推送。GitHub 的 v0.2.2 tag source archive 会继承此前已跟踪的 `README.md`、`PROJECT_MASTER_CONTROL.md` 与 `V1-T05_T06_Completion_Report.md`（历史提交 `6938bfb` / `557b294`）；本轮 README/PMC 状态回写不在已发布 tag 中。
+
+## 39.2 Automated Validation
+
+- 最新 `app/main.js` 导入修复之前，本地 `deno task test` 为 357 passed / 0 failed、`deno task check` 通过，Rust AI 定向测试为 32 passed / 0 failed。导入修复之后 `deno check app/main.js`、native/browser 导入路径回归与原生 ledger 验收通过；未重跑最新完整 Deno suite。
+- `tests/native_boundary_test.ts` 保留一条针对旧 `asset.import` context payload 的静态断言，已不兼容 import-only 新语义；该 fixture 的兼容更新未包含在本次产品 commit、未上传，且修复后未重跑全套 Deno tests。此前干净 HEAD 的旧 AI fixtures 还沿用先存 Key 后建连接及 renderer endpoint；新安全实现要求确认凭据来源并从已保存连接取 endpoint，不能放宽产品安全约束迎合旧 fixtures。
+- 当前 main push 没有触发 GitHub 测试 workflow；发布 workflow run `36539271460` 成功并发布了 v0.2.2。此前干净 HEAD fixture 失败来自定向快照运行，不是 GitHub Actions 测试失败；本轮测试资料未上传。
+
+## 39.3 Native Smoke Evidence
+
+真实 0.2.2 WKWebView smoke 通过：PDF blob iframe 预览；PNG/GIF 放大；MP4、WAV、Markdown 预览；损坏、空白及缺失图片的错误区分与重试；地图阶段折叠/展开；阶段菜单焦点和改名；阶段/课时标题编辑及 Undo/Redo；发布预检显示 0 个必须修复项、0 个提示。未点击开始导出。预检前后隔离 fixture 的 `project.json` SHA-256 均为 `e94063dc95bc15f1ff1558530509107f21afa6fffdbb7917ef9b36c802e43cde`，资产、备份与 index 文件名及 hash 均相同；仅运行时 `project.lock` 变化。
+
+## 39.4 Open Items and Limits
+
+- **已提交并原生复测通过：**新导入的 43-byte TXT 使用懒加载；离屏第 10 张卡先显示“等待加载 smoke-text.txt”，滚动两页进入视口后约 1.36 秒显示 `Smoke TXT preview Tauri WKWebView fixture.`。修复包含于已公开的 `v0.2.2`，发布源码 tag 指向 `d85c3f7`。
+- **原生复测通过：**真实跨阶段拖放 S01-02 → S02-01 后，课时 ID、文档 ID 与标题保持稳定，目标阶段与 order 写入磁盘；Undo、Redo 后 UI 与持久化状态均正确。验收 fixture 的目标课原本有 0 个正文 block、0 个 `asset_usages`，因此非空正文/素材引用的移动保留尚未覆盖。
+- **DOCX 参考卡验收通过：**原生导入有效最小 DOCX 后，WKWebView 显示“参考文件 · 当前环境没有内嵌缩略图”，没有读取或解码错误。全文解析未做且不属于本次验收要求；缩略图仅在可用时提供。证据：本地 WKWebView smoke 记录（未随 Release 附带）。
+- **导入副作用修复原生复测通过：**main commit `202e6e4` 修复“添加素材”导入自动附加当前课程上下文。补丁版只执行“添加素材”导入新的 957B DOCX 后，AX 显示“还没有被任何内容引用”；磁盘状态为 assets 11→12、usages 1→1、blocks 0→0，没有给新素材新增 usage。旧 fixture 已有的 1 条 usage 保留，不自动清理。证据：本地隔离导入记录（未随 Release 附带）。
+- **未覆盖：**本次没有在原生 UI 执行显式“插入素材”步骤；现有 acceptance 回归覆盖显式 usage。旧 `tests/native_boundary_test.ts` 静态断言仍针对已废弃的 import context payload；兼容更新未包含在本次产品 commit、未上传。
+- **未验证：**真实在线 Provider 调用。本次隔离 smoke 未配置或读取 Key，也未发起 Provider 请求；自动化测试不能替代在线调用验收。
+- 初次原生验收、TXT 复测及跨阶段拖放/Undo/Redo 的证据均保存在本地隔离 QA 记录中，未随 Release 附带；初次记录包含 TXT 离屏卡片的初始复现，不代表修复后状态。
+
+NEXT ACTION = 如需覆盖非空正文/素材引用保留，用含这些内容的隔离课时补测跨阶段移动及 Undo/Redo；有条件时完成显式素材插入的原生 UI 验收和在线 Provider 验收。保持 V1 ACTIVE；不创建 T07；已发布的 `v0.2.2` tag/assets 保持冻结，后续修复发布新版本。
+
+# 40. V1 补充反馈与 v0.2.3 候选收尾（2026-10-01）
+
+> 本节是当前状态；§39 及更早章节保留为历史快照。V1 保持 ACTIVE，本节不创建 V1-T07，也不将未完成的实际使用反馈标为 VERIFIED。
+
+## 40.1 Current Position
+
+```text
+V0 = CLOSED
+V1 = ACTIVE
+V1-T01 through V1-T06 = historical VERIFIED records unchanged
+Current task = v0.2.3 candidate release preparation; overall acceptance PARTIAL
+Application target version = 0.2.3
+Latest public release = v0.2.2 (frozen)
+v0.2.3 release = user-authorized; production Universal app/DMG built; 53 files staged; commit/publication pending
+Local DMG SHA-256 = b109449abc48f534fdc6e64618e3e0297da3435fad8bcdcb64df7631689074f6 (hdiutil verify passed; not yet a public asset)
+Product state = PARTIAL; explicit limitations remain; V1 stays ACTIVE
+Distribution = PARTIAL; Developer ID signing / notarization unavailable
+```
+
+用户已授权本轮完成后同步 Git、GitHub 与 Release 页面。最终源码检查、测试和清理 QA-only 诊断后的 Universal app/DMG 构建均已完成；53 项明确文件已暂存，仍待提交、打 tag 与发布。review 已程序化核对发布 53 项 pathspec，4 份原始反馈/私人历史文件排除在外。v0.2.2 及更早 tags/assets 保持不变。原始反馈及用户私人历史文档保留本地，不纳入发布文件。
+
+## 40.2 Scope and Acceptance Record
+
+本轮范围按反馈 15 项覆盖：文件与文件夹首次导入/追加、Markdown 解析与显式本地图片依赖、编辑器小屏与区块交互、分页控制、AI 设置与三类 API 协议、媒体库及文件页预览。导入重复检测使用来源校验和持久来源记录；追加需保留项目身份、现有正文/分页/素材引用，并把一个导入作为一次可撤销操作。安全预览仅处理明确的本地引用，不自动抓取远程图片。
+
+逐项状态、preview4/6/7/8/9 原生证据、未验证边界及正式发布后待补资料详见 [`0.2.3 验收报告`](docs/V1_Feedback_Import_Rendering_AI_Settings_2026-09-30_Acceptance_Report.md)。报告区分自动化与原生证据，未以单项测试通过替代整体验收。
+
+## 40.3 Automated Validation Snapshot
+
+- 安全补丁后、首帧解码改动前：Deno 388/388、Rust 95/95；`deno task check` 与 `cargo fmt --check` 通过。
+- 测试替身更新后的最新完整结果：Deno 389/389、Rust 95/95，`deno task check` 与 `cargo fmt --check` 通过。首帧改动的早期 388/1 结果由旧测试替身缺少 rVFC / canvas pixel API 引起，已修复；视频首帧与文件浏览器定向测试 9/9。
+- 导入/安全定向回归：Deno 扫描测试 9/9、导入事务 11/11（含故障注入）、Rust 导入 5/5、中间符号链接拒绝 1/1；AI 设置定向测试 29/29。QA-only 诊断脚本/HTML 引用删除后，最终源码完整结果为 Deno 389/389、Rust 95/95，`deno task check` 与 `cargo fmt --check` 通过；清理后的 Universal app/DMG 生产构建成功。
+
+## 40.4 Native Snapshot and Blockers
+
+preview4 验证了 PDF 整页中文和真实图片；PPTX 在 PowerPoint 打开且未触发 Repair，文字和图片对象分别可编辑。preview6/7 视频静态 poster 显示红色首帧且未自动播放；显式播放与返回复位通过。preview6 中文正文编辑持久、加粗 Undo/Redo、分页退出重进及拖动后重新选字通过；preview7 已有 C02 追加、同 SHA 默认跳过、单次 Undo/Redo、新连接表单取消无持久化通过。preview8 验证窄屏工具栏与四种侧栏组合、设置三协议取消保留列表、Markdown 本地图/缺图/PDF、依赖展开保持选择、分页位置保留及 Escape 取消 click-move 后正文可选字。目录选择经键盘明确选中后扫描目标目录；此前 CUA 单击只是 hover，不是产品路径缺陷。preview9 GIF Blob 为 487B，MIME/GIF89a/SHA 与 fixture 匹配，独立 IMG 从同字节重建并加载；modal 与独立 IMG 连续 2.65 秒都只观察到红帧，本机 WKWebView 动画未通过/未闭环，不归因于源文件损坏。最终无诊断 QA 轻抽检确认正文聚焦行显示自己的 +/⋯ 控件、顶部设置进入 AI 模型管理且课程地图可达。精确 1024/字体缩放、指针拖动取消、在线 SIWC/Provider 未测。首帧解码透明帧重试与迟到 Blob 清理自动化已通过。preview6–9 均为 QA 快照；当前生产 Universal app/DMG 已构建并通过 `hdiutil verify`；53 项明确文件已暂存，尚未提交、tag 或发布。DMG 本地 SHA-256 `b109449abc48f534fdc6e64618e3e0297da3435fad8bcdcb64df7631689074f6`；ad-hoc signed，spctl rejected，无 Developer ID 签名/公证。候选可进入发布流程，但总体验收保持 PARTIAL。
+
+三种 API 协议的 loopback 请求与部分订阅会话行为通过自动化/本地替身验证；没有在线 SIWC 登录、真实 token refresh 或真实 Provider 请求。不得把本地替身描述为在线账户验收。签名与公证仍是单独的分发阻碍。
+
+## 40.5 Next Gate
+
+1. 53 项发布 pathspec 已暂存；待发布授权后提交源码，并检查提交/tag 与生产构建对应关系；保持 4 份私人/反馈文档不发布。
+2. 核对 Universal DMG、SHA-256 sidecar、匿名下载及 Release 页面，按用户授权发布 v0.2.3；以真实 commit/tag/工作流/资产数据回填 README、本报告与本节。
+3. 发布说明保留 GIF 动画在本机 WKWebView 未观察到、在线服务未测、签名/公证未完成和精确交互/尺寸未测等限制；不将总体 PARTIAL 改成整体 VERIFIED。
+4. 保持 V1 ACTIVE；后续用户实际使用确认后再收口，不自动关闭 V1。
