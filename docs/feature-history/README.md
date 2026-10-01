@@ -15,8 +15,8 @@
 | **v0.2.0** | 2026-09-27（tag 时间） | `a793204` | **不存在** | **未发布 / 失败 tag** | **用户没有从这一版拿到任何东西。** 见下方「关于 v0.2.0」。 |
 | v0.2.1 | 2026-09-27 | `60f6976` | [v0.2.1](https://github.com/wyzh0117/workbench/releases/tag/v0.2.1) | 公开可用（历史版本） | Grid 布局里出现了真正的「页」：页有稳定编号、可以改顺序和尺寸、内容能在页之间移动；课程可以按页导出 HTML / PDF / PowerPoint，PPTX 一页对应一张幻灯片，文字和图片是能分别编辑的独立对象。 |
 | v0.2.2 | 2026-09-29 | `d85c3f7` | [v0.2.2](https://github.com/wyzh0117/workbench/releases/tag/v0.2.2) | 公开可用（历史版本） | 素材库里可以直接看内容：图片和 GIF 能放大、PDF 看首页、视频音频能播、Markdown 能读；往素材库加文件不再被自动挂到当前课；服务商换了服务域名时，会先问你是否愿意把密钥发过去。 |
-| v0.2.3 | 2026-10-01 | `0ce229a` | [v0.2.3](https://github.com/wyzh0117/workbench/releases/tag/v0.2.3) | **公开可用 / Latest / 冻结** | 可以把一批 Markdown 文件或多个文件夹，带着**看得见、可修改的映射计划**导入并追加到已有课程，整个导入能一次撤销；正文里的 Markdown 按语义呈现；AI 设置把 OpenAI Chat Completions、OpenAI Responses、Anthropic Messages 当成三种不同协议处理，并新增原生 Sign in with ChatGPT 订阅登录。 |
-| **v0.2.4** | 2026-10-02 | 见下方说明 | [v0.2.4](https://github.com/wyzh0117/workbench/releases/tag/v0.2.4) | **公开可用 / Latest / 冻结** | 编辑器去掉干扰（B/I/S 与 Markdown 源码切换消失，Markdown 语义直接编译且可撤销）、区块工具条与属性改成浮层、Grid 恢复左键落位 / 右键移出、素材改名会真的改磁盘文件、素材支持多选批量导入、打开文件夹会先看懂再说话、子目录图片视频进素材库、PNG 缩略图修好且卡片重做、AI 连接改为自配服务商与真实模型清单、ChatGPT 订阅登录逐阶段报错。 |
+| v0.2.3 | 2026-10-01 | `0ce229a` | [v0.2.3](https://github.com/wyzh0117/workbench/releases/tag/v0.2.3) | 公开可用（历史版本） | 可以把一批 Markdown 文件或多个文件夹，带着**看得见、可修改的映射计划**导入并追加到已有课程，整个导入能一次撤销；正文里的 Markdown 按语义呈现；AI 设置把 OpenAI Chat Completions、OpenAI Responses、Anthropic Messages 当成三种不同协议处理，并新增原生 Sign in with ChatGPT 订阅登录。 |
+| **v0.2.4** | 2026-10-02 | `4db396b` | [v0.2.4](https://github.com/wyzh0117/workbench/releases/tag/v0.2.4) | **公开可用 / Latest / 冻结** | 编辑器去掉干扰（B/I/S 与 Markdown 源码切换消失，Markdown 语义直接编译且可撤销）、区块工具条与属性改成浮层、Grid 恢复左键落位 / 右键移出、素材改名会真的改磁盘文件、素材支持多选批量导入、打开文件夹会先看懂再说话、子目录图片视频进素材库、PNG 缩略图修好且卡片重做、AI 连接改为自配服务商与真实模型清单、ChatGPT 订阅登录逐阶段报错。 |
 
 ### 关于 v0.2.0
 
@@ -58,15 +58,15 @@
 Release 正文与总控冲突时以 Release 正文为准，并在版本文件里注明分歧。
 **没有证据的地方一律写「无记录」，不推测、不补全。**
 
-## 分发状态的长期事实（从 v0.1.0 到 v0.2.3 没有变过）
+## 分发状态的长期事实（从 v0.1.0 到 v0.2.4 没有变过）
 
 所有已发布的 DMG 都是 **ad-hoc 签名**：没有 Apple Developer ID 签名、没有 Apple 公证，
-`spctl --assess --type execute` 判定 **rejected**。每个用户首次打开都需要手动过一次 Gatekeeper 放行。
+`spctl --assess --type execute` 判定 **rejected**（v0.2.4 的公开包在 2026-10-02 复测仍是 `rejected`，见 `PROJECT_MASTER_CONTROL.md` §43.4）。每个用户首次打开都需要手动过一次 Gatekeeper 放行。
 另外，**放行之后的首次启动从未被实测过**（自动化环境无法投递右键菜单与「系统设置」交互），
 实测到的只是放行**之前**的拦截状态。
 
 ## 当前循环
 
-`v0.2.4` 是最新的公开版本，且发布后即刻冻结。2026-10-01 那一轮 15 项实际使用反馈收口已整体归档进 [`v0.2.4.md`](./v0.2.4.md)：11 PASS / 2 PARTIAL（原生面板手势）/ 1 BLOCKED（真实在线推理），逐项矩阵与证据见 `PROJECT_MASTER_CONTROL.md` §42 与 `docs/V1_Post_v0.2.3_Actual_Use_Closure_2026-10-01_Completion_Report.md`。用户选择在原生窗口 smoke 与在线 AI 两条通道未闭合的情况下先发布，所以 `v0.2.4.md` 的「已知限制」把这两条写在了最前面。中断记录保留在 [`V1_Post_v0.2.3_Actual_Use_Closure_2026-10-01.md`](../../V1_Post_v0.2.3_Actual_Use_Closure_2026-10-01.md) §28。
+`v0.2.4` 是最新的公开版本（源码提交 `4db396b`，tag 对象 `db3171c`，发布 workflow [36906333256](https://github.com/wyzh0117/workbench/actions/runs/36906333256) `success`），且发布后即刻冻结。2026-10-01 那一轮 15 项实际使用反馈收口已整体归档进 [`v0.2.4.md`](./v0.2.4.md)：11 PASS / 2 PARTIAL（原生面板手势）/ 1 BLOCKED（真实在线推理），逐项矩阵与证据见 `PROJECT_MASTER_CONTROL.md` §42 与 `docs/V1_Post_v0.2.3_Actual_Use_Closure_2026-10-01_Completion_Report.md`。用户选择在原生窗口 smoke 与在线 AI 两条通道未闭合的情况下先发布，所以 `v0.2.4.md` 的「已知限制」把这两条写在了最前面；这两条的待办清单见 `PROJECT_MASTER_CONTROL.md` §43.6。中断记录保留在 [`V1_Post_v0.2.3_Actual_Use_Closure_2026-10-01.md`](../../V1_Post_v0.2.3_Actual_Use_Closure_2026-10-01.md) §28。
 
-**v0.2.4 的源码提交**由 tag 自身给出：`git rev-parse v0.2.4^{commit}`（发布验证段补在 `v0.2.4.md` 与本表之后）。
+**v0.2.4 的公开产物已按 [`docs/release-playbook.md`](../release-playbook.md) §6 校验**：匿名下载的 Universal DMG（12,107,473 bytes）SHA-256 为 `82fdba5957f57d9650f74922197e9593e981be418515e6c7e34519164cef4dab`，与 `.sha256` sidecar 及 GitHub 自报 digest 一致，`hdiutil verify` 通过；包内 `lipo -archs` 给出 `x86_64 arm64`，版本 0.2.4，签名 ad-hoc（无 `TeamIdentifier`、未公证），`spctl` 为 `rejected`。完整事实块见 `PROJECT_MASTER_CONTROL.md` §43.4。

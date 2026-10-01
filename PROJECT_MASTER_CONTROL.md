@@ -2013,6 +2013,19 @@ YYYY-MM-DD | Task | From → To | Summary
 当前：
 
 ```text
+2026-10-02 | v0.2.4 发布 | 发布执行中 → 已发布，公开产物验证完成（RELEASED）
+commit 4db396bf7c1953a62f72d3887d6ae07b03fcaa76 推送 origin/main；附注 tag v0.2.4（tag 对象
+db3171c2ad14cac8ae1ded0d1300757963ffe937）指向该 commit；release workflow run 36906333256
+（event=push、headBranch=v0.2.4）completed / success。Release v0.2.4 isDraft=false、
+isPrerelease=false，publishedAt 2026-10-01T18:28:40Z。匿名下载 Universal DMG（12,107,473 bytes）
+SHA-256 82fdba5957f57d9650f74922197e9593e981be418515e6c7e34519164cef4dab，与 .sha256 sidecar
+及 GitHub 自报 asset digest 逐字符一致，hdiutil verify = VALID；挂载后 lipo -archs = x86_64 arm64、
+Info.plist 版本 0.2.4、codesign Signature=adhoc / TeamIdentifier not set、
+spctl --assess --type execute = rejected（与 Notes 的 ad-hoc / 未公证表述一致）；/releases/latest
+指向 v0.2.4。tag 所在源码状态复跑 gate 全绿：deno task check、deno task test 522 passed、
+cargo fmt --check、cargo test 104 passed、cargo build。v0.2.3 及更早 tag / DMG / sidecar 未动。
+验证段以第二个 commit 追加进 .github/release-notes/v0.2.4.md 并同步进公开 Release 正文（只改
+notes，不重传资产）。仍未闭合的两条通道见 §43.6：原生窗口手势 smoke、真实在线 AI 调用；交用户验收。
 2026-10-02 | v0.2.4 发布 | 等待用户验收 → 用户授权发布，发布执行中
 用户明确授权「把项目同步到 GitHub，同时 tag 和发布新版本 release」，覆盖 §42.8 / 需求 §22 的
 「未单独授权不发布」限制，范围是本次 v0.2.4。决定：两条未闭合验收通道（§15.4 原生指针 smoke、
@@ -2476,12 +2489,12 @@ V1 ACTIVE
 V1-T01 / V1-T02 / V1-T03 / V1-T04  VERIFIED
 V1-T05 Paged Canvas                VERIFIED
 V1-T06 Layout-aware Export & PPTX  VERIFIED
-CURRENT CLOSURE   Post-v0.2.3 15 项实际使用反馈：实现完成并随 v0.2.4 发布（§42 / §43）
-CURRENT HANDOFF  用户已授权提交 / tag / 发布；v0.2.4 发布执行中（§43）
-CURRENT STATUS  IMPLEMENTED，SELF-VERIFIED；RELEASE v0.2.4 IN PROGRESS；用户原生验收 PENDING
-PRODUCT STATE   本轮改动随 v0.2.4 提交；发布前公开版本为 v0.2.3（冻结）
+CURRENT CLOSURE   Post-v0.2.3 15 项实际使用反馈：已实现并随 v0.2.4 公开（§42 / §43）
+CURRENT HANDOFF  v0.2.4 已发布并完成公开产物验证（§43.4）；待用户在真实窗口做原生验收（§43.6）
+CURRENT STATUS  RELEASED v0.2.4，SELF-VERIFIED；用户原生验收 + 真实在线 AI = PENDING
+PRODUCT STATE   公开最新版 = v0.2.4（tag 4db396b，DMG SHA-256 82fdba59…4dab）；v0.2.3 及更早冻结
 DISTRIBUTION    PARTIAL；Apple Developer ID signing / notarization not configured（CI 走 ad-hoc 分支）
-OPEN BLOCKERS   NONE（在线 AI smoke 与原生指针 smoke = 环境限制，见 §42.4；用户选择先发布）
+OPEN BLOCKERS   NONE（在线 AI smoke 与原生指针 smoke = 环境限制，见 §42.4 与 §43.6；用户选择先发布）
 BACKLOG         Tauri WebView pointer-reorder；原生 folder picker / invalid-folder toast（Tauri）；
                 Tauri WebView Explorer/Adopt smoke；不创建 V1-T07
 ```
@@ -2489,8 +2502,8 @@ BACKLOG         Tauri WebView pointer-reorder；原生 folder picker / invalid-f
 下一步唯一动作：
 
 ```text
-发布 v0.2.4：提交 → 推送 main → 推 tag → 盯 workflow → 校验公开产物 → 回填 §43.4
-之后仍待用户：在真实窗口跑原生指针 / 面板手势验收（§42.4）
+用户侧：下载 v0.2.4 DMG（或本机的 debug 候选 .app），跑 §43.6 列出的原生手势与第一次真实 AI 调用
+新问题 → 按 docs/release-playbook.md 走 v0.2.5；本轮代码不再改动 v0.2.4 的已发布资产
 ```
 
 T05/T06 已 VERIFIED；v0.2.1 已按授权发布，v0.2.0 失败 tag 冻结且无 Release / 资产。严格保护 §0.4，不覆盖已发布 tag / Release / 资产。
@@ -2516,14 +2529,16 @@ CURRENT VERSION
 V1（ACTIVE）
 
 CURRENT TASK
-v0.2.4 发布执行（§43）；收口内容见 §42；V1-T05 / V1-T06 已 VERIFIED，不新增 V1-T07
+v0.2.4 已发布（§43）；收口内容见 §42；V1-T05 / V1-T06 已 VERIFIED，不新增 V1-T07
 
 CURRENT STATUS
-IMPLEMENTED，SELF-VERIFIED — v0.2.4 发布执行中；用户原生验收 PENDING；V1 ACTIVE
+RELEASED v0.2.4，SELF-VERIFIED — 用户原生验收与真实在线 AI 仍 PENDING；V1 ACTIVE
 PRODUCT STATE = Post-v0.2.3 15 项收口：11 PASS / 2 PARTIAL（item 1、2）/ 1 BLOCKED（item 9 在线推理）/
 item 14 PASS 但原生指针 smoke 条款 BLOCKED；全部证据见 §42 与 Completion Report
-NEXT ACTION = 完成 v0.2.4 发布与验证并回填 §43.4；用户随后跑候选 .app 做原生验收；不创建 V1-T07，不关闭 V1
-DISTRIBUTION STATE = PARTIAL（ad-hoc 签名；Apple Developer ID / 公证未配置）；本轮未产出 DMG / tag / Release
+NEXT ACTION = 用户下载 v0.2.4（或本机候选 .app）按 §43.6 清单做原生手势验收并发起第一次真实 AI 调用；
+新问题按 docs/release-playbook.md 走 v0.2.5；不创建 V1-T07，不关闭 V1
+DISTRIBUTION STATE = PARTIAL（ad-hoc 签名；Apple Developer ID / 公证未配置）；
+v0.2.4 tag / Universal DMG / .sha256 已由 CI 发布并匿名下载校验（§43.4）
 V0 = CLOSED；V0-T01 / V0-T02 / V0-T03 / V0-T04 全部 VERIFIED
 V1-T01 = VERIFIED（§33）；V1-T02 = VERIFIED（§29 / §35 第一次实施 / §36 第二次实施）；
 V1-T03 = VERIFIED（ego-browser §21 26/27 PASS + 1 N-A；§9.3 page.mouse Drag Handle PASS）；
@@ -3853,7 +3868,7 @@ README.md                                   区分「公开版本 v0.2.3」与�
 
 ---
 
-# 43. v0.2.4 发布执行记录（2026-10-02）
+# 43. v0.2.4 发布执行记录（2026-10-02，已发布并完成公开资产验证）
 
 > 本节是当前状态；§42 及更早章节保留为历史记录。V1 保持 ACTIVE，不创建 V1-T07。
 
@@ -3885,20 +3900,68 @@ Playbook   = 发布步骤、验证清单、只有用户能做的部分固化到 
 ## 43.3 发布前 gate（版本 bump 之后复跑）
 
 ```text
-deno task check / deno task test / cargo fmt --check / cargo test / cargo build
-结果见本节末尾的回填；任一项失败则不推 tag。
+deno task check       OK（无类型错误）
+deno task test        522 passed / 0 failed
+cargo fmt --check     OK（无 diff）
+cargo test            104 passed / 0 failed（另两个 target 各 0 tests）
+cargo build           OK
 ```
 
-## 43.4 发布结果与验证（发布后回填）
+发布前复跑通过，因此允许推 tag；任一项失败则不推 tag。tag 推送后 CI 再跑一次
+Universal `cargo tauri build`（release 配置 + DMG），run 36906333256 结论 `success`。
+
+## 43.4 发布结果与验证（发布后回填，2026-10-02）
 
 ```text
-Commit                 = 待回填
-Tag → commit           = 待回填
-Workflow run           = 待回填
-Release / isDraft      = 待回填
-DMG SHA-256            = 待回填
-sidecar 一致 / hdiutil = 待回填
-架构切片               = 待回填
-codesign / spctl       = 待回填（无 Developer ID 时预期 ad-hoc + rejected，如实记录）
-/releases/latest 指向  = 待回填
+Commit                 = 4db396bf7c1953a62f72d3887d6ae07b03fcaa76
+                         （"Implement v0.2.4 actual-use feedback closure"，已推送 origin/main）
+Tag → commit           = v0.2.4（附注 tag 对象 db3171c2ad14cac8ae1ded0d1300757963ffe937）
+                         → 4db396b；git ls-remote 确认远端 ref 已建立
+Workflow run           = 36906333256，event=push，headBranch=v0.2.4，
+                         status=completed / conclusion=success
+                         https://github.com/wyzh0117/workbench/actions/runs/36906333256
+Release / isDraft      = https://github.com/wyzh0117/workbench/releases/tag/v0.2.4
+                         isDraft=false、isPrerelease=false，publishedAt=2026-10-01T18:28:40Z
+DMG SHA-256            = 82fdba5957f57d9650f74922197e9593e981be418515e6c7e34519164cef4dab
+                         （AI-Course-Workbench-macOS.dmg，12,107,473 bytes）
+sidecar 一致 / hdiutil = 匿名下载 DMG 与 .sha256（96 bytes）成功；sidecar 内容与上面的
+                         digest 逐字符一致，也与 GitHub 自报的 asset digest 一致；
+                         hdiutil verify → "checksum ... is VALID"
+架构切片               = lipo -archs → x86_64 arm64（Universal 成立）
+                         Info.plist CFBundleShortVersionString / CFBundleVersion = 0.2.4
+codesign / spctl       = Signature=adhoc，TeamIdentifier=not set，无 Developer ID、未公证；
+                         spctl --assess --type execute → rejected（exit 3），与 Release Notes 一致
+/releases/latest 指向  = v0.2.4 | AI Course Workbench 0.2.4
+v0.2.3 冻结核对        = 未移动 tag、未替换 DMG、未改写 .sha256，本轮只新增 v0.2.4
 ```
+
+验证细节：DMG 挂载后 bundle 里没有独立的 `app/*.js` 文件（Tauri 把前端资源压进二进制），
+所以「发布包用的就是仓库里那份 `app/`」这条依据是 `frontendDist: "../app"` 且没有任何构建/转译步骤，
+外加对二进制里版本串的 grep（`0.2.4` 命中 77 处）；对 JS 文本做 strings grep 不适用，不作证据。
+
+## 43.5 发布后的产品状态
+
+```text
+Latest public release  = v0.2.4（发布即冻结，§43.4 的验证写进公开 Release 正文）
+Feature Update Manual  = docs/feature-history/v0.2.4.md（本轮 15 项的用户视角事实）
+Rolling file           = docs/feature-history/UNRELEASED.md 已重置为下一周期空模板
+Workflow 规则          = 只在推送新的 v* tag 时发布；workflow_dispatch 只构建（未改动）
+下一版本预期           = v0.2.5（用户验收暴露的问题在那里修）
+V1                     = 仍然 ACTIVE；不创建 V1-T07，不关闭 V1
+```
+
+## 43.6 发布时仍未闭合的两条验收通道
+
+发布是用户在 §43.1 明确授权下先行的，这两条不是被判定通过，而是带着「未验收」标记公开：
+
+1. **原生窗口 pointer / 面板手势 smoke（需求 §15.4）**：本环境无法向 macOS 窗口发送真实点击
+   （AppleScript 系统事件 `-1712`），也无法截图（`could not create image from display`）。
+   需要用户在本机做的动作：原生打开面板的多选与文件夹/项目分流、Grid 的真实左键移动 + 右键移出、
+   放大后 GIF 播放、Esc 关闭预览、真实输入法打字。
+2. **真实在线 AI（item 9）**：没有在线 Sign in with ChatGPT 登录、没有真实账户 token 刷新、
+   没有真实服务商推理调用（`api.openai.com` 在此 60 秒超时）。用户授权自己的连接后，
+   第一次真实调用才算这条通道闭合。
+
+用户验收若发现问题，按 `docs/release-playbook.md` 走 v0.2.5；两条通道闭合后，在
+`docs/feature-history/v0.2.4.md` 的「已知限制」里把它们从「未验证」改为带证据的结论，
+并同步 `.github/release-notes/v0.2.4.md` 的正文（只改 notes，不动已发布的资产）。

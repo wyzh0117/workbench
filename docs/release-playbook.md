@@ -110,21 +110,34 @@ gh run list --workflow "Release macOS DMG" --limit 3
 gh run watch <run-id> --exit-status
 ```
 
-发布后逐项核对（`v0.2.3` 的先例就是这套）：
+发布后逐项核对（`v0.2.3` / `v0.2.4` 的先例就是这套）：
 
 ```bash
-gh release view v0.2.4 --json isDraft,assets,body            # isDraft 必须 false，两个资产齐全
-curl -sIL -o /dev/null -w '%{http_code}\n' \
-  https://github.com/wyzh0117/workbench/releases/download/v0.2.4/AI-Course-Workbench-macOS.dmg   # 匿名 200
-curl -sL .../AI-Course-Workbench-macOS.dmg.sha256 -o /tmp/sidecar.txt
-shasum -a 256 ~/Downloads/AI-Course-Workbench-macOS.dmg       # 与 sidecar 一致
-hdiutil verify <dmg>                                          # CRC 通过
-hdiutil attach -nobrowse -readonly <dmg>                      # 挂载后：
-lipo -archs "/Volumes/AI Course Workbench*/Applications/AI Course Workbench.app/Contents/MacOS/ai-course-workbench"
-codesign -dv --verbose=4 <app> | grep -E "Identifier|TeamIdentifier|Authority"   # ad-hoc 时无 TeamIdentifier
-spctl --assess --type execute -v <app>                        # 无 Developer ID 时 rejected —— 如实记录
-gh release view --json tagName -q .tagName -R wyzh0117/workbench releases/latest # latest 指向本版
+gh release view v0.2.4 --json isDraft,isPrerelease,publishedAt,url,assets   # 字段是 isPrerelease，不是 prerelease
+# 匿名下载：GitHub 直链在这台机器上会间歇返回 curl (16) HTTP/2 framing / (52) Empty reply，
+# 必须写重试循环，一次失败不代表资产坏了；sidecar 很小通常一次就过。
+for i in 1 2 3 4 5 6; do
+  curl -sSL --http1.1 -o /tmp/wb/AI-Course-Workbench-macOS.dmg \
+    https://github.com/wyzh0117/workbench/releases/download/v0.2.4/AI-Course-Workbench-macOS.dmg && break
+  sleep 5
+done
+shasum -a 256 /tmp/wb/AI-Course-Workbench-macOS.dmg      # 与 sidecar 及 gh 的 asset digest 一致
+hdiutil verify /tmp/wb/AI-Course-Workbench-macOS.dmg      # 期望 "checksum ... is VALID"
+hdiutil attach -nobrowse -readonly /tmp/wb/AI-Course-Workbench-macOS.dmg
+# 挂载点里 app 直接在根目录（同级的那个 Applications 只是替身，app 不在它里面）：
+VOL=$(ls -d /Volumes/AI\ Course\ Workbench* | tail -1)
+APP="$VOL/AI Course Workbench.app"
+lipo -archs "$APP/Contents/MacOS/ai-course-workbench"                      # 期望 x86_64 arm64
+/usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" "$APP/Contents/Info.plist"
+codesign -dv --verbose=4 "$APP" 2>&1 | grep -E "Identifier|TeamIdentifier|Signature"
+spctl --assess --type execute -vv "$APP"                                   # 无 Developer ID 时 rejected —— 如实记录
+hdiutil detach "$VOL"                                                       # 别忘了弹掉，否则 /Volumes 会堆积
+gh release view --json tagName -q .tagName -R wyzh0117/workbench --latest    # latest 指向本版
 ```
+
+关于「包里的前端就是仓库里那份 `app/`」：Tauri 把前端资源压缩进主二进制，挂载点里**没有** `app/*.js` 文件，
+所以对二进制做 `strings | grep` 找 JS 文本不是有效证据（版本串能命中，业务字符串命中不了）。
+这条依据来自 `frontendDist: "../app"` 且没有任何构建/转译步骤本身。
 
 固定直链必须仍然可用（文件名**永远**是 `AI-Course-Workbench-macOS.dmg`，用户手里的书签依赖它）：
 
@@ -138,8 +151,21 @@ https://github.com/wyzh0117/workbench/releases/latest/download/AI-Course-Workben
 2. `docs/feature-history/vX.Y.Z.md` 顶部补发布日期与源码提交；`docs/feature-history/README.md` 索引表填 sha（短写）。
 3. `PROJECT_MASTER_CONTROL.md`：Change Log 追加一行（`YYYY-MM-DD | 任务 | From → To | 摘要`）、§29/§30 的 CURRENT STATUS / NEXT ACTION / Latest public release 切换、追加新的收口/发布章节（**不改写历史 VERIFIED 记录**）。
 4. `README.md`：Download 段（固定直链不用改）、系统要求、分发状态、当前开发位置里的公开版本行。
-5. `git push origin main`，然后 `gh release edit vX.Y.Z --notes-file dist/release-notes-full.md` 把验证段同步进公开正文（改正文不动资产，不违反 §0.4）。
-6. `graft build` 刷新代码图。
+5. 第二个提交只含文档与 Release Notes 文件（显式列路径，见 §4），`git push origin main`。
+6. 把验证段同步进公开正文（改正文不动资产，不违反 §0.4）——**注意 `gh release edit --notes-file` 会替换整个正文**，
+   而 workflow 发布的正文是「`# AI Course Workbench <版本>` 标题 + `.github/release-notes/<TAG>.md` + System / Install /
+   首次打开说明 / Distribution status / Verify / Links」拼出来的（见 `release.yml` 里生成 `dist/release-notes.md` 的那一步）。
+   所以**不能**直接拿仓库里的 notes 文件去 edit，否则后面几段会被删掉。安全做法：先把当前公开正文取下来，
+   只在 `## System` 之前插入 `## Release verification` 段，确认 diff 是「纯新增、0 删除」，再提交：
+
+   ```bash
+   gh release view v0.2.4 --repo <owner>/<repo> --json body --jq .body > /tmp/body_current.md
+   # 用脚本把 notes 文件里的 '## Release verification' 段插到 '## System' 之前 -> /tmp/body_full.md
+   # 核对：新增行数 = 验证段长度，删除行数 = 0
+   gh release edit v0.2.4 --repo <owner>/<repo> --notes-file /tmp/body_full.md
+   gh release view v0.2.4 --repo <owner>/<repo> --json body --jq .body | grep '^## '   # 段落顺序必须完整
+   ```
+7. `graft build` 刷新代码图。
 
 ## 8. 永远只能由用户在本机完成的事
 
