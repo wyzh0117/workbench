@@ -2027,6 +2027,21 @@ YYYY-MM-DD | Task | From → To | Summary
 当前：
 
 ```text
+2026-10-03 | v0.2.5 发布 | 实现完成 → 已发布，公开产物验证完成（RELEASED）
+commit d16b622c082720c3c386613df187deec3b7ec469 推送 origin/main；附注 tag v0.2.5（tag 对象
+9d9507999eb3b46a1bf58fd87e04c743aafd15ba）指向该 commit；release workflow run 37100286505
+（event=push、headBranch=v0.2.5）completed / success（8m4s）。Release v0.2.5 isDraft=false、
+isPrerelease=false，publishedAt 2026-10-03T05:42:45Z。匿名下载 Universal DMG（14,293,951 bytes）
+SHA-256 a84884466b084cd674a4d0d32a52b3284863a9adb9706c11283009fb14b7f9fd，与 .sha256 sidecar
+及 GitHub 自报 asset digest 逐字符一致，hdiutil verify = VALID；挂载后 lipo -archs = x86_64 arm64、
+Info.plist 版本 0.2.5、codesign Signature=adhoc / TeamIdentifier not set、
+spctl --assess --type execute = rejected；/releases/latest 指向 v0.2.5；固定直链匿名 200。
+tag 所在源码状态 gate 全绿：deno task check、deno task test 584 passed、cargo fmt --check、
+cargo test 216 passed、cargo build。v0.2.4 及更早 tag / DMG / sidecar 未动（v0.2.4 DMG
+SHA-256 82fdba59…4dab 复测不变）。验证段以第二个 commit 追加进 .github/release-notes/v0.2.5.md
+并同步进公开 Release 正文（只改 notes，不重传资产）。本轮四块范围（项目身份 / 多项目入口、
+素材滚动稳定性、九类文本·文档导入、映射后二次选择）与十点回写见 §45；未闭合的三条通道见
+§45.3：原生窗口手势 smoke、真实在线 AI 调用、媒体库真实触控板 / 滚轮滚动验证；交用户验收。
 2026-10-02 | v0.2.4 发布 | 发布执行中 → 已发布，公开产物验证完成（RELEASED）
 commit 4db396bf7c1953a62f72d3887d6ae07b03fcaa76 推送 origin/main；附注 tag v0.2.4（tag 对象
 db3171c2ad14cac8ae1ded0d1300757963ffe937）指向该 commit；release workflow run 36906333256
@@ -2503,12 +2518,13 @@ V1 ACTIVE
 V1-T01 / V1-T02 / V1-T03 / V1-T04  VERIFIED
 V1-T05 Paged Canvas                VERIFIED
 V1-T06 Layout-aware Export & PPTX  VERIFIED
-CURRENT CLOSURE   Post-v0.2.3 15 项实际使用反馈：已实现并随 v0.2.4 公开（§42 / §43）
-CURRENT HANDOFF  v0.2.4 已发布并完成公开产物验证（§43.4）；待用户在真实窗口做原生验收（§43.6）
-CURRENT STATUS  RELEASED v0.2.4，SELF-VERIFIED；用户原生验收 + 真实在线 AI = PENDING
-PRODUCT STATE   公开最新版 = v0.2.4（tag 4db396b，DMG SHA-256 82fdba59…4dab）；v0.2.3 及更早冻结
+CURRENT CLOSURE   v0.2.5 四块收口（项目身份 / 多项目入口、素材滚动稳定性、九类文本·文档导入、
+                  映射后二次选择）：已实现并随 v0.2.5 公开（§45）
+CURRENT HANDOFF  v0.2.5 已发布并完成公开产物验证（§45.4）；待用户在真实窗口做原生验收（§45.3）
+CURRENT STATUS  RELEASED v0.2.5，SELF-VERIFIED；用户原生验收 + 真实在线 AI + 真实滚动 = PENDING
+PRODUCT STATE   公开最新版 = v0.2.5（tag d16b622，DMG SHA-256 a8488446…f9fd）；v0.2.4 及更早冻结
 DISTRIBUTION    PARTIAL；Apple Developer ID signing / notarization not configured（CI 走 ad-hoc 分支）
-OPEN BLOCKERS   NONE（在线 AI smoke 与原生指针 smoke = 环境限制，见 §42.4 与 §43.6；用户选择先发布）
+OPEN BLOCKERS   NONE（在线 AI smoke、原生指针 smoke 与真实滚动 = 环境限制，见 §45.3；用户选择先发布）
 BACKLOG         Tauri WebView pointer-reorder；原生 folder picker / invalid-folder toast（Tauri）；
                 Tauri WebView Explorer/Adopt smoke；不创建 V1-T07
 ```
@@ -2516,8 +2532,8 @@ BACKLOG         Tauri WebView pointer-reorder；原生 folder picker / invalid-f
 下一步唯一动作：
 
 ```text
-用户侧：下载 v0.2.4 DMG（或本机的 debug 候选 .app），跑 §43.6 列出的原生手势与第一次真实 AI 调用
-新问题 → 按 docs/release-playbook.md 走 v0.2.5；本轮代码不再改动 v0.2.4 的已发布资产
+用户侧：下载 v0.2.5 DMG，跑 §45.3 列出的三条未闭合通道（原生手势、真实在线 AI、媒体库真实滚动）
+新问题 → 按 docs/release-playbook.md 走 v0.2.6；不覆盖 v0.2.5 及更早的已发布资产
 ```
 
 T05/T06 已 VERIFIED；v0.2.1 已按授权发布，v0.2.0 失败 tag 冻结且无 Release / 资产。严格保护 §0.4，不覆盖已发布 tag / Release / 资产。
@@ -2543,16 +2559,17 @@ CURRENT VERSION
 V1（ACTIVE）
 
 CURRENT TASK
-v0.2.4 已发布（§43）；收口内容见 §42；V1-T05 / V1-T06 已 VERIFIED，不新增 V1-T07
+v0.2.5 已发布（§45.4）；收口内容见 §45；V1-T05 / V1-T06 已 VERIFIED，不新增 V1-T07
 
 CURRENT STATUS
-RELEASED v0.2.4，SELF-VERIFIED — 用户原生验收与真实在线 AI 仍 PENDING；V1 ACTIVE
-PRODUCT STATE = Post-v0.2.3 15 项收口：11 PASS / 2 PARTIAL（item 1、2）/ 1 BLOCKED（item 9 在线推理）/
-item 14 PASS 但原生指针 smoke 条款 BLOCKED；全部证据见 §42 与 Completion Report
-NEXT ACTION = 用户下载 v0.2.4（或本机候选 .app）按 §43.6 清单做原生手势验收并发起第一次真实 AI 调用；
-新问题按 docs/release-playbook.md 走 v0.2.5；不创建 V1-T07，不关闭 V1
+RELEASED v0.2.5，SELF-VERIFIED — 用户原生验收、真实在线 AI 与真实滚动验证仍 PENDING；V1 ACTIVE
+PRODUCT STATE = v0.2.5 四块收口已公开：项目身份 / 多项目入口（Project Registry）、素材滚动稳定性
+（消闭环 + 钉住在页卡片 + 有界淘汰）、九类文本 / 文档导入（逐份选择 + §28 回执 + 来源原地不动）、
+映射后二次正文选择；证据见 §45 与 Completion Report
+NEXT ACTION = 用户下载 v0.2.5 按 §45.3 清单做原生手势 / 真实滚动验收并发起第一次真实 AI 调用；
+新问题按 docs/release-playbook.md 走 v0.2.6；不创建 V1-T07，不关闭 V1
 DISTRIBUTION STATE = PARTIAL（ad-hoc 签名；Apple Developer ID / 公证未配置）；
-v0.2.4 tag / Universal DMG / .sha256 已由 CI 发布并匿名下载校验（§43.4）
+v0.2.5 tag / Universal DMG / .sha256 已由 CI 发布并匿名下载校验（§45.4）
 V0 = CLOSED；V0-T01 / V0-T02 / V0-T03 / V0-T04 全部 VERIFIED
 V1-T01 = VERIFIED（§33）；V1-T02 = VERIFIED（§29 / §35 第一次实施 / §36 第二次实施）；
 V1-T03 = VERIFIED（ego-browser §21 26/27 PASS + 1 N-A；§9.3 page.mouse Drag Handle PASS）；
@@ -2625,10 +2642,12 @@ DONE / IMPLEMENTED
 
 OPEN BLOCKERS
 - T05/T06：None。
-- 本轮（§42）两条环境受限的验收通道，非产品缺陷：
-  1) 在线 AI 真实推理（item 9）——`api.openai.com` 在本环境 60 s 超时；实现与阶段错误码已验证。
-  2) 原生窗口 GUI 输入 / 截图（items 1、2、12 的原生面板手势与 §15.4 原生指针 smoke）——
-     AppleScript `-1712`、`screencapture: could not create image from display`；候选 .app 可自行启动（PID 56564 写入项目租约）。
+- 本轮（§45.3）三条环境受限的验收通道，非产品缺陷：
+  1) 原生窗口 GUI 输入 / 截图——AppleScript `-1712`、`screencapture: could not create image from display`；
+     覆盖 §45 的原生指针 / 面板手势与启动页项目列表走查。
+  2) 在线 AI 真实推理——`api.openai.com` 在本环境 60 s 超时；本轮未改 AI 链路，按 v0.2.4 结论顺延。
+  3) 生产规模媒体库（大图 + 240+ 素材）与真实触控板 / 滚轮滚动——状态机由自动化用例覆盖，
+     真实指针滚动仍需真实窗口验证。
 
 DISTRIBUTION LIMITATION
 - 缺正式 macOS signing / notarization credentials（无 Developer ID Application 证书或公证凭据）；DMG 为 ad-hoc 签名，macOS 可能显示安全提示。
@@ -2641,8 +2660,8 @@ BACKLOG
 - Tauri WebView Explorer / Mapping / Adopt smoke（本轮未在 WKWebView 内复测）
 
 AFTER CURRENT TASK
-用户已授权本次提交 / tag / 发布（§43.1）；下一次发布仍需要单独授权。
-v0.2.4 发布后，v0.2.4 及更早的 release tags / assets 全部冻结。V0 不重新打开。
+用户已授权本次提交 / tag / 发布（§45 开头）；下一次发布仍需要单独授权。
+v0.2.5 发布后，v0.2.5 及更早的 release tags / assets 全部冻结。V0 不重新打开。
 
 V1
 ACTIVE
@@ -2651,7 +2670,7 @@ V2
 NOT ACTIVE
 
 NEXT ACTION
-发布 v0.2.4 并回填 §43.4，然后由用户对原生 GUI 手势做验收（V1-T01—T06 VERIFIED；V1 ACTIVE；V0 CLOSED；不创建 V1-T07。）
+v0.2.5 已发布并回填 §45.4；由用户对原生 GUI 手势 / 真实滚动做验收并发起第一次真实 AI 调用（V1-T01—T06 VERIFIED；V1 ACTIVE；V0 CLOSED；不创建 V1-T07。）
 ```
 
 ---
@@ -4078,7 +4097,7 @@ v0.2.5 完成 + V1 实际使用收口达到用户认可 + V1 正式收口 + 用�
 
 ---
 
-# 45. v0.2.5 — 项目身份 / 多项目入口 / 素材滚动稳定性 / 文本·文档导入（2026-10-03，实现完成）
+# 45. v0.2.5 — 项目身份 / 多项目入口 / 素材滚动稳定性 / 文本·文档导入（2026-10-03，实现完成并已发布）
 
 来源：`V0.2.4_Closure_and_V2_Roadmap_Revision.md` PART I / PART II（该文件交接时写作“v0.2.4”，
 因 v0.2.4 已于 2026-10-02 发布并冻结，经用户决定本轮以 **v0.2.5** 交付，范围不删减；
@@ -4160,7 +4179,30 @@ cargo build                     clean
 3. 生产规模媒体库的量化证据（大图 + 240+ 素材）—— 有界淘汰行为本身是 §11 允许的。
 ```
 
-## 45.4 发布记录（发布后回填）
+## 45.4 发布记录（发布后回填，2026-10-03）
 
-待 v0.2.5 tag / workflow / 公开资产验证完成后回填：tag → commit、run 链接与结论、
-DMG SHA-256 / 架构 / 签名状态、`releases/latest` 指向、README 与 Feature Manual 冻结结果。
+```text
+授权           用户在原任务中授权「开发完成后同步 GitHub 以及 tag、release 页」（提交 / 推送 / tag /
+               Release 四件事，同 v0.2.4 先例）
+源码提交        d16b622c082720c3c386613df187deec3b7ec469 推送 origin/main（5559881..d16b622）
+附注 tag        v0.2.5（tag 对象 9d9507999eb3b46a1bf58fd87e04c743aafd15ba）指向该 commit
+发布 workflow   run 37100286505（event=push、headBranch=v0.2.5）completed / success（8m4s）
+Release         isDraft=false、isPrerelease=false，publishedAt 2026-10-03T05:42:45Z；
+                https://github.com/wyzh0117/workbench/releases/tag/v0.2.5
+公开资产        匿名下载 Universal DMG 14,293,951 bytes，SHA-256
+                a84884466b084cd674a4d0d32a52b3284863a9adb9706c11283009fb14b7f9fd，与 .sha256
+                sidecar 及 GitHub 自报 asset digest 逐字符一致；hdiutil verify = VALID；
+                lipo -archs = x86_64 arm64；Info.plist 版本 0.2.5；codesign Signature=adhoc /
+                TeamIdentifier not set；spctl --assess --type execute = rejected
+                （与 Notes 的 ad-hoc / 未公证表述一致）
+latest          /releases/latest 指向 v0.2.5；固定直链 releases/latest/download/… 匿名 200
+冻结            v0.2.4 及更早 tag / DMG / sidecar 未移动、未覆盖（v0.2.4 DMG 12,107,473 bytes /
+                SHA-256 82fdba59…4dab 复测不变）；v0.2.5 发布后即刻冻结
+发布前 gate     版本 bump 到 0.2.5 后复跑全绿：deno task check、deno task test 584 passed、
+                cargo fmt --check、cargo test 216 passed、cargo build（与 §45.2 同源）
+回写            验证段以第二个 commit 追加进 .github/release-notes/v0.2.5.md 并同步进公开
+                Release 正文（只改 notes，不重传资产）；docs/feature-history/v0.2.5.md 头部与
+                索引表回填；README 当前开发位置切换为 v0.2.5
+未闭合通道      三条（§45.3）：原生窗口指针 / 面板手势 smoke、真实在线 AI 调用、
+                真实触控板 / 滚轮滚动验证；如实记录，不记成通过
+```

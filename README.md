@@ -88,7 +88,7 @@ DISTRIBUTION STATE = PARTIAL
 BLOCKER            = 缺正式 macOS signing / notarization credentials
 ```
 
-- **已有公开版**：最新正式 Release 为 v0.2.4，Universal（Apple Silicon + Intel）DMG、固定 latest 直链与 SHA-256 sidecar 均已发布并校验；已发布 tag 与资产保持冻结。
+- **已有公开版**：最新正式 Release 为 v0.2.5，Universal（Apple Silicon + Intel）DMG、固定 latest 直链与 SHA-256 sidecar 均已发布并校验；已发布 tag 与资产保持冻结。
 - **当前可见性**：仓库为 **public**，Release 页面与 latest 直链对匿名访问者可用。
 - **未完成**：Developer ID Application 签名与 Apple 公证（notarization / stapling）。
   本机 `security find-identity -v -p codesigning` 返回 0 valid identities，没有可用的
@@ -113,17 +113,19 @@ BLOCKER            = 缺正式 macOS signing / notarization credentials
 - V1-T04 — Workspace Explorer & Existing-Folder Adoption：**VERIFIED**
 - V1-T05 — Paged Canvas & Pagination：**VERIFIED**
 - V1-T06 — Layout-aware Export & PPTX：**VERIFIED**
-- 当前交接：**v0.2.5 发布中**（收口内容 = 项目身份与多项目入口、媒体库滚动稳定性、九类文本 / 文档导入、映射后二次正文选择；实现与自测见 §45）
-- 当前状态：**V1 ACTIVE；本轮四块内容已全部实现并完成我方自测，按用户授权随 `v0.2.5` 提交、打 tag 并发布**（T01–T06 的 VERIFIED 为历史任务结论）
+- 当前交接：**v0.2.5 已发布并冻结**（收口内容 = 项目身份与多项目入口、媒体库滚动稳定性、九类文本 / 文档导入、映射后二次正文选择；发布验证事实见 §45.4）
+- 当前状态：**V1 ACTIVE；v0.2.5 四块内容已实现、自测并按用户授权提交、打 tag、发布**（T01–T06 的 VERIFIED 为历史任务结论）
 - [Completion Report](docs/V0.2.5_Closure_2026-10-03_Completion_Report.md) · [Master Control §45](PROJECT_MASTER_CONTROL.md)：§33 19 项验收矩阵、自动化 gate、真实 UI 证据与未闭合通道；媒体库闪烁的大白话根因见 [docs/v0.2.5_media_flicker_root_cause.md](docs/v0.2.5_media_flicker_root_cause.md)。
-- 公开版与源码态的区别：**v0.2.4 及更早的公开包不含本轮四块改动**；这些改动随 `v0.2.5` 到达用户。`v0.2.5` 的下载地址、SHA-256 与验证结果以本页上方 `releases/latest` 链接与 `PROJECT_MASTER_CONTROL.md` §45.4 为准（发布验证完成后回填）。已发布版本一律冻结，不会被重建或覆盖。
+- 公开版与源码态的区别：**v0.2.4 及更早的公开包不含本轮四块改动**；这些改动已随 `v0.2.5` 到达用户。`v0.2.5` 的下载地址、SHA-256 与验证结果见本页上方 `releases/latest` 链接与 `PROJECT_MASTER_CONTROL.md` §45.4。已发布版本一律冻结，不会被重建或覆盖。
 - 本轮改动清单（面向用户可见行为）见 [Feature Update Manual / v0.2.5](docs/feature-history/v0.2.5.md)：启动入口变成项目列表（重新定位 / 移除只动列表）、打开文件夹先诊断再动作且不会认错子项目、媒体库滚到底再往回滚不再闪烁、九类文本 / 文档作为正文导入（.txt/.text/.md/.markdown/.tex/.latex/.docx/.epub/.pdf）、映射确认后新增「选择要导入为正文的文档」窗口。
-- 产品状态：**公开版 v0.2.4 = 已发布**（上轮收口 15 项为 11 PASS / 2 PARTIAL / 1 BLOCKED）；**本轮 v0.2.5 = 实现与自动化验证完成，真实 Tauri 验收行按 UNCLOSED 如实记录**（原生窗口手势与真实在线 AI 两条通道继承未闭合，见 Completion Report §2 与 §9），不作整体 VERIFIED 或 DOGFOOD READY 结论
-- 分发状态：**PARTIAL / 公开下载可用**（v0.2.4 Universal DMG 与 SHA-256 sidecar 已匿名下载校验；制品为 ad-hoc signed，无 `TeamIdentifier`，`spctl --assess --type execute` 为 `rejected`，未做 Developer ID 签名或公证）
+- 产品状态：**公开版 v0.2.5 = 已发布并完成公开产物验证**（上轮 v0.2.4 收口 15 项为 11 PASS / 2 PARTIAL / 1 BLOCKED）；**v0.2.5 的真实 Tauri 验收行按 UNCLOSED 如实记录**（原生窗口手势、真实在线 AI、媒体库真实滚动三条通道未闭合，见 Completion Report §2 与 §9），不作整体 VERIFIED 或 DOGFOOD READY 结论
+- 分发状态：**PARTIAL / 公开下载可用**（v0.2.5 Universal DMG 与 SHA-256 sidecar 已匿名下载校验；制品为 ad-hoc signed，无 `TeamIdentifier`，`spctl --assess --type execute` 为 `rejected`，未做 Developer ID 签名或公证）
 - V0 状态：**V0 CLOSED；V0-T01 / V0-T02 / V0-T03 / V0-T04 全部 VERIFIED**
-- 最新公开版本为 [`v0.2.4`](https://github.com/wyzh0117/workbench/releases/tag/v0.2.4)（tag/source commit `4db396bf7c1953a62f72d3887d6ae07b03fcaa76`，workflow run `36906333256`）；[Universal DMG](https://github.com/wyzh0117/workbench/releases/download/v0.2.4/AI-Course-Workbench-macOS.dmg) 与 [SHA-256 sidecar](https://github.com/wyzh0117/workbench/releases/download/v0.2.4/AI-Course-Workbench-macOS.dmg.sha256) 已匿名下载核验（SHA-256 `82fdba5957f57d9650f74922197e9593e981be418515e6c7e34519164cef4dab`、`hdiutil verify` VALID、`x86_64 arm64`、版本 0.2.4）；[`v0.2.3`](https://github.com/wyzh0117/workbench/releases/tag/v0.2.3) 及其资产保持冻结。
-- NEXT ACTION：`v0.2.5` 发布完成后，用户在真实窗口里补做原生验收（启动页项目列表、原生打开面板、媒体库真实滚动、正文选择窗口点击、重启走查）并发起第一次真实 AI 调用，清单见 `PROJECT_MASTER_CONTROL.md` §45.3 与 Completion Report §2 的 UNCLOSED 行；新问题按下一个版本处理，下一次发布仍需单独授权；不创建 V1-T07，不关闭 V1。
+- 最新公开版本为 [`v0.2.5`](https://github.com/wyzh0117/workbench/releases/tag/v0.2.5)（tag/source commit `d16b622c082720c3c386613df187deec3b7ec469`，workflow run `37100286505`）；[Universal DMG](https://github.com/wyzh0117/workbench/releases/download/v0.2.5/AI-Course-Workbench-macOS.dmg) 与 [SHA-256 sidecar](https://github.com/wyzh0117/workbench/releases/download/v0.2.5/AI-Course-Workbench-macOS.dmg.sha256) 已匿名下载核验（SHA-256 `a84884466b084cd674a4d0d32a52b3284863a9adb9706c11283009fb14b7f9fd`、`hdiutil verify` VALID、`x86_64 arm64`、版本 0.2.5）；[`v0.2.4`](https://github.com/wyzh0117/workbench/releases/tag/v0.2.4) 及其资产保持冻结。
+- NEXT ACTION：`v0.2.5` 已发布；用户在真实窗口里补做原生验收（启动页项目列表、原生打开面板、媒体库真实滚动、正文选择窗口点击、重启走查）并发起第一次真实 AI 调用，清单见 `PROJECT_MASTER_CONTROL.md` §45.3 与 Completion Report §2 的 UNCLOSED 行；新问题按下一个版本处理，下一次发布仍需单独授权；不创建 V1-T07，不关闭 V1。
 - 发版本身怎么操作（版本字段三处联动、Release Notes 规则、tag 与 workflow、发布后验证与回写、只有用户能做的部分）见 [docs/release-playbook.md](docs/release-playbook.md)。
+
+2026-10-03 v0.2.5 发布：用户授权「开发完成后同步 GitHub 以及 tag、release 页」后，源码提交 `d16b622c082720c3c386613df187deec3b7ec469` 推送 `main`，附注 tag `v0.2.5` 触发 workflow `37100286505`（`success`，8m4s），Release 为当前 Latest（`isDraft=false`）。公开 Universal DMG（14,293,951 bytes）与 `.sha256` sidecar 匿名下载校验一致：SHA-256 `a84884466b084cd674a4d0d32a52b3284863a9adb9706c11283009fb14b7f9fd`、`hdiutil verify` VALID、`lipo -archs` = `x86_64 arm64`、包内版本 0.2.5。发布前与 tag 所在源码状态的自动化 gate 全绿：`deno task check`、Deno 584/584、`cargo fmt --check`、Rust 216/216、`cargo build`。三条验收通道带着「未闭合」发布而非记成通过：原生窗口指针 / 面板手势 smoke、真实在线 AI 调用（`api.openai.com` 60 秒超时）、媒体库真实触控板 / 滚轮滚动；逐条清单见 `PROJECT_MASTER_CONTROL.md` §45.3。正式 DMG 为 ad-hoc signed、无 `TeamIdentifier`、未公证，`spctl --assess --type execute` 返回 `rejected`。`v0.2.4` 及更早 tag / DMG / sidecar 未移动、未覆盖。
 
 2026-10-02 v0.2.4 发布：用户授权「把项目同步到 GitHub，同时 tag 和发布新版本 release」后，源码提交 `4db396bf7c1953a62f72d3887d6ae07b03fcaa76` 推送 `main`，附注 tag `v0.2.4` 触发 workflow `36906333256`（`success`），Release 为当前 Latest（`isDraft=false`）。公开 Universal DMG（12,107,473 bytes）与 `.sha256` sidecar 匿名下载校验一致：SHA-256 `82fdba5957f57d9650f74922197e9593e981be418515e6c7e34519164cef4dab`、`hdiutil verify` VALID、`lipo -archs` = `x86_64 arm64`、包内版本 0.2.4。发布前与 tag 所在源码状态的自动化 gate 全绿：`deno task check`、Deno 522/522、`cargo fmt --check`、Rust 104/104、`cargo build`。两条验收通道按用户决定带着「未闭合」发布而非记成通过：原生窗口指针 / 面板手势 smoke（本环境 AppleScript `-1712`、截图 `could not create image from display`）与真实在线 AI 调用（`api.openai.com` 60 秒超时），逐条清单见 `PROJECT_MASTER_CONTROL.md` §43.6。正式 DMG 同样是 ad-hoc signed、无 `TeamIdentifier`、未公证，`spctl --assess --type execute` 返回 `rejected`。`v0.2.3` 及更早 tag / DMG / sidecar 未移动、未覆盖。发版操作步骤固化在 [docs/release-playbook.md](docs/release-playbook.md)。
 
