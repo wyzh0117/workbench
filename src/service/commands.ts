@@ -20,6 +20,12 @@ import {
 export const HIGH_LEVEL_COMMANDS = [
   "project.open",
   "project.inspect",
+  // §4 application-level project registry: app-global, rebuildable, never a
+  // second copy of a course. Both shells expose the same four operations.
+  "registry.list",
+  "registry.record",
+  "registry.remove",
+  "registry.relocate",
   "project.create",
   "project.save",
   "project.external.inspect",

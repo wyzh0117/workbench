@@ -21,7 +21,9 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tauri::{AppHandle, Emitter, Manager, State};
 use tauri_plugin_dialog::DialogExt;
 
+pub mod documents;
 mod paged_export;
+mod registry;
 
 static ID_COUNTER: AtomicU64 = AtomicU64::new(0);
 const PROJECT_LOCK_RELATIVE_PATH: &str = ".workspace/project.lock";
@@ -4683,6 +4685,612 @@ fn record_markdown_import_source(
     Ok(())
 }
 
+/// §28 outcome of one text/document file inside an import batch. These four
+/// strings are the frontend contract for `document_import.files[*].outcome`.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum DocumentOutcome {
+    /// Imported with all the structure the source actually carries.
+    Succeeded,
+    /// Imported, but structure was lost (math stored as code, unknown macros kept
+    /// verbatim, an unsupported filter, an embedded image that could not resolve).
+    Degraded,
+    /// Deliberately not imported (duplicate by SHA-256, no usable text layer,
+    /// unchecked by the user, or refused by a containment check).
+    Skipped,
+    /// The file could not be read, parsed or committed.
+    Failed,
+}
+
+impl DocumentOutcome {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Succeeded => "succeeded",
+            Self::Degraded => "degraded",
+            Self::Skipped => "skipped",
+            Self::Failed => "failed",
+        }
+    }
+}
+
+/// The per-file tally `folder_apply_import` returns as `document_import`, so both
+/// `folder.adopt` and `folder.append` expose it. Counts are always derived from
+/// `files`, never incremented separately, so they cannot drift apart.
+#[derive(Default)]
+struct DocumentImportTally {
+    files: Vec<Value>,
+}
+
+impl DocumentImportTally {
+    fn record(&mut self, relative_path: &str, outcome: DocumentOutcome, reason: &str) {
+        self.files.push(json!({
+            "relative_path": relative_path,
+            "outcome": outcome.as_str(),
+            "reason": reason,
+        }));
+    }
+
+    /// Only rows the text/document pipeline owns are tallied: a listed file whose
+    /// extension the parser layer supports. Media (image / video) never enters it.
+    fn record_file(
+        &mut self,
+        kind: &str,
+        relative_path: &str,
+        filename: &str,
+        outcome: DocumentOutcome,
+        reason: &str,
+    ) {
+        if !ADOPTABLE_FILE_KINDS.contains(&kind) || !documents::is_supported_document(filename) {
+            return;
+        }
+        self.record(relative_path, outcome, reason);
+    }
+
+    fn count(&self, outcome: DocumentOutcome) -> usize {
+        self.files
+            .iter()
+            .filter(|entry| entry["outcome"] == json!(outcome.as_str()))
+            .count()
+    }
+
+    fn to_value(&self) -> Value {
+        json!({
+            "succeeded": self.count(DocumentOutcome::Succeeded),
+            "degraded": self.count(DocumentOutcome::Degraded),
+            "skipped": self.count(DocumentOutcome::Skipped),
+            "failed": self.count(DocumentOutcome::Failed),
+            "files": self.files,
+        })
+    }
+}
+
+/// The mutable state one import transaction accumulates. Grouping it lets a
+/// single file be rolled back (§28) without threading eight `&mut` arguments
+/// through every helper.
+#[derive(Default)]
+struct AdoptAccumulator {
+    warnings: Vec<String>,
+    stage_ids: Vec<String>,
+    content_item_ids: Vec<String>,
+    asset_ids: Vec<String>,
+    source_ids: Vec<String>,
+    reused_asset_ids: Vec<String>,
+    copied_files: Vec<String>,
+    staged_pairs: Vec<(String, String)>,
+}
+
+/// Everything a single file item may append, captured before it is processed so a
+/// failure leaves no half-imported lesson, asset, usage or provenance record.
+struct AdoptItemSnapshot {
+    stages: usize,
+    content_items: usize,
+    documents: usize,
+    blocks: usize,
+    assets: usize,
+    asset_usages: usize,
+    inbox_items: usize,
+    ledger: usize,
+    warnings: usize,
+    content_item_ids: usize,
+    asset_ids: usize,
+    source_ids: usize,
+    reused_asset_ids: usize,
+    copied_files: usize,
+    staged_pairs: usize,
+}
+
+impl AdoptItemSnapshot {
+    fn capture(project: &Value, acc: &AdoptAccumulator) -> Self {
+        let length = |key: &str| {
+            project
+                .get(key)
+                .and_then(Value::as_array)
+                .map(Vec::len)
+                .unwrap_or(0)
+        };
+        Self {
+            stages: length("stages"),
+            content_items: length("content_items"),
+            documents: length("documents"),
+            blocks: length("blocks"),
+            assets: length("assets"),
+            asset_usages: length("asset_usages"),
+            inbox_items: length("inbox_items"),
+            ledger: project
+                .get("project")
+                .and_then(|value| value.get("settings"))
+                .and_then(|value| value.get("markdown_import_sources"))
+                .and_then(Value::as_array)
+                .map(Vec::len)
+                .unwrap_or(0),
+            warnings: acc.warnings.len(),
+            content_item_ids: acc.content_item_ids.len(),
+            asset_ids: acc.asset_ids.len(),
+            source_ids: acc.source_ids.len(),
+            reused_asset_ids: acc.reused_asset_ids.len(),
+            copied_files: acc.copied_files.len(),
+            staged_pairs: acc.staged_pairs.len(),
+        }
+    }
+
+    fn restore(self, project: &mut Value, acc: &mut AdoptAccumulator) {
+        for (key, length) in [
+            ("stages", self.stages),
+            ("content_items", self.content_items),
+            ("documents", self.documents),
+            ("blocks", self.blocks),
+            ("assets", self.assets),
+            ("asset_usages", self.asset_usages),
+            ("inbox_items", self.inbox_items),
+        ] {
+            if let Some(values) = project.get_mut(key).and_then(Value::as_array_mut) {
+                values.truncate(length);
+            }
+        }
+        if let Some(values) = project
+            .get_mut("project")
+            .and_then(|value| value.get_mut("settings"))
+            .and_then(|value| value.get_mut("markdown_import_sources"))
+            .and_then(Value::as_array_mut)
+        {
+            values.truncate(self.ledger);
+        }
+        acc.warnings.truncate(self.warnings);
+        acc.content_item_ids.truncate(self.content_item_ids);
+        acc.asset_ids.truncate(self.asset_ids);
+        acc.source_ids.truncate(self.source_ids);
+        acc.reused_asset_ids.truncate(self.reused_asset_ids);
+        acc.copied_files.truncate(self.copied_files);
+        // The staged bytes themselves go with the transaction's own staging
+        // directory, which `AdoptStagingGuard` removes on the way out.
+        acc.staged_pairs.truncate(self.staged_pairs);
+    }
+}
+
+/// Read-only facts about where this transaction runs.
+struct AdoptRoots<'a> {
+    resolved_source_root: &'a Path,
+    resolved_root: &'a Path,
+    project_id: &'a str,
+    duplicate_choice: &'a str,
+    staging_relative_root: &'a str,
+}
+
+/// One file row of the confirmed Mapping Plan, already resolved, read and hashed
+/// by `folder_apply_import`.
+struct AdoptFile<'a> {
+    item: &'a Value,
+    rel: &'a str,
+    absolute: &'a Path,
+    bytes: &'a [u8],
+    checksum: &'a str,
+    filename: &'a str,
+    file_title: &'a str,
+}
+
+/// `files[*].reason` renders next to the path in the frontend, so the `{rel}: `
+/// prefix the warning stream needs would only be duplicated there.
+fn document_reason(rel: &str, message: &str) -> String {
+    message
+        .strip_prefix(&format!("{rel}: "))
+        .unwrap_or(message)
+        .to_string()
+}
+
+/// §30 duplicate rule, shared by the Markdown path and the native document path so
+/// both speak exactly one language about the same SHA-256.
+///
+/// `Some((true, warning))` refuses the file until the plan says `allow_duplicate`;
+/// `Some((false, warning))` records the user's explicit re-import choice; `None`
+/// means nothing on record matches this source.
+fn adopt_duplicate_check(
+    project: &Value,
+    resolved_source_root: &Path,
+    rel: &str,
+    checksum: &str,
+    allow_duplicate: bool,
+) -> Option<(bool, String)> {
+    let source_match = find_markdown_source_match(project, resolved_source_root, rel, checksum)?;
+    if !allow_duplicate {
+        let message = if source_match.state == "same_content" {
+            if source_match.target_deleted {
+                format!(
+                    "{rel}: SHA-256与曾导入来源「{}」一致，但目标课时已删除；项目仍保留来源记录，默认跳过。",
+                    source_match.title
+                )
+            } else {
+                format!(
+                    "{rel}: SHA-256与已导入课时「{}」一致；默认跳过，已有编辑内容保持不变。",
+                    source_match.title
+                )
+            }
+        } else {
+            format!(
+                "{rel}: 来源路径已有较旧导入「{}」{}（SHA-256 {}）；默认跳过以避免静默替换，请明确选择“作为新版本导入”。",
+                source_match.title,
+                if source_match.target_deleted { "（目标课时已删除）" } else { "" },
+                source_match.previous_hash.chars().take(12).collect::<String>()
+            )
+        };
+        return Some((true, message));
+    }
+    let message = if source_match.state == "same_content" {
+        if source_match.target_deleted {
+            format!(
+                "{rel}: 用户已明确重新导入曾删除课时「{}」的相同Markdown；按当前目标新建或追加。",
+                source_match.title
+            )
+        } else {
+            format!(
+                "{rel}: 用户已明确选择再次导入与「{}」内容相同的Markdown；原课时正文不会被覆盖。",
+                source_match.title
+            )
+        }
+    } else if source_match.target_deleted {
+        format!(
+            "{rel}: 用户已明确导入曾删除课时「{}」的来源新版本；按当前目标新建或追加。",
+            source_match.title
+        )
+    } else {
+        format!(
+            "{rel}: 用户已明确选择导入来源的新版本；「{}」及其编辑内容保持不变。",
+            source_match.title
+        )
+    };
+    Some((false, message))
+}
+
+/// The managed `assets/<uuid>-<name>` path of an asset, used to turn a parser's
+/// stable `document-image-N.png` reference into a project-owned href.
+fn asset_storage_path(project: &Value, asset_id: &str) -> Option<String> {
+    project
+        .get("assets")
+        .and_then(Value::as_array)
+        .and_then(|assets| {
+            assets
+                .iter()
+                .find(|asset| asset.get("id").and_then(Value::as_str) == Some(asset_id))
+        })
+        .and_then(|asset| asset.get("storage_path").and_then(Value::as_str))
+        .map(str::to_owned)
+}
+
+/// Rewrites one image href inside a block body. The parser emits `![alt](ref)`
+/// with `](` … `)` as the only occurrence shape, so the delimiters are matched
+/// literally and nothing else in the imported text is touched.
+fn rewrite_block_image_href(block: &mut Value, from: &str, to: &str) {
+    let previous = format!("]({from})");
+    let managed = format!("]({to})");
+    for key in ["raw", "text"] {
+        let replaced = match block.get(key).and_then(Value::as_str) {
+            Some(value) if value.contains(previous.as_str()) => {
+                Some(value.replace(previous.as_str(), managed.as_str()))
+            }
+            Some(value) if value.contains(from) => Some(value.replace(from, to)),
+            _ => None,
+        };
+        if let Some(value) = replaced {
+            block[key] = json!(value);
+        }
+    }
+}
+
+/// Registers a file as a Source / Reference inbox item. Never creates a lesson,
+/// which is what keeps a file with no importable body out of the content chain.
+fn adopt_source_inbox(
+    project: &mut Value,
+    project_id: &str,
+    source_type: &str,
+    title: &str,
+    body: &str,
+    asset_id: Value,
+) -> Result<String, String> {
+    let inbox_id = native_id("inbox");
+    project
+        .as_object_mut()
+        .ok_or("项目数据必须是 JSON 对象")?
+        .get_mut("inbox_items")
+        .and_then(Value::as_array_mut)
+        .ok_or("inbox_items 无效")?
+        .push(json!({
+            "id": inbox_id,
+            "project_id": project_id,
+            "source_type": source_type,
+            "title": title,
+            "body": body,
+            "asset_id": asset_id,
+            "content_item_id": Value::Null,
+            "status": "open",
+            "created_at": rfc3339_now(),
+            "updated_at": rfc3339_now(),
+        }));
+    Ok(inbox_id)
+}
+
+/// Keeps a document that has no importable body (a scanned PDF) as a managed
+/// Source Reference: the original file is never moved (§29).
+fn adopt_keep_source_reference(
+    project: &mut Value,
+    acc: &mut AdoptAccumulator,
+    roots: &AdoptRoots,
+    file: &AdoptFile,
+) -> Result<(), String> {
+    let mut asset_id = Value::Null;
+    if let Some(id) = adopt_import_asset(
+        project,
+        roots.resolved_root,
+        roots.project_id,
+        file.filename,
+        file.bytes,
+        file.checksum,
+        Some(file.absolute),
+        roots.duplicate_choice,
+        Some("document"),
+        &mut acc.warnings,
+        &mut acc.reused_asset_ids,
+        &mut acc.copied_files,
+        &mut acc.staged_pairs,
+        roots.staging_relative_root,
+    )? {
+        if !acc.asset_ids.contains(&id) {
+            acc.asset_ids.push(id.clone());
+        }
+        asset_id = Value::String(id);
+    }
+    let inbox_id = adopt_source_inbox(
+        project,
+        roots.project_id,
+        "source",
+        file.file_title,
+        &format!("源资料：{}", file.rel),
+        asset_id,
+    )?;
+    acc.source_ids.push(inbox_id);
+    Ok(())
+}
+
+/// §15–§20: a `.txt .tex .docx .epub .pdf` (anything but Markdown, which stays on
+/// the shared JS parse) becomes lesson body from the shell's own parse of the
+/// bytes it read from the canonicalized path.
+///
+/// A client-supplied `parsed_markdown` is deliberately not consulted for these
+/// formats: the shell parsing the file it opened itself is strictly harder to
+/// forge than accepting blocks the renderer sent. Blocks, destination rules and
+/// provenance all go through the same `adopt_markdown_blocks` /
+/// `adopt_lesson_destination` path as Markdown (§19), and every `ParsedImage`
+/// becomes a managed Asset whose href is written back into the body.
+fn adopt_native_document_lesson(
+    project: &mut Value,
+    acc: &mut AdoptAccumulator,
+    roots: &AdoptRoots,
+    file: &AdoptFile,
+    destination: &AdoptLessonDestination,
+) -> Result<(DocumentOutcome, String, Option<String>), String> {
+    let parsed = documents::parse_document(file.filename, file.bytes)
+        .map_err(|error| format!("{}: 文档解析失败（{error}）", file.rel))?;
+    if !parsed.usable_text {
+        // A scanned PDF: never an empty lesson body, only a Source Reference.
+        let reason = "没有文字层，已保留为来源参考";
+        adopt_keep_source_reference(project, acc, roots, file)?;
+        acc.warnings.push(format!(
+            "{}: 该文件没有文字层（扫描件），未创建课时，{reason}。",
+            file.rel
+        ));
+        return Ok((DocumentOutcome::Skipped, reason.to_string(), None));
+    }
+    // Nothing the parser noticed may be silently dropped (§28 "不得静默丢失").
+    for warning in &parsed.warnings {
+        acc.warnings.push(format!("{}: {warning}", file.rel));
+    }
+    if let Some((skip, message)) = adopt_duplicate_check(
+        project,
+        roots.resolved_source_root,
+        file.rel,
+        file.checksum,
+        file.item
+            .get("allow_duplicate")
+            .and_then(Value::as_bool)
+            .unwrap_or(false),
+    ) {
+        acc.warnings.push(message.clone());
+        if skip {
+            return Ok((
+                DocumentOutcome::Skipped,
+                document_reason(file.rel, &message),
+                None,
+            ));
+        }
+    }
+
+    let mut assets_by_block: HashMap<usize, Vec<Value>> = HashMap::new();
+    let mut managed: HashMap<String, (String, String)> = HashMap::new();
+    let mut unresolved: Vec<String> = Vec::new();
+    for image in &parsed.images {
+        let bytes = match decode_base64(&image.base64) {
+            Ok(bytes) => bytes,
+            Err(error) => {
+                acc.warnings.push(format!(
+                    "{}: 内嵌图片「{}」无法解码（{error}）；已保留正文原文，未创建素材。",
+                    file.rel, image.ref_name
+                ));
+                unresolved.push(image.ref_name.clone());
+                continue;
+            }
+        };
+        let name = safe_asset_filename(&image.ref_name);
+        let asset_id = match adopt_import_asset(
+            project,
+            roots.resolved_root,
+            roots.project_id,
+            &name,
+            &bytes,
+            &sha256_hex(&bytes),
+            None,
+            roots.duplicate_choice,
+            None,
+            &mut acc.warnings,
+            &mut acc.reused_asset_ids,
+            &mut acc.copied_files,
+            &mut acc.staged_pairs,
+            roots.staging_relative_root,
+        ) {
+            Ok(Some(id)) => id,
+            Ok(None) => {
+                acc.warnings.push(format!(
+                    "{}: 内嵌图片「{}」未纳入素材库；已保留正文原文。",
+                    file.rel, image.ref_name
+                ));
+                unresolved.push(image.ref_name.clone());
+                continue;
+            }
+            Err(error) => {
+                // The document's own assets are part of its transaction; a media
+                // write that fails is this file's failure, not the batch's.
+                return Err(error);
+            }
+        };
+        match asset_storage_path(project, &asset_id) {
+            Some(storage_path) => {
+                if !acc.asset_ids.contains(&asset_id) {
+                    acc.asset_ids.push(asset_id.clone());
+                }
+                managed.insert(image.ref_name.clone(), (storage_path, asset_id));
+            }
+            None => {
+                acc.warnings.push(format!(
+                    "{}: 内嵌图片「{}」没有可用的素材路径；已保留正文原文。",
+                    file.rel, image.ref_name
+                ));
+                unresolved.push(image.ref_name.clone());
+            }
+        }
+    }
+
+    let mut blocks: Vec<Value> = Vec::with_capacity(parsed.blocks.len());
+    for (index, block) in parsed.blocks.iter().enumerate() {
+        let mut block = block.clone();
+        let references = block
+            .get("imageRefs")
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default();
+        if references.is_empty() {
+            blocks.push(block);
+            continue;
+        }
+        let mut rewritten: Vec<Value> = Vec::with_capacity(references.len());
+        for reference in references {
+            let href = reference.get("href").and_then(Value::as_str).unwrap_or("");
+            match managed.get(href) {
+                Some((storage_path, asset_id)) => {
+                    rewrite_block_image_href(&mut block, href, storage_path);
+                    let occurrence = reference
+                        .get("occurrence")
+                        .and_then(Value::as_u64)
+                        .unwrap_or(0);
+                    let mut entry = reference.clone();
+                    if let Some(object) = entry.as_object_mut() {
+                        object.insert("href".to_owned(), json!(storage_path));
+                    }
+                    rewritten.push(entry);
+                    assets_by_block
+                        .entry(index)
+                        .or_default()
+                        .push(json!({ "href": storage_path, "asset_id": asset_id, "occurrence": occurrence }));
+                }
+                None => {
+                    if !href.is_empty() && !unresolved.iter().any(|pending| pending == href) {
+                        acc.warnings.push(format!(
+                            "{}: 图片引用「{href}」未能纳入素材库；已保留正文原文。",
+                            file.rel
+                        ));
+                        unresolved.push(href.to_owned());
+                    }
+                    rewritten.push(reference);
+                }
+            }
+        }
+        block["imageRefs"] = Value::Array(rewritten);
+        blocks.push(block);
+    }
+    let degraded = parsed.degraded || !unresolved.is_empty();
+    let mut reason = if parsed.degraded {
+        match parsed.warnings.first() {
+            Some(first) => format!("结构有降级：{first}"),
+            None => "结构有降级".to_string(),
+        }
+    } else {
+        String::new()
+    };
+    if !unresolved.is_empty() {
+        let text = format!("内嵌图片未能纳入素材库：{}", unresolved.join("、"));
+        reason = if reason.is_empty() {
+            text
+        } else {
+            format!("{reason}；{text}")
+        };
+    }
+    let content_id = if let Some(existing_id) = destination.existing_lesson_id.clone() {
+        existing_id
+    } else {
+        adopt_add_lesson(
+            project,
+            roots.project_id,
+            destination.stage_id.as_deref(),
+            file.file_title,
+            "",
+            false,
+        )?
+    };
+    let provenance = json!({
+        "source_root": roots.resolved_source_root.to_string_lossy(),
+        "relative_path": file.rel,
+        "source_hash": file.checksum,
+    });
+    adopt_markdown_blocks(
+        project,
+        &content_id,
+        &Value::Array(blocks),
+        &assets_by_block,
+        Some(&provenance),
+    )?;
+    let imported_title = project["content_items"]
+        .as_array()
+        .and_then(|items| items.iter().find(|item| item["id"] == json!(content_id)))
+        .and_then(|item| item["title"].as_str())
+        .unwrap_or(file.file_title)
+        .to_owned();
+    record_markdown_import_source(project, &content_id, &imported_title, &provenance)?;
+    Ok((
+        if degraded {
+            DocumentOutcome::Degraded
+        } else {
+            DocumentOutcome::Succeeded
+        },
+        reason,
+        Some(content_id),
+    ))
+}
+
 /// Item kinds `folder_apply_import` treats as files. `image` / `video` come from
 /// the recursive media scan under a directory the user selected and follow the
 /// exact same asset path as `file`; directories never enter here. Mirrors
@@ -4803,21 +5411,65 @@ fn folder_apply_import(
         .unwrap_or("")
         .to_string();
 
-    let mut warnings = Vec::new();
+    let mut acc = AdoptAccumulator::default();
+    let mut tally = DocumentImportTally::default();
     let mut items = plan_obj
         .get("items")
         .and_then(Value::as_array)
         .cloned()
         .unwrap_or_default();
-    expand_selected_directory_media(&resolved_source_root, &mut items, &mut warnings);
+    expand_selected_directory_media(&resolved_source_root, &mut items, &mut acc.warnings);
 
-    let mut stage_ids = Vec::new();
-    let mut content_item_ids = Vec::new();
-    let mut asset_ids = Vec::new();
-    let mut source_ids = Vec::new();
-    let mut reused_asset_ids = Vec::new();
-    let mut copied_files = Vec::new();
-    let mut staged_pairs: Vec<(String, String)> = Vec::new();
+    // §28: every supported document that did not reach the body pipeline is still
+    // accounted for, so "unchecked" shows up as a deliberate skip rather than
+    // vanishing from the report.
+    for item in &items {
+        if adopt_item_included(item) {
+            continue;
+        }
+        let kind = item.get("kind").and_then(Value::as_str).unwrap_or("file");
+        if !ADOPTABLE_FILE_KINDS.contains(&kind) {
+            continue;
+        }
+        let rel = item
+            .get("relative_path")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .replace('\\', "/");
+        let filename = safe_asset_filename(
+            Path::new(&rel)
+                .file_name()
+                .and_then(|value| value.to_str())
+                .unwrap_or("unnamed"),
+        );
+        if !documents::is_supported_document(&filename) {
+            continue;
+        }
+        let mapping = item
+            .get("mapping")
+            .and_then(Value::as_str)
+            .unwrap_or("ignore");
+        if !matches!(mapping, "lesson" | "ignore") {
+            continue;
+        }
+        let reason = if item
+            .get("error")
+            .and_then(|value| value.as_str())
+            .map(|value| !value.is_empty())
+            .unwrap_or(false)
+        {
+            item.get("error")
+                .and_then(|value| value.as_str())
+                .unwrap_or_default()
+                .to_owned()
+        } else if mapping == "ignore" {
+            "未选择导入正文".to_string()
+        } else {
+            "未勾选，未导入正文".to_string()
+        };
+        tally.record_file(kind, &rel, &filename, DocumentOutcome::Skipped, &reason);
+    }
+
     let mut stage_by_rel: std::collections::HashMap<String, String> =
         std::collections::HashMap::new();
 
@@ -4871,7 +5523,7 @@ fn folder_apply_import(
             .unwrap()
             .push(stage);
         stage_by_rel.insert(rel.clone(), stage_id.clone());
-        stage_ids.push(stage_id);
+        acc.stage_ids.push(stage_id);
     }
 
     fs::create_dir_all(resolved_root.join(".workspace"))
@@ -4883,6 +5535,13 @@ fn folder_apply_import(
     fs::create_dir(&staging_absolute_root)
         .map_err(|error| format!("无法创建素材暂存目录：{error}"))?;
     let staging_cleanup = AdoptStagingGuard(staging_absolute_root);
+    let roots = AdoptRoots {
+        resolved_source_root: &resolved_source_root,
+        resolved_root: &resolved_root,
+        project_id: &project_id,
+        duplicate_choice,
+        staging_relative_root: &staging_relative_root,
+    };
 
     // Pass 2: files, including the image/video rows `expand_selected_directory_media`
     // appended for directories the user selected. Directories stay in pass 1 as
@@ -4904,8 +5563,29 @@ fn folder_apply_import(
         if !ADOPTABLE_FILE_KINDS.contains(&kind) || rel.is_empty() {
             continue;
         }
+        let filename = safe_asset_filename(
+            Path::new(&rel)
+                .file_name()
+                .and_then(|value| value.to_str())
+                .unwrap_or("unnamed"),
+        );
+        let file_title = Path::new(&filename)
+            .file_stem()
+            .and_then(|value| value.to_str())
+            .unwrap_or(&filename)
+            .to_string();
+        // The containment checks below refuse a path before it is ever opened. For
+        // the text/document rows that refusal is also a §28 "skipped" line, so the
+        // user sees why a listed file produced nothing.
         if Path::new(&rel).is_absolute() || rel.split('/').any(|part| part == ".." || part == ".") {
-            warnings.push(format!("{rel}: 非法路径已跳过"));
+            acc.warnings.push(format!("{rel}: 非法路径已跳过"));
+            tally.record_file(
+                kind,
+                &rel,
+                &filename,
+                DocumentOutcome::Skipped,
+                "非法路径，未导入",
+            );
             continue;
         }
         let mut absolute = resolved_source_root.clone();
@@ -4922,24 +5602,52 @@ fn folder_apply_import(
             }
         }
         if invalid_path {
-            warnings.push(format!("{rel}: 已跳过符号链接"));
+            acc.warnings.push(format!("{rel}: 已跳过符号链接"));
+            tally.record_file(
+                kind,
+                &rel,
+                &filename,
+                DocumentOutcome::Skipped,
+                "符号链接目标未跟随，未导入",
+            );
             continue;
         }
         let meta = match fs::symlink_metadata(&absolute) {
             Ok(value) => value,
             Err(error) => {
-                warnings.push(format!("{rel}: 无法读取（{error}）"));
+                acc.warnings.push(format!("{rel}: 无法读取（{error}）"));
+                tally.record_file(
+                    kind,
+                    &rel,
+                    &filename,
+                    DocumentOutcome::Failed,
+                    "无法读取文件",
+                );
                 continue;
             }
         };
         if meta.file_type().is_symlink() {
-            warnings.push(format!("{rel}: 已跳过符号链接"));
+            acc.warnings.push(format!("{rel}: 已跳过符号链接"));
+            tally.record_file(
+                kind,
+                &rel,
+                &filename,
+                DocumentOutcome::Skipped,
+                "符号链接目标未跟随，未导入",
+            );
             continue;
         }
         let canonical_absolute = match fs::canonicalize(&absolute) {
             Ok(path) if path.starts_with(&resolved_source_root) => path,
             _ => {
-                warnings.push(format!("{rel}: 导入路径超出所选文件夹"));
+                acc.warnings.push(format!("{rel}: 导入路径超出所选文件夹"));
+                tally.record_file(
+                    kind,
+                    &rel,
+                    &filename,
+                    DocumentOutcome::Skipped,
+                    "导入路径超出所选文件夹，未导入",
+                );
                 continue;
             }
         };
@@ -4947,359 +5655,446 @@ fn folder_apply_import(
         let bytes = match fs::read(&absolute) {
             Ok(value) => value,
             Err(error) => {
-                warnings.push(format!("{rel}: 无法读取（{error}）"));
+                acc.warnings.push(format!("{rel}: 无法读取（{error}）"));
+                tally.record_file(
+                    kind,
+                    &rel,
+                    &filename,
+                    DocumentOutcome::Failed,
+                    "无法读取文件",
+                );
                 continue;
             }
         };
         let checksum = sha256_hex(&bytes);
-        let filename = safe_asset_filename(
-            Path::new(&rel)
-                .file_name()
-                .and_then(|value| value.to_str())
-                .unwrap_or("unnamed"),
-        );
-        let file_title = Path::new(&filename)
-            .file_stem()
-            .and_then(|value| value.to_str())
-            .unwrap_or(&filename)
-            .to_string();
         let stage_id = adopt_parent_stage(&rel, &stage_by_rel);
 
-        match mapping {
-            "lesson" => {
-                let destination =
-                    adopt_lesson_destination(&project, &project_id, item, stage_id.clone())?;
-                let markdown = matches!(
-                    Path::new(&filename)
-                        .extension()
-                        .and_then(|value| value.to_str())
-                        .unwrap_or_default()
-                        .to_ascii_lowercase()
-                        .as_str(),
-                    "md" | "markdown"
-                );
-                let content_id = if markdown {
-                    let parsed = item
-                        .get("parsed_markdown")
-                        .filter(|value| value.is_object())
-                        .ok_or_else(|| {
-                            format!("{rel}: 缺少共享Markdown解析结果，请重新打开映射预览")
-                        })?;
-                    let expected_hash = parsed
-                        .get("source_hash")
-                        .and_then(Value::as_str)
-                        .unwrap_or("");
-                    if expected_hash != checksum {
-                        return Err(format!("{rel}: 源文件在解析后发生变化，未提交导入"));
-                    }
-                    let source_text = std::str::from_utf8(&bytes)
-                        .map_err(|_| format!("{rel}: Markdown源不是UTF-8文本"))?;
-                    let parsed_blocks = parsed.get("blocks").ok_or("Markdown解析结果缺少blocks")?;
-                    let refs = parsed
-                        .get("explicitLocalImageRefs")
-                        .and_then(Value::as_array)
-                        .cloned()
-                        .unwrap_or_default();
-                    verify_markdown_image_refs(source_text, parsed_blocks, &refs)?;
-                    if let Some(source_match) =
-                        find_markdown_source_match(&project, &resolved_source_root, &rel, &checksum)
-                    {
-                        let allowed = item
-                            .get("allow_duplicate")
-                            .and_then(Value::as_bool)
-                            .unwrap_or(false);
-                        if !allowed {
-                            warnings.push(if source_match.state == "same_content" {
-                                if source_match.target_deleted {
-                                    format!(
-                                        "{rel}: SHA-256与曾导入来源「{}」一致，但目标课时已删除；项目仍保留来源记录，默认跳过。",
-                                        source_match.title
-                                    )
-                                } else {
-                                    format!(
-                                        "{rel}: SHA-256与已导入课时「{}」一致；默认跳过，已有编辑内容保持不变。",
-                                        source_match.title
-                                    )
-                                }
-                            } else {
-                                format!(
-                                    "{rel}: 来源路径已有较旧导入「{}」{}（SHA-256 {}）；默认跳过以避免静默替换，请明确选择“作为新版本导入”。",
-                                    source_match.title,
-                                    if source_match.target_deleted { "（目标课时已删除）" } else { "" },
-                                    source_match.previous_hash.chars().take(12).collect::<String>()
-                                )
-                            });
-                            continue;
-                        }
-                        warnings.push(if source_match.state == "same_content" {
-                            if source_match.target_deleted {
-                                format!(
-                                    "{rel}: 用户已明确重新导入曾删除课时「{}」的相同Markdown；按当前目标新建或追加。",
-                                    source_match.title
-                                )
-                            } else {
-                                format!(
-                                    "{rel}: 用户已明确选择再次导入与「{}」内容相同的Markdown；原课时正文不会被覆盖。",
-                                    source_match.title
-                                )
-                            }
-                        } else {
-                            if source_match.target_deleted {
-                                format!(
-                                    "{rel}: 用户已明确导入曾删除课时「{}」的来源新版本；按当前目标新建或追加。",
-                                    source_match.title
-                                )
-                            } else {
-                                format!(
-                                    "{rel}: 用户已明确选择导入来源的新版本；「{}」及其编辑内容保持不变。",
-                                    source_match.title
-                                )
-                            }
-                        });
-                    }
-                    let mut assets_by_block: HashMap<usize, Vec<Value>> = HashMap::new();
-                    for reference in refs {
-                        let block_index = reference
-                            .get("blockIndex")
-                            .and_then(Value::as_u64)
-                            .and_then(|value| usize::try_from(value).ok())
-                            .ok_or("Markdown图片引用缺少区块索引")?;
-                        let href = reference
-                            .get("href")
-                            .and_then(Value::as_str)
-                            .ok_or("Markdown图片引用缺少路径")?;
-                        let occurrence = reference
-                            .get("occurrence")
-                            .and_then(Value::as_u64)
-                            .unwrap_or(0);
-                        let parser_block = parsed_blocks
-                            .as_array()
-                            .and_then(|blocks| blocks.get(block_index))
-                            .ok_or("Markdown图片引用指向不存在区块")?;
-                        let in_block = parser_block
-                            .get("imageRefs")
-                            .and_then(Value::as_array)
-                            .map(|images| {
-                                images.iter().any(|image| {
-                                    image.get("href").and_then(Value::as_str) == Some(href)
-                                        && image.get("occurrence").and_then(Value::as_u64)
-                                            == Some(occurrence)
-                                })
-                            })
-                            .unwrap_or(false);
-                        if !in_block {
-                            return Err("Markdown图片引用与解析区块不一致".into());
-                        }
-                        let dependency =
-                            match markdown_dependency_path(&resolved_source_root, &rel, href)? {
-                                Some(path) => path,
-                                None => {
-                                    warnings.push(format!(
-                                    "{rel}: 图片依赖「{href}」不存在；已保留正文原文，未创建素材。"
-                                ));
-                                    continue;
-                                }
-                            };
-                        let dependency_bytes = match fs::read(&dependency) {
-                            Ok(bytes) => bytes,
-                            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-                                warnings.push(format!(
-                                    "{rel}: 图片依赖「{href}」不存在；已保留正文原文，未创建素材。"
-                                ));
-                                continue;
-                            }
-                            Err(error) => {
-                                return Err(format!("无法读取Markdown图片依赖「{href}」：{error}"))
-                            }
-                        };
-                        let dependency_name = safe_asset_filename(
-                            dependency
-                                .file_name()
+        // §28: everything that can fail because of *this* file lives in the block
+        // below. A `?` here means "this document failed", the transaction records
+        // it, rolls the file's own partial work back and moves on — a 15-file batch
+        // must not collapse over one broken file. Real transaction failures
+        // (locked project, unwritable manifest, journal/atomic write) still `Err`.
+        let file = AdoptFile {
+            item,
+            rel: &rel,
+            absolute: &absolute,
+            bytes: &bytes,
+            checksum: &checksum,
+            filename: &filename,
+            file_title: &file_title,
+        };
+        let snapshot = AdoptItemSnapshot::capture(&project, &acc);
+        let report: Result<Option<(DocumentOutcome, String)>, String> = (|| {
+            let mut report: Option<(DocumentOutcome, String)> = None;
+            'item: {
+                match mapping {
+                    "lesson" => {
+                        let destination = adopt_lesson_destination(
+                            &project,
+                            &project_id,
+                            item,
+                            stage_id.clone(),
+                        )?;
+                        let markdown = matches!(
+                            Path::new(&filename)
+                                .extension()
                                 .and_then(|value| value.to_str())
-                                .unwrap_or("image"),
+                                .unwrap_or_default()
+                                .to_ascii_lowercase()
+                                .as_str(),
+                            "md" | "markdown"
                         );
-                        let dependency_checksum = sha256_hex(&dependency_bytes);
-                        let asset_id = adopt_import_asset(
+                        // §15–§20: a format the parser layer supports becomes body content
+                        // through the shell's own parse of the bytes it read from the
+                        // canonicalized path. `.md` / `.markdown` keep the shared JS parse
+                        // and its `source_hash` check exactly as before.
+                        let native = !markdown && documents::is_supported_document(&filename);
+                        let mut unresolved_images = 0_usize;
+                        let content_id = if native {
+                            let (outcome, reason, content_id) = adopt_native_document_lesson(
+                                &mut project,
+                                &mut acc,
+                                &roots,
+                                &file,
+                                &destination,
+                            )?;
+                            report = Some((outcome, reason));
+                            content_id
+                        } else if markdown {
+                            let parsed = item
+                                .get("parsed_markdown")
+                                .filter(|value| value.is_object())
+                                .ok_or_else(|| {
+                                    format!("{rel}: 缺少共享Markdown解析结果，请重新打开映射预览")
+                                })?;
+                            let expected_hash = parsed
+                                .get("source_hash")
+                                .and_then(Value::as_str)
+                                .unwrap_or("");
+                            if expected_hash != checksum {
+                                return Err(format!("{rel}: 源文件在解析后发生变化，未提交导入"));
+                            }
+                            let source_text = std::str::from_utf8(&bytes)
+                                .map_err(|_| format!("{rel}: Markdown源不是UTF-8文本"))?;
+                            let parsed_blocks =
+                                parsed.get("blocks").ok_or("Markdown解析结果缺少blocks")?;
+                            let refs = parsed
+                                .get("explicitLocalImageRefs")
+                                .and_then(Value::as_array)
+                                .cloned()
+                                .unwrap_or_default();
+                            verify_markdown_image_refs(source_text, parsed_blocks, &refs)?;
+                            if let Some((skip, message)) = adopt_duplicate_check(
+                                &project,
+                                &resolved_source_root,
+                                &rel,
+                                &checksum,
+                                item.get("allow_duplicate")
+                                    .and_then(Value::as_bool)
+                                    .unwrap_or(false),
+                            ) {
+                                acc.warnings.push(message.clone());
+                                if skip {
+                                    report = Some((
+                                        DocumentOutcome::Skipped,
+                                        document_reason(&rel, &message),
+                                    ));
+                                    break 'item;
+                                }
+                            }
+                            let mut assets_by_block: HashMap<usize, Vec<Value>> = HashMap::new();
+                            for reference in refs {
+                                let block_index = reference
+                                    .get("blockIndex")
+                                    .and_then(Value::as_u64)
+                                    .and_then(|value| usize::try_from(value).ok())
+                                    .ok_or("Markdown图片引用缺少区块索引")?;
+                                let href = reference
+                                    .get("href")
+                                    .and_then(Value::as_str)
+                                    .ok_or("Markdown图片引用缺少路径")?;
+                                let occurrence = reference
+                                    .get("occurrence")
+                                    .and_then(Value::as_u64)
+                                    .unwrap_or(0);
+                                let parser_block = parsed_blocks
+                                    .as_array()
+                                    .and_then(|blocks| blocks.get(block_index))
+                                    .ok_or("Markdown图片引用指向不存在区块")?;
+                                let in_block = parser_block
+                                    .get("imageRefs")
+                                    .and_then(Value::as_array)
+                                    .map(|images| {
+                                        images.iter().any(|image| {
+                                            image.get("href").and_then(Value::as_str) == Some(href)
+                                                && image.get("occurrence").and_then(Value::as_u64)
+                                                    == Some(occurrence)
+                                        })
+                                    })
+                                    .unwrap_or(false);
+                                if !in_block {
+                                    return Err("Markdown图片引用与解析区块不一致".into());
+                                }
+                                let dependency = match markdown_dependency_path(
+                                    &resolved_source_root,
+                                    &rel,
+                                    href,
+                                )? {
+                                    Some(path) => path,
+                                    None => {
+                                        unresolved_images += 1;
+                                        acc.warnings.push(format!(
+                                    "{rel}: 图片依赖「{href}」不存在；已保留正文原文，未创建素材。"
+                                ));
+                                        continue;
+                                    }
+                                };
+                                let dependency_bytes = match fs::read(&dependency) {
+                                    Ok(bytes) => bytes,
+                                    Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                                        unresolved_images += 1;
+                                        acc.warnings.push(format!(
+                                    "{rel}: 图片依赖「{href}」不存在；已保留正文原文，未创建素材。"
+                                ));
+                                        continue;
+                                    }
+                                    Err(error) => {
+                                        return Err(format!(
+                                            "无法读取Markdown图片依赖「{href}」：{error}"
+                                        ))
+                                    }
+                                };
+                                let dependency_name = safe_asset_filename(
+                                    dependency
+                                        .file_name()
+                                        .and_then(|value| value.to_str())
+                                        .unwrap_or("image"),
+                                );
+                                let dependency_checksum = sha256_hex(&dependency_bytes);
+                                let asset_id = adopt_import_asset(
+                                    &mut project,
+                                    &resolved_root,
+                                    &project_id,
+                                    &dependency_name,
+                                    &dependency_bytes,
+                                    &dependency_checksum,
+                                    Some(&dependency),
+                                    duplicate_choice,
+                                    None,
+                                    &mut acc.warnings,
+                                    &mut acc.reused_asset_ids,
+                                    &mut acc.copied_files,
+                                    &mut acc.staged_pairs,
+                                    &staging_relative_root,
+                                )?
+                                .ok_or("Markdown图片依赖没有生成素材")?;
+                                if !acc.asset_ids.contains(&asset_id) {
+                                    acc.asset_ids.push(asset_id.clone());
+                                }
+                                assets_by_block.entry(block_index).or_default().push(json!({
+                                    "href": href,
+                                    "asset_id": asset_id,
+                                    "occurrence": occurrence,
+                                }));
+                            }
+                            let content_id =
+                                if let Some(existing_id) = destination.existing_lesson_id {
+                                    existing_id
+                                } else {
+                                    adopt_add_lesson(
+                                        &mut project,
+                                        &project_id,
+                                        destination.stage_id.as_deref(),
+                                        &file_title,
+                                        "",
+                                        false,
+                                    )?
+                                };
+                            let provenance = json!({
+                                "source_root": resolved_source_root.to_string_lossy(),
+                                "relative_path": rel,
+                                "source_hash": checksum,
+                            });
+                            adopt_markdown_blocks(
+                                &mut project,
+                                &content_id,
+                                parsed_blocks,
+                                &assets_by_block,
+                                Some(&provenance),
+                            )?;
+                            let imported_title = project["content_items"]
+                                .as_array()
+                                .and_then(|items| {
+                                    items.iter().find(|item| item["id"] == content_id)
+                                })
+                                .and_then(|item| item["title"].as_str())
+                                .unwrap_or(&file_title)
+                                .to_owned();
+                            record_markdown_import_source(
+                                &mut project,
+                                &content_id,
+                                &imported_title,
+                                &provenance,
+                            )?;
+                            Some(content_id)
+                        } else {
+                            let text = String::from_utf8_lossy(&bytes).into_owned();
+                            let content_id =
+                                if let Some(existing_id) = destination.existing_lesson_id {
+                                    adopt_append_text_lesson(&mut project, &existing_id, &text)?;
+                                    existing_id
+                                } else {
+                                    adopt_add_lesson(
+                                        &mut project,
+                                        &project_id,
+                                        destination.stage_id.as_deref(),
+                                        &file_title,
+                                        &text,
+                                        false,
+                                    )?
+                                };
+                            Some(content_id)
+                        };
+                        if let Some(content_id) = content_id {
+                            if !acc.content_item_ids.contains(&content_id) {
+                                acc.content_item_ids.push(content_id);
+                            }
+                        }
+                        if report.is_none() {
+                            let (outcome, reason) = if unresolved_images > 0 {
+                                (
+                            DocumentOutcome::Degraded,
+                            format!("{unresolved_images} 处图片依赖未纳入素材库，正文已保留原文"),
+                        )
+                            } else {
+                                (DocumentOutcome::Succeeded, String::new())
+                            };
+                            report = Some((outcome, reason));
+                        }
+                    }
+                    "asset" => {
+                        if let Some(asset_id) = adopt_import_asset(
                             &mut project,
                             &resolved_root,
                             &project_id,
-                            &dependency_name,
-                            &dependency_bytes,
-                            &dependency_checksum,
-                            &dependency,
+                            &filename,
+                            &bytes,
+                            &checksum,
+                            Some(&absolute),
                             duplicate_choice,
                             None,
-                            &mut warnings,
-                            &mut reused_asset_ids,
-                            &mut copied_files,
-                            &mut staged_pairs,
+                            &mut acc.warnings,
+                            &mut acc.reused_asset_ids,
+                            &mut acc.copied_files,
+                            &mut acc.staged_pairs,
                             &staging_relative_root,
-                        )?
-                        .ok_or("Markdown图片依赖没有生成素材")?;
-                        if !asset_ids.contains(&asset_id) {
-                            asset_ids.push(asset_id.clone());
+                        )? {
+                            acc.asset_ids.push(asset_id);
                         }
-                        assets_by_block.entry(block_index).or_default().push(json!({
-                            "href": href,
-                            "asset_id": asset_id,
-                            "occurrence": occurrence,
-                        }));
                     }
-                    let content_id = if let Some(existing_id) = destination.existing_lesson_id {
-                        existing_id
-                    } else {
-                        adopt_add_lesson(
+                    "reference" | "source" => {
+                        let source_type = if mapping == "reference" {
+                            "reference"
+                        } else {
+                            "source"
+                        };
+                        let ext = Path::new(&filename)
+                            .extension()
+                            .and_then(|value| value.to_str())
+                            .unwrap_or("")
+                            .to_ascii_lowercase();
+                        let is_text = matches!(ext.as_str(), "md" | "markdown" | "txt");
+                        let mut asset_id = Value::Null;
+                        if !is_text || mapping == "reference" {
+                            if let Some(id) = adopt_import_asset(
+                                &mut project,
+                                &resolved_root,
+                                &project_id,
+                                &filename,
+                                &bytes,
+                                &checksum,
+                                Some(&absolute),
+                                duplicate_choice,
+                                Some("document"),
+                                &mut acc.warnings,
+                                &mut acc.reused_asset_ids,
+                                &mut acc.copied_files,
+                                &mut acc.staged_pairs,
+                                &staging_relative_root,
+                            )? {
+                                acc.asset_ids.push(id.clone());
+                                asset_id = Value::String(id);
+                            }
+                        }
+                        let body = if is_text && mapping == "source" {
+                            format!("源资料：{rel}\n\n{}", String::from_utf8_lossy(&bytes))
+                        } else if mapping == "reference" {
+                            format!("参考资料：{rel}")
+                        } else {
+                            format!("源资料：{rel}")
+                        };
+                        let inbox_id = adopt_source_inbox(
                             &mut project,
                             &project_id,
-                            destination.stage_id.as_deref(),
+                            source_type,
                             &file_title,
-                            "",
-                            false,
-                        )?
-                    };
-                    let provenance = json!({
-                        "source_root": resolved_source_root.to_string_lossy(),
-                        "relative_path": rel,
-                        "source_hash": checksum,
-                    });
-                    adopt_markdown_blocks(
-                        &mut project,
-                        &content_id,
-                        parsed_blocks,
-                        &assets_by_block,
-                        Some(&provenance),
-                    )?;
-                    let imported_title = project["content_items"]
-                        .as_array()
-                        .and_then(|items| items.iter().find(|item| item["id"] == content_id))
-                        .and_then(|item| item["title"].as_str())
-                        .unwrap_or(&file_title)
-                        .to_owned();
-                    record_markdown_import_source(
-                        &mut project,
-                        &content_id,
-                        &imported_title,
-                        &provenance,
-                    )?;
-                    content_id
-                } else {
-                    let text = String::from_utf8_lossy(&bytes).into_owned();
-                    if let Some(existing_id) = destination.existing_lesson_id {
-                        adopt_append_text_lesson(&mut project, &existing_id, &text)?;
-                        existing_id
-                    } else {
-                        adopt_add_lesson(
-                            &mut project,
-                            &project_id,
-                            destination.stage_id.as_deref(),
-                            &file_title,
-                            &text,
-                            false,
-                        )?
+                            &body,
+                            asset_id,
+                        )?;
+                        acc.source_ids.push(inbox_id);
                     }
-                };
-                if !content_item_ids.contains(&content_id) {
-                    content_item_ids.push(content_id);
-                }
-            }
-            "asset" => {
-                if let Some(asset_id) = adopt_import_asset(
-                    &mut project,
-                    &resolved_root,
-                    &project_id,
-                    &filename,
-                    &bytes,
-                    &checksum,
-                    &absolute,
-                    duplicate_choice,
-                    None,
-                    &mut warnings,
-                    &mut reused_asset_ids,
-                    &mut copied_files,
-                    &mut staged_pairs,
-                    &staging_relative_root,
-                )? {
-                    asset_ids.push(asset_id);
-                }
-            }
-            "reference" | "source" => {
-                let source_type = if mapping == "reference" {
-                    "reference"
-                } else {
-                    "source"
-                };
-                let ext = Path::new(&filename)
-                    .extension()
-                    .and_then(|value| value.to_str())
-                    .unwrap_or("")
-                    .to_ascii_lowercase();
-                let is_text = matches!(ext.as_str(), "md" | "markdown" | "txt");
-                let mut asset_id = Value::Null;
-                if !is_text || mapping == "reference" {
-                    if let Some(id) = adopt_import_asset(
-                        &mut project,
-                        &resolved_root,
-                        &project_id,
-                        &filename,
-                        &bytes,
-                        &checksum,
-                        &absolute,
-                        duplicate_choice,
-                        Some("document"),
-                        &mut warnings,
-                        &mut reused_asset_ids,
-                        &mut copied_files,
-                        &mut staged_pairs,
-                        &staging_relative_root,
-                    )? {
-                        asset_ids.push(id.clone());
-                        asset_id = Value::String(id);
+                    other => {
+                        acc.warnings
+                            .push(format!("{rel}: 映射「{other}」在文件上已跳过"));
                     }
                 }
-                let body = if is_text && mapping == "source" {
-                    format!("源资料：{rel}\n\n{}", String::from_utf8_lossy(&bytes))
-                } else if mapping == "reference" {
-                    format!("参考资料：{rel}")
-                } else {
-                    format!("源资料：{rel}")
-                };
-                let inbox_id = native_id("inbox");
-                project
-                    .as_object_mut()
-                    .unwrap()
-                    .get_mut("inbox_items")
-                    .and_then(Value::as_array_mut)
-                    .unwrap()
-                    .push(json!({
-                        "id": inbox_id,
-                        "project_id": project_id,
-                        "source_type": source_type,
-                        "title": file_title,
-                        "body": body,
-                        "asset_id": asset_id,
-                        "content_item_id": Value::Null,
-                        "status": "open",
-                        "created_at": rfc3339_now(),
-                        "updated_at": rfc3339_now(),
-                    }));
-                source_ids.push(inbox_id);
             }
-            other => warnings.push(format!("{rel}: 映射「{other}」在文件上已跳过")),
+            Ok(report)
+        })();
+        match report {
+            Ok(Some((outcome, reason))) => {
+                tally.record_file(kind, &rel, &filename, outcome, &reason)
+            }
+            Ok(None) => {}
+            // The user cancelled duplicates for the whole run: honour that as a
+            // transaction-level abort instead of quietly moving to the next file.
+            Err(error) if error == "已取消重复素材导入" => return Err(error),
+            Err(error) => {
+                let reason = document_reason(&rel, &error);
+                snapshot.restore(&mut project, &mut acc);
+                acc.warnings.push(format!(
+                    "{rel}: 该文件导入失败，已跳过并继续处理其余文件（{reason}）"
+                ));
+                tally.record_file(kind, &rel, &filename, DocumentOutcome::Failed, &reason);
+            }
         }
     }
 
-    // Promote this transaction's UUID-owned media first, then atomically write
-    // the Canonical manifest as the final commit. Existing assets and originals
-    // are never replaced or removed.
+    // §28 + §29: an append that imported nothing rewrites nothing — the existing
+    // manifest keeps the exact bytes it had, so a batch whose every file failed
+    // cannot touch a project the user did not change. A first adoption still creates
+    // the project the dialog asked for.
+    let imported_anything = !acc.stage_ids.is_empty()
+        || !acc.content_item_ids.is_empty()
+        || !acc.asset_ids.is_empty()
+        || !acc.source_ids.is_empty()
+        || !acc.reused_asset_ids.is_empty()
+        || !acc.copied_files.is_empty()
+        || !acc.staged_pairs.is_empty()
+        || quarantine_manifest;
     let root_str = resolved_root.to_string_lossy().into_owned();
+    if append_target.is_none() || imported_anything {
+        adopt_commit_transaction(
+            &mut project,
+            &mut acc,
+            &resolved_root,
+            &root_str,
+            append_target.is_some(),
+            quarantine_manifest,
+            &existing_manifest,
+        )?;
+    }
+    let staging_parent = resolved_root.join(".workspace/adopt-staging");
+    drop(staging_cleanup);
+    let _ = fs::remove_dir(staging_parent);
+
+    Ok(json!({
+        "data": project,
+        "root": root_str,
+        "source_root": resolved_source_root.to_string_lossy(),
+        "stage_ids": acc.stage_ids,
+        "content_item_ids": acc.content_item_ids,
+        "asset_ids": acc.asset_ids,
+        "source_ids": acc.source_ids,
+        "reused_asset_ids": acc.reused_asset_ids,
+        "warnings": acc.warnings,
+        "copied_files": acc.copied_files,
+        "copied_original_paths": [],
+        "document_import": tally.to_value(),
+    }))
+}
+
+/// Promotes this transaction's UUID-owned media first, then atomically writes the
+/// Canonical manifest as the final commit. Existing assets and originals are never
+/// replaced or removed; every failure here is a transaction-level error, because
+/// it is about the project on disk rather than one source file.
+fn adopt_commit_transaction(
+    project: &mut Value,
+    acc: &mut AdoptAccumulator,
+    resolved_root: &Path,
+    root_str: &str,
+    is_append: bool,
+    quarantine_manifest: bool,
+    existing_manifest: &Path,
+) -> Result<(), String> {
     let mut promoted = Vec::new();
     let promotion = (|| -> Result<(), String> {
-        if !staged_pairs.is_empty() {
+        if !acc.staged_pairs.is_empty() {
             reject_symlink(&resolved_root.join("assets"), "素材目录")?;
             fs::create_dir_all(resolved_root.join("assets"))
                 .map_err(|error| format!("无法创建 assets：{error}"))?;
         }
-        for (staging, final_path) in &staged_pairs {
+        for (staging, final_path) in &acc.staged_pairs {
             let from = resolved_root.join(staging);
             let to = resolved_root.join(final_path);
             if let Some(parent) = to.parent() {
@@ -5328,7 +6123,7 @@ fn folder_apply_import(
         for path in &promoted {
             let _ = fs::remove_file(path);
         }
-        for (staging, _) in &staged_pairs {
+        for (staging, _) in &acc.staged_pairs {
             let _ = fs::remove_file(resolved_root.join(staging));
         }
         return Err(error);
@@ -5355,11 +6150,11 @@ fn folder_apply_import(
                 return Err("无法为原有的 project.json 找到可用的备份文件名，导入已中止。".into());
             }
         }
-        if let Err(error) = fs::rename(&existing_manifest, &backup) {
+        if let Err(error) = fs::rename(existing_manifest, &backup) {
             for path in &promoted {
                 let _ = fs::remove_file(path);
             }
-            for (staging, _) in &staged_pairs {
+            for (staging, _) in &acc.staged_pairs {
                 let _ = fs::remove_file(resolved_root.join(staging));
             }
             return Err(format!(
@@ -5369,25 +6164,25 @@ fn folder_apply_import(
         }
         quarantined = Some(backup);
     }
-    let commit = if append_target.is_some() {
-        write_project_value_unlocked(&resolved_root, &project)
+    let commit = if is_append {
+        write_project_value_unlocked(resolved_root, project)
     } else {
-        project_create(root_str.clone(), project.clone()).map(|_| ())
+        project_create(root_str.to_owned(), project.clone()).map(|_| ())
     };
     if let Err(error) = commit {
         for path in &promoted {
             let _ = fs::remove_file(path);
         }
-        for (staging, _) in &staged_pairs {
+        for (staging, _) in &acc.staged_pairs {
             let _ = fs::remove_file(resolved_root.join(staging));
         }
         if let Some(backup) = &quarantined {
-            let _ = fs::rename(backup, &existing_manifest);
+            let _ = fs::rename(backup, existing_manifest);
         }
         return Err(error);
     }
     if let Some(backup) = &quarantined {
-        warnings.push(format!(
+        acc.warnings.push(format!(
             "原有的 project.json 已完整保留为「{}」，没有删除任何文件。",
             backup
                 .file_name()
@@ -5395,23 +6190,7 @@ fn folder_apply_import(
                 .unwrap_or("备份文件")
         ));
     }
-    let staging_parent = resolved_root.join(".workspace/adopt-staging");
-    drop(staging_cleanup);
-    let _ = fs::remove_dir(staging_parent);
-
-    Ok(json!({
-        "data": project,
-        "root": root_str,
-        "source_root": resolved_source_root.to_string_lossy(),
-        "stage_ids": stage_ids,
-        "content_item_ids": content_item_ids,
-        "asset_ids": asset_ids,
-        "source_ids": source_ids,
-        "reused_asset_ids": reused_asset_ids,
-        "warnings": warnings,
-        "copied_files": copied_files,
-        "copied_original_paths": [],
-    }))
+    Ok(())
 }
 
 fn adopt_item_included(item: &Value) -> bool {
@@ -5660,7 +6439,7 @@ fn adopt_import_asset(
     filename: &str,
     bytes: &[u8],
     checksum: &str,
-    source_abs: &Path,
+    source_abs: Option<&Path>,
     duplicate_choice: &str,
     force_type: Option<&str>,
     warnings: &mut Vec<String>,
@@ -5704,7 +6483,13 @@ fn adopt_import_asset(
     }
     // Stage under .workspace so a failed Canonical write does not leave a
     // half-adopted assets/ tree. Originals are only read, never truncated.
-    if fs::copy(source_abs, &dest).is_err() {
+    // Bytes that exist only inside a parsed document (an embedded image) have no
+    // source path and go straight into staging.
+    let copied = match source_abs {
+        Some(path) => fs::copy(path, &dest).is_ok(),
+        None => false,
+    };
+    if !copied {
         fs::write(&dest, bytes).map_err(|error| format!("无法写入素材暂存：{error}"))?;
     }
     staged_pairs.push((staging_path, storage_path.clone()));
@@ -18204,12 +18989,43 @@ mod tests {
             }]
         });
 
-        let error = folder_adopt(plan, None, None, None)
-            .expect_err("path escape must fail the transaction");
-        assert!(error.contains("超出所选目录"), "got: {error}");
+        // §28: an image reference that escapes the folder is a failure of *this*
+        // file — the refusal must still be reported and its content must still be
+        // absent, but one bad path may no longer collapse the whole batch.
+        let result = folder_adopt(plan, None, None, None).expect("one bad ref skips its file");
         assert!(
-            !root.join("project.json").exists(),
-            "failed transaction writes no manifest"
+            result["warnings"]
+                .as_array()
+                .expect("warnings")
+                .iter()
+                .any(|warning| warning.as_str().unwrap_or("").contains("超出所选目录")),
+            "the escape must reach the user: {:?}",
+            result["warnings"]
+        );
+        let tally = test_document_import(&result);
+        assert_eq!(tally["failed"], json!(1), "{tally}");
+        assert_eq!(
+            tally["files"][0]["relative_path"],
+            json!("lesson.md"),
+            "{tally}"
+        );
+        assert_eq!(
+            result["data"]["content_items"]
+                .as_array()
+                .expect("content items")
+                .len(),
+            0,
+            "the rejected file writes no lesson"
+        );
+        assert_eq!(
+            result["data"]["blocks"].as_array().expect("blocks").len(),
+            0,
+            "the rejected file writes no body"
+        );
+        assert_eq!(
+            result["data"]["assets"].as_array().expect("assets").len(),
+            0,
+            "the valid sibling image is rolled back with its file"
         );
         assert!(
             !root.join("assets").exists(),
@@ -18415,6 +19231,9 @@ mod tests {
 
         // Provenance lives on Project.settings, so deleting the compatibility copy
         // from the first imported block must not make the same source append twice.
+        // Only the Markdown import's copy is stripped by name: `existing.txt` is a
+        // native document import too now (v0.2.5 §15–§20), and its block is the
+        // pre-existing edited content this test protects.
         let mut without_provenance_block =
             read_project_value(&target).expect("read appended project");
         assert!(
@@ -18433,7 +19252,9 @@ mod tests {
                 block
                     .get("settings")
                     .and_then(|settings| settings.get("markdown_import"))
-                    .is_none()
+                    .and_then(|import| import.get("relative_path"))
+                    .and_then(Value::as_str)
+                    != Some("lesson.md")
             });
         write_project_value_unlocked(&target, &without_provenance_block)
             .expect("remove only block-level compatibility provenance");
@@ -18520,7 +19341,8 @@ mod tests {
                 .unwrap()
                 .iter()
                 .any(|block| { block["content"] == json!("已有正文") }),
-            "pre-existing edited lesson content is not overwritten"
+            "pre-existing edited lesson content is not overwritten: {:?}",
+            revised["data"]["blocks"]
         );
         assert!(
             revised["data"]["blocks"]
@@ -18750,6 +19572,10 @@ mod tests {
         let bad_source = test_directory("folder-append-bad-hash");
         fs::write(bad_source.join("bad.md"), "# changed\n").expect("bad source");
         let manifest_before_bad_hash = fs::read(target.join("project.json")).unwrap();
+        let lessons_before_bad_hash = read_project_value(&target).unwrap()["content_items"]
+            .as_array()
+            .expect("content items")
+            .len();
         let bad_plan = json!({
             "root": bad_source.to_string_lossy(), "confirmed": true,
             "items": [{
@@ -18757,7 +19583,43 @@ mod tests {
                 "parsed_markdown": { "source_hash": "00", "blocks": [heading_block("# old\n", "old", 1)], "explicitLocalImageRefs": [] }
             }]
         });
-        assert!(folder_append(bad_plan, target.to_string_lossy().into_owned(), None).is_err());
+        // §28: a stale parser payload fails *its own file*, not the batch — the
+        // refusal still writes nothing, so the security intent is kept and tightened
+        // to "this file's lesson is absent" instead of "the call errored".
+        let stale_source_result =
+            folder_append(bad_plan, target.to_string_lossy().into_owned(), None)
+                .expect("one unparsable file must not fail the append batch");
+        assert!(
+            stale_source_result["warnings"]
+                .as_array()
+                .expect("warnings")
+                .iter()
+                .any(|warning| warning
+                    .as_str()
+                    .unwrap_or_default()
+                    .contains("源文件在解析后发生变化")),
+            "the stale-source refusal must still reach the user: {:?}",
+            stale_source_result["warnings"]
+        );
+        assert_eq!(
+            test_document_import(&stale_source_result)["failed"],
+            json!(1),
+            "{:?}",
+            stale_source_result["document_import"]
+        );
+        assert!(
+            test_lesson_block_texts(&stale_source_result, "bad").is_empty(),
+            "the refused file must not create a lesson: {:?}",
+            stale_source_result["data"]["content_items"]
+        );
+        assert_eq!(
+            stale_source_result["data"]["content_items"]
+                .as_array()
+                .expect("content items")
+                .len(),
+            lessons_before_bad_hash,
+            "the refused file adds no lesson"
+        );
         assert_eq!(
             fs::read(target.join("project.json")).unwrap(),
             manifest_before_bad_hash
@@ -18783,10 +19645,32 @@ mod tests {
                 "parsed_markdown": test_markdown_payload(&bad_source.join("bad.md"), forged_blocks, forged_refs)
             }]
         });
+        // §28 again: the AST mismatch still rejects this file's import, and it is
+        // reported as that file's failure instead of erroring the whole batch.
+        let forged_result = folder_append(forged_plan, target.to_string_lossy().into_owned(), None)
+            .expect("one forged file must not fail the append batch");
         assert!(
-            folder_append(forged_plan, target.to_string_lossy().into_owned(), None)
-                .expect_err("source AST must reject a forged same-root dependency")
-                .contains("解析结果不一致")
+            forged_result["warnings"]
+                .as_array()
+                .expect("warnings")
+                .iter()
+                .any(|warning| warning
+                    .as_str()
+                    .unwrap_or_default()
+                    .contains("解析结果不一致")),
+            "the forged reference must still be refused by name: {:?}",
+            forged_result["warnings"]
+        );
+        assert_eq!(
+            test_document_import(&forged_result)["failed"],
+            json!(1),
+            "{:?}",
+            forged_result["document_import"]
+        );
+        assert!(
+            test_lesson_block_texts(&forged_result, "bad").is_empty(),
+            "a forged dependency must not import its file's body: {:?}",
+            forged_result["data"]["content_items"]
         );
         assert_eq!(
             fs::read(target.join("project.json")).unwrap(),
@@ -19561,6 +20445,776 @@ mod tests {
         let _ = project_close(root.to_string_lossy().into_owned());
         let _ = fs::remove_dir_all(root);
     }
+
+    // ---------------------------------------------------------------------
+    // §15–§20 + §28–§30: native document parsing on the import shell side.
+    //
+    // Synthetic bytes only (no external files, no network), because the parser
+    // layer's own fixtures live in a private `cfg(test)` module.
+    // ---------------------------------------------------------------------
+
+    fn test_zip_build(entries: &[(&str, &[u8])]) -> Vec<u8> {
+        use std::io::{Cursor, Write};
+        use zip::write::SimpleFileOptions;
+        use zip::{CompressionMethod, ZipWriter};
+        let options = SimpleFileOptions::default().compression_method(CompressionMethod::Deflated);
+        let mut writer = ZipWriter::new(Cursor::new(Vec::new()));
+        for (name, bytes) in entries {
+            writer.start_file(*name, options).expect("zip entry name");
+            writer.write_all(bytes).expect("zip write");
+        }
+        writer.finish().expect("zip finish").into_inner()
+    }
+
+    fn test_png_bytes(label: &str) -> Vec<u8> {
+        let mut bytes = b"\x89PNG\r\n\x1a\n".to_vec();
+        bytes.extend_from_slice(label.as_bytes());
+        bytes
+    }
+
+    const TEST_DOCX_CONTENT_TYPES: &str = concat!(
+        r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>"#,
+        r#"<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">"#,
+        r#"<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>"#,
+        r#"<Default Extension="xml" ContentType="application/xml"/>"#,
+        r#"<Default Extension="png" ContentType="image/png"/>"#,
+        r#"<Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>"#,
+        r#"</Types>"#
+    );
+
+    const TEST_DOCX_ROOT_RELS: &str = concat!(
+        r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>"#,
+        r#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">"#,
+        r#"<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/>"#,
+        r#"</Relationships>"#
+    );
+
+    /// A DOCX the parser layer accepts: `word/document.xml`, its relationship
+    /// table and any `word/media/*` part the body references.
+    fn test_docx_bytes(body: &str, rels: &str, media: &[(&str, &[u8])]) -> Vec<u8> {
+        let document = format!(
+            concat!(
+                r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n"#,
+                r#"<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main""#,
+                r#" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships""#,
+                r#" xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing""#,
+                r#" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main""#,
+                r#" xmlns:pic="http://schemas.openxmlformats.org/drawingml/2006/picture">"#,
+                "<w:body>{body}</w:body></w:document>"
+            ),
+            body = body
+        );
+        let mut entries: Vec<(&str, &[u8])> = vec![
+            ("[Content_Types].xml", TEST_DOCX_CONTENT_TYPES.as_bytes()),
+            ("_rels/.rels", TEST_DOCX_ROOT_RELS.as_bytes()),
+            ("word/document.xml", document.as_bytes()),
+            ("word/_rels/document.xml.rels", rels.as_bytes()),
+        ];
+        entries.extend_from_slice(media);
+        test_zip_build(&entries)
+    }
+
+    fn test_docx_heading(text: &str) -> String {
+        format!(
+            r#"<w:p><w:pPr><w:pStyle w:val="Heading1"/></w:pPr><w:r><w:t xml:space="preserve">{text}</w:t></w:r></w:p>"#
+        )
+    }
+
+    fn test_docx_paragraph(text: &str) -> String {
+        format!(r#"<w:p><w:r><w:t xml:space="preserve">{text}</w:t></w:r></w:p>"#)
+    }
+
+    fn test_docx_image(embed_id: &str, descr: &str) -> String {
+        format!(
+            concat!(
+                r#"<w:r><w:drawing><wp:inline><wp:extent cx="1" cy="1"/>"#,
+                r#"<wp:docPr id="7" name="Picture 7" descr="{descr}"/>"#,
+                r#"<a:graphic><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/picture">"#,
+                r#"<pic:pic><pic:nvPicPr><pic:cNvPr id="7" name="{descr}"/><pic:cNvPicPr/></pic:nvPicPr>"#,
+                r#"<pic:blipFill><a:blip r:embed="{embed_id}"/></pic:blipFill>"#,
+                r#"<pic:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="1" cy="1"/></a:xfrm></pic:spPr>"#,
+                r#"</pic:pic></a:graphicData></a:graphic></wp:inline></w:drawing></w:r>"#
+            ),
+            descr = descr,
+            embed_id = embed_id
+        )
+    }
+
+    fn test_docx_image_rels(target: &str) -> String {
+        format!(
+            concat!(
+                r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>"#,
+                r#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">"#,
+                r#"<Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="{target}"/>"#,
+                r#"</Relationships>"#
+            ),
+            target = target
+        )
+    }
+
+    /// An image-only PDF with a real cross-reference table: no text operator, so
+    /// the parser reports `usable_text == false`, i.e. a scan.
+    fn test_scanned_pdf_bytes() -> Vec<u8> {
+        fn stream(dict: &str, content: &[u8]) -> Vec<u8> {
+            let mut body = format!("{dict} /Length {}\nstream\n", content.len()).into_bytes();
+            body.extend_from_slice(content);
+            body.extend_from_slice(b"\nendstream");
+            body
+        }
+        let image = stream(
+            "<< /Type /XObject /Subtype /Image /Width 1 /Height 1 /ColorSpace /DeviceGray /BitsPerComponent 8 >>",
+            &[0xFF_u8],
+        );
+        let content = stream("<< >>", b"q 612 0 0 792 0 0 cm /Im1 Do Q\n");
+        let objects = vec![
+            b"<< /Type /Pages /Kids [2 0 R] /Count 1 >>".to_vec(),
+            b"<< /Type /Page /Parent 1 0 R /MediaBox [0 0 612 792] /Resources << /XObject << /Im1 3 0 R >> >> /Contents 4 0 R >>".to_vec(),
+            image,
+            content,
+            b"<< /Type /Catalog /Pages 1 0 R >>".to_vec(),
+        ];
+        let mut out = b"%PDF-1.7\n".to_vec();
+        let mut offsets = Vec::new();
+        for (index, body) in objects.iter().enumerate() {
+            offsets.push(out.len());
+            out.extend_from_slice(format!("{} 0 obj\n", index + 1).as_bytes());
+            out.extend_from_slice(body);
+            out.extend_from_slice(b"\nendobj\n");
+        }
+        let xref_position = out.len();
+        let count = objects.len() + 1;
+        out.extend_from_slice(format!("xref\n0 {count}\n").as_bytes());
+        out.extend_from_slice(b"0000000000 65535 f \n");
+        for offset in offsets {
+            out.extend_from_slice(format!("{offset:010} 00000 n \n").as_bytes());
+        }
+        out.extend_from_slice(
+            format!(
+                "trailer\n<< /Size {count} /Root 5 0 R >>\nstartxref\n{xref_position}\n%%EOF\n"
+            )
+            .as_bytes(),
+        );
+        out
+    }
+
+    fn test_document_import(result: &Value) -> Value {
+        result["document_import"].clone()
+    }
+
+    fn test_tally_files(result: &Value) -> Vec<(String, String, String)> {
+        result["document_import"]["files"]
+            .as_array()
+            .cloned()
+            .unwrap_or_default()
+            .iter()
+            .map(|entry| {
+                (
+                    entry["relative_path"].as_str().unwrap_or("").to_owned(),
+                    entry["outcome"].as_str().unwrap_or("").to_owned(),
+                    entry["reason"].as_str().unwrap_or("").to_owned(),
+                )
+            })
+            .collect()
+    }
+
+    /// The §28 contract: counts are the number of `files` entries per outcome.
+    fn assert_tally_is_consistent(result: &Value) {
+        let tally = test_document_import(result);
+        let files = tally["files"].as_array().expect("files array");
+        for outcome in ["succeeded", "degraded", "skipped", "failed"] {
+            let listed = files
+                .iter()
+                .filter(|entry| entry["outcome"] == json!(outcome))
+                .count();
+            assert_eq!(
+                tally[outcome].as_u64().unwrap_or(0) as usize,
+                listed,
+                "{outcome} count must equal the files entries with that outcome"
+            );
+            assert!(
+                files.iter().all(|entry| {
+                    let reason = entry["reason"].as_str().unwrap_or("");
+                    (entry["outcome"] == json!("succeeded")) == reason.is_empty()
+                }),
+                "only a plain success may have an empty reason"
+            );
+        }
+        assert_eq!(
+            files.len(),
+            ["succeeded", "degraded", "skipped", "failed"]
+                .iter()
+                .map(|outcome| tally[*outcome].as_u64().unwrap_or(0))
+                .sum::<u64>() as usize,
+            "the four counts cover every listed file"
+        );
+    }
+
+    fn test_lesson_block_texts(result: &Value, title_fragment: &str) -> Vec<String> {
+        let document_id = result["data"]["content_items"]
+            .as_array()
+            .expect("content items")
+            .iter()
+            .find(|item| {
+                item["title"]
+                    .as_str()
+                    .unwrap_or("")
+                    .contains(title_fragment)
+            })
+            .and_then(|item| item["document_id"].as_str())
+            .unwrap_or("");
+        result["data"]["blocks"]
+            .as_array()
+            .expect("blocks")
+            .iter()
+            .filter(|block| block["document_id"] == json!(document_id))
+            .map(|block| block["content"].as_str().unwrap_or("").to_owned())
+            .collect()
+    }
+
+    #[test]
+    fn folder_adopt_parses_docx_body_and_materialises_embedded_image() {
+        let root = test_directory("folder-adopt-docx-native");
+        fs::create_dir_all(root.join("s01-01")).expect("stage directory");
+        let png = test_png_bytes("embedded");
+        let body = format!(
+            "{}<w:p>{}</w:p>",
+            test_docx_heading("开场"),
+            test_docx_image("rId2", "示意图")
+        );
+        let docx = test_docx_bytes(
+            &body,
+            &test_docx_image_rels("media/image1.png"),
+            &[("word/media/image1.png", &png)],
+        );
+        fs::write(root.join("s01-01/intro.docx"), &docx).expect("docx written");
+        let plan = json!({
+            "root": root.to_string_lossy(),
+            "confirmed": true,
+            "confirmed_at": "2026-01-01T00:00:00.000Z",
+            "items": [
+                { "relative_path": "s01-01", "kind": "directory", "mapping": "stage", "selected": true },
+                { "relative_path": "s01-01/intro.docx", "kind": "file", "mapping": "lesson", "selected": true }
+            ]
+        });
+        let result = folder_adopt(plan, None, None, None).expect("adopt docx");
+
+        // The mapped stage/lesson destination rules (§19) are the Markdown ones.
+        assert_eq!(result["content_item_ids"].as_array().unwrap().len(), 1);
+        let lesson_stage = result["data"]["content_items"][0]["stage_id"].clone();
+        assert_eq!(
+            lesson_stage,
+            json!(result["stage_ids"].as_array().unwrap()[0]),
+            "the docx lesson lands in the confirmed stage"
+        );
+        let texts = test_lesson_block_texts(&result, "intro");
+        assert!(
+            texts.iter().any(|text| text == "开场"),
+            "heading became a block: {texts:?}"
+        );
+
+        // The embedded image is a managed Asset whose href replaced the parser ref.
+        let asset = result["data"]["assets"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|asset| asset["filename"] == json!("document-image-1.png"))
+            .cloned()
+            .expect("embedded image became an asset");
+        let storage_path = asset["storage_path"].as_str().unwrap().to_owned();
+        assert!(storage_path.starts_with("assets/"), "got {storage_path}");
+        assert_eq!(asset["checksum"], json!(sha256_hex(&png)));
+        assert_eq!(
+            fs::read(root.join(&storage_path)).expect("managed asset on disk"),
+            png,
+            "decoded bytes, not the container"
+        );
+        let image_text = texts
+            .iter()
+            .find(|text| text.contains("![") && text.contains("document-image-1.png"))
+            .unwrap_or_else(|| panic!("image reference missing: {texts:?}"));
+        assert!(
+            image_text.contains(&format!("]({storage_path})")),
+            "reference rewritten to the managed path: {image_text}"
+        );
+        assert!(
+            !image_text.contains("](document-image-1.png)"),
+            "the parser-local ref must not survive: {image_text}"
+        );
+        let block = result["data"]["blocks"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|block| {
+                block["content"]
+                    .as_str()
+                    .unwrap_or("")
+                    .contains("document-image-1.png")
+            })
+            .expect("image block");
+        assert_eq!(
+            block["settings"]["markdown_assets"][0]["href"],
+            json!(storage_path),
+            "asset mapping resolves the rewritten href"
+        );
+        assert_eq!(
+            block["settings"]["markdown_assets"][0]["asset_id"], asset["id"],
+            "the block is wired to the managed asset"
+        );
+        assert_eq!(
+            block["settings"]["markdown_assets"][0]["occurrence"],
+            json!(0)
+        );
+
+        let tally = test_document_import(&result);
+        assert_eq!(tally["succeeded"], json!(1));
+        assert_eq!(
+            test_tally_files(&result)[0].0,
+            "s01-01/intro.docx".to_string()
+        );
+        assert_tally_is_consistent(&result);
+        // §29: the source stays exactly where it was.
+        assert_eq!(fs::read(root.join("s01-01/intro.docx")).unwrap(), docx);
+        let _ = project_close(root.to_string_lossy().into_owned());
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn folder_adopt_marks_latex_math_as_degraded_and_surfaces_the_warning() {
+        let root = test_directory("folder-adopt-latex-degraded");
+        fs::write(
+            root.join("energy.tex"),
+            "\\section{质能}\n\n质能方程 $E=mc^2$ 很有名。\n",
+        )
+        .expect("tex");
+        let plan = json!({
+            "root": root.to_string_lossy(),
+            "confirmed": true,
+            "items": [{
+                "relative_path": "energy.tex", "kind": "file", "mapping": "lesson", "selected": true
+            }]
+        });
+        let result = folder_adopt(plan, None, None, None).expect("adopt tex");
+        let tally = test_document_import(&result);
+        assert_eq!(tally["degraded"], json!(1), "math lost its structure");
+        assert_eq!(tally["succeeded"], json!(0));
+        let files = test_tally_files(&result);
+        assert_eq!(files.len(), 1);
+        assert_eq!(files[0].1, "degraded");
+        assert!(files[0].2.contains("结构有降级"), "got {}", files[0].2);
+        let warnings: Vec<String> = result["warnings"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|value| value.as_str().unwrap_or("").to_owned())
+            .collect();
+        assert!(
+            warnings
+                .iter()
+                .any(|warning| warning.contains("energy.tex:") && warning.contains("数学公式")),
+            "parser warning must reach the user: {warnings:?}"
+        );
+        // Degraded still means imported: the body is there.
+        let texts = test_lesson_block_texts(&result, "energy");
+        assert!(
+            texts.iter().any(|text| text.contains("质能方程")),
+            "body imported: {texts:?}"
+        );
+        assert_tally_is_consistent(&result);
+        let _ = project_close(root.to_string_lossy().into_owned());
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn folder_adopt_keeps_a_scanned_pdf_as_a_source_reference_without_a_lesson() {
+        let root = test_directory("folder-adopt-scanned-pdf");
+        let scan = test_scanned_pdf_bytes();
+        fs::write(root.join("scan.pdf"), &scan).expect("pdf");
+        let plan = json!({
+            "root": root.to_string_lossy(),
+            "confirmed": true,
+            "items": [{
+                "relative_path": "scan.pdf", "kind": "file", "mapping": "lesson", "selected": true
+            }]
+        });
+        let result = folder_adopt(plan, None, None, None).expect("adopt scan");
+        let tally = test_document_import(&result);
+        assert_eq!(tally["skipped"], json!(1), "no text layer is a skip");
+        assert_eq!(tally["failed"], json!(0), "a scan is not a failure");
+        let files = test_tally_files(&result);
+        assert_eq!(files[0].2, "没有文字层，已保留为来源参考");
+
+        // No lesson, and never an empty body block.
+        assert!(result["data"]["content_items"]
+            .as_array()
+            .unwrap()
+            .is_empty());
+        assert!(result["content_item_ids"].as_array().unwrap().is_empty());
+        assert!(result["data"]["blocks"].as_array().unwrap().is_empty());
+        // Kept as a Source Reference instead.
+        let inbox = result["data"]["inbox_items"].as_array().unwrap();
+        assert_eq!(inbox.len(), 1, "the file is kept as a reference");
+        assert_eq!(inbox[0]["source_type"], json!("source"));
+        assert_eq!(inbox[0]["asset_id"].is_null(), false);
+        assert!(
+            result["warnings"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|warning| {
+                    warning
+                        .as_str()
+                        .unwrap_or("")
+                        .contains("scan.pdf: 该文件没有文字层")
+                }),
+            "the user is told why nothing was imported"
+        );
+        // §29: re-reading and hashing proves the source was not touched.
+        assert_eq!(fs::read(root.join("scan.pdf")).unwrap(), scan);
+        assert_eq!(
+            sha256_hex(&fs::read(root.join("scan.pdf")).unwrap()),
+            sha256_hex(&scan)
+        );
+        assert!(result["copied_original_paths"]
+            .as_array()
+            .unwrap()
+            .is_empty());
+        assert_tally_is_consistent(&result);
+        let _ = project_close(root.to_string_lossy().into_owned());
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn folder_append_skips_a_duplicate_document_until_allow_duplicate_is_set() {
+        let target = test_directory("folder-adopt-docx-duplicate");
+        let docx = test_docx_bytes(&test_docx_paragraph("重复导入正文"), "", &[]);
+        fs::create_dir_all(target.join("s01-01")).expect("stage directory");
+        fs::write(target.join("s01-01/intro.docx"), &docx).expect("docx");
+        let plan = |root: &Path, allow: bool| {
+            json!({
+                "root": root.to_string_lossy(),
+                "confirmed": true,
+                "items": [{
+                    "relative_path": "s01-01/intro.docx", "kind": "file", "mapping": "lesson",
+                    "selected": true, "allow_duplicate": allow
+                }]
+            })
+        };
+        let adopted = folder_adopt(plan(&target, false), None, None, None).expect("first import");
+        assert_eq!(test_document_import(&adopted)["succeeded"], json!(1));
+        assert_eq!(
+            adopted["data"]["content_items"].as_array().unwrap().len(),
+            1
+        );
+
+        // Same SHA-256 + same relative path: §30 defaults to a visible skip.
+        let second = test_directory("folder-adopt-docx-duplicate-second");
+        fs::create_dir_all(second.join("s01-01")).expect("stage directory");
+        fs::write(second.join("s01-01/intro.docx"), &docx).expect("copied docx");
+        let repeated = folder_append(
+            plan(&second, false),
+            target.to_string_lossy().into_owned(),
+            None,
+        )
+        .expect("duplicate run still commits the batch");
+        assert_eq!(test_document_import(&repeated)["skipped"], json!(1));
+        let files = test_tally_files(&repeated);
+        assert!(files[0].2.contains("SHA-256"), "got {}", files[0].2);
+        assert_eq!(
+            read_project_value(&target).unwrap()["content_items"]
+                .as_array()
+                .unwrap()
+                .len(),
+            1,
+            "the duplicate created no second lesson"
+        );
+        assert_eq!(
+            fs::read(second.join("s01-01/intro.docx")).unwrap(),
+            docx,
+            "§29: the duplicate source is untouched"
+        );
+
+        // The explicit choice imports it as a new source without touching the first.
+        let first_title = read_project_value(&target).unwrap()["content_items"][0]["title"].clone();
+        let explicit = folder_append(
+            plan(&second, true),
+            target.to_string_lossy().into_owned(),
+            None,
+        )
+        .expect("allow_duplicate imports");
+        assert_eq!(test_document_import(&explicit)["succeeded"], json!(1));
+        let items = explicit["data"]["content_items"].as_array().unwrap();
+        assert_eq!(items.len(), 2, "imported as a new source");
+        assert_eq!(
+            items[0]["title"], first_title,
+            "the earlier lesson is intact"
+        );
+        assert_eq!(fs::read(second.join("s01-01/intro.docx")).unwrap(), docx);
+        assert_eq!(fs::read(target.join("s01-01/intro.docx")).unwrap(), docx);
+        let _ = project_close(target.to_string_lossy().into_owned());
+        let _ = fs::remove_dir_all(target);
+        let _ = fs::remove_dir_all(second);
+    }
+
+    #[test]
+    fn folder_adopt_one_broken_document_does_not_fail_the_batch() {
+        let root = test_directory("folder-adopt-batch-continues");
+        fs::create_dir_all(root.join("s01-01")).expect("stage directory");
+        let good_docx = test_docx_bytes(&test_docx_paragraph("文档正文"), "", &[]);
+        fs::write(root.join("s01-01/intro.docx"), &good_docx).expect("docx");
+        fs::write(root.join("s01-01/notes.txt"), "纯文本第一段\n\n第二段\n").expect("txt");
+        fs::write(
+            root.join("s01-01/plan.tex"),
+            "\\section{计划}\n\n教学目标\n",
+        )
+        .expect("tex");
+        // A truncated ZIP: unreadable as a document, and it must not sink the run.
+        fs::write(root.join("s01-01/broken.docx"), &good_docx[..12]).expect("broken docx");
+        let plan = json!({
+            "root": root.to_string_lossy(),
+            "confirmed": true,
+            "items": [
+                { "relative_path": "s01-01", "kind": "directory", "mapping": "stage", "selected": true },
+                { "relative_path": "s01-01/intro.docx", "kind": "file", "mapping": "lesson", "selected": true },
+                { "relative_path": "s01-01/notes.txt", "kind": "file", "mapping": "lesson", "selected": true },
+                { "relative_path": "s01-01/plan.tex", "kind": "file", "mapping": "lesson", "selected": true },
+                { "relative_path": "s01-01/broken.docx", "kind": "file", "mapping": "lesson", "selected": true }
+            ]
+        });
+        let result = folder_adopt(plan, None, None, None).expect("§28 batch survives one bad file");
+        assert_eq!(
+            result["content_item_ids"].as_array().unwrap().len(),
+            3,
+            "the three good documents still commit"
+        );
+        let tally = test_document_import(&result);
+        assert_eq!(tally["failed"], json!(1));
+        assert_eq!(
+            tally["succeeded"].as_u64().unwrap_or(0) + tally["degraded"].as_u64().unwrap_or(0),
+            3
+        );
+        let files = test_tally_files(&result);
+        let broken = files
+            .iter()
+            .find(|(_, outcome, _)| outcome == "failed")
+            .expect("the bad file is listed");
+        assert_eq!(broken.0, "s01-01/broken.docx");
+        assert!(broken.2.contains("解析失败"), "got {}", broken.2);
+        // No half-imported lesson for the failed file.
+        assert!(
+            result["data"]["content_items"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .all(|item| !item["title"].as_str().unwrap_or("").contains("broken")),
+            "a failed file leaves no lesson behind"
+        );
+        assert_eq!(
+            result["data"]["blocks"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .filter(|block| block["settings"].get("markdown_import").is_some())
+                .count(),
+            3,
+            "exactly three imported documents"
+        );
+        assert_eq!(
+            fs::read(root.join("s01-01/broken.docx")).unwrap(),
+            &good_docx[..12],
+            "§29 the broken source is untouched"
+        );
+        assert_tally_is_consistent(&result);
+        let _ = project_close(root.to_string_lossy().into_owned());
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn folder_adopt_ignores_client_supplied_blocks_for_a_native_document() {
+        let root = test_directory("folder-adopt-docx-forged-client-parse");
+        let png = test_png_bytes("real");
+        let body = format!(
+            "{}{}",
+            test_docx_heading("真实标题"),
+            test_docx_paragraph("真实正文")
+        );
+        let docx = test_docx_bytes(&body, "", &[]);
+        fs::write(root.join("intro.docx"), &docx).expect("docx");
+        let forged = test_markdown_payload(
+            &root.join("intro.docx"),
+            json!([{
+                "type": "heading", "raw": "# 客户端伪造标题\n", "text": "客户端伪造标题",
+                "level": 1, "language": null, "checked": null,
+                "imageRefs": [{ "href": "../../etc/passwd", "title": null, "alt": "x", "tokenIndex": 0, "occurrence": 0 }]
+            }]),
+            json!([]),
+        );
+        let plan = json!({
+            "root": root.to_string_lossy(),
+            "confirmed": true,
+            "items": [{
+                "relative_path": "intro.docx", "kind": "file", "mapping": "lesson",
+                "selected": true, "parsed_markdown": forged
+            }]
+        });
+        let result = folder_adopt(plan, None, None, None).expect("native parse wins");
+        let texts: Vec<String> = result["data"]["blocks"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|block| block["content"].as_str().unwrap_or("").to_owned())
+            .collect();
+        assert!(
+            texts.iter().any(|text| text == "真实标题"),
+            "the shell parsed the file: {texts:?}"
+        );
+        assert!(
+            !texts.iter().any(|text| text.contains("伪造")),
+            "client blocks must be ignored: {texts:?}"
+        );
+        assert_eq!(
+            result["data"]["assets"].as_array().unwrap().len(),
+            0,
+            "a forged client reference cannot create an asset"
+        );
+        assert_eq!(test_document_import(&result)["succeeded"], json!(1));
+        assert_eq!(fs::read(root.join("intro.docx")).unwrap(), docx);
+        let _ = png;
+        let _ = project_close(root.to_string_lossy().into_owned());
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn folder_adopt_refuses_document_paths_that_escape_the_chosen_folder() {
+        let outside = test_directory("folder-adopt-document-escape-outside");
+        fs::write(
+            outside.join("secret.docx"),
+            test_docx_bytes(&test_docx_paragraph("越界正文"), "", &[]),
+        )
+        .expect("outside docx");
+        let root = test_directory("folder-adopt-document-escape");
+        fs::create_dir_all(root.join("inner")).expect("inner");
+        fs::write(root.join("keep.txt"), "留在文件夹内\n").expect("txt");
+        let outside_document = outside.join("secret.docx");
+        std::os::unix::fs::symlink(&outside_document, root.join("inner/link.docx"))
+            .expect("symlink fixture");
+        let plan = json!({
+            "root": root.to_string_lossy(),
+            "confirmed": true,
+            "items": [
+                { "relative_path": "../folder-adopt-document-escape-outside/secret.docx", "kind": "file", "mapping": "lesson", "selected": true },
+                { "relative_path": "inner/link.docx", "kind": "file", "mapping": "lesson", "selected": true },
+                { "relative_path": "keep.txt", "kind": "file", "mapping": "lesson", "selected": true }
+            ]
+        });
+        let result = folder_adopt(plan, None, None, None).expect("a refusal is not a crash");
+        let warnings: Vec<String> = result["warnings"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|value| value.as_str().unwrap_or("").to_owned())
+            .collect();
+        assert!(
+            warnings
+                .iter()
+                .any(|warning| warning.contains("非法路径已跳过")),
+            "traversal refused: {warnings:?}"
+        );
+        assert!(
+            warnings
+                .iter()
+                .any(|warning| warning.contains("已跳过符号链接")),
+            "symlink refused: {warnings:?}"
+        );
+        let files = test_tally_files(&result);
+        assert_eq!(files.len(), 3, "both refusals and the good file are listed");
+        for entry in files.iter().take(2) {
+            assert_eq!(entry.1, "skipped", "refusal is a deliberate skip");
+        }
+        assert_eq!(files[2].1, "succeeded");
+        assert_eq!(result["content_item_ids"].as_array().unwrap().len(), 1);
+        let texts: Vec<String> = result["data"]["blocks"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|block| block["content"].as_str().unwrap_or("").to_owned())
+            .collect();
+        assert!(
+            !texts.iter().any(|text| text.contains("越界")),
+            "nothing outside the folder is imported: {texts:?}"
+        );
+        assert!(
+            !root.join("assets").exists(),
+            "no asset from a refused path"
+        );
+        assert_eq!(
+            fs::read(&outside_document).unwrap().windows(8).count(),
+            test_docx_bytes(&test_docx_paragraph("越界正文"), "", &[])
+                .len()
+                .saturating_sub(7),
+            "the outside file was only ever read"
+        );
+        assert_tally_is_consistent(&result);
+        let _ = project_close(root.to_string_lossy().into_owned());
+        let _ = fs::remove_dir_all(root);
+        let _ = fs::remove_dir_all(outside);
+    }
+
+    #[test]
+    fn folder_adopt_tallies_unchecked_documents_as_deliberate_skips() {
+        let root = test_directory("folder-adopt-document-tally-unchecked");
+        fs::write(root.join("used.txt"), "已勾选\n").expect("used");
+        fs::write(root.join("unused.txt"), "未勾选\n").expect("unused");
+        fs::write(root.join("ignored.md"), "# 未选择导入正文\n").expect("ignored");
+        fs::write(root.join("photo.png"), [3_u8, 3, 3]).expect("media stays out");
+        let plan = json!({
+            "root": root.to_string_lossy(),
+            "confirmed": true,
+            "items": [
+                { "relative_path": "used.txt", "kind": "file", "mapping": "lesson", "selected": true },
+                { "relative_path": "unused.txt", "kind": "file", "mapping": "lesson", "selected": false },
+                { "relative_path": "ignored.md", "kind": "file", "mapping": "ignore", "selected": true },
+                { "relative_path": "photo.png", "kind": "file", "mapping": "asset", "selected": true }
+            ]
+        });
+        let result = folder_adopt(plan, None, None, None).expect("adopt");
+        let tally = test_document_import(&result);
+        assert_eq!(tally["succeeded"], json!(1));
+        assert_eq!(tally["skipped"], json!(2), "unchecked plus not-for-body");
+        assert_eq!(tally["failed"], json!(0));
+        let files = test_tally_files(&result);
+        assert_eq!(files.len(), 3, "media is never tallied: {files:?}");
+        assert!(
+            !files.iter().any(|(path, _, _)| path == "photo.png"),
+            "an imported image is media, not a document: {files:?}"
+        );
+        let outcome_of = |path: &str| -> (String, String) {
+            files
+                .iter()
+                .find(|(listed, _, _)| listed == path)
+                .map(|(_, outcome, reason)| (outcome.clone(), reason.clone()))
+                .unwrap_or_else(|| panic!("{path} is not tallied: {files:?}"))
+        };
+        assert_eq!(
+            outcome_of("used.txt"),
+            ("succeeded".to_string(), String::new()),
+            "a checked document reports a plain success"
+        );
+        let unchecked = outcome_of("unused.txt");
+        assert_eq!(unchecked.0, "skipped");
+        assert!(
+            unchecked.1.contains("未勾选"),
+            "an unchecked file says why: {files:?}"
+        );
+        let not_for_body = outcome_of("ignored.md");
+        assert_eq!(not_for_body.0, "skipped");
+        assert!(
+            not_for_body.1.contains("未选择导入正文"),
+            "a file mapped away from the body says why: {files:?}"
+        );
+        assert_tally_is_consistent(&result);
+        let _ = project_close(root.to_string_lossy().into_owned());
+        let _ = fs::remove_dir_all(root);
+    }
 }
 
 pub fn run() {
@@ -19594,6 +21248,10 @@ pub fn run() {
             read_project,
             save_session,
             load_session,
+            registry::registry_list,
+            registry::registry_record,
+            registry::registry_remove,
+            registry::registry_relocate,
             write_recovery_journal,
             read_recovery_journal,
             clear_recovery_journal,

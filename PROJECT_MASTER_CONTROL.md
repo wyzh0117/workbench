@@ -465,7 +465,7 @@ V1 的目标不是重新做基础功能，而是：
 更高效的素材组织
 课程更新 / 审计
 更成熟的 AI 上下文装配
-更成熟的模型 / MCP / Skill 协作
+更成熟的模型 / Skill 协作
 内容版本比较
 更强的搜索、定位和维护能力
 发布工作流提速
@@ -491,39 +491,53 @@ V1 的详细任务：
 
 # V2 — 长期运营与扩展版
 
-> V0 / V1 未完成前，不拆分 V2 的具体任务。
+> 状态：**PLANNED ONLY —— 不启动开发**。V2 只有在 V1 正式收口且用户明确批准后才激活（见 §44 的激活门槛）。
 
 V2 关注：
 
-> **Workbench 如何从个人课程生产工具，成长为可以长期扩展和承载更多内容工作流的平台。**
+> **Workbench 如何从个人课程生产工具，成长为可以长期承载多门课程、可维护、可复用的内容库。**
 
-方向可能包括：
+规划中的任务（编号沿用此前草案，本轮**不重新编号**，避免在 V2 尚未启动时制造任务名漂移）：
 
 ```text
-更成熟的发布适配
-跨项目内容资产
-更强的自动化
-插件 / Connector 生态
-更稳定的平台迁移
-大型内容库
-长期运营
-必要时的协作能力
+V2-T02 — Project Library + Model & Skill Center
+V2-T03 — Reuse & Templates
+V2-T04 — Search / Audit / Maintenance
+V2-T06 — Batch & Automation
+```
+
+规划的依赖顺序：
+
+```text
+V2-T02 项目库 + 模型与 Skill
+      ↓
+V2-T03 复用与模板
+      ↓
+V2-T04 搜索 / 审计 / 维护
+      ↓
+V2-T06 批量与自动化
+```
+
+原因：先有稳定的多项目管理，才谈跨项目复用；再做维护审计；最后才是批量自动化。
+
+已经从 V2 路线中删除的方向（不得因为旧草案写过就自动恢复）：
+
+```text
+V2-T01 Universal Content Import   → 九类文本 / 文档格式已前移进本轮 v0.2.5，不再是 V2 任务
+V2-T05 AI / Connector Platform    → 并入 V2-T02，并且只保留 Skill
+MCP 平台 / Connector 生态 / 新模型架构 / 新 Provider 协议框架 / 无限文件格式平台
 ```
 
 V2 的关键词：
 
 ```text
-扩展
-生态
-自动化
+多项目
+复用
+维护
 长期运营
 ```
 
-V2 的详细范围：
-
-> 到 V1 后期再决定。
-
-避免现在为遥远需求提前造系统。
+详细规划、Skill 语义与激活门槛见 §44。
 
 ---
 
@@ -3965,3 +3979,188 @@ V1                     = 仍然 ACTIVE；不创建 V1-T07，不关闭 V1
 用户验收若发现问题，按 `docs/release-playbook.md` 走 v0.2.5；两条通道闭合后，在
 `docs/feature-history/v0.2.4.md` 的「已知限制」里把它们从「未验证」改为带证据的结论，
 并同步 `.github/release-notes/v0.2.4.md` 的正文（只改 notes，不动已发布的资产）。
+
+---
+
+# 44. V2 路线图修订（2026-10-02，仅规划 · 不启动开发）
+
+来源：`V0.2.4_Closure_and_V2_Roadmap_Revision.md` PART III（§37—§49）。该文件把目标版本写作
+`v0.2.4`，但 `v0.2.4` 已于 2026-10-02 发布并冻结（§43），因此本轮范围按用户决定顺延为 **v0.2.5**；
+本文其余部分对范围的定义不变。
+
+本节的状态是：
+
+```text
+V2 = PLANNED ONLY
+本轮不创建 V2 任务、不改变 Current Version、不启动任何 V2 开发
+```
+
+## 44.1 两处路线变更
+
+1. **删除 `V2-T01 — Universal Content Import`。** 用户要求的
+   `.txt .text .md .markdown .tex .latex .docx .epub .pdf` 全部前移进 v0.2.5 本轮实现，
+   因此「继续兼容更多文本文件」不再作为独立路线。以后出现新格式：按真实使用反馈进入 Backlog，
+   不预先建设无限格式平台。
+2. **原 `V2-T05 — AI / Connector Platform` 并入 `V2-T02`，且只保留 Skill。**
+   MCP 平台、Connector 生态、新模型平台、新 Provider 协议框架全部从路线中删除；
+   模型能力只复用 V1 / v0.2.5 已实现的部分，V2 不重新开发传输层、API 协议、订阅授权体系、
+   模型路由平台或模型市场，后续只允许 bug 修复、Provider 兼容性修复、安全更新与必要的小幅 UX 调整。
+
+同时废止的此前提案（本轮明确不做，不进入任何版本）：
+
+```text
+.gitignore / .workbenchignore 式过滤规则解析器
+.DS_Store 黑名单、node_modules 目录目录表、IDE 目录目录表
+```
+
+导入范围改由两层自然收敛：用户所选的 mapped files / folders + 明确支持的 media / text 扩展名；
+其它类型既不自动作为正文，也不自动作为素材。
+
+## 44.2 V2-T02 — Project Library + Model & Skill Center
+
+v0.2.5 只做「历史项目列表」（应用级 Project Registry，见 §45）；V2-T02 再升级为真正的
+Project Library：全部项目 / 最近项目 / 收藏 / 标签 / 封面 / 最后修改时间 / 完成度 / 待补数量 /
+路径状态 / 重新定位 / 搜索筛选。
+
+模型管理复用现有能力（API providers、protocol、models、subscription accounts、default model），
+不扩底层。
+
+Skill 管理是 V2-T02 新增，至少需要定义：
+
+```text
+Skill ID / Name / Description / Version / Instruction 行为定义
+Allowed scope / Enabled-disabled / 兼容模型与能力要求 / Source / Updated_at
+```
+
+Skill 来源优先支持 Local Skill、导入的 Skill 包、用户自己编写的 Skill；**包格式等到 V2-T02
+真正开工时再锁定**，现在不提前设计完整插件生态。
+
+Skill 权限：安装不等于自动获得全部权限，至少区分「读取当前 Block / 读取当前 Lesson /
+读取 Course / 使用模型 / 提出 ChangeDraft」，并仍然遵守
+
+```text
+Suggestion → ChangeDraft → Diff → User Review → Apply
+```
+
+Skill 不得绕过 Canonical 安全边界；可以声明 recommended capability，但不能偷偷切换到收费更高的
+模型或使用未授权账户。
+
+**界面约束（不可拆）**：模型与 Skill 在用户认知里同属「AI 能力」，必须放在同一个设置位置：
+
+```text
+设置 → AI → { 模型, Skills }
+```
+
+不允许「模型藏在设置、Skill 放项目侧栏」这种两个无关入口的形态。
+
+## 44.3 V2-T03 / V2-T04 / V2-T06 摘要
+
+```text
+V2-T03 复用与模板：Block / Lesson / Stage 复制、Lesson / Stage 模板、跨项目复制、Asset reuse；
+        必须把「复制」与「链接引用」分清，默认复制后独立，A 课的普通修改不得静默改到 B 课。
+V2-T04 搜索 / 审计 / 维护：跨项目搜索、按对象类型检索、待补与状态筛选、缺失素材检查、
+        来源变化检查、长期未更新内容、外链检查、布局 warning、内容审计。
+V2-T06 批量与自动化：批量状态修改 / 移动 / 重新导入 / 来源更新 / Requirement / AI Review / 摘要；
+        必须仍然 Plan → Preview → User Confirm → Apply，不发展后台静默 Agent。
+```
+
+## 44.4 激活门槛
+
+只有同时满足：
+
+```text
+v0.2.5 完成 + V1 实际使用收口达到用户认可 + V1 正式收口 + 用户明确批准 V2
+```
+
+才可以把 V2 置为 ACTIVE。在此之前禁止创建 V2 任务卡或改动 Current Version。
+正式进入 V2 时，如果用户希望编号连续，可以一次性锁定最终编号；在那之前保持
+`V2-T02 / T03 / T04 / T06` 现有编号不动。
+
+---
+
+# 45. v0.2.5 — 项目身份 / 多项目入口 / 素材滚动稳定性 / 文本·文档导入（2026-10-03，实现完成）
+
+来源：`V0.2.4_Closure_and_V2_Roadmap_Revision.md` PART I / PART II（该文件交接时写作“v0.2.4”，
+因 v0.2.4 已于 2026-10-02 发布并冻结，经用户决定本轮以 **v0.2.5** 交付，范围不删减；
+偏差已在 Completion Report 如实记录）。发布授权：用户在原任务中明确指示「开发完成后同步
+GitHub 以及 tag、release 页」，即本轮提交 / 推送 / tag / Release 四件事的授权（同 v0.2.4 先例）。
+
+## 45.1 §50 十点回写（本轮强制）
+
+```text
+1. project.id 是永久项目身份
+   → 唯一身份字段；迁移只在缺失时才生成 id，已有 id 逐字节保留；
+     无第二个 UUID / 别名（§32.1 用例如实断言 uuid / project_id 等字段不存在）。
+
+2. Project Registry 是应用级可重建索引，不是 Canonical
+   → 桌面壳 <app local data>/.workspace/projects.json；浏览器壳 <项目根>/.workspace/projects.json。
+     仅存 5 个字段：project_id / project_path / project_title / last_opened_at /
+     可选 last_content_item_id；≤200 行、原子写、0600、损坏另存 .bak 并按空表；
+     凭据形状键逐层拒绝；课程正文 / API Key / AI Token / project.json 拷贝一律不存；
+     删掉它只丢“最近打开”便利列表，课程不受影响（registry.rs / project_registry.ts）。
+
+3. v0.2.5 的九类文本 / 文档格式能力
+   → .txt .text / .md .markdown / .tex .latex / .docx / .epub / .pdf 全部作为正文导入
+     （src-tauri/src/documents/，Rust 侧）；逐格式“保留 / 降级 / 未支持”见
+     Completion Report §5 与 docs/feature-history（.md 走既有 marked 管线透传，
+     不做第二套实现；扫描版 PDF 不做 OCR、诚实保留为 Source Reference）。
+
+4. 媒体闪烁根因与修复摘要
+   → 根因一句话：load 完成 → notify → 整页重建（render innerHTML）→ 观察器重新登记
+     → 再 load 的闭环；诱因是“读取即重排 LRU + 容量 32 淘汰在页卡片并 revoke 其 URL”。
+     修复：预览完成就地 patch 那一格（不再整页重建）、在页卡片钉住缓存（容量 = 在页数 + 32，
+     上限 240）、字节预算先重画再作废并标记 released + 重试、get() 只读、已就绪/在途
+     卡片不再重新登记、等待队列有界且作废“卡片已消失”的读取。
+     大白话六问见 docs/v0.2.5_media_flicker_root_cause.md 与 Completion Report；
+     回归 tests/media_preview_stability_test.ts（12 例，120 卡三轮 reads===120、rebuilds===0）。
+
+5. 映射后的“媒体自动导入 + 文档二次选择”规则
+   → 根级 Mapping Preview 不变；确认后媒体（图片/视频）递归自动进素材库（不自动生成
+     AssetUsage、不自动插入正文）；九类文档候选出现时弹「选择要导入为正文的文档」
+     （分组显示、全选/全不选/行点击、媒体-only 目录保持单次确认旧路径、取消 = 零写入）；
+     导入严格服从已确认 Mapping Plan，不回推第二套 Stage/Lesson；结果给 §28 回执
+     document_import = { succeeded, degraded, skipped, failed, files:[…] }；
+     来源原地不动，权威清单在 project.settings.markdown_import_sources。
+
+6. .gitignore-style filtering proposal = REJECTED / removed
+   → 不实现 .gitignore / .workbenchignore 解析器与目录黑名单；导入范围由
+     「用户勾选的 mapped files / folders」+「明确支持的扩展名」两层收敛（§31）。
+```
+
+第 7—10 点（V2 事务）已在 §44 完成回写，此处只做索引：
+
+```text
+7. V2 Universal Content Import 已前移本轮 → §44.1（V2-T01 删除）
+8. 原 V2-T05 并入 V2-T02，仅保留 Skill → §44.1 / §44.2
+9. Model + Skill 同处「设置 → AI」同一管理面 → §44.2 界面约束
+10. V2 仍未激活（PLANNED ONLY；激活门槛见 §44.4）
+```
+
+## 45.2 自动化证据快照（2026-10-03，源码状态）
+
+```text
+deno task check                 clean
+Deno 测试                       584 passed / 0 failed
+   新增：media_preview_stability_test.ts (12)、project_registry_test.ts (15)、
+        registry_launcher_test.ts (16)、document_import_dialog_test.ts (17)；
+        smart_project_inspect_test.ts 增至 16（§3.5 + §32.1）；t04_adoption_test.ts 按 §18 更新
+cargo fmt --check               clean
+Rust 测试                       216 passed / 0 failed
+   documents 模块 90（docx 8 / epub 20 / pdf 25 / latex 17 / plaintext 10 / mod 契约 10）、
+   registry.rs 14、folder_adopt / folder_append / 原生文档导入系列走真实临时目录
+cargo build                     clean
+```
+
+## 45.3 未闭合通道（如实记录，不记成通过）
+
+```text
+1. 原生窗口指针 / 面板手势 smoke —— 本环境 AppleScript -1712、截图无权限；
+   全部真实 Tauri 验收行按 UNCLOSED 记录（Completion Report §2 / §9）。
+2. 真实在线 AI 调用 —— 环境到 api.openai.com 60s 超时；本轮未改 AI 链路，按 v0.2.4 结论顺延。
+3. 生产规模媒体库的量化证据（大图 + 240+ 素材）—— 有界淘汰行为本身是 §11 允许的。
+```
+
+## 45.4 发布记录（发布后回填）
+
+待 v0.2.5 tag / workflow / 公开资产验证完成后回填：tag → commit、run 链接与结论、
+DMG SHA-256 / 架构 / 签名状态、`releases/latest` 指向、README 与 Feature Manual 冻结结果。

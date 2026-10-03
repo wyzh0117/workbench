@@ -207,6 +207,57 @@ Deno.test("inspectProjectDirectory: a relative path is an unreadable classificat
     void dir;
   }));
 
+Deno.test("inspectProjectDirectory: a parent of adopted projects is itself no_project_json (§3.5)", () =>
+  withTempDir(async (dir) => {
+    // The exact shape a user gets after adopting several folders side by side:
+    // a plain parent whose children are each a real, opened project.
+    for (const [index, title] of ["第一课", "第二课"].entries()) {
+      const child = `${dir}/s01-0${index}`;
+      await Deno.mkdir(child);
+      await writeProjectJson(child, serializeProject(createEmptyProjectData(title)));
+    }
+    const inspection = await inspectProjectDirectory(dir);
+    assert(inspection.status === "no_project_json", `got ${inspection.status}`);
+    assert(inspection.problem?.code === "project_json_missing", "missing file diagnosis");
+    // Routing only ever acts on the root it was given: no silently echoing a
+    // child's identity, which would auto-open the wrong project.
+    assert(inspection.project === null, "the parent must not borrow a child's identity");
+    // The children are genuinely openable, so the parent's classification is
+    // about the parent — not about the children being broken.
+    for (const name of ["s01-00", "s01-01"]) {
+      const childInspection = await inspectProjectDirectory(`${dir}/${name}`);
+      assert(childInspection.status === "valid", `child ${name} must be valid`);
+      assert(childInspection.project !== null, `child ${name} must carry an identity`);
+    }
+  }));
+
+Deno.test("migration: an old supported schema keeps exactly one identity (§2, §32.1)", () => {
+  const fresh = createEmptyProjectData("身份课");
+  const identity = fresh.project.id;
+  const older = structuredClone(fresh) as unknown as Record<string, unknown>;
+  delete older.layout_pages;
+  older.schema_version = 4; // pre-semver integer revision
+  delete (older.project as Record<string, unknown>).schema_version;
+  const migrated = migrateProject(older);
+  assert(migrated.project.id === identity, "migration must keep project.id byte-identical");
+  assert(
+    migrated.schema_version === fresh.schema_version &&
+      migrated.project.schema_version === fresh.project.schema_version,
+    "migration must bump both version stamps to the current schema",
+  );
+  assert(validateProjectData(migrated).length === 0, "migration must reach zero issues");
+  const reread = JSON.parse(serializeProject(migrated)) as { project: { id: string } };
+  assert(reread.project.id === identity, "identity must survive a serialize → parse round-trip");
+  const inspection = inspectProjectData(reread);
+  assert(inspection.status === "valid", `migrated project must inspect valid, got ${inspection.status}`);
+  assert(inspection.project?.id === identity, "the inspector must echo the one identity");
+  // §2: one identity, not two — no parallel uuid-style field may appear while
+  // the legacy file is brought forward.
+  for (const key of ["uuid", "project_uuid", "project_uuid_v4", "projectId", "project_id"]) {
+    assert(!(key in migrated), `migration must not mint a second identity field (${key})`);
+  }
+});
+
 // Guard: keep the unused-import checker happy for the ProjectData type used in
 // fixtures above without widening the public surface.
 const _typeProbe: ProjectData | null = null;

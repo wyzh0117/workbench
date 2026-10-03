@@ -1,6 +1,6 @@
 [package]
 name = "ai-course-workbench"
-version = "0.2.4"
+version = "0.2.5"
 description = "Local-first desktop shell for AI Course Workbench"
 authors = ["AI Course Workbench"]
 edition = "2021"
@@ -28,6 +28,20 @@ getrandom = "0.3"
 # 传递依赖，源码不在这台机器上）；锁死版本可避免联网构建时解析到未缓存的新版。
 # 必须关掉默认特性，否则会拉入 native-tls / hyper-tls（本地同样没有缓存）。
 reqwest = { version = "=0.11.27", default-features = false, features = ["json", "rustls-tls"] }
+# --- v0.2.5 文本/文档导入解析层（src/documents）---
+# docx / epub 都是 ZIP 容器。手写 ZIP 读取（zip64、data descriptor、加密条目、
+# 路径穿越）对不可信输入风险太高，用成熟 crate；只保留 deflate，避免
+# bzip2 / lzma / zstd / aes 进入依赖树。
+zip = { version = "=4.0.0", default-features = false, features = ["deflate"] }
+# OOXML（document.xml / .rels / numbering.xml）、OPF 与 EPUB XHTML 都是 XML。
+# quick-xml 已在依赖树里（tauri 传递依赖），直接复用 = 零新增 crate。
+quick-xml = "=0.42.0"
+# .txt 的非 UTF-8 编码识别（GB18030 / Big5 / windows-1252），同样已在依赖树里。
+encoding_rs = "=0.8.35"
+# PDF：对象树 + 交叉引用表/xref 流 + 对象流 + 过滤器 + ToUnicode/CID 字体映射，
+# 手写这套不现实（也正是 lopdf 被推荐的原因）。关掉默认特性（chrono-clock/rayon），
+# 只保留解析与文本解码所需部分。
+lopdf = { version = "=0.45.0", default-features = false }
 
 [features]
 custom-protocol = ["tauri/custom-protocol"]

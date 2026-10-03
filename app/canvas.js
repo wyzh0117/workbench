@@ -109,34 +109,71 @@ export function stopPreviewMedia(scope = globalThis.document) {
  * cached per project, asset identity, and content checksum, and are never
  * written back anywhere. Webviews cannot read project paths directly, so
  * media uses temporary object URLs allowed by the app's narrowly scoped CSP.
+ *
+ * The state machine a card paints is `idle → loading → ready` and
+ * `loading → error`, and it only moves forward: a preview that settled stays
+ * settled while its card is in the document. `observe()` registers the painted
+ * frames (`[data-asset-preview-key]`), and a frame with a connected element
+ * PINS its entry — the entry budget is the painted set plus a bounded history,
+ * so scrolling through a large library can no longer evict a card that is still
+ * on screen and revoke the object URL its `<img>` is using.
+ *
+ * A preview that settles is written back through `onPatch`, which repaints that
+ * one frame; the whole screen is rebuilt only for a key nothing can patch.
+ * That is what breaks the render → observe → load → evict → render loop: a full
+ * rebuild destroys every card, the observer re-registers all of them, each new
+ * intersect record reads the asset again, and the loop repeats.
  */
 export class AssetPreviewCache {
   constructor(bridge, options = {}) {
     this.bridge = bridge;
     this.mediaLimit = options.mediaLimit ?? 8 * BYTES_PER_MEGABYTE;
     this.maxCacheBytes = options.maxCacheBytes ?? 96 * BYTES_PER_MEGABYTE;
+    /** Entries kept IN ADDITION to the ones currently painted. */
     this.maxEntries = options.maxEntries ?? 32;
+    /** Hard ceiling on memory-holding entries, however many cards are painted. */
+    this.maxTotalEntries = options.maxTotalEntries ?? 240;
     this.maxConcurrentLoads = options.maxConcurrentLoads ?? 2;
+    /** Loads waiting for a slot, so a scroll burst cannot queue doomed reads. */
+    this.maxQueuedLoads = options.maxQueuedLoads ?? 32;
     this.activeLoads = 0;
     this.loadQueue = [];
+    /** Declined while saturated; retried when a slot frees or dropped if not. */
+    this.deferred = new Set();
+    /** Settled previews dropped by the byte budget while their card was painted. */
+    this.released = new Set();
     this.entries = new Map();
     this.pending = new Map();
+    /** Per-key write token: a response older than the current attempt is dropped. */
+    this.tokens = new Map();
     this.assetsByKey = new Map();
+    /** key -> the frame elements currently painting that preview. */
+    this.frames = new Map();
+    /** Keys painted as of the last `observe()`; null while no DOM is known. */
+    this.renderedKeys = null;
     this.observedElements = new Set();
     this.intersectionObserver = null;
     this.cacheBytes = 0;
     this.generation = 0;
+    /** Monotonic clock behind eviction order; advanced by visibility, not reads. */
+    this.useClock = 0;
     this.failures = 0;
     this.urls = new Set();
     this.onChange = options.onChange ?? (() => {});
+    this.onPatch = options.onPatch ?? null;
     this.notifyScheduled = false;
   }
 
   /**
+   * @param {string} assetId
+   * @param {{archived?: boolean, project_id?: string, storage_path?: string,
+   *   checksum?: string}|null} [assetSnapshot] the row as the caller renders it,
+   *   so a hot grid does not have to look it up again.
    * @returns {{url?: string, thumbnailUrl?: string, posterUrl?: string,
    *   text?: string, pdf?: boolean, width?: number, height?: number,
    *   durationSeconds?: number, loaded?: boolean, failed?: boolean,
-   *   error?: string, loading?: boolean, pending?: boolean, key?: string}
+   *   error?: string, loading?: boolean, pending?: boolean, released?: boolean,
+   *   key?: string}
    *   |undefined}
    */
   get(assetId, assetSnapshot = null) {
@@ -145,14 +182,13 @@ export class AssetPreviewCache {
     if (!asset || asset.archived) return undefined;
     const key = this.keyFor(asset);
     const cached = this.entries.get(key);
-    if (cached) {
-      // Map insertion order is the small LRU: recently used previews move to
-      // the end, so scrolling through a large library cannot grow memory.
-      this.entries.delete(key);
-      this.entries.set(key, cached);
-      return cached.value;
-    }
-    this.assetsByKey.set(key, asset);
+    // Read-only on purpose. This runs once per painted card per render, so the
+    // reordering it used to perform made eviction follow the scroll direction
+    // instead of real staleness, and evicted cards that were still visible.
+    if (cached) return cached.value;
+    // A settled preview the byte budget had to give up is not "still loading":
+    // saying so would leave the card waiting for something that never comes.
+    if (this.released.has(key)) return { released: true, key };
     return { loading: true, pending: this.pending.has(key), key };
   }
 
@@ -167,11 +203,14 @@ export class AssetPreviewCache {
     if (cached) {
       this.entries.delete(key);
       this.cacheBytes = Math.max(0, this.cacheBytes - cached.size);
+      this.bumpToken(key);
       this.releaseEntry(cached.value);
     }
     this.assetsByKey.set(key, asset);
+    this.released.delete(key);
     const task = this.load(asset, key);
-    this.scheduleNotify();
+    // An explicit retry is one of the three allowed ways back to `loading`.
+    this.repaint(key);
     return task;
   }
 
@@ -180,21 +219,45 @@ export class AssetPreviewCache {
     const placeholders = [...root.querySelectorAll(
       "[data-asset-preview-key]",
     )];
-    const activeKeys = new Set(placeholders.map((element) =>
-      element.getAttribute("data-asset-preview-key") || ""
-    ).filter(Boolean));
-
-    for (const [key, asset] of this.assetsByKey) {
-      if (!activeKeys.has(key) && !this.pending.has(key)) {
-        this.assetsByKey.delete(key);
-      } else if (activeKeys.has(key)) {
-        const current = this.findAsset(asset.id);
-        if (current) this.assetsByKey.set(key, current);
+    const activeKeys = new Set();
+    const frames = new Map();
+    for (const element of placeholders) {
+      const key = element.getAttribute("data-asset-preview-key") || "";
+      if (!key) continue;
+      activeKeys.add(key);
+      const bucket = frames.get(key);
+      if (bucket) bucket.add(element);
+      else frames.set(key, new Set([element]));
+      const asset = this.assetFor(key, element);
+      if (asset && !asset.archived && !this.entries.has(key)) {
+        this.assetsByKey.set(key, asset);
       }
     }
+    this.frames = frames;
+    this.renderedKeys = activeKeys;
+
+    for (const key of [...this.assetsByKey.keys()]) {
+      if (!activeKeys.has(key) && !this.pending.has(key)) {
+        this.assetsByKey.delete(key);
+      }
+    }
+    // Keys that stopped being painted have nothing left to wait for.
+    for (const key of [...this.deferred]) {
+      if (!activeKeys.has(key)) this.deferred.delete(key);
+    }
+    // A card that scrolled away and comes back may load again. A card that stays
+    // on screen waits for the user to ask, otherwise the byte budget would evict
+    // it and re-arm it on every render — the same loop at a slower tempo.
+    for (const key of [...this.released]) {
+      if (!activeKeys.has(key)) this.released.delete(key);
+    }
+    this.dropUnrenderedLoads();
+    // Frames that left the document with the previous render release the entries
+    // they were pinning; this is the only way history stops accumulating.
+    this.trim();
 
     if (typeof IntersectionObserver !== "function") {
-      for (const key of activeKeys) void this.loadByKey(key);
+      for (const key of activeKeys) this.loadByKey(key);
       return;
     }
     if (!this.intersectionObserver) {
@@ -202,9 +265,20 @@ export class AssetPreviewCache {
         for (const record of records) {
           if (!record.isIntersecting) continue;
           const key = record.target.getAttribute("data-asset-preview-key");
-          this.intersectionObserver.unobserve(record.target);
-          this.observedElements.delete(record.target);
-          if (key) void this.loadByKey(key);
+          if (!key) {
+            this.unwatch(record.target);
+            continue;
+          }
+          if (this.entries.has(key) || this.pending.has(key)) {
+            this.unwatch(record.target);
+            continue;
+          }
+          // Visibility — not a render — is what makes an entry young again.
+          this.touch(key);
+          // A declined load keeps its frame watched: the queue is bounded, so a
+          // freed slot (or the next intersection) starts it instead of a doomed
+          // read that would only re-render the screen later.
+          if (this.loadByKey(key)) this.unwatch(record.target);
         }
       }, { rootMargin: "160px" });
     }
@@ -215,6 +289,8 @@ export class AssetPreviewCache {
     }
     for (const element of placeholders) {
       const key = element.getAttribute("data-asset-preview-key");
+      // Settled and in-flight frames are never re-observed: re-observing hands
+      // the target a fresh intersect record, which is what restarted the loop.
       if (!key || this.entries.has(key) || this.pending.has(key) ||
         this.observedElements.has(element)) continue;
       this.observedElements.add(element);
@@ -222,10 +298,44 @@ export class AssetPreviewCache {
     }
   }
 
+  unwatch(element) {
+    if (!element) return;
+    this.intersectionObserver?.unobserve(element);
+    this.observedElements.delete(element);
+  }
+
+  /** Start the load for a painted key; false when there is nothing to start. */
   loadByKey(key) {
     const asset = this.assetsByKey.get(key);
-    if (asset && !this.entries.has(key) && !this.pending.has(key)) {
-      void this.load(asset, key);
+    if (!asset || this.entries.has(key) || this.pending.has(key)) return false;
+    // A preview the byte budget took back stays taken back. `observe()` runs on
+    // every render and a freshly registered target always gets an intersect
+    // record, so without this the released card read itself again the moment the
+    // screen re-rendered, overflowed the budget all over again, and handed yet
+    // another card back — the eviction/re-render loop at a slower tempo. Only
+    // `retry()` (§9's user action) may send a released key loading.
+    if (this.released.has(key)) return false;
+    void this.load(asset, key);
+    return true;
+  }
+
+  /**
+   * The asset a painted frame belongs to, from its own attribute or its key.
+   * @param {{getAttribute?: (name: string) => string|null}|null} [element]
+   */
+  assetFor(key, element = null) {
+    const id = element?.getAttribute?.("data-asset-preview-asset") ||
+      this.assetIdFor(key);
+    return id ? this.findAsset(id) : null;
+  }
+
+  /** Keys are the asset's identity tuple; the second field is the asset id. */
+  assetIdFor(key) {
+    try {
+      const parts = JSON.parse(key);
+      return Array.isArray(parts) ? String(parts[1] || "") : "";
+    } catch {
+      return "";
     }
   }
 
@@ -238,28 +348,112 @@ export class AssetPreviewCache {
     this.onChange = listener;
   }
 
-  acquireLoadSlot(generation) {
-    if (generation !== this.generation) return Promise.resolve(false);
+  /**
+   * Route a settled preview into the DOM without rebuilding the screen.
+   * @param {(key: string) => number} listener repaints every frame painting
+   *   `key` and returns how many it rewrote.
+   */
+  setOnPatch(listener) {
+    this.onPatch = typeof listener === "function" ? listener : null;
+  }
+
+  acquireLoadSlot(key, token, generation) {
+    if (!this.canGrant(key, token, generation)) return Promise.resolve(false);
     if (this.activeLoads < this.maxConcurrentLoads) {
       this.activeLoads += 1;
       return Promise.resolve(true);
     }
+    if (this.loadQueue.length >= this.maxQueuedLoads) {
+      // Cheaper to hold the key outside the queue than to keep a doomed read.
+      this.deferred.add(key);
+      return Promise.resolve(false);
+    }
     return new Promise((resolve) => {
-      this.loadQueue.push({ generation, resolve });
+      this.loadQueue.push({ key, token, generation, resolve });
     });
+  }
+
+  /** A preview is only worth reading while its attempt — and its card — live. */
+  canGrant(key, token, generation) {
+    if (generation !== this.generation) return false;
+    if (this.tokenFor(key) !== token) return false;
+    // No DOM knowledge (a direct `load()`, a retry, a WebView without an
+    // observer) means nothing to pin and nothing to drop.
+    if (this.renderedKeys === null) return true;
+    return this.renderedKeys.has(key) && this.isLive(key);
+  }
+
+  tokenFor(key) {
+    return this.tokens.get(key) || 0;
+  }
+
+  bumpToken(key) {
+    const next = this.tokenFor(key) + 1;
+    this.tokens.set(key, next);
+    return next;
+  }
+
+  /**
+   * Hand back the queue slots held by keys that stopped being painted. Waiting
+   * for a slot only makes sense for a card the user can still reach; leaving
+   * the library must not leave hundreds of doomed reads behind the live ones.
+   */
+  dropUnrenderedLoads() {
+    if (!this.loadQueue.length) return;
+    const kept = [];
+    for (const waiter of this.loadQueue) {
+      if (this.canGrant(waiter.key, waiter.token, waiter.generation)) {
+        kept.push(waiter);
+        continue;
+      }
+      this.deferred.delete(waiter.key);
+      waiter.resolve(false);
+    }
+    this.loadQueue = kept;
   }
 
   releaseLoadSlot() {
     this.activeLoads = Math.max(0, this.activeLoads - 1);
     while (this.loadQueue.length && this.activeLoads < this.maxConcurrentLoads) {
       const waiter = this.loadQueue.shift();
-      if (waiter.generation !== this.generation) {
+      if (!this.canGrant(waiter.key, waiter.token, waiter.generation)) {
+        this.deferred.delete(waiter.key);
         waiter.resolve(false);
         continue;
       }
       this.activeLoads += 1;
       waiter.resolve(true);
     }
+    if (this.activeLoads < this.maxConcurrentLoads && this.deferred.size) {
+      this.drainDeferred();
+    }
+  }
+
+  /** Retry only what is still painted; everything else is dropped for free. */
+  drainDeferred() {
+    for (const key of [...this.deferred]) {
+      if (this.activeLoads >= this.maxConcurrentLoads) return;
+      this.deferred.delete(key);
+      if (this.entries.has(key) || this.pending.has(key)) continue;
+      if (!this.canGrantRendered(key)) continue;
+      const asset = this.assetsByKey.get(key) ||
+        this.assetFor(key, this.firstFrame(key));
+      if (!asset) continue;
+      this.assetsByKey.set(key, asset);
+      this.loadByKey(key);
+    }
+  }
+
+  canGrantRendered(key) {
+    if (this.renderedKeys === null) return true;
+    return this.renderedKeys.has(key) && this.isLive(key);
+  }
+
+  firstFrame(key) {
+    for (const element of this.frames.get(key) || []) {
+      if (element.isConnected) return element;
+    }
+    return null;
   }
 
   scheduleNotify() {
@@ -289,16 +483,18 @@ export class AssetPreviewCache {
     const asset = typeof assetOrId === "object" && assetOrId
       ? assetOrId
       : this.findAsset(assetOrId);
-    if (!asset || asset.archived) return;
+    if (!asset || asset.archived) return false;
     const assetId = asset.id;
     const key = knownKey || this.keyFor(asset);
-    if (this.entries.has(key) || this.pending.has(key)) return;
+    // At most one in-flight preview per asset, however often the same card was
+    // re-observed by a scroll or a re-render.
+    if (this.entries.has(key) || this.pending.has(key)) return false;
     const current = this.findAsset(assetId);
-    if (!current || current.archived || this.keyFor(current) !== key) return;
+    if (!current || current.archived || this.keyFor(current) !== key) return false;
     const generation = this.generation;
+    const token = this.bumpToken(key);
+    let acquired = false;
     const task = (async () => {
-      const acquired = await this.acquireLoadSlot(generation);
-      if (!acquired) return;
       let entry;
       let sourceRelease = null;
       const ownedUrls = [];
@@ -308,6 +504,10 @@ export class AssetPreviewCache {
         return url;
       };
       try {
+        acquired = await this.acquireLoadSlot(key, token, generation);
+        // The wait for a slot is where a doomed load leaves: its card may have
+        // been un-painted, or a newer attempt took the key over.
+        if (!acquired) return;
         let bytes = null;
         let source = null;
         if (asset.type === "video") {
@@ -319,11 +519,12 @@ export class AssetPreviewCache {
         } else {
           bytes = await this.bridge.readAssetBytes(assetId, this.mediaLimit);
         }
-        // Project switches and content edits invalidate reads already in
-        // flight. Never let their late response repopulate the new cache.
+        // Project switches, content edits and released entries invalidate reads
+        // already in flight. Never let a late response repopulate newer state.
         const current = this.findAsset(assetId);
-        if (generation !== this.generation || !current ||
+        if (!this.isCurrent(key, token, generation) || !current ||
           this.keyFor(current) !== key) {
+          for (const url of ownedUrls) this.releaseEntry({ url });
           try { sourceRelease?.(); } catch { /* source token may already be gone */ }
           sourceRelease = null;
           return;
@@ -402,7 +603,7 @@ export class AssetPreviewCache {
           entry = { loaded: true };
         }
         const latest = this.findAsset(assetId);
-        if (generation !== this.generation || !latest ||
+        if (!this.isCurrent(key, token, generation) || !latest ||
           this.keyFor(latest) !== key) {
           this.releaseEntry(entry);
           return;
@@ -412,7 +613,8 @@ export class AssetPreviewCache {
         for (const url of ownedUrls) this.releaseEntry({ url });
         try { sourceRelease?.(); } catch { /* source token may already be gone */ }
         sourceRelease = null;
-        if (generation !== this.generation) return;
+        if (!acquired || generation !== this.generation ||
+          this.tokenFor(key) !== token) return;
         this.failures += 1;
         entry = {
           failed: true,
@@ -420,30 +622,145 @@ export class AssetPreviewCache {
         };
         this.cache(key, entry, 0);
       } finally {
-        this.releaseLoadSlot();
-        if (generation === this.generation) {
-          this.pending.delete(key);
+        if (acquired) this.releaseLoadSlot();
+        const stale = generation !== this.generation ||
+          this.tokenFor(key) !== token;
+        const waiting = !stale && this.deferred.has(key);
+        if (this.pending.get(key) === task) this.pending.delete(key);
+        if (stale) this.deferred.delete(key);
+        if (waiting) {
+          // Declined for a slot: the asset stays registered and a freed slot
+          // retries it, instead of this attempt queueing a doomed read.
+        } else {
           this.assetsByKey.delete(key);
-          this.scheduleNotify();
+          // Settled. Patch the one frame that paints this key; a full rebuild
+          // here is what restarted the observe → load → evict cycle.
+          this.repaint(key);
         }
       }
     })();
     this.pending.set(key, task);
     await task;
+    return true;
+  }
+
+  isCurrent(key, token, generation) {
+    return generation === this.generation && this.tokenFor(key) === token;
+  }
+
+  /** Cards painted in the document: their entries are pinned against eviction. */
+  isLive(key) {
+    for (const element of this.frames.get(key) || []) {
+      if (element.isConnected) return true;
+    }
+    return false;
+  }
+
+  liveKeyCount() {
+    let count = 0;
+    for (const [key, elements] of this.frames) {
+      let painted = false;
+      for (const element of elements) {
+        if (element.isConnected) {
+          painted = true;
+          break;
+        }
+      }
+      if (painted && this.entries.has(key)) count += 1;
+    }
+    return count;
+  }
+
+  /** The painted set plus a bounded history, under a hard ceiling. */
+  capacity() {
+    const history = Math.max(0, this.maxEntries);
+    return Math.min(
+      Math.max(this.maxTotalEntries, history),
+      this.liveKeyCount() + history,
+    );
+  }
+
+  /** Visibility, not a lookup, is what makes an entry young again. */
+  touch(key) {
+    const entry = this.entries.get(key);
+    if (entry) entry.used = ++this.useClock;
   }
 
   cache(key, value, size) {
-    this.entries.set(key, { value, size });
+    this.entries.delete(key);
+    this.entries.set(key, {
+      value: { ...value, key },
+      size,
+      used: ++this.useClock,
+    });
     this.cacheBytes += size;
-    while (this.entries.size > this.maxEntries ||
-      this.cacheBytes > this.maxCacheBytes) {
-      const oldestKey = this.entries.keys().next().value;
-      if (oldestKey === undefined) break;
-      const oldest = this.entries.get(oldestKey);
-      this.entries.delete(oldestKey);
-      this.cacheBytes -= oldest.size;
-      this.releaseEntry(oldest.value);
+    this.trim();
+  }
+
+  /**
+   * Release entries beyond the budget. Count pressure only ever touches cards
+   * that are no longer painted, so scrolling cannot revoke a live object URL;
+   * the byte budget may drop a painted card, but that card is repainted first
+   * and no node is left holding a revoked URL.
+   */
+  trim() {
+    let guard = this.entries.size + 1;
+    while (guard-- > 0) {
+      if (this.entries.size <= this.capacity() &&
+        this.cacheBytes <= this.maxCacheBytes) break;
+      const victim = this.pickVictim();
+      if (!victim) break;
+      this.evict(victim);
     }
+  }
+
+  pickVictim() {
+    const detached = [];
+    const painted = [];
+    for (const [key, entry] of this.entries) {
+      (this.isLive(key) ? painted : detached).push([key, entry.used]);
+    }
+    const pool = detached.length ? detached : painted;
+    if (!pool.length) return null;
+    pool.sort((left, right) => left[1] - right[1]);
+    return pool[0][0];
+  }
+
+  evict(key) {
+    const entry = this.entries.get(key);
+    if (!entry) return false;
+    this.entries.delete(key);
+    this.cacheBytes = Math.max(0, this.cacheBytes - entry.size);
+    // Anything still reading this key is now stale by definition.
+    this.bumpToken(key);
+    // Repaint first: the frame stops using the URL before it is revoked.
+    if (this.isLive(key)) {
+      // Only the byte budget reaches here with a painted card; count pressure
+      // never drops one. Record it so the card says "released", not "loading".
+      this.released.add(key);
+      this.repaint(key);
+    }
+    this.releaseEntry(entry.value);
+    return true;
+  }
+
+  /**
+   * Write a settled preview into the document in place. Returns true when the
+   * cache owns the outcome: either the frame was patched, or a rebuild was
+   * scheduled because nothing could patch it.
+   */
+  repaint(key) {
+    const patched = this.onPatch ? Number(this.onPatch(key)) || 0 : 0;
+    if (patched > 0) return true;
+    // No painted frame to patch means no work. With no DOM knowledge at all (a
+    // direct read, a WebView without an observer) a rebuild is the only way to
+    // show the result, and it is what releases a revoked URL from the screen.
+    if (this.renderedKeys === null) {
+      this.scheduleNotify();
+      return true;
+    }
+    if (this.renderedKeys.has(key)) this.scheduleNotify();
+    return false;
   }
 
   trackUrl(entry) {
@@ -480,7 +797,15 @@ export class AssetPreviewCache {
     stopPreviewMedia(globalThis.document);
     this.generation += 1;
     for (const waiter of this.loadQueue.splice(0)) waiter.resolve(false);
-    for (const cached of this.entries.values()) this.releaseEntry(cached.value);
+    this.deferred.clear();
+    this.released.clear();
+    for (const [key, entry] of [...this.entries]) {
+      // Drop the entry first: a frame repainted below must read as waiting, and
+      // a URL a painted card still shows must not be revoked before it is gone.
+      this.entries.delete(key);
+      if (this.isLive(key)) this.repaint(key);
+      this.releaseEntry(entry.value);
+    }
     for (const url of this.urls) {
       try {
         URL.revokeObjectURL(url);
@@ -494,7 +819,10 @@ export class AssetPreviewCache {
     this.observedElements.clear();
     this.entries.clear();
     this.pending.clear();
+    this.tokens.clear();
     this.assetsByKey.clear();
+    this.frames.clear();
+    this.renderedKeys = null;
     this.cacheBytes = 0;
   }
 }

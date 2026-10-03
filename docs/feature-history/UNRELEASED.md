@@ -4,18 +4,20 @@
 
 ---
 
-## 当前状态（2026-10-02）
+## 当前状态（2026-10-03）
 
 ```text
-Latest public release       = v0.2.4
-Rolling content             = 空 —— 上一个周期（Post-v0.2.3 的 15 项实际使用反馈收口）
-                              已整体冻结进 docs/feature-history/v0.2.4.md
-Still open from v0.2.4      = 两条验收通道没有由自动化环境闭合：原生窗口的指针 / 面板手势、
-                              真实在线 AI 调用（原因见 v0.2.4.md 的「已知限制」）
+Latest public release       = v0.2.5（发布验证事实见本目录 README「当前循环」，验证完成后回填）
+Rolling content             = 空 —— 上一个周期（项目身份与多项目入口、大量素材滚动稳定性、
+                              九类文本 / 文档导入、映射后二次正文选择）已整体冻结进
+                              docs/feature-history/v0.2.5.md
+Still open from v0.2.5      = 三条验收通道没有由自动化环境闭合：原生窗口的指针 / 面板手势、
+                              真实在线 AI 调用、媒体库滚动的真实触控板 / 滚轮验证
+                              （原因见 v0.2.5.md 与 v0.2.4.md 的「已知限制」）
 V0 = CLOSED；V1 = ACTIVE；不创建 V1-T07，不关闭 V1
 ```
 
-用户在上述两处给出的结论，以及任何新的行为改动，从下一条记录开始写进本文件。
+用户在上述几处给出的结论，以及任何新的行为改动，从下一条记录开始写进本文件。
 
 ---
 
@@ -43,7 +45,7 @@ V0 = CLOSED；V1 = ACTIVE；不创建 V1-T07，不关闭 V1
 
 ## 发版时需要做的事
 
-1. 需要发布时**使用新的版本与 tag**（下一个预期版本 `v0.2.5`）；`v0.2.4` 及更早的 tags / 资产保持冻结。发布只在推送新的 `v*` tag 且版本与 `src-tauri/tauri.conf.json` 一致时发生；`workflow_dispatch` 只构建、不发布。发布需要用户单独授权。
+1. 需要发布时**使用新的版本与 tag**（下一个预期版本 `v0.2.6`）；`v0.2.5` 及更早的 tags / 资产保持冻结。发布只在推送新的 `v*` tag 且版本与 `src-tauri/tauri.conf.json` 一致时发生；`workflow_dispatch` 只构建、不发布。发布需要用户单独授权。
 2. 发布前补做：release 配置的 Universal 构建 + DMG + `hdiutil verify`，以及本机真实指针 smoke。完整步骤见 [`../release-playbook.md`](../release-playbook.md)。
 3. 发布后核对公开 Release 资产与 `.sha256` sidecar，并把事实回写 Release Notes、本目录索引与 `PROJECT_MASTER_CONTROL.md`。
 4. 把本文件中属于该版本的内容冻结成 `docs/feature-history/vX.Y.Z.md`，在 `docs/feature-history/README.md` 的索引表加一行，然后**把本文件重置为下一个周期的空模板**。

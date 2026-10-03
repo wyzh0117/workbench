@@ -113,16 +113,16 @@ BLOCKER            = 缺正式 macOS signing / notarization credentials
 - V1-T04 — Workspace Explorer & Existing-Folder Adoption：**VERIFIED**
 - V1-T05 — Paged Canvas & Pagination：**VERIFIED**
 - V1-T06 — Layout-aware Export & PPTX：**VERIFIED**
-- 当前交接：**v0.2.4 已发布**（收口内容 = Post-v0.2.3 的 15 项实际使用反馈，实现与自测见 §42，发布与产物验证见 §43）
-- 当前状态：**V1 ACTIVE；15 项反馈已全部实现并完成我方自测，已按用户授权随 `v0.2.4` 提交、打 tag 并发布**（T01–T06 的 VERIFIED 为历史任务结论）
-- [本轮需求](V1_Post_v0.2.3_Actual_Use_Closure_2026-10-01.md) · [Completion Report](docs/V1_Post_v0.2.3_Actual_Use_Closure_2026-10-01_Completion_Report.md) · [Master Control §42](PROJECT_MASTER_CONTROL.md)：15 项矩阵、自动化 gate、真实 UI 证据与未闭合通道。
-- 公开版与源码态的区别：**v0.2.3 及更早的公开包不含本轮 15 项改动**；这 15 项改动随 `v0.2.4` 到达用户。`v0.2.4` 的下载地址、SHA-256 与验证结果见本页上方 `releases/latest` 链接与 `PROJECT_MASTER_CONTROL.md` §43.4。已发布版本一律冻结，不会被重建或覆盖。
-- 本轮改动清单（面向用户可见行为）见 [Feature Update Manual / v0.2.4](docs/feature-history/v0.2.4.md)：智能识别项目与普通文件夹、目录递归贡献图片视频素材、编辑区去除 B/I/S 与 Markdown 源码切换并直接编译语义、块工具条默认隐藏、分页控件随状态显示、去掉重复页面标题、PNG 缩略图与素材卡片、多选导入素材、重命名会真的改本地文件、DSH 风格模型设置、Grid 左右键交互恢复。
-- 产品状态：**公开版 v0.2.4 = 已发布，收口 15 项为 11 PASS / 2 PARTIAL（原生文件夹与素材面板手势需用户 GUI 会话）/ 1 BLOCKED（在线真实推理，`api.openai.com` 在本环境 60s 超时）**，不作整体 VERIFIED 或 DOGFOOD READY 结论；更早的 v0.2.3 GIF 动画在本机 WKWebView 未观察到，在线服务及若干精确交互/尺寸仍未验收
+- 当前交接：**v0.2.5 发布中**（收口内容 = 项目身份与多项目入口、媒体库滚动稳定性、九类文本 / 文档导入、映射后二次正文选择；实现与自测见 §45）
+- 当前状态：**V1 ACTIVE；本轮四块内容已全部实现并完成我方自测，按用户授权随 `v0.2.5` 提交、打 tag 并发布**（T01–T06 的 VERIFIED 为历史任务结论）
+- [Completion Report](docs/V0.2.5_Closure_2026-10-03_Completion_Report.md) · [Master Control §45](PROJECT_MASTER_CONTROL.md)：§33 19 项验收矩阵、自动化 gate、真实 UI 证据与未闭合通道；媒体库闪烁的大白话根因见 [docs/v0.2.5_media_flicker_root_cause.md](docs/v0.2.5_media_flicker_root_cause.md)。
+- 公开版与源码态的区别：**v0.2.4 及更早的公开包不含本轮四块改动**；这些改动随 `v0.2.5` 到达用户。`v0.2.5` 的下载地址、SHA-256 与验证结果以本页上方 `releases/latest` 链接与 `PROJECT_MASTER_CONTROL.md` §45.4 为准（发布验证完成后回填）。已发布版本一律冻结，不会被重建或覆盖。
+- 本轮改动清单（面向用户可见行为）见 [Feature Update Manual / v0.2.5](docs/feature-history/v0.2.5.md)：启动入口变成项目列表（重新定位 / 移除只动列表）、打开文件夹先诊断再动作且不会认错子项目、媒体库滚到底再往回滚不再闪烁、九类文本 / 文档作为正文导入（.txt/.text/.md/.markdown/.tex/.latex/.docx/.epub/.pdf）、映射确认后新增「选择要导入为正文的文档」窗口。
+- 产品状态：**公开版 v0.2.4 = 已发布**（上轮收口 15 项为 11 PASS / 2 PARTIAL / 1 BLOCKED）；**本轮 v0.2.5 = 实现与自动化验证完成，真实 Tauri 验收行按 UNCLOSED 如实记录**（原生窗口手势与真实在线 AI 两条通道继承未闭合，见 Completion Report §2 与 §9），不作整体 VERIFIED 或 DOGFOOD READY 结论
 - 分发状态：**PARTIAL / 公开下载可用**（v0.2.4 Universal DMG 与 SHA-256 sidecar 已匿名下载校验；制品为 ad-hoc signed，无 `TeamIdentifier`，`spctl --assess --type execute` 为 `rejected`，未做 Developer ID 签名或公证）
 - V0 状态：**V0 CLOSED；V0-T01 / V0-T02 / V0-T03 / V0-T04 全部 VERIFIED**
 - 最新公开版本为 [`v0.2.4`](https://github.com/wyzh0117/workbench/releases/tag/v0.2.4)（tag/source commit `4db396bf7c1953a62f72d3887d6ae07b03fcaa76`，workflow run `36906333256`）；[Universal DMG](https://github.com/wyzh0117/workbench/releases/download/v0.2.4/AI-Course-Workbench-macOS.dmg) 与 [SHA-256 sidecar](https://github.com/wyzh0117/workbench/releases/download/v0.2.4/AI-Course-Workbench-macOS.dmg.sha256) 已匿名下载核验（SHA-256 `82fdba5957f57d9650f74922197e9593e981be418515e6c7e34519164cef4dab`、`hdiutil verify` VALID、`x86_64 arm64`、版本 0.2.4）；[`v0.2.3`](https://github.com/wyzh0117/workbench/releases/tag/v0.2.3) 及其资产保持冻结。
-- NEXT ACTION：用户在真实窗口里补做原生验收（Grid 左/右键、原生多选导入、文件夹 vs 项目打开、放大动图播放、真实 IME）并发起第一次真实 AI 调用，清单见 `PROJECT_MASTER_CONTROL.md` §43.6；新问题按 v0.2.5 处理，下一次发布仍需单独授权；不创建 V1-T07，不关闭 V1。
+- NEXT ACTION：`v0.2.5` 发布完成后，用户在真实窗口里补做原生验收（启动页项目列表、原生打开面板、媒体库真实滚动、正文选择窗口点击、重启走查）并发起第一次真实 AI 调用，清单见 `PROJECT_MASTER_CONTROL.md` §45.3 与 Completion Report §2 的 UNCLOSED 行；新问题按下一个版本处理，下一次发布仍需单独授权；不创建 V1-T07，不关闭 V1。
 - 发版本身怎么操作（版本字段三处联动、Release Notes 规则、tag 与 workflow、发布后验证与回写、只有用户能做的部分）见 [docs/release-playbook.md](docs/release-playbook.md)。
 
 2026-10-02 v0.2.4 发布：用户授权「把项目同步到 GitHub，同时 tag 和发布新版本 release」后，源码提交 `4db396bf7c1953a62f72d3887d6ae07b03fcaa76` 推送 `main`，附注 tag `v0.2.4` 触发 workflow `36906333256`（`success`），Release 为当前 Latest（`isDraft=false`）。公开 Universal DMG（12,107,473 bytes）与 `.sha256` sidecar 匿名下载校验一致：SHA-256 `82fdba5957f57d9650f74922197e9593e981be418515e6c7e34519164cef4dab`、`hdiutil verify` VALID、`lipo -archs` = `x86_64 arm64`、包内版本 0.2.4。发布前与 tag 所在源码状态的自动化 gate 全绿：`deno task check`、Deno 522/522、`cargo fmt --check`、Rust 104/104、`cargo build`。两条验收通道按用户决定带着「未闭合」发布而非记成通过：原生窗口指针 / 面板手势 smoke（本环境 AppleScript `-1712`、截图 `could not create image from display`）与真实在线 AI 调用（`api.openai.com` 60 秒超时），逐条清单见 `PROJECT_MASTER_CONTROL.md` §43.6。正式 DMG 同样是 ad-hoc signed、无 `TeamIdentifier`、未公证，`spctl --assess --type execute` 返回 `rejected`。`v0.2.3` 及更早 tag / DMG / sidecar 未移动、未覆盖。发版操作步骤固化在 [docs/release-playbook.md](docs/release-playbook.md)。
@@ -133,6 +133,31 @@ T05/T06 自动化检查为 346/346，Rust 检查 78/78；这些是 §38 历史�
 
 2026-09-29 本地验证属于 v0.2.2 的历史快照，不代表当时的 v0.2.3 候选：当时的 Deno 357/357 与 Rust AI 定向 32/32 在后续导入改动前运行；原生 smoke 覆盖 PDF、图片/GIF、音视频、Markdown、课程地图、Undo/Redo 与导入素材副作用。真实在线 Provider 调用未验证。当前公开版本与逐项验收以本节上方摘要、`PROJECT_MASTER_CONTROL.md` §43 与 [Feature Update Manual / v0.2.4](docs/feature-history/v0.2.4.md) 为准。
 - 分发边界：v0.2.3 与 v0.2.4 均已公开且冻结；后续改动使用新的版本与 tag。Developer ID 签名、公证与签名版安装 smoke 仍需取得 Apple 分发凭据后完成。
+
+---
+
+## 路线规划（V2 · 只记录路线，不开发）
+
+**这一节不是开发授权。** V2 只有在 V1 正式收口并且用户明确批准之后才会激活；在那之前不创建 V2 任务卡、不改变当前版本状态。完整规划见 `PROJECT_MASTER_CONTROL.md` §4 与 §44。
+
+规划中的 V2 任务（编号沿用旧草案，暂不重新编号，避免任务名漂移）：
+
+| 编号 | 方向 | 要点 |
+| --- | --- | --- |
+| **V2-T02** | Project Library + Model & Skill Center | 把本轮的「历史项目列表」升级为真正的资源库（收藏 / 标签 / 封面 / 完成度 / 待补 / 路径状态 / 搜索筛选）；模型管理**只复用**已有能力，不扩传输层；新增 Skill 管理，与模型同处一个「设置 → AI」入口 |
+| **V2-T03** | Reuse & Templates | Block / Lesson / Stage 复制、模板、跨项目复制、素材复用；必须分清「复制」与「链接引用」，默认复制后独立，A 课的修改不得静默改到 B 课 |
+| **V2-T04** | Search / Audit / Maintenance | 跨项目搜索、待补与状态筛选、缺失素材检查、来源变化检查、长期未更新内容、外链检查、内容审计 |
+| **V2-T06** | Batch & Automation | 批量改状态 / 移动 / 重新导入 / 来源更新 / Requirement / AI Review / 摘要；仍然必须 Plan → Preview → 用户确认 → Apply，不做后台静默 Agent |
+
+规划的依赖顺序：**V2-T02 → V2-T03 → V2-T04 → V2-T06**（先有多项目管理，才谈跨项目复用，再做维护审计，最后才是批量自动化）。
+
+已经从路线中删除、不会自动恢复的方向：
+
+- `V2-T01 Universal Content Import`：用户要求的九类文本 / 文档格式已全部前移到 **v0.2.5** 本轮实现，「继续兼容更多文本文件」不再是独立路线；以后出现新格式按真实使用反馈进入 Backlog，不预先建设无限格式平台。
+- `V2-T05 AI / Connector Platform`：并入 V2-T02，**只保留 Skill**；MCP 平台、Connector 生态、新模型架构、新 Provider 协议框架全部删除。模型能力只使用已实现的部分，后续允许 bug 修复、Provider 兼容性修复、安全更新与必要的小幅 UX 调整，不再把模型管理扩成一个大系统。
+- `.gitignore` / `.workbenchignore` 式系统文件过滤方案（含各类目录黑名单）：此前提案废止，不开发。导入范围由「用户勾选的映射对象」+「明确支持的扩展名」两层自然收敛。
+
+Skill 的边界（V2-T02 开工时锁定细节）：安装不等于自动获得权限，至少区分读取 Block / 读取 Lesson / 读取 Course / 使用模型 / 提出 ChangeDraft；产出仍走 `Suggestion → ChangeDraft → Diff → 用户审阅 → Apply`，不得绕过 Canonical 安全边界，也不得偷偷切换更贵的模型或未授权账户。
 
 ---
 
@@ -197,6 +222,10 @@ PROJECT_ROOT=/path/to/project PORT=4174 deno run --allow-net --allow-read --allo
 - Preview 与导出读取同一份 Canonical 正文；单课完成度由六维状态 + 待补 + 素材 + 排版派生，不单独保存；
 - 重启后恢复上次的课、模式、右侧面板、所在视图与选中区块（UI session 不含凭据字段）。桌面壳把会话写入应用数据目录，已在真实窗口中验证「关闭 → 重启 → 继续」；浏览器壳把同一份会话写入 `<project>/.workspace/browser-session.json`（带版本号、字段白名单与 64KB 上限，只保存阅读位置这类可重建状态），刷新页面后课程位置与右侧面板都会恢复，文件缺失 / 损坏 / 属于别的项目时安全降级为默认视图而不是白屏或写错项目；
 - 切换项目只提交新项目自己的状态：按 `project_id` 分别保存每个项目的阅读位置，切换到 B 不会把 A 的课次或面板带过去，切回 A 时仍回到 A 原来的位置；切换失败时保留原项目会话，不写半套状态；
+- 打开文件夹先做只读分类再动作：有可用的 `project.json` 直接打开；属于旧 schema 先结构修复（`project.id` 原样保留）；坏文件 / 太新的文件 / 不是课程文件都给出具体字段级原因；没有 `project.json` 则进入导入扫描。父目录下每个子目录各是一个项目时，父目录不会被当成其中任何一个；
+- 应用级项目登记表与启动页：列出全部历史项目（最近打开优先、id 稳定排序），文件夹被移走的那一行标明「找不到」并可「重新定位」（新路径里的 `project.id` 必须一致）或「从列表移除」（只删行、不碰磁盘）；同一项目出现两个副本时询问用户而不是擅自合并。登记表是可重建索引：不含课程正文、不含任何密钥，删除它只丢「最近打开」列表；
+- 九类文本 / 文档作为正文导入（`.txt` `.text` `.md` `.markdown` `.tex` `.latex` `.docx` `.epub` `.pdf`）：按文档原本结构落位（标题层级、段落、加粗 / 斜体 / 删除线、引用、列表、代码、表格、链接、文档内嵌图片）；映射确认后媒体递归自动进素材库，文档候选进入「选择要导入为正文的文档」窗口（分组、全选 / 全不选 / 行点击）；导入严格服从已确认的映射计划，单文件失败只降级该文件，结果给出成功 / 降级 / 跳过 / 失败的逐文件回执；来源文件不移动、不改名、不删除、不覆盖，重复来源默认跳过、不静默替换已编辑正文；
+- 媒体库滚动稳定性：预览完成只就地更新对应卡片（不再整页重建）、正在显示的卡片不会被缓存淘汰、同一素材不会重复读取、淘汰前先重画再释放并给出「已释放 / 重试预览」，120 张卡来回滚动的回归用例钉住整条状态机（根因说明见 [docs/v0.2.5_media_flicker_root_cause.md](docs/v0.2.5_media_flicker_root_cause.md)）；
 - 项目被另一实例持有时启动会给出可读提示并保留上次位置，不会清空「继续工作」入口；前端资源加载失败时窗口显示失败原因，而不是空白页；
 - 写入前一致性校验：编号唯一、待补/素材/排版/收件箱引用完整，磁盘上的项目被替换时停止写入而不是覆盖；
 - 原子写入、自动保存恢复日志、项目锁、外部修改检测、历史版本恢复前备份；
@@ -228,10 +257,10 @@ PROJECT_ROOT=/path/to/project PORT=4174 deno run --allow-net --allow-read --allo
 - AI 面板不做逐字流式渲染：连接器已能归一化 SSE 与非流式响应，界面按完整结果展示；
 - 不做 AI 后台自动执行、多 Agent 调度、RAG / 向量数据库，也不做绕过 ChangeDraft 的直接写入；
 - 原生壳未提供在创作期间打开系统默认应用查看素材；键盘快捷键只保留撤销/重做/保存/搜索与快速收集；
-- Word/PDF 内容解析只作为参考素材导入，不伪装成可编辑正文；
+- 文本 / 文档导入的边界（如实说明）：扫描版 PDF 不做 OCR——没有文本层时只保留为参考文件并说明，不假装导入正文；PDF 只提取文本层，不导入内嵌图片（位置不可靠，保留原 PDF 为来源引用）、表单字段与批注，不执行任何 PDF 脚本，多栏按「页序 + 内容流顺序」输出；LaTeX 只做词法级识别，数学公式以代码形式保留（源码不丢），未知命令按原文保留并提示；`.txt` 刻意不猜标题（全部按段落）；EPUB 不解析 CSS（只用 class 名做弱标题提示）；DOCX 忽略 Word 主题 / 字体 / 字号 / 颜色 / 页边距 / 页眉页脚 / 文本框 / WordArt 等装饰样式；未列出的文件类型既不自动作为正文也不自动作为素材——不做 `.gitignore` / `.workbenchignore` 式系统文件过滤，也不做目录黑名单；
 - 浏览器 UI 是无依赖审查壳，文件选择和复杂拖拽体验仍需接入正式 Tauri 命令；
 - 不提供后台聊天抓取，不将 API Key、Cookie、Token 写入项目、Git、导出或诊断包。
 
 ## 目录边界
 
-`src/domain/` 保存 Canonical schema 与确定性业务规则；`src/service/` 保存存储/恢复、错误/诊断、搜索、连接器、AI 传输、导入/导出和高层命令；`src/ui/` 是 UI 契约与 Grid 计算；`app/` 是可直接打开的 Web UI（`authoring.js` 是课程地图/单课/完成度投影，`ai.js` 是 AI 上下文装配与连接器契约，`views.js` 是渲染层，`canvas.js` 是素材预览缓存，`constants.js` 是壳与视图层共用常量，`main.js` 是存储模型与桌面桥接）；`src-tauri/` 只负责受限桌面桥接。SQLite、日志、恢复、AI 执行记录和缩略图等工作台数据不得反过来成为项目唯一真相。
+`src/domain/` 保存 Canonical schema 与确定性业务规则；`src/service/` 保存存储/恢复、错误/诊断、搜索、连接器、AI 传输、导入/导出和高层命令；`src/ui/` 是 UI 契约与 Grid 计算；`app/` 是可直接打开的 Web UI（`authoring.js` 是课程地图/单课/完成度投影，`ai.js` 是 AI 上下文装配与连接器契约，`views.js` 是渲染层，`canvas.js` 是素材预览缓存，`constants.js` 是壳与视图层共用常量，`main.js` 是存储模型与桌面桥接）；`src-tauri/` 负责受限桌面桥接，以及文本 / 文档解析层（`src-tauri/src/documents/`）与应用级项目登记表（`registry.rs`）。SQLite、日志、恢复、AI 执行记录和缩略图等工作台数据不得反过来成为项目唯一真相。

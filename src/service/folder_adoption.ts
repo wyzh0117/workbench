@@ -25,10 +25,18 @@ import { createInboxItem } from "../domain/workflow.ts";
 import { ADOPTABLE_FILE_KINDS, scanMediaDescendants } from "./folder_scan.ts";
 import type { MediaDescendantScan } from "./folder_scan.ts";
 import type {
+  DocumentImportFile,
+  DocumentImportOutcome,
+  DocumentImportReport,
   ImportMappingItem,
   ImportMappingPlan,
   ImportMappingDestination,
   MappingRole,
+} from "./folder_mapping.ts";
+import {
+  DOCUMENT_IMPORT_EXTENSIONS,
+  documentImportReportFromFiles,
+  isDocumentImportCandidate,
 } from "./folder_mapping.ts";
 import { ProjectDirectoryStore, inspectProjectDirectory } from "./storage.ts";
 import { parseMarkdown } from "../../app/markdown.js";
@@ -66,9 +74,22 @@ export interface FolderAdoptionResult {
   copied_files: string[];
   /** Always empty — originals are never relocated. */
   copied_original_paths?: string[];
+  /**
+   * §28 — per-document outcome of the body-content import, present only when the
+   * confirmed plan actually carried document candidates. The same key the native
+   * shell returns, so the dialog's result panel reads one shape from both.
+   */
+  document_import?: DocumentImportReport;
 }
 
 const TEXT_EXT = new Set([".md", ".markdown", ".txt"]);
+/**
+ * §18 formats this shell can genuinely turn into blocks. The rest of the §18
+ * list (`tex` / `latex` / `docx` / `epub` / `pdf`) is NOT parsed here — no
+ * TypeScript parser is faked for this report — so a lesson-mapped one records an
+ * honest `failed` row instead of pushing binary bytes into a paragraph block.
+ */
+const BROWSER_BODY_EXTENSIONS = new Set([".md", ".markdown", ".txt", ".text"]);
 // Mirrors `normalize_asset_type` / `mime_for_filename` in src-tauri/src/lib.rs
 // and ASSET_EXTENSIONS in src/service/folder_scan.ts. Adding an extension here
 // without adding it there makes a folder adopted in the browser and reopened in
@@ -712,6 +733,25 @@ export async function confirmFolderAdoption(
   const staged: Array<{ staging: string; final: string }> = [];
   const stagingRoot = `.workspace/adopt-staging/${crypto.randomUUID()}`;
 
+  /**
+   * §28 — one row per document the body dialog sent. Written only for rows that
+   * were candidates, and one unreadable or unsupported file never aborts the
+   * batch: it records its own outcome and the loop carries on.
+   */
+  const documentFiles: DocumentImportFile[] = [];
+  const documentSeen = new Set<string>();
+  const recordDocument = (
+    item: ImportMappingItem,
+    outcome: DocumentImportOutcome,
+    reason = "",
+  ): void => {
+    if (!isDocumentImportCandidate(item)) return;
+    const rel = item.relative_path.replaceAll("\\", "/");
+    if (documentSeen.has(rel)) return;
+    documentSeen.add(rel);
+    documentFiles.push({ relative_path: rel, outcome, reason });
+  };
+
   try {
   const items = await expandSelectedDirectoryMedia(
     sourceRoot,
@@ -750,6 +790,7 @@ export async function confirmFolderAdoption(
       const stat = await Deno.lstat(sourceAbs);
       if (stat.isSymlink) {
         result.warnings.push(`${rel}: 已跳过符号链接`);
+        recordDocument(item, "skipped", "符号链接已跳过，正文未写入；原文件保持原地。");
         continue;
       }
       bytes = await Deno.readFile(sourceAbs);
@@ -759,6 +800,11 @@ export async function confirmFolderAdoption(
           caught instanceof Error ? caught.message : String(caught)
         }）`,
       );
+      recordDocument(
+        item,
+        "failed",
+        `无法读取源文件（${caught instanceof Error ? caught.message : String(caught)}）；原文件保持原地。`,
+      );
       continue;
     }
     const checksum = await sha256Bytes(bytes);
@@ -766,6 +812,20 @@ export async function confirmFolderAdoption(
 
     if (role === "lesson") {
       const ext = extension(filename);
+      // §18 / §28 honesty: this shell has no parser for the container formats in
+      // the §18 list, and decoding their bytes into a paragraph would be a false
+      // success. Record the one file as failed and keep going with the batch.
+      if (
+        !BROWSER_BODY_EXTENSIONS.has(ext) &&
+        (DOCUMENT_IMPORT_EXTENSIONS as readonly string[]).includes(ext)
+      ) {
+        recordDocument(
+          item,
+          "failed",
+          "浏览器版不解析这种文档格式，需要用桌面应用导入正文；这个文件没有写入，源文件保持原地。",
+        );
+        continue;
+      }
       const format: "markdown" | "text" = TEXT_EXT.has(ext) &&
           ext !== ".txt"
         ? "markdown"
@@ -786,6 +846,13 @@ export async function confirmFolderAdoption(
         result.warnings.push(sourceMatch.state === "same_content"
           ? `${rel}: SHA-256与${sourceMatch.item ? `已导入课时「${sourceMatch.title}」` : `曾导入来源「${sourceMatch.title}」（目标课时已删除）`}一致；默认跳过，已有编辑内容保持不变。`
           : `${rel}: 来源路径已有较旧导入「${sourceMatch.title}」${sourceMatch.item ? "" : "（目标课时已删除）"}（SHA-256 ${sourceMatch.previousHash.slice(0, 12)}）；默认跳过以避免静默替换，请明确选择“作为新版本导入”。`);
+        recordDocument(
+          item,
+          "skipped",
+          sourceMatch.state === "same_content"
+            ? `内容与已导入来源「${sourceMatch.title}」相同（SHA-256 一致），默认跳过；已有正文没有被改写。`
+            : `来源路径已有旧版导入「${sourceMatch.title}」，默认跳过以避免静默替换；可在映射预览里明确选择导入新版本。`,
+        );
         continue;
       }
       if (sourceMatch) {
@@ -931,6 +998,13 @@ export async function confirmFolderAdoption(
         }
       }
       if (!result.content_item_ids.includes(lesson.id)) result.content_item_ids.push(lesson.id);
+      recordDocument(
+        item,
+        parsed?.warnings.length ? "degraded" : "succeeded",
+        parsed?.warnings.length
+          ? `正文已导入，但有 ${parsed.warnings.length} 项格式未能原样保留：${parsed.warnings[0] ?? ""}`
+          : "",
+      );
       continue;
     }
 
@@ -1069,6 +1143,13 @@ export async function confirmFolderAdoption(
     await cleanupStaging(root, staged, stagingRoot);
   } else {
     await cleanupStaging(root, staged, stagingRoot);
+  }
+
+  // §28 — the tally rides along with the import result under the same key the
+  // native shell uses, so the dialog reads one shape from both. No document
+  // candidates, no key: the caller keeps showing the ordinary warning list.
+  if (documentFiles.length) {
+    result.document_import = documentImportReportFromFiles(documentFiles);
   }
 
   return result;

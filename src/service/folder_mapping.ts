@@ -127,6 +127,161 @@ export function mappingRoleFromSuggested(role: SuggestedRole): MappingRole {
 }
 
 /**
+ * §18 — the text/document formats that may become lesson body content once the
+ * Mapping Plan is confirmed. Media is absent on purpose: images and videos
+ * already auto-import into the Media Library under §17.
+ *
+ * `app/constants.js` carries the shell-side twin of this list; the dialog test
+ * asserts the two stay identical.
+ */
+export const DOCUMENT_IMPORT_EXTENSIONS: readonly string[] = [
+  ".txt",
+  ".text",
+  ".md",
+  ".markdown",
+  ".tex",
+  ".latex",
+  ".docx",
+  ".epub",
+  ".pdf",
+];
+
+/** §28 — the only outcomes one document import may report. */
+export type DocumentImportOutcome = "succeeded" | "degraded" | "skipped" | "failed";
+
+export const DOCUMENT_IMPORT_OUTCOMES: readonly DocumentImportOutcome[] = [
+  "succeeded",
+  "degraded",
+  "skipped",
+  "failed",
+];
+
+/** §28 — one row of the per-file import list. `reason` is display copy. */
+export interface DocumentImportFile {
+  relative_path: string;
+  outcome: DocumentImportOutcome;
+  reason: string;
+}
+
+/** §28 — the tally plus the per-file list a shell returns with an import. */
+export interface DocumentImportReport {
+  succeeded: number;
+  degraded: number;
+  skipped: number;
+  failed: number;
+  files: DocumentImportFile[];
+}
+
+/** Lowercased extension of a relative path, or "" when the row has none. */
+export function documentImportExtension(relativePath: string): string {
+  const name = String(relativePath ?? "").replaceAll("\\", "/").split("/").pop() || "";
+  const dot = name.lastIndexOf(".");
+  return dot > 0 ? name.slice(dot).toLowerCase() : "";
+}
+
+/** The original relative directory of a row ("" when it sits at the root). */
+export function documentImportDirectory(relativePath: string): string {
+  const path = String(relativePath ?? "").replaceAll("\\", "/");
+  const slash = path.lastIndexOf("/");
+  return slash < 0 ? "" : path.slice(0, slash);
+}
+
+/**
+ * §16 / §18 — a confirmed-plan row the body dialog may offer.
+ *
+ * `lesson` is the only mapping that becomes 正文 in either shell, so the dialog
+ * re-infers nothing (§19); media rows and rows the preview cannot read stay out.
+ */
+export function isDocumentImportCandidate(item: ImportMappingItem | undefined): boolean {
+  if (!item) return false;
+  if (item.kind !== "file") return false;
+  if (item.selected !== true) return false;
+  if (item.mapping !== "lesson") return false;
+  if (item.error) return false;
+  return (DOCUMENT_IMPORT_EXTENSIONS as readonly string[]).includes(
+    documentImportExtension(item.relative_path),
+  );
+}
+
+/** Candidate rows of a plan, copied so the dialog cannot write through. */
+export function collectDocumentImportCandidates(
+  plan: ImportMappingPlan | null | undefined,
+): ImportMappingItem[] {
+  const items = Array.isArray(plan?.items) ? plan.items : [];
+  return items
+    .filter((item) => isDocumentImportCandidate(item))
+    .map((item) => ({
+      ...item,
+      destination: item.destination ? { ...item.destination } : null,
+    }));
+}
+
+/** §18.2 — candidates grouped by their original relative directory, never flat. */
+export interface DocumentImportGroup {
+  directory: string;
+  items: ImportMappingItem[];
+}
+
+export function groupDocumentImportCandidates(
+  items: readonly ImportMappingItem[],
+): DocumentImportGroup[] {
+  const buckets = new Map<string, ImportMappingItem[]>();
+  for (const item of items) {
+    const directory = documentImportDirectory(item.relative_path);
+    const bucket = buckets.get(directory);
+    if (bucket) bucket.push(item);
+    else buckets.set(directory, [item]);
+  }
+  return [...buckets.entries()]
+    .map(([directory, rows]) => ({ directory, items: rows }))
+    .sort((left, right) => {
+      if (left.directory === right.directory) return 0;
+      if (!left.directory) return -1;
+      if (!right.directory) return 1;
+      return left.directory < right.directory ? -1 : 1;
+    });
+}
+
+/**
+ * §19 / §31 — apply the dialog's answer to a confirmed plan.
+ *
+ * Deselected candidates lose their `selected` flag and are therefore not sent;
+ * every other row — mapping, destination, duplicate acknowledgement — is
+ * forwarded verbatim and the plan stays confirmed. Only rows the dialog could
+ * have shown are writable here: an arbitrary path cannot switch off a stage.
+ */
+export function applyDocumentImportDeselection(
+  plan: ImportMappingPlan,
+  deselected: readonly string[],
+): ImportMappingPlan {
+  const paths = new Set(
+    (Array.isArray(deselected) ? deselected : [])
+      .map((path) => String(path ?? "").replaceAll("\\", "/")),
+  );
+  const next = clonePlan(plan);
+  for (const item of next.items) {
+    if (!paths.has(item.relative_path)) continue;
+    if (!isDocumentImportCandidate(item)) continue;
+    item.selected = false;
+  }
+  return next;
+}
+
+/** Count a report's own rows, so a shell that sends only `files` is still honest. */
+export function documentImportReportFromFiles(
+  files: readonly DocumentImportFile[],
+): DocumentImportReport {
+  const counts: Record<DocumentImportOutcome, number> = {
+    succeeded: 0,
+    degraded: 0,
+    skipped: 0,
+    failed: 0,
+  };
+  for (const file of files) counts[file.outcome] += 1;
+  return { ...counts, files: files.map((file) => ({ ...file })) };
+}
+
+/**
  * Chinese label for a mapping role.
  * Pass `{ suggestion: true }` to prefix 建议 (advice, not fact).
  */

@@ -631,6 +631,22 @@ async function waitForMarkdownPreview(store: { ui: Record<string, unknown> }) {
   throw new Error("Markdown dependency preview did not settle");
 }
 
+/**
+ * §18 inserts a body-document dialog between confirming the mapping plan and
+ * writing anything, so a plan that carries document candidates now needs a second
+ * click. These tests assert the import behind that click, so the dialog is answered
+ * with its default — every row already selected — which leaves the plan byte-for-byte
+ * what the preview confirmed.
+ */
+async function acceptDocumentImportDialog(store: {
+  ui: Record<string, unknown>;
+  confirmDocumentImportSelection: () => Promise<void>;
+}) {
+  if (!store.ui.documentImportDialog) return;
+  await store.confirmDocumentImportSelection();
+  await new Promise((resolve) => setTimeout(resolve, 0));
+}
+
 async function bootStore() {
   const source = createEmptyProjectData("接管 UI 测试");
   const seed = createCourseSeed(source, {
@@ -822,6 +838,7 @@ async function bootStore() {
     openImportMappingPreview: () => void;
     confirmImportMapping: () => Promise<void>;
     applyFolderAdoption: () => Promise<void>;
+    confirmDocumentImportSelection: () => Promise<void>;
     undo: () => void;
     redo: () => void;
     flush: () => Promise<boolean>;
@@ -873,7 +890,7 @@ Deno.test("UI confirmation performs one adopt action and keeps row controls dist
       (store.ui.importMappingPlan as ImportMappingPlan).confirmed === true,
       "confirm marks the plan before executing it",
     );
-    await new Promise((resolve) => setTimeout(resolve, 0));
+    await acceptDocumentImportDialog(store);
     const adoptsAfter = state.adopts.length;
     assert(
       adoptsAfter === 1,
@@ -908,6 +925,7 @@ Deno.test("failed import keeps the editable plan, shows a persistent safe reason
     state.adoptFailure = "permission denied";
 
     await store.confirmImportMapping();
+    await acceptDocumentImportDialog(store);
 
     const plan = store.ui.importMappingPlan as ImportMappingPlan;
     assert(!plan.confirmed, "a failed pre-commit import must unlock the plan");
@@ -941,6 +959,7 @@ Deno.test("failed import keeps the editable plan, shows a persistent safe reason
 
     state.adoptFailure = "";
     await store.confirmImportMapping();
+    await acceptDocumentImportDialog(store);
     assert(state.adopts.length === 2, "a second confirmation must retry the same plan");
     assert(String(store.ui.route) === "map", "successful retry must open the course map");
     assert(!store.ui.importMappingError, "success must clear the persistent error");
@@ -966,6 +985,7 @@ Deno.test("folder append is one undoable Canonical change and never removes sour
     store.openImportMappingPreview();
     await waitForMarkdownPreview(store);
     await store.confirmImportMapping();
+    await acceptDocumentImportDialog(store);
 
     assert(state.appends.length === 1, "confirmed append should execute once");
     const imported = store.data.blocks.find((block) => block.content === "通过追加计划导入的正文");

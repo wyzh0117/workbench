@@ -9,7 +9,13 @@
  * `data-action` attributes that `main.js` binds.
  */
 
-import { PROJECT_FILE_PICKER } from "./constants.js";
+import {
+  DOCUMENT_IMPORT_TYPE_LABELS,
+  PROJECT_FILE_PICKER,
+  documentImportExtension,
+  documentImportTallyText,
+  groupDocumentImportCandidates,
+} from "./constants.js";
 import { renderMarkdown } from "./markdown.js";
 import {
   MEDIA_REQUIREMENT_TYPES,
@@ -82,6 +88,21 @@ const BLOCK_PALETTE = [
 ];
 const RIGHT_PANEL_LABELS = Object.fromEntries(RIGHT_PANELS);
 const MODE_LABELS = Object.fromEntries(EDITOR_MODES);
+
+/**
+ * The user's home directory, or "" — a path label is a nicety, never a failure.
+ *
+ * `Deno.env.get` does not return undefined when the process lacks env
+ * permission, it throws, so an optional-looking read here can blank the whole
+ * start page. The browser and the Tauri webview have no `Deno` at all.
+ */
+function readHomeDirectory() {
+  try {
+    return String(globalThis.Deno?.env?.get?.("HOME") || globalThis.process?.env?.HOME || "");
+  } catch {
+    return "";
+  }
+}
 
 export function createViews(store) {
   const esc = (value) =>
@@ -161,6 +182,38 @@ export function createViews(store) {
   };
 
   /**
+   * The identity of the preview a card paints. Emitted on the frame in EVERY
+   * state — waiting, loading, ready and error — because a frame that stops
+   * advertising its key cannot be found again to be repainted, and the preview
+   * cache pins an entry to the card that is showing it.
+   */
+  const previewKey = (asset) =>
+    asset && asset.id && typeof store.assetPreview.keyFor === "function"
+      ? store.assetPreview.keyFor(asset)
+      : "";
+
+  /**
+   * The one box every preview state paints inside.
+   *
+   * Waiting, reading, ready and failed are its *content*, so a card's height is
+   * the frame's height and never changes when a preview settles — a changing
+   * card height moved the scroll offset and the observer boundaries, which is
+   * half of the twitching. The two data attributes are also how `main.js`
+   * repaints just this frame when a preview settles instead of rebuilding the
+   * whole screen, and how the cache knows which entries are still on screen.
+   */
+  const previewFrame = (asset, surface, inner, attrs = "") => {
+    const key = previewKey(asset);
+    return `<div class="asset-preview-frame asset-preview-frame--${surface}"${
+      key
+        ? ` data-asset-preview-key="${esc(key)}" data-asset-preview-asset="${
+          esc(asset.id)
+        }"`
+        : ""
+    } data-asset-preview-surface="${surface}"${attrs}>${inner}</div>`;
+  };
+
+  /**
    * Thumbnails: images/GIF as <img>, video as a muted poster card, Markdown as
    * text, PDF/DOCX as attachment cards — never a blank board.
    */
@@ -170,12 +223,14 @@ export function createViews(store) {
     if (preview && preview.failed) {
       return `<span class="asset-thumb" role="img" aria-label="${esc(label)}预览失败">⚠<small>预览失败</small><small>${esc(preview.error || "素材不可读")}</small><small>请检查文件或重新导入</small></span>`;
     }
+    if (preview?.released) {
+      // Memory budget took this settled thumbnail back. It is not "coming soon",
+      // so offer the one thing that is true: load it again on request.
+      return `<span class="asset-thumb" title="为了控制内存，这张缩略图已释放" style="flex-direction:column;gap:3px;padding:6px">${esc(label)}<small>缩略图已释放</small>${retryAssetPreviewButton(asset, true)}</span>`;
+    }
     if (!preview || preview.loading) {
-      const key = preview?.key
-        ? ` data-asset-preview-key="${esc(preview.key)}"`
-        : "";
       const pending = Boolean(preview?.pending);
-      return `<span class="asset-thumb"${key} title="${pending ? "正在读取素材预览" : "靠近素材时加载预览"}">${preview?.loading ? pending ? "正在读取" : "等待加载" : "预览未加载"}</span>`;
+      return `<span class="asset-thumb" title="${pending ? "正在读取素材预览" : "靠近素材时加载预览"}">${preview?.loading ? pending ? "正在读取" : "等待加载" : "预览未加载"}</span>`;
     }
     const url = preview.url || "";
     if (url && isImageLike(asset)) {
@@ -224,22 +279,285 @@ export function createViews(store) {
       return mediaOpenButton(asset, preview.thumbnailUrl || url, label);
     }
     if (preview?.pdf && url) {
-      return `<iframe class="asset-pdf-preview" src="${esc(url)}" title="${esc(label)} · PDF 第一页预览" loading="lazy" referrerpolicy="no-referrer" style="display:block;width:100%;height:180px;border:0;background:#f4f4f4"></iframe>`;
+      // No inline height: the frame owns it, so a PDF card is exactly as tall as
+      // the placeholder it replaces.
+      return `<iframe class="asset-pdf-preview" src="${esc(url)}" title="${esc(label)} · PDF 第一页预览" loading="lazy" referrerpolicy="no-referrer"></iframe>`;
     }
     if (asset.type === "video" && url && preview.posterUrl) {
       const duration = mediaDuration(preview.durationSeconds);
       const poster = mediaOpenButton(asset, preview.posterUrl, label, `${label} · 视频首帧`);
-      return duration ? `<div>${poster}<small class="muted">${duration}</small></div>` : poster;
+      return duration
+        ? `<div class="asset-media-duration">${poster}<small class="muted">${duration}</small></div>`
+        : poster;
     }
     if (asset.type === "audio" && url) {
       const player = `<audio class="asset-audio" src="${esc(url)}" controls preload="metadata" aria-label="${esc(label)}"></audio>`;
       const duration = mediaDuration(preview.durationSeconds);
-      return duration ? `<div>${player}<small class="muted">${duration}</small></div>` : player;
+      return duration
+        ? `<div class="asset-media-duration">${player}<small class="muted">${duration}</small></div>`
+        : player;
     }
     return assetThumb(asset);
   };
 
+  /**
+   * The media body of one editor block, on its own so a settled preview can be
+   * written back into the frame that already exists.
+   */
+  const mediaSlotBody = (asset) => {
+    const preview = assetPreview(asset);
+    const url = preview?.url || "";
+    const text = preview?.text;
+    if (asset.type === "video" && url && preview.posterUrl) {
+      return mediaOpenButton(asset, preview.posterUrl, asset.title || asset.filename, `${asset.filename} · 视频首帧`);
+    }
+    if (asset.type === "audio" && url) {
+      return `<audio class="asset-audio" src="${esc(url)}" controls preload="metadata"></audio>`;
+    }
+    if ((asset.type === "image" || asset.type === "gif") && url) {
+      return mediaOpenButton(asset, asset.type === "gif" ? preview.thumbnailUrl : url, asset.title || asset.filename);
+    }
+    if (preview?.pdf && url) {
+      return `<iframe class="media-pdf-preview" src="${esc(url)}" title="${esc(asset.title || asset.filename)} · PDF 第一页预览" loading="lazy" referrerpolicy="no-referrer" style="display:block;width:100%;height:420px;border:0;background:#f4f4f4"></iframe>`;
+    }
+    // Markdown and other text bundles are material too: show the beginning
+    // of the real file instead of an empty slot.
+    if (typeof text === "string") {
+      return `<pre class="media-document">${
+        esc(text.slice(0, 1200) || "（空文档）")
+      }</pre>`;
+    }
+    if (preview && preview.failed) {
+      return `<div class="media-slot failed"><b>${esc(asset.filename)} · ${esc(assetLabel(asset.type))} 预览失败</b><small>${esc(preview.error || "素材不可读")}</small><small>请检查文件内容，或在媒体库替换为可读取的文件。</small>${retryAssetPreviewButton(asset)}</div>`;
+    }
+    if (preview?.loaded) {
+      // This file is readable, but the current WebView has no renderer.
+      return `<div class="media-slot attachment">📎 ${
+        esc(asset.title || asset.filename)
+      }（${esc(assetLabel(asset.type))} · ${esc(asset.type === "other" ? "当前格式不支持内嵌预览" : "参考文件，当前没有正文解析")})</div>`;
+    }
+    if (preview?.released) {
+      return `<div class="media-slot loading">缩略图已释放${retryAssetPreviewButton(asset)}</div>`;
+    }
+    if (preview?.loading) {
+      return `<div class="media-slot loading">${preview.pending ? "正在读取素材预览…" : "靠近素材时加载预览…"}</div>`;
+    }
+    return `<div class="media-slot failed"><b>${esc(asset.filename)} 暂不可用</b><small>${asset.archived ? "素材已归档" : "找不到可读取的素材预览"}；请在媒体库检查或重新添加。</small></div>`;
+  };
+
+  const previewMediaBody = (asset, block = null) => {
+    const preview = assetPreview(asset);
+    const url = preview?.url || "";
+    if (preview?.failed) {
+      return `<div class="preview-media-failed"><b>${esc(asset.filename)} · ${esc(assetLabel(asset.type))} 预览失败</b><p>${esc(preview.error || "素材不可读")}</p><p class="muted">请检查文件内容，或在媒体库替换为可读取的文件。</p>${retryAssetPreviewButton(asset)}</div>`;
+    }
+    if (preview?.released) {
+      return `<div class="preview-placeholder">缩略图已释放，可重新读取 ${esc(asset.filename)}${retryAssetPreviewButton(asset)}</div>`;
+    }
+    if (preview?.loading) {
+      return `<div class="preview-placeholder">${preview.pending ? "正在读取" : "等待加载"} ${esc(asset.filename)}…</div>`;
+    }
+    if ((asset.type === "image" || asset.type === "gif") && url) {
+      const label = asset.title || asset.filename;
+      return `<figure>${mediaOpenButton(asset, asset.type === "gif" ? preview.thumbnailUrl : url, label)}<figcaption>${esc(label)}</figcaption></figure>`;
+    }
+    if (asset.type === "video" && url && preview.posterUrl) {
+      return `<figure>${mediaOpenButton(asset, preview.posterUrl, asset.title || asset.filename, `${asset.filename} · 视频首帧`)}<figcaption>${
+        esc(asset.title || asset.filename)
+      }</figcaption></figure>`;
+    }
+    if (asset.type === "audio" && url) {
+      return `<figure><audio src="${esc(url)}" controls preload="metadata"></audio><figcaption>${
+        esc(asset.title || asset.filename)
+      }</figcaption></figure>`;
+    }
+    if (preview?.pdf && url) {
+      return `<figure class="preview-pdf"><iframe src="${esc(url)}" title="${esc(asset.title || asset.filename)} · PDF 第一页预览" loading="lazy" referrerpolicy="no-referrer" style="display:block;width:100%;height:560px;border:0;background:#f4f4f4"></iframe><figcaption>${esc(asset.title || asset.filename)} · PDF 第一页</figcaption></figure>`;
+    }
+    const text = preview?.text;
+    if (typeof text === "string") {
+      const sample = text.slice(0, 4000);
+      const isMarkdown = asset.mime_type === "text/markdown" || /\.(md|markdown)$/i.test(asset.filename || "");
+      return `<figure class="preview-document"><figcaption>${
+        esc(asset.title || asset.filename)
+      } · ${isMarkdown ? "Markdown 摘要" : "文本摘要"}</figcaption>${
+        isMarkdown
+          ? `<div class="preview-markdown">${renderMarkdown(sample, { resolveImage: markdownImageResolver(block || { settings: {} }) })}</div>`
+          : `<pre class="preview-markdown">${esc(sample || "（空文档）")}</pre>`
+      }</figure>`;
+    }
+    if (preview?.loaded) return `<p class="preview-attachment">📎 ${
+      esc(asset.title || asset.filename)
+    }（${esc(assetLabel(asset.type))} · ${esc(asset.type === "other" ? "当前格式不支持内嵌预览" : "参考文件，当前没有正文解析")})</p>`;
+    return `<div class="preview-media-failed"><b>${esc(asset.filename)} 暂不可用</b><p>${asset.archived ? "素材已归档" : "找不到可读取的素材预览"}；请在媒体库检查或重新添加。</p></div>`;
+  };
+
+  /**
+   * The enlarged media modal's body, on its own so a video or image that
+   * finishes loading paints itself without rebuilding the screen behind it.
+   */
+  const overlayMediaBody = (asset) => {
+    const label = asset.title || asset.filename || "素材";
+    const canPreview = !asset.archived &&
+      (isImageLike(asset) || asset.type === "video");
+    const preview = canPreview ? assetPreview(asset) : null;
+    if (!canPreview) return `<p class="preview-media-failed">素材当前不可用。</p>`;
+    if (preview?.failed) {
+      return `<div class="preview-media-failed"><b>${esc(asset.filename)} · ${esc(assetLabel(asset.type))} 预览失败</b><p>${esc(preview.error || "素材不可读")}</p>${retryAssetPreviewButton(asset)}</div>`;
+    }
+    if (preview?.loading) {
+      return `<div class="preview-placeholder">正在读取 ${esc(label)}…</div>`;
+    }
+    if (asset.type === "video" && preview?.url && preview.posterUrl) {
+      return `<div class="asset-video-stage" style="display:grid;place-items:center;position:relative"><video class="asset-preview-video" src="${esc(preview.url)}" poster="${esc(preview.posterUrl)}" controls preload="none" playsinline aria-label="${esc(label)}" style="display:block;margin:12px auto;max-height:72vh;max-width:100%"></video><button type="button" class="asset-video-play" data-action="play-asset-video" aria-label="播放视频" title="播放视频" style="align-items:center;background:#111b;border:0;border-radius:50%;color:white;cursor:pointer;display:flex;font-size:28px;height:64px;justify-content:center;left:50%;position:absolute;top:50%;transform:translate(-50%,-50%);width:64px">▶</button></div>${
+        preview.width && preview.height
+          ? `<small class="muted" style="text-align:center">${preview.width} × ${preview.height}</small>`
+          : ""
+      }`;
+    }
+    if (preview?.url) {
+      return `<img class="asset-image ${asset.type === "gif" ? "asset-gif-preview" : ""}" ${asset.type === "gif" ? 'data-animated-preview="true"' : ""} src="${esc(preview.url)}" alt="${esc(label)}" style="display:block;margin:12px auto;max-height:72vh;max-width:100%;object-fit:contain" />${
+        preview.width && preview.height
+          ? `<small class="muted" style="text-align:center">${preview.width} × ${preview.height}</small>`
+          : ""
+      }`;
+    }
+    return `<p class="preview-media-failed">${esc(label)} 暂无可显示的预览。</p>`;
+  };
+
+  /**
+   * The surfaces that paint an asset preview, keyed by the
+   * `data-asset-preview-surface` written on their frame. `main.js` repaints a
+   * settled preview through this table; a surface that is not here (a Markdown
+   * image inside a rich editor, whose markup `markdown.js` owns) is left to the
+   * ordinary rebuild path.
+   */
+  const assetPreviewSurfaces = {
+    card: (asset) => mediaLibraryPreview(asset),
+    thumb: (asset) => assetThumb(asset),
+    block: (asset) => mediaSlotBody(asset),
+    preview: (asset, block) => previewMediaBody(asset, block),
+    overlay: (asset) => overlayMediaBody(asset),
+  };
+
+  /**
+   * Frame content for one asset on one surface, or null when that surface has
+   * no in-place renderer. Null is what makes the cache fall back to `notify()`
+   * for it — and only for it.
+   */
+  function assetPreviewFrameInner(asset, surface, block = null) {
+    const render = assetPreviewSurfaces[surface];
+    if (!render || !asset) return null;
+    return render(asset, block);
+  }
+
   /* ---------------------------------------------------------------- shell */
+
+  /** `last_opened_at` as the start page reads it: recent, then dated. */
+  function registryTimeLabel(value) {
+    const stamp = Date.parse(String(value || ""));
+    if (!Number.isFinite(stamp)) return "上次打开时间未知";
+    const minutes = Math.floor((Date.now() - stamp) / 60000);
+    if (minutes < 1) return "刚刚打开";
+    if (minutes < 60) return `${minutes} 分钟前打开`;
+    const hours = Math.floor(minutes / 60);
+    if (hours < 24) return `${hours} 小时前打开`;
+    const days = Math.floor(hours / 24);
+    if (days < 30) return `${days} 天前打开`;
+    const date = new Date(stamp);
+    const sameYear = date.getFullYear() === new Date().getFullYear();
+    return `${date.getMonth() + 1} 月 ${date.getDate()} 日打开${sameYear ? "" : ` · ${date.getFullYear()} 年`}`;
+  }
+
+  /** A path the row can show without overflowing: home is `~`, the tail wins. */
+  function shortRegistryPath(value) {
+    const raw = String(value || "").trim();
+    if (!raw) return "位置未知";
+    const home = readHomeDirectory();
+    const shown = home && raw.startsWith(home) ? `~${raw.slice(home.length)}` : raw;
+    const parts = shown.split("/").filter(Boolean);
+    if (shown.length <= 46 || parts.length < 3) return shown;
+    return `…/${parts.slice(-2).join("/")}`;
+  }
+
+  /**
+   * §5 — every project this install has opened, newest first.
+   *
+   * The list is the registry, not a scan: a row whose folder no longer answers
+   * stays visible and offers 重新定位, because forgetting a project the user
+   * worked on is worse than showing a stale one. Opening a row reads that
+   * folder's `project.json` and checks its id — the same route 「打开项目文件夹」
+   * takes — so a moved or replaced folder cannot be adopted under this title.
+   */
+  function registryListView(esc) {
+    const rows = store.ui.registryProjects || [];
+    const currentId = store.data.project?.id || "";
+    if (!rows.length) {
+      return `<section class="project-library"><div class="library-head"><span class="eyebrow">最近项目</span></div>
+        <p class="small muted library-empty">这台电脑还没有打开过项目。用上面的按钮新建一门课程，或选择一个已有的 Workbench 项目文件夹。</p>
+      </section>`;
+    }
+    return `<section class="project-library">
+      <div class="library-head"><span class="eyebrow">最近项目</span><small class="muted">${rows.length} 个项目 · 按最近打开排序</small></div>
+      <ul class="library-list">${
+      rows.map((row) => {
+        const path = String(row.project_path || "");
+        const isCurrent = row.project_id && row.project_id === currentId;
+        return `<li class="library-row${row.available ? "" : " is-stale"}">
+          <div class="library-row-main">
+            <b class="library-title">${esc(row.project_title || shortRegistryPath(path))}${
+          isCurrent ? '<span class="library-badge">当前</span>' : ""
+        }${row.copy ? '<span class="library-badge copy">副本</span>' : ""}</b>
+            <small class="library-path" title="${esc(path)}">${esc(shortRegistryPath(path))}</small>
+            <small class="library-time">${
+          row.available ? esc(registryTimeLabel(row.last_opened_at)) : "找不到文件夹"
+        }</small>
+          </div>
+          <div class="library-row-actions">${
+          row.available
+            ? `<button class="primary" data-action="open-registry-project" data-project-path="${
+                esc(path)
+              }">${isCurrent ? "继续工作" : "打开"}</button>`
+            : `<button class="secondary" data-action="relocate-registry-project" data-project-id="${
+                esc(row.project_id)
+              }">重新定位</button>`
+        }<button class="text-button" data-action="remove-registry-project" data-project-id="${
+          esc(row.project_id)
+        }" data-project-path="${esc(path)}">从列表移除</button></div>
+        </li>`;
+      }).join("")
+    }
+      </ul>
+      <p class="small muted">「从列表移除」只是把这一条从启动页去掉，不会删除或改写磁盘上的课程文件。</p>
+    </section>`;
+  }
+
+  /**
+   * §4.4 — one `project.id` found at two live folders.
+   *
+   * The registry refuses to guess which one the user meant, so the choice is
+   * asked for outright: keeping the row pointed at the old folder, moving it to
+   * the new one, or keeping both labelled as copies. Nothing here edits a
+   * course — the identity is the only thing at stake.
+   */
+  function registryCopyModal(esc) {
+    const copy = store.ui.registryCopy;
+    if (!copy) return "";
+    return `<div class="overlay"><div class="conflict-modal modal" role="dialog" aria-modal="true" aria-label="项目副本" data-stop-click="true">
+      <div class="modal-head"><div><span class="eyebrow">项目身份检查</span><h2>检测到同一个 Workbench 项目的两个副本</h2></div></div>
+      <p class="muted">同一个项目标识出现在两个文件夹，登记表不会替你决定哪一个才是你要用的那个。</p>
+      <p class="small muted"><b>${esc(copy.project_title || copy.project_id || "")}</b></p>
+      <ul class="library-copy-paths">
+        <li><span>登记表里记录的位置</span><code title="${esc(copy.existing_path || "")}">${esc(shortRegistryPath(copy.existing_path))}</code></li>
+        <li><span>这次打开的位置</span><code title="${esc(copy.opened_path || "")}">${esc(shortRegistryPath(copy.opened_path))}</code></li>
+      </ul>
+      <div class="modal-actions">
+        <button class="secondary" data-action="registry-copy-update-location">更新项目位置</button>
+        <button class="secondary" data-action="registry-copy-keep-both">保留两条记录（标注副本）</button>
+        <button class="primary" data-action="registry-copy-dismiss">先不动登记表</button>
+      </div>
+    </div></div>`;
+  }
 
   function launcherView(esc) {
     const project = store.data.project;
@@ -266,6 +584,7 @@ export function createViews(store) {
         }`
         : "还没有课程内容。现在可以新建第一课，之后随时回来继续。"
     }</p>${map.lesson_count ? `<div class="progress-track"><span style="width:${map.progress}%"></span></div><small class="muted">整门课程 ${map.complete_count}/${map.lesson_count} 课完成 · 待补 ${map.open_requirements} 项</small>` : ""}</div><button class="primary" data-action="enter-project">继续工作 <span>→</span></button></div>
+      ${registryListView(esc)}
       <p class="small muted">${
       native
         ? "可以选择新建课程、打开已有 Workbench 项目，或导入已有文件夹（只读扫描，确认前不会改写原文件）。"
@@ -855,44 +1174,11 @@ export function createViews(store) {
         block.id
       }">选择素材</button></div>`;
     }
-    const preview = assetPreview(asset);
-    const url = preview?.url || "";
-    const text = preview?.text;
-    const body = (() => {
-      if (asset.type === "video" && url && preview.posterUrl) {
-        return mediaOpenButton(asset, preview.posterUrl, asset.title || asset.filename, `${asset.filename} · 视频首帧`);
-      }
-      if (asset.type === "audio" && url) {
-        return `<audio class="asset-audio" src="${esc(url)}" controls preload="metadata"></audio>`;
-      }
-      if ((asset.type === "image" || asset.type === "gif") && url) {
-        return mediaOpenButton(asset, asset.type === "gif" ? preview.thumbnailUrl : url, asset.title || asset.filename);
-      }
-      if (preview?.pdf && url) {
-        return `<iframe class="media-pdf-preview" src="${esc(url)}" title="${esc(asset.title || asset.filename)} · PDF 第一页预览" loading="lazy" referrerpolicy="no-referrer" style="display:block;width:100%;height:420px;border:0;background:#f4f4f4"></iframe>`;
-      }
-      // Markdown and other text bundles are material too: show the beginning
-      // of the real file instead of an empty slot.
-      if (typeof text === "string") {
-        return `<pre class="media-document">${
-          esc(text.slice(0, 1200) || "（空文档）")
-        }</pre>`;
-      }
-      if (preview && preview.failed) {
-        return `<div class="media-slot failed"><b>${esc(asset.filename)} · ${esc(assetLabel(asset.type))} 预览失败</b><small>${esc(preview.error || "素材不可读")}</small><small>请检查文件内容，或在媒体库替换为可读取的文件。</small>${retryAssetPreviewButton(asset)}</div>`;
-      }
-      if (preview?.loaded) {
-        // This file is readable, but the current WebView has no renderer.
-        return `<div class="media-slot attachment">📎 ${
-          esc(asset.title || asset.filename)
-        }（${esc(assetLabel(asset.type))} · ${esc(asset.type === "other" ? "当前格式不支持内嵌预览" : "参考文件，当前没有正文解析")})</div>`;
-      }
-      if (preview?.loading) {
-        return `<div class="media-slot loading" data-asset-preview-key="${esc(preview.key || "")}">${preview.pending ? "正在读取素材预览…" : "靠近素材时加载预览…"}</div>`;
-      }
-      return `<div class="media-slot failed"><b>${esc(asset.filename)} 暂不可用</b><small>${asset.archived ? "素材已归档" : "找不到可读取的素材预览"}；请在媒体库检查或重新添加。</small></div>`;
-    })();
-    return `<div class="media-slot" data-block-id="${block.id}">${body}<div class="media-meta"><span class="badge">${
+    // The preview paints inside its own frame, so a preview that settles later
+    // rewrites this frame and nothing else (§12.4).
+    return `<div class="media-slot" data-block-id="${block.id}">${
+      previewFrame(asset, "block", mediaSlotBody(asset))
+    }<div class="media-meta"><span class="badge">${
       assetLabel(asset.type)
     }</span><b>${esc(asset.title || asset.filename)}</b><small class="muted">${
       esc(asset.source_type)
@@ -1463,48 +1749,14 @@ export function createViews(store) {
         : "";
     }
     // Markdown and other text bundles render their real content, which is the
-    // whole point of importing them as material.
-    const preview = assetPreview(asset);
-    const url = preview?.url || "";
-    if (preview?.failed) {
-      return `<div class="preview-media-failed"><b>${esc(asset.filename)} · ${esc(assetLabel(asset.type))} 预览失败</b><p>${esc(preview.error || "素材不可读")}</p><p class="muted">请检查文件内容，或在媒体库替换为可读取的文件。</p>${retryAssetPreviewButton(asset)}</div>`;
-    }
-    if (preview?.loading) {
-      return `<div class="preview-placeholder" data-asset-preview-key="${esc(preview.key || "")}">${preview.pending ? "正在读取" : "等待加载"} ${esc(asset.filename)}…</div>`;
-    }
-    if ((asset.type === "image" || asset.type === "gif") && url) {
-      const label = asset.title || asset.filename;
-      return `<figure>${mediaOpenButton(asset, asset.type === "gif" ? preview.thumbnailUrl : url, label)}<figcaption>${esc(label)}</figcaption></figure>`;
-    }
-    if (asset.type === "video" && url && preview.posterUrl) {
-      return `<figure>${mediaOpenButton(asset, preview.posterUrl, asset.title || asset.filename, `${asset.filename} · 视频首帧`)}<figcaption>${
-        esc(asset.title || asset.filename)
-      }</figcaption></figure>`;
-    }
-    if (asset.type === "audio" && url) {
-      return `<figure><audio src="${esc(url)}" controls preload="metadata"></audio><figcaption>${
-        esc(asset.title || asset.filename)
-      }</figcaption></figure>`;
-    }
-    if (preview?.pdf && url) {
-      return `<figure class="preview-pdf"><iframe src="${esc(url)}" title="${esc(asset.title || asset.filename)} · PDF 第一页预览" loading="lazy" referrerpolicy="no-referrer" style="display:block;width:100%;height:560px;border:0;background:#f4f4f4"></iframe><figcaption>${esc(asset.title || asset.filename)} · PDF 第一页</figcaption></figure>`;
-    }
-      const text = preview?.text;
-    if (typeof text === "string") {
-      const sample = text.slice(0, 4000);
-      const isMarkdown = asset.mime_type === "text/markdown" || /\.(md|markdown)$/i.test(asset.filename || "");
-      return `<figure class="preview-document"><figcaption>${
-        esc(asset.title || asset.filename)
-      } · ${isMarkdown ? "Markdown 摘要" : "文本摘要"}</figcaption>${
-        isMarkdown
-          ? `<div class="preview-markdown">${renderMarkdown(sample, { resolveImage: markdownImageResolver(block) })}</div>`
-          : `<pre class="preview-markdown">${esc(sample || "（空文档）")}</pre>`
-      }</figure>`;
-    }
-    if (preview?.loaded) return `<p class="preview-attachment">📎 ${
-      esc(asset.title || asset.filename)
-    }（${esc(assetLabel(asset.type))} · ${esc(asset.type === "other" ? "当前格式不支持内嵌预览" : "参考文件，当前没有正文解析")})</p>`;
-    return `<div class="preview-media-failed"><b>${esc(asset.filename)} 暂不可用</b><p>${asset.archived ? "素材已归档" : "找不到可读取的素材预览"}；请在媒体库检查或重新添加。</p></div>`;
+    // whole point of importing them as material. The frame is what a settled
+    // preview rewrites, so the block id travels with it.
+    return previewFrame(
+      asset,
+      "preview",
+      previewMediaBody(asset, block),
+      ` data-block-id="${esc(block.id || "")}"`,
+    );
   }
 
   /* ------------------------------------------------------------ backlog */
@@ -1820,6 +2072,94 @@ export function createViews(store) {
     }</div></div><div class="explorer-preview-pane">${previewPane()}</div></div></section>`;
   }
 
+  /**
+   * §28 — the per-document outcome of the last body import, rendered where the
+   * import warnings already surface.  `null` (a shell that sends no tally, or an
+   * import without documents) renders nothing, so the ordinary warning copy stays
+   * the only voice instead of a panel full of invented zeros.
+   */
+  function documentImportResultView(esc) {
+    const report = store.ui.documentImportReport;
+    if (!report || typeof report !== "object") return "";
+    const files = Array.isArray(report.files) ? report.files : [];
+    const rows = files.map((file) =>
+      `<li class="document-import-outcome ${esc(String(file?.outcome || ""))}"><b>${
+        esc(file?.outcome_label || file?.outcome || "未识别")
+      }</b><code title="${esc(String(file?.relative_path || ""))}">${
+        esc(String(file?.relative_path || ""))
+      }</code>${file?.reason ? `<small>${esc(String(file.reason))}</small>` : ""}</li>`
+    ).join("");
+    return `<div class="document-import-result" role="status"><div class="document-import-result-head"><b>正文导入结果</b><span class="document-import-tally">${
+      esc(documentImportTallyText(report))
+    }</span></div><ul>${rows || `<li class="muted">这次没有逐文件明细，请按上方数量核对正文。</li>`}</ul><p class="muted">未进入正文的文件仍留在原处；源文件没有被移动、重命名、删除或覆盖。</p></div>`;
+  }
+
+  /** §18.3 `类型` — the format name, not a MIME string. */
+  function documentImportTypeLabel(relativePath) {
+    return DOCUMENT_IMPORT_TYPE_LABELS[documentImportExtension(relativePath)] || "文档";
+  }
+
+  /**
+   * §18.3 optional state line.  It says what *this* shell can honestly do with
+   * the file: the browser build has no parser for the container formats, and the
+   * desktop build reads them but flattens decoration (§21), so a PDF is a
+   * 可能降级 row rather than a promise of a faithful copy.
+   */
+  function documentImportStateHint(relativePath) {
+    const extension = documentImportExtension(relativePath);
+    const native = store.bridge.isNative();
+    if (".md,.markdown,.txt,.text".split(",").includes(extension)) {
+      return native ? "可读取" : "可读取";
+    }
+    if (!native) return "需桌面应用解析";
+    if (extension === ".pdf") return "可能降级 · 无文字层时保留为来源参考";
+    if (extension === ".docx") return "结构可解析 · 样式会简化";
+    if (extension === ".epub") return "结构可解析 · 可能降级";
+    return "结构可解析 · 可能降级";
+  }
+
+  /**
+   * §18 — the body-document dialog.  It opens on a plan the user has already
+   * confirmed and only decides which of that plan's document rows are sent:
+   * mappings, destinations and duplicate choices are forwarded as they were
+   * confirmed, because this window must not grow a second Stage / Lesson
+   * inference of its own (§19).  Media is absent — §17 already imported it.
+   */
+  function documentImportModalView(esc) {
+    const dialog = store.ui.documentImportDialog;
+    const items = Array.isArray(dialog?.items) ? dialog.items : [];
+    if (!dialog || !items.length) return "";
+    const selectedCount = items.filter((item) => item?.selected === true).length;
+    const rowView = (item) => {
+      const path = String(item?.relative_path ?? "");
+      const name = explorerEntryName(path) || path;
+      const selected = item?.selected === true;
+      return `<div class="document-import-row ${
+        selected ? "" : "deselected"
+      }" data-document-import-row data-path="${esc(path)}" data-selected="${
+        selected ? "true" : "false"
+      }" title="${esc(path)}"><input type="checkbox" data-document-import-select data-path="${
+        esc(path)
+      }" ${selected ? "checked" : ""} aria-label="将 ${esc(name)} 导入为正文" /><b class="document-import-name">${
+        esc(name)
+      }</b><small class="document-import-meta">${esc(path)} · ${
+        esc(documentImportTypeLabel(path))
+      } · ${esc(formatBytes(item?.size))}</small><small class="document-import-state">${
+        esc(documentImportStateHint(path))
+      }</small></div>`;
+    };
+    const groups = groupDocumentImportCandidates(items).map((group) =>
+      `<section class="document-import-group"><h3 class="document-import-directory">${
+        esc(group.directory ? `${group.directory}/` : "根目录")
+      }</h3>${group.items.map(rowView).join("")}</section>`
+    ).join("");
+    return `<div class="overlay" data-action="document-import-cancel"><div class="document-import-modal modal" role="dialog" aria-modal="true" aria-labelledby="document-import-title" data-stop-click="true"><div class="modal-head"><div><span class="eyebrow">导入正文</span><h2 id="document-import-title">选择要导入为正文的文档</h2></div><button type="button" class="icon-button" data-action="document-import-cancel" aria-label="取消正文选择" title="取消">×</button></div><p class="muted">媒体素材已按映射自动进入媒体库；这里只决定哪些文档写入课文正文。${
+      dialog.appending ? `导入到：${esc(store.data?.project?.title || "当前课程")}。` : ""
+    }取消不会写入任何课程内容。</p><div class="document-import-tools"><button class="secondary" data-action="document-import-all">全选</button><button class="secondary" data-action="document-import-none">取消全选</button><span class="document-import-count">已选 ${
+      selectedCount
+    } / ${items.length} 项</span></div><div class="document-import-groups">${groups}</div><p class="document-import-foot">未勾选的文件不会被导入，会原样留在所选文件夹里；源文件不会被移动、重命名、删除或覆盖。</p><div class="modal-actions"><button class="secondary" data-action="document-import-cancel">取消</button><button class="primary" data-action="document-import-confirm">导入所选正文</button></div></div></div>`;
+  }
+
   function mappingView() {
     const plan = store.ui.importMappingPlan;
     const report = store.ui.folderScan;
@@ -1961,7 +2301,7 @@ export function createViews(store) {
       : `<button class="secondary" data-action="route" data-route="explorer">返回资源浏览器</button>${selectedMarkdownRows.length ? `<button class="secondary" data-action="refresh-markdown-dependencies">重新检查图片依赖</button>` : ""}<button class="primary" data-action="confirm-import-mapping" ${dependenciesPending ? "disabled" : ""}>${dependenciesPending ? "等待图片依赖检查…" : appending ? "确认并追加到当前课程" : "确认导入计划并打开"}</button>`;
     return `<section class="page mapping-page"><div class="page-head"><div><span class="eyebrow">导入映射</span><h1>映射预览</h1><p class="muted">候选映射 · ${
       esc(rootLabel || "已扫描文件夹")
-    } · 建议 ≠ 事实 · 确认后可原地写入课程项目。</p></div><div class="page-head-actions">${actions}</div></div>${status}${reviewNotice}${errorNotice}<div class="mapping-table-wrap"><table class="mapping-table"><thead><tr><th>导入</th><th>文件 / 文件夹</th><th>建议</th><th>映射为</th>${appending ? "<th>目标</th>" : ""}</tr></thead><tbody>${
+    } · 建议 ≠ 事实 · 确认后可原地写入课程项目。</p></div><div class="page-head-actions">${actions}</div></div>${status}${reviewNotice}${errorNotice}${documentImportResultView(esc)}<div class="mapping-table-wrap"><table class="mapping-table"><thead><tr><th>导入</th><th>文件 / 文件夹</th><th>建议</th><th>映射为</th>${appending ? "<th>目标</th>" : ""}</tr></thead><tbody>${
       rows || `<tr><td colspan="${appending ? "5" : "4"}" class="side-empty">没有可映射的条目</td></tr>`
     }</tbody></table></div></section>`;
   }
@@ -1995,7 +2335,7 @@ export function createViews(store) {
           return `<article class="asset-card" data-asset-id="${
             asset.id
           }"><div class="asset-card-media">${
-            mediaLibraryPreview(asset)
+            previewFrame(asset, "card", mediaLibraryPreview(asset))
           }</div><div class="asset-card-body">${
             renaming
               ? `<label class="field-label">素材文件名<input class="select" data-asset-title data-focus-key="asset-title" data-id="${asset.id}" value="${
@@ -2267,7 +2607,9 @@ export function createViews(store) {
           const preview = assetPreview(asset);
           return `<div class="side-item asset-row" data-asset-id="${
             asset.id
-          }"><span class="side-thumb-wrap">${assetThumb(asset)}</span><span class="side-item-body"><b>${
+          }"><span class="side-thumb-wrap">${
+            previewFrame(asset, "thumb", assetThumb(asset))
+          }</span><span class="side-item-body"><b>${
             esc(displayName)
           }</b><small>${esc(assetLabel(asset.type))} · ${
             usages.length ? `已使用 ${usages.length} 处` : "还没有被引用"
@@ -3343,6 +3685,10 @@ export function createViews(store) {
   function overlayView(esc) {
     const projectProblem = projectProblemModal(esc);
     if (projectProblem) return projectProblem;
+    const registryCopy = registryCopyModal(esc);
+    if (registryCopy) return registryCopy;
+    const documentImport = documentImportModalView(esc);
+    if (documentImport) return documentImport;
     if (store.externalConflict) {
       const conflict = store.externalConflict;
       const externalEntries = conflict.external_diff?.entries || [];
@@ -3386,24 +3732,13 @@ export function createViews(store) {
       const asset = store.data.assets.find((candidate) =>
         candidate.id === store.ui.assetImagePreviewId
       );
-      const canPreview = asset && !asset.archived &&
-        (isImageLike(asset) || asset.type === "video");
-      const preview = canPreview
-        ? assetPreview(asset)
-        : null;
       const label = asset?.title || asset?.filename || "素材";
-      const content = !canPreview
-        ? `<p class="preview-media-failed">素材当前不可用。</p>`
-        : preview?.failed
-        ? `<div class="preview-media-failed"><b>${esc(asset.filename)} · ${esc(assetLabel(asset.type))} 预览失败</b><p>${esc(preview.error || "素材不可读")}</p>${retryAssetPreviewButton(asset)}</div>`
-        : preview?.loading
-        ? `<div class="preview-placeholder" data-asset-preview-key="${esc(preview.key || "")}">正在读取 ${esc(label)}…</div>`
-        : asset.type === "video" && preview?.url && preview.posterUrl
-        ? `<div class="asset-video-stage" style="display:grid;place-items:center;position:relative"><video class="asset-preview-video" src="${esc(preview.url)}" poster="${esc(preview.posterUrl)}" controls preload="none" playsinline aria-label="${esc(label)}" style="display:block;margin:12px auto;max-height:72vh;max-width:100%"></video><button type="button" class="asset-video-play" data-action="play-asset-video" aria-label="播放视频" title="播放视频" style="align-items:center;background:#111b;border:0;border-radius:50%;color:white;cursor:pointer;display:flex;font-size:28px;height:64px;justify-content:center;left:50%;position:absolute;top:50%;transform:translate(-50%,-50%);width:64px">▶</button></div>`
-        : preview?.url
-        ? `<img class="asset-image ${asset.type === "gif" ? "asset-gif-preview" : ""}" ${asset.type === "gif" ? 'data-animated-preview="true"' : ""} src="${esc(preview.url)}" alt="${esc(label)}" style="display:block;margin:12px auto;max-height:72vh;max-width:100%;object-fit:contain" />`
-        : `<p class="preview-media-failed">${esc(label)} 暂无可显示的预览。</p>`;
-      return `<div class="overlay" data-action="close-overlay"><div class="image-preview-modal modal asset-media-preview-modal" role="dialog" aria-modal="true" aria-label="媒体预览：${esc(label)}" data-stop-click="true" style="max-height:84vh;overflow:auto;padding:18px;width:min(92vw,1200px)"><div class="modal-head"><div><span class="eyebrow">媒体预览</span><h2>${esc(label)}</h2></div><button type="button" class="icon-button" data-action="close-overlay" aria-label="关闭媒体预览" title="关闭媒体预览">×</button></div>${content}${preview?.width && preview?.height ? `<small class="muted" style="text-align:center">${preview.width} × ${preview.height}</small>` : ""}</div></div>`;
+      // The frame is what a settled preview rewrites while this modal is open,
+      // instead of rebuilding the whole window behind it (§12.4).
+      const content = asset
+        ? previewFrame(asset, "overlay", overlayMediaBody(asset))
+        : `<p class="preview-media-failed">素材当前不可用。</p>`;
+      return `<div class="overlay" data-action="close-overlay"><div class="image-preview-modal modal asset-media-preview-modal" role="dialog" aria-modal="true" aria-label="媒体预览：${esc(label)}" data-stop-click="true" style="max-height:84vh;overflow:auto;padding:18px;width:min(92vw,1200px)"><div class="modal-head"><div><span class="eyebrow">媒体预览</span><h2>${esc(label)}</h2></div><button type="button" class="icon-button" data-action="close-overlay" aria-label="关闭媒体预览" title="关闭媒体预览">×</button></div>${content}</div></div>`;
     }
     if (store.ui.assetPicker) {
       const target = store.ui.assetPicker;
@@ -3421,7 +3756,9 @@ export function createViews(store) {
             assets.map((asset) =>
               `<button class="picker-card" data-action="choose-asset" data-id="${
                 asset.id
-              }"><span class="picker-thumb">${assetThumb(asset)}</span><b>${
+              }"><span class="picker-thumb">${
+                previewFrame(asset, "thumb", assetThumb(asset))
+              }</span><b>${
                 esc(asset.filename)
               }</b><small>${esc(assetLabel(asset.type))}</small></button>`
             ).join("")
@@ -3579,5 +3916,6 @@ export function createViews(store) {
     statusbarView: () => statusbarView(store.currentItem()),
     saveStateView,
     paletteResults,
+    assetPreviewFrameInner,
   };
 }

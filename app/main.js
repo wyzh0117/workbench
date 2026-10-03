@@ -8,7 +8,13 @@
  * Components only mutate WorkbenchStore; they never call fs, Git, or secrets.
  */
 
-import { PROJECT_FILE_PICKER } from "./constants.js";
+import {
+  PROJECT_FILE_PICKER,
+  applyDocumentImportDeselection,
+  collectDocumentImportCandidates,
+  documentImportTallyText,
+  normalizeDocumentImportReport,
+} from "./constants.js";
 import {
   caretTextOffset,
   compileInlineAtCaret,
@@ -173,6 +179,59 @@ const nextRevision = (previous) => {
   const currentMs = Date.now();
   return new Date(Math.max(currentMs, Number.isFinite(previousMs) ? previousMs + 1 : currentMs)).toISOString();
 };
+/**
+ * §4 — the application-level project registry.
+ *
+ * These four commands are app-global and rebuildable, so — unlike
+ * `NATIVE_PROJECT_COMMANDS` — they must never receive the injected
+ * `projectDir`, and the shell takes them as one `input: Value` struct (the
+ * browser service receives the same payload flat through `/api/command`).
+ * A row carries only identity, location, title and last-opened hints: never
+ * course content, never a credential.
+ */
+const REGISTRY_COMMANDS = new Set([
+  "registry.list",
+  "registry.record",
+  "registry.remove",
+  "registry.relocate",
+]);
+/** The §4.1 record, exactly. Anything else is not a registry row. */
+const REGISTRY_ROW_FIELDS = [
+  "project_id",
+  "project_path",
+  "project_title",
+  "last_opened_at",
+  "last_content_item_id",
+];
+/**
+ * Build the payload for `registry.record` from what the caller already knows.
+ * Written as an explicit whitelist so a future caller cannot smuggle a course
+ * body, a token or a whole `project.json` into the app-level file.
+ */
+function registryRecordPayload(value = {}) {
+  const candidate = value && typeof value === "object" ? value : {};
+  const row = {
+    project_id: String(candidate.project_id ?? candidate.projectId ?? "").trim(),
+    project_path: String(candidate.project_path ?? candidate.projectPath ?? "").trim(),
+    project_title: String(candidate.project_title ?? candidate.projectTitle ?? "").trim(),
+  };
+  const position = String(
+    candidate.last_content_item_id ?? candidate.lastContentItemId ?? "",
+  ).trim();
+  if (position) row.last_content_item_id = position;
+  if (candidate.allow_second_copy === true || candidate.allowSecondCopy === true) {
+    row.allow_second_copy = true;
+  }
+  return row;
+}
+/** Newest first, id as a stable tiebreak — the same order both shells return. */
+function sortRegistryRows(rows = []) {
+  const key = (row) => `${String(row?.last_opened_at || "")}\u0000${String(row?.project_id || "")}`;
+  return (Array.isArray(rows) ? rows : [])
+    .filter((row) => row && typeof row === "object" && row.project_id)
+    .slice()
+    .sort((left, right) => (key(left) < key(right) ? 1 : key(left) > key(right) ? -1 : 0));
+}
 const parseNativeValue = (value) => {
   if (typeof value !== "string") return value;
   try { return JSON.parse(value); } catch { return value; }
@@ -402,6 +461,27 @@ const userFacingError = (error, fallback) => {
   return raw;
 };
 
+/**
+ * §28 — the body-import line for the import toast.
+ *
+ * A batch where one file failed must not read as if nothing happened, and must
+ * not read as if the whole import failed either: the tally says how many came in
+ * and the names say which did not. No report, no line — the ordinary warning
+ * copy already on the toast stands on its own.
+ */
+const documentImportToastText = (report) => {
+  if (!report) return "";
+  const notImported = (Array.isArray(report.files) ? report.files : []).filter(
+    (file) => file?.outcome === "failed" || file?.outcome === "skipped",
+  );
+  const names = notImported.slice(0, 2).map((file) => String(file.relative_path || "")).filter(Boolean);
+  const tail = notImported.length > names.length ? ` 等 ${notImported.length} 个文件` : "";
+  const detail = notImported.length
+    ? `；未进入正文：${names.join("、")}${tail}`
+    : "";
+  return ` 正文导入：${documentImportTallyText(report)}${detail}。`;
+};
+
 const STATUS = {
   content: ["待研究", "起草中", "待审核", "已定稿"],
   media: ["未开始", "制作中", "待审核", "已完成"],
@@ -586,6 +666,11 @@ class DesktopBridge {
     return {
       "project.open": "project_open",
       "project.inspect": "project_inspect",
+      // §4 app-level registry: no `projectDir` injection, `input: Value` struct.
+      "registry.list": "registry_list",
+      "registry.record": "registry_record",
+      "registry.remove": "registry_remove",
+      "registry.relocate": "registry_relocate",
       "project.create": "project_create",
       "project.save": "project_save",
       "project.external.inspect": "project_external_status",
@@ -726,6 +811,20 @@ class DesktopBridge {
     return Object.fromEntries(Object.entries(value).map(([key, child]) => [key, this.decodeBytes(child)]));
   }
   async command(name, input = {}) {
+    if (REGISTRY_COMMANDS.has(name)) {
+      const candidate = input && typeof input === "object" ? input : {};
+      if (name === "registry.list") return await this.invoke(name, {});
+      // `registry_record` / `_remove` / `_relocate` read one `input: Value`
+      // struct in the native shell; the browser service takes the same payload
+      // flat, so only the native transport wraps it.
+      const payload = name === "registry.relocate"
+        ? {
+          project_id: String(candidate.project_id ?? candidate.projectId ?? "").trim(),
+          new_path: String(candidate.new_path ?? candidate.newPath ?? "").trim(),
+        }
+        : registryRecordPayload(candidate);
+      return await this.invoke(name, this.isNative() ? { input: payload } : payload);
+    }
     if (this.isNative() && name === "project.create") {
       const candidate = input && typeof input === "object" ? input : {};
       if (candidate.project_dir || candidate.projectDir) this.setProjectDir(candidate.project_dir || candidate.projectDir);
@@ -1341,6 +1440,14 @@ class WorkbenchStore {
        * for example).  Consumed once, never persisted.
        */
       focusField: "",
+      /**
+       * §4/§5 — the app-level project registry rows for the start page, newest
+       * first, plus the §4.4 copy prompt. Convenience state only: it is re-read
+       * from the shell, never written into a course, and never part of the
+       * session pointer.
+       */
+      registryProjects: [],
+      registryCopy: null,
       /** Inline editors: the course title in the topbar, one layout section, asset title. */
       editingProjectTitle: false,
       editingProjectTitleSurface: "topbar",
@@ -1367,6 +1474,18 @@ class WorkbenchStore {
       importMappingError: "",
       importMode: "adopt",
       importingMapping: false,
+      /**
+       * §18 — the body-document dialog opened by a confirmed plan: the candidate
+       * rows (with the user's checkbox state) or null while it is closed.
+       */
+      documentImportDialog: null,
+      /**
+       * One-shot: the body dialog already answered this import run, so the import
+       * it started is not asked again. Consumed by `applyFolderAdoption`.
+       */
+      documentImportAnswered: false,
+      /** §28 — the last per-document import tally, or null when the shell sent none. */
+      documentImportReport: null,
       /** §3.2 Case C: a folder whose project.json exists but cannot be used. */
       projectProblem: null,
       /** One-shot: the next adoption may move an invalid project.json aside. */
@@ -3642,6 +3761,11 @@ class WorkbenchStore {
     let session = null;
     let persisted = null;
     let recovery = null;
+    // §5 — the start page is the first screen a returning user sees, so the
+    // project list is read before it paints.  Fire-and-forget: `loadRegistryRows`
+    // contains its own failure and an unreadable registry is an empty list,
+    // which must not delay or replace the project restore below.
+    void this.loadRegistryRows();
     try {
       session = await this.bridge.loadSession();
       this.rememberSession(session);
@@ -3806,6 +3930,7 @@ class WorkbenchStore {
     this.assetPreview.clear();
     this.data = project;
     this.trackProjectIdentity();
+    void this.recordCurrentProject();
     this.history = [];
     this.future = [];
     this.localSnapshots.clear();
@@ -3904,6 +4029,8 @@ class WorkbenchStore {
       this.ui.explorerFilter = "";
       this.ui.explorerSelected = null;
       this.ui.explorerPreview = null;
+      // A new scan invalidates any body dialog / tally left over from the last one.
+      this.clearDocumentImportDialog();
       // Fresh scan → fresh unconfirmed mapping suggestions (preview ≠ confirm).
       this.ui.importMappingPlan = buildImportMappingPlan(resolvedRoot, report.entries);
       // Expand top-level directories so the first glance shows nested files.
@@ -4009,6 +4136,98 @@ class WorkbenchStore {
       allow,
     );
     this.notify();
+  }
+  /** Drop any pending §18 body dialog and its result panel. */
+  clearDocumentImportDialog() {
+    this.ui.documentImportDialog = null;
+    this.ui.documentImportAnswered = false;
+    this.ui.documentImportReport = null;
+  }
+  /**
+   * §18 — open the body-document dialog for a *confirmed* plan.
+   *
+   * Returns false when the plan holds no document candidate, which is exactly how
+   * a media-only or text-free folder keeps its single confirm click (§16/§17).
+   * The rows shown here are copies of the confirmed plan's candidates: the dialog
+   * filters what gets sent and never re-infers a Stage / Lesson (§19).
+   */
+  openDocumentImportDialog(plan) {
+    const items = collectDocumentImportCandidates(plan);
+    if (!items.length) return false;
+    this.ui.documentImportDialog = {
+      root: String(plan?.root || this.ui.importFolderRoot || ""),
+      appending: this.ui.importMode === "append",
+      items,
+    };
+    this.ui.documentImportAnswered = false;
+    this.ui.documentImportReport = null;
+    this.ui.importMappingError = "";
+    this.notify();
+    return true;
+  }
+  documentImportRow(relativePath) {
+    const path = String(relativePath ?? "").replaceAll("\\", "/");
+    const items = this.ui.documentImportDialog?.items;
+    if (!Array.isArray(items)) return null;
+    return items.find((item) =>
+      String(item?.relative_path ?? "").replaceAll("\\", "/") === path
+    ) || null;
+  }
+  /** §18.1 — one row, toggled by its checkbox or by a click anywhere on the row. */
+  setDocumentImportSelected(relativePath, selected) {
+    const row = this.documentImportRow(relativePath);
+    if (!row) return;
+    row.selected = Boolean(selected);
+    this.notify();
+  }
+  /** §18.1 — 全选 / 取消全选. */
+  setAllDocumentImportSelected(selected) {
+    const items = this.ui.documentImportDialog?.items;
+    if (!Array.isArray(items)) return;
+    for (const item of items) item.selected = Boolean(selected);
+    this.notify();
+  }
+  /**
+   * §18 — 取消.  Nothing is adopted: the plan goes back to the editable,
+   * unconfirmed state the preview uses for every other stopped import, and the
+   * copy says in plain Chinese that no course content was written.
+   */
+  cancelDocumentImportSelection() {
+    if (!this.ui.documentImportDialog) return;
+    this.ui.documentImportDialog = null;
+    this.ui.documentImportAnswered = false;
+    const plan = this.ui.importMappingPlan;
+    if (plan?.confirmed) {
+      this.ui.importMappingPlan = { ...plan, confirmed: false, confirmed_at: null };
+    }
+    this.ui.importMappingError =
+      "已取消正文选择：没有写入任何课程内容，源文件仍在原处。映射预览仍可继续调整，再次确认即可导入。";
+    this.notify();
+  }
+  /**
+   * §19 / §31 — apply the dialog's answer to the confirmed plan and import.
+   * Unchecked rows are deselected and therefore not sent at all; checked rows
+   * keep the mapping and destination the preview already confirmed.
+   */
+  async confirmDocumentImportSelection() {
+    const dialog = this.ui.documentImportDialog;
+    if (!dialog) return;
+    this.ui.documentImportDialog = null;
+    const plan = this.ui.importMappingPlan;
+    if (!plan?.confirmed) {
+      this.ui.importMappingError =
+        "映射计划已不再是已确认状态，课程没有写入。请在映射预览里重新确认。";
+      this.notify();
+      return;
+    }
+    const items = Array.isArray(dialog.items) ? dialog.items : [];
+    const deselected = items
+      .filter((item) => item?.selected !== true)
+      .map((item) => String(item.relative_path ?? ""));
+    this.ui.importMappingPlan = applyDocumentImportDeselection(plan, deselected);
+    // One-shot: the import started from this answer must not re-open the dialog.
+    this.ui.documentImportAnswered = true;
+    await this.applyFolderAdoption();
   }
   findMarkdownSourceMatch(sourceHash, sourceRoot, relativePath) {
     if (this.ui.importMode !== "append") return null;
@@ -4308,6 +4527,13 @@ class WorkbenchStore {
     }
     if (this.importInFlight) return;
     const appending = this.ui.importMode === "append";
+    // §18 — a confirmed plan that carries document candidates stops at the body
+    // dialog before anything is written. The answer is consumed once, so the
+    // import the dialog launches is not asked again; a plan with no candidate
+    // takes no extra click and imports exactly as before.
+    const answered = this.ui.documentImportAnswered === true;
+    this.ui.documentImportAnswered = false;
+    if (!answered && this.openDocumentImportDialog(plan)) return;
     if (appending && !await this.flush()) {
       this.ui.importMappingPlan = { ...plan, confirmed: false, confirmed_at: null };
       this.ui.importMappingError =
@@ -4397,13 +4623,20 @@ class WorkbenchStore {
       const warnings = Array.isArray(result?.warnings)
         ? result.warnings.filter((warning) => typeof warning === "string" && warning.trim())
         : [];
+      // §28 — the per-document tally rides on the same result. A shell that does
+      // not send `document_import` (an older build, a folder with no document)
+      // leaves the panel empty and the warning list doing all the talking.
+      const documentReport = normalizeDocumentImportReport(result?.document_import);
+      this.ui.documentImportReport = documentReport;
       const warningSummary = warnings.length
         ? ` 注意：${warnings.slice(0, 2).join("；")}${warnings.length > 2 ? `；另有 ${warnings.length - 2} 项提醒` : ""}`
         : "";
       this.ui.route = "map";
       this.scheduleSessionSave();
       this.ui.importMappingError = "";
-      this.ui.toast = `${parts.join(" · ")}。原文件未移动或删除。${warningSummary}`;
+      this.ui.toast = `${parts.join(" · ")}。原文件未移动或删除。${
+        documentImportToastText(documentReport)
+      }${warningSummary}`;
       this.notify();
     } catch (error) {
       const raw = String(error?.message || error || "");
@@ -5446,11 +5679,166 @@ class WorkbenchStore {
     this.scheduleSave();
     this.notify();
   }
+  /* ---------------------------------------------------------------- registry */
+
+  /**
+   * §5 — the start page reads the registry from the shell every time it shows.
+   *
+   * A missing or damaged registry is an empty list, never an error screen: the
+   * rows are rebuildable convenience state, and the courses themselves live on
+   * disk.  The rows arrive already newest-first; the shell re-sorts so a service
+   * that returns them in another order cannot make the page flicker between two
+   * renders of the same data.
+   */
+  async loadRegistryRows() {
+    try {
+      const listed = await this.bridge.command("registry.list");
+      const rows = Array.isArray(listed?.projects) ? listed.projects : [];
+      this.ui.registryProjects = sortRegistryRows(rows);
+    } catch {
+      this.ui.registryProjects = [];
+    }
+    this.notify();
+  }
+  /**
+   * §4.2 — record the project that just became current.
+   *
+   * Create, open and adopt all end in one of the two commit points, so this one
+   * call covers the three.  It runs *after* the project is loaded and safe: the
+   * registry is convenience state, so a failed record must never be dressed up
+   * as a failed open.  A `duplicate` answer is the one case the user has to
+   * decide on, and it opens the §4.4 prompt instead of guessing.
+   */
+  async recordCurrentProject() {
+    const project = this.data?.project;
+    const projectId = String(project?.id || "").trim();
+    const projectPath = String(this.bridge.projectDir || "").trim();
+    if (!projectId || !projectPath) return null;
+    let result = null;
+    try {
+      result = await this.bridge.command("registry.record", {
+        project_id: projectId,
+        project_path: projectPath,
+        project_title: String(project.title || ""),
+        last_content_item_id: String(this.ui.activeId || ""),
+      });
+    } catch {
+      return null;
+    }
+    if (result?.status === "duplicate") {
+      this.ui.registryCopy = {
+        project_id: projectId,
+        project_title: String(project.title || ""),
+        existing_path: String(result?.project?.project_path || ""),
+        opened_path: projectPath,
+      };
+      this.notify();
+    }
+    return result;
+  }
+  /** §5 — a row opens through the same route 「打开项目文件夹」 uses. */
+  async openRegistryProject(projectPath) {
+    const dir = String(projectPath || "").trim();
+    if (!dir) return;
+    // `openProject` reads that folder's `project.json`, runs the full
+    // classification, and routes a folder that turns out not to be an openable
+    // project; the registry row is not a shortcut past any of that.
+    await this.openProject(dir, { reopen: true });
+  }
+  /** §4.3 — point a row at a new folder, with the shell's id check. */
+  async relocateRegistryProject(projectId) {
+    const id = String(projectId || "").trim();
+    if (!id) return;
+    let dir = "";
+    try {
+      dir = String(await this.bridge.selectFolder() || "").trim();
+    } catch {
+      this.ui.toast = "没有可用的文件夹选择器，请稍后再试。";
+      this.notify();
+      return;
+    }
+    if (!dir) {
+      this.ui.toast = "没有选择文件夹。这个项目仍留在列表里。";
+      this.notify();
+      return;
+    }
+    try {
+      await this.bridge.command("registry.relocate", { project_id: id, new_path: dir });
+      this.ui.toast = "已更新项目位置。";
+    } catch (error) {
+      // The native shell refuses a mismatched id here, and that refusal is the
+      // point: say what it found rather than letting it look like a dead button.
+      this.ui.toast = userFacingError(error, "无法重新定位这个项目。登记表没有改变。");
+    }
+    await this.loadRegistryRows();
+  }
+  /**
+   * §5 — remove the row, nothing else.
+   *
+   * Deliberately destructive-looking, so the choice is confirmed first; the
+   * command it calls only rewrites `.workspace/projects.json`.
+   */
+  async removeRegistryProject(projectId, projectPath) {
+    const id = String(projectId || "").trim();
+    if (!id) return;
+    const row = (this.ui.registryProjects || []).find((candidate) =>
+      candidate.project_id === id &&
+      (!projectPath || candidate.project_path === projectPath)
+    );
+    const label = String(row?.project_title || projectPath || id).trim();
+    if (!confirm(`只把「${label}」从启动页列表移除？\n磁盘上的课程文件夹不会被删除或修改。`)) return;
+    try {
+      await this.bridge.command("registry.remove", {
+        project_id: id,
+        project_path: String(projectPath || ""),
+      });
+      this.ui.toast = `已从列表移除「${label}」；课程文件夹没有被改动。`;
+    } catch (error) {
+      this.ui.toast = userFacingError(error, "无法从列表移除。登记表没有改变。");
+    }
+    await this.loadRegistryRows();
+  }
+  /** §4.4 — the user answers the copy question. */
+  async resolveRegistryCopy(choice) {
+    const copy = this.ui.registryCopy;
+    if (!copy) return;
+    this.ui.registryCopy = null;
+    if (choice === "relocate") {
+      try {
+        await this.bridge.command("registry.relocate", {
+          project_id: copy.project_id,
+          new_path: copy.opened_path,
+        });
+        this.ui.toast = "项目位置已更新为这次打开的文件夹。";
+      } catch (error) {
+        this.ui.toast = userFacingError(error, "无法更新项目位置。");
+      }
+      await this.loadRegistryRows();
+      return;
+    }
+    if (choice === "both") {
+      try {
+        await this.bridge.command("registry.record", {
+          project_id: copy.project_id,
+          project_path: copy.opened_path,
+          project_title: copy.project_title,
+          allow_second_copy: true,
+        });
+        this.ui.toast = "两条位置都保留了，列表里已标注副本。";
+      } catch (error) {
+        this.ui.toast = userFacingError(error, "无法保留两条记录。");
+      }
+      await this.loadRegistryRows();
+      return;
+    }
+    this.notify();
+  }
   /** Return to the launcher without releasing the active project lease. */
   returnToLauncher() {
     stopPreviewMedia(globalThis.document);
     this.clearExplorerPreview();
     this.ui.screen = "launcher";
+    void this.loadRegistryRows();
     this.ui.palette = this.ui.capture = this.ui.preflight = this.ui.snapshot = false;
     this.ui.assetPicker = null;
     this.ui.assetImagePreviewId = null;
@@ -8128,6 +8516,11 @@ function migrateUiProject(value) {
 const bridge = new DesktopBridge();
 const store = new WorkbenchStore(bridge);
 store.assetPreview.setOnChange(() => store.notify());
+/**
+ * A preview that settles repaints its own card. `onChange` above stays as the
+ * fallback the cache uses only for a key no frame can repaint.
+ */
+store.assetPreview.setOnPatch((key) => patchAssetPreviewFrames(key));
 /** The asset preview cache resolves ids against the currently open project. */
 bridge.currentProject = () => store.data;
 
@@ -8324,6 +8717,53 @@ function patchChrome() {
   scheduleToastDismissal();
 }
 
+/**
+ * Repaint the frames that show one asset preview, in place.
+ *
+ * A settled preview used to go through `store.notify()`, which rebuilt the whole
+ * window: every card lost its element identity, `observe()` registered all of
+ * them again, a freshly observed target always gets an intersect record, and
+ * that record started another read — which evicted another still-visible card
+ * and re-rendered the screen. That is the loop that made the media library flip
+ * between 正在读取 / 等待加载 / thumbnail. Rewriting just this frame takes the
+ * rebuild out of the cycle, and the patched frame keeps its identity so the
+ * observer never sees it as newly visible.
+ */
+function patchAssetPreviewFrames(key) {
+  if (!root) return 0;
+  let frames = [];
+  try {
+    frames = Array.from(root.querySelectorAll("[data-asset-preview-key]"));
+  } catch {
+    return 0;
+  }
+  let patched = 0;
+  for (const frame of frames) {
+    if (!frame || frame.getAttribute("data-asset-preview-key") !== key) continue;
+    if (!frame.isConnected) continue;
+    const asset = store.assetPreview.assetFor(key, frame);
+    // A card whose file changed identity is not ours to patch: its key is stale
+    // and only a real render can hand it the new one.
+    if (!asset || store.assetPreview.keyFor(asset) !== key) continue;
+    const surface = frame.getAttribute("data-asset-preview-surface") || "";
+    const blockId = frame.getAttribute("data-block-id") || "";
+    const block = blockId
+      ? store.data.blocks.find((candidate) => candidate.id === blockId) || null
+      : null;
+    const inner = views.assetPreviewFrameInner(asset, surface, block);
+    // null: this surface's markup belongs to somebody else (a Markdown image
+    // inside a rich editor). The cache then falls back to a rebuild for it.
+    if (inner === null) continue;
+    stopPreviewMedia(frame);
+    frame.innerHTML = inner;
+    // Brand-new controls — 放大查看, 重试预览, the video play button — would
+    // otherwise be the visible-but-dead-button bug this app has fought before.
+    bindActionControls(frame);
+    patched += 1;
+  }
+  return patched;
+}
+
 function render() {
   if (!root) return;
   if (rendering) {
@@ -8357,7 +8797,6 @@ function render() {
     cancelActivePointerDrag?.();
     closeActiveBlockOverflowMenu?.();
     root.innerHTML = store.ui.screen === "launcher" ? views.launcherView() : views.shellView();
-    store.assetPreview.observe(root);
   } finally {
     rendering = false;
   }
@@ -8365,6 +8804,10 @@ function render() {
   autosizeBlockFields();
   scheduleToastDismissal();
   restoreScrollState(scroll);
+  // Observe AFTER the viewport is back where the user left it: registered
+  // first, every frame would be judged against the pre-restore scroll position
+  // and the first cards of the library would all read at once.
+  store.assetPreview.observe(root);
   restoreTypingState(typing);
   restorePendingBlockCaret();
   const fieldRequest = String(store.ui.focusField || "");
@@ -8630,6 +9073,17 @@ function handleAction(action, element, event) {
       return;
     case "enter-project": store.enterProject(); return;
     case "return-launcher": store.returnToLauncher(); return;
+    case "open-registry-project": void store.openRegistryProject(element.dataset.projectPath); return;
+    case "relocate-registry-project": void store.relocateRegistryProject(element.dataset.projectId); return;
+    case "remove-registry-project":
+      void store.removeRegistryProject(element.dataset.projectId, element.dataset.projectPath);
+      return;
+    case "registry-copy-dismiss":
+      store.ui.registryCopy = null;
+      store.notify();
+      return;
+    case "registry-copy-update-location": void store.resolveRegistryCopy("relocate"); return;
+    case "registry-copy-keep-both": void store.resolveRegistryCopy("both"); return;
     case "new-project": void (store.bridge.isNative() ? store.newProjectFromPicker() : store.newProject()); return;
     case "pick-seed": store.pickSeed(element.dataset.type); return;
     case "cancel-seed": store.cancelSeed(); return;
@@ -8657,6 +9111,11 @@ function handleAction(action, element, event) {
     case "import-folder-again": void store.importExistingFolderFromPicker(); return;
     case "open-import-mapping": store.openImportMappingPreview(); return;
     case "confirm-import-mapping": store.confirmImportMapping(); return;
+    // §18 — the body-document dialog opened from a confirmed plan.
+    case "document-import-all": store.setAllDocumentImportSelected(true); return;
+    case "document-import-none": store.setAllDocumentImportSelected(false); return;
+    case "document-import-confirm": void store.confirmDocumentImportSelection(); return;
+    case "document-import-cancel": store.cancelDocumentImportSelection(); return;
     case "refresh-markdown-dependencies": void store.retryMarkdownDependencyPreviews(); return;
     case "retry-open-adopted-project": void store.retryOpenAdoptedProject(); return;
     case "apply-folder-adoption": void store.applyFolderAdoption(); return;
@@ -9282,31 +9741,48 @@ function onGridContextMenu(event) {
   store.removePlacementByContext(placement.dataset.placement || "");
 }
 
+/**
+ * Bind the `data-action` controls of one subtree.
+ *
+ * `render()` calls this on the root for the whole shell. A preview frame that
+ * was patched in place owns brand-new controls and no render is coming for
+ * them, so the patcher calls it on just that frame — otherwise the thumbnail
+ * appears and its button does nothing.
+ */
+function bindActionControls(scope) {
+  if (!scope?.querySelectorAll) return 0;
+  const controls = Array.from(scope.querySelectorAll("[data-action]") || []);
+  for (const element of controls) {
+    element.addEventListener("click", (event) => {
+      if (element.matches?.("select[data-action], input[data-action]")) return;
+      // Controls inside the placement Grid / unplaced strip belong to the single
+      // delegated grid surface (`bindGridPointerSurface`), which survives every
+      // re-render.  Binding them here as well would dispatch each grid click and
+      // each cell commit twice.
+      if (typeof element.closest === "function" && element.closest("[data-grid-surface]")) return;
+      if (element.dataset.stopClick === "true") event.stopPropagation();
+      // A dialog carries `data-stop-click="true"` so that a click inside it is
+      // not a click on the backdrop.  The guard used to sit on the `[data-action]`
+      // listener alone, and no dialog has a `data-action` of its own — so every
+      // click inside a dialog bubbled to the overlay's `close-overlay` and threw
+      // the dialog, and whatever had been typed into it, away.  Resolve the
+      // dialog the click actually happened in and only dispatch actions from
+      // that same scope.
+      const dialog = typeof event.target?.closest === "function"
+        ? event.target.closest("[data-stop-click='true']")
+        : null;
+      if (
+        dialog &&
+        !(typeof element.closest === "function" && element.closest("[data-stop-click='true']") === dialog)
+      ) return;
+      handleAction(element.dataset.action, element, event);
+    });
+  }
+  return controls.length;
+}
+
 function bindEvents() {
-  root.querySelectorAll("[data-action]").forEach((element) => element.addEventListener("click", (event) => {
-    if (element.matches?.("select[data-action], input[data-action]")) return;
-    // Controls inside the placement Grid / unplaced strip belong to the single
-    // delegated grid surface (`bindGridPointerSurface`), which survives every
-    // re-render.  Binding them here as well would dispatch each grid click and
-    // each cell commit twice.
-    if (typeof element.closest === "function" && element.closest("[data-grid-surface]")) return;
-    if (element.dataset.stopClick === "true") event.stopPropagation();
-    // A dialog carries `data-stop-click="true"` so that a click inside it is
-    // not a click on the backdrop.  The guard used to sit on the `[data-action]`
-    // listener alone, and no dialog has a `data-action` of its own — so every
-    // click inside a dialog bubbled to the overlay's `close-overlay` and threw
-    // the dialog, and whatever had been typed into it, away.  Resolve the
-    // dialog the click actually happened in and only dispatch actions from
-    // that same scope.
-    const dialog = typeof event.target?.closest === "function"
-      ? event.target.closest("[data-stop-click='true']")
-      : null;
-    if (
-      dialog &&
-      !(typeof element.closest === "function" && element.closest("[data-stop-click='true']") === dialog)
-    ) return;
-    handleAction(element.dataset.action, element, event);
-  }));
+  bindActionControls(root);
   root.querySelectorAll("select[data-action], input[data-action]").forEach((element) => {
     element.addEventListener("change", (event) => {
       handleAction(element.dataset.action, element, event);
@@ -9644,6 +10120,24 @@ function bindEvents() {
   root.querySelectorAll("input[data-mapping-duplicate]").forEach((element) => {
     element.addEventListener("change", () => {
       store.setImportMappingAllowDuplicate(element.dataset.path || "", Boolean(element.checked));
+    });
+  });
+  // §18.1 — the whole row is a hit target, not only the checkbox.  The same
+  // predicate the mapping preview uses keeps interactive children (the checkbox
+  // itself, buttons) out of the row toggle so one click does exactly one thing.
+  root.querySelectorAll("input[data-document-import-select]").forEach((element) => {
+    element.addEventListener("change", () => {
+      store.setDocumentImportSelected(element.dataset.path || "", Boolean(element.checked));
+    });
+  });
+  root.querySelectorAll("[data-document-import-row]").forEach((row) => {
+    row.addEventListener("click", (event) => {
+      const target = event.target;
+      if (!(target instanceof Element) || !mappingRowClickToggles(target)) return;
+      store.setDocumentImportSelected(
+        row.dataset.path || "",
+        row.dataset.selected !== "true",
+      );
     });
   });
 
@@ -10111,6 +10605,12 @@ document.addEventListener("keydown", (event) => {
     store.ui.palette = false;
     store.ui.focusField = "capture";
     store.notify();
+  }
+  if (event.key === "Escape" && store.ui.documentImportDialog) {
+    // §18 — Escape is the 取消 button: nothing gets adopted, and the mapping page
+    // says out loud that no course content was written.
+    store.cancelDocumentImportSelection();
+    return;
   }
   if (event.key === "Escape" && store.ui.assetImagePreviewId) {
     // The modal is `aria-modal`, so Escape has to win over everything underneath

@@ -60,6 +60,7 @@ import {
 } from "./import_export.ts";
 import { inspectMarkdownImage, readFolderPreview, readFolderSource, scanFolder, scanMediaDescendants } from "./folder_scan.ts";
 import { confirmFolderAdoption } from "./folder_adoption.ts";
+import { ProjectRegistryStore } from "./project_registry.ts";
 import type { ImportMappingPlan } from "./folder_mapping.ts";
 import type { ExportPreset } from "../domain/types.ts";
 
@@ -92,6 +93,14 @@ export class DesktopService {
   readonly store: ProjectDirectoryStore;
   /** Browser reader metadata is separate from canonical project storage. */
   readonly browserSession: BrowserSessionStore;
+  /**
+   * §4 app-level project registry. Rebuildable convenience state, never
+   * Canonical: id / path / title / last-opened only. The desktop shell keeps it
+   * in app-local data; this shell owns one configured root, so it keeps the same
+   * `.workspace/projects.json` beside that root like its session and AI side
+   * files do.
+   */
+  readonly projectRegistry: ProjectRegistryStore;
   readonly events = new EventBus();
   readonly jobs = new JobManager();
   readonly audit = new AuditLog();
@@ -117,6 +126,7 @@ export class DesktopService {
   ) {
     this.store = new ProjectDirectoryStore(directory, options);
     this.browserSession = new BrowserSessionStore(this.store.directory);
+    this.projectRegistry = new ProjectRegistryStore(this.store.directory);
     this.aiOptions = aiOptions;
     this.diagnostics = new DiagnosticLogger(
       join(directory, ".workspace", "diagnostics"),
@@ -190,6 +200,54 @@ export class DesktopService {
           object_type: "project",
           action: "project_inspect",
           metadata: { status: inspection.status, path },
+        },
+      };
+    });
+    // ---- §4 project registry (browser twin of `registry.rs`) ---------------
+    // App-level, rebuildable, and usable before any project is open: these four
+    // commands carry id / path / title / a last-opened hint and nothing else.
+    this.commands.register("registry.list", async () => {
+      const listed = await this.projectRegistry.list();
+      return {
+        value: listed,
+        audit: {
+          object_type: "project_registry",
+          action: "list",
+          metadata: { project_count: listed.projects.length },
+        },
+      };
+    });
+    this.commands.register("registry.record", async (input) => {
+      const outcome = await this.projectRegistry.record(input);
+      return {
+        value: outcome,
+        audit: {
+          object_type: "project_registry",
+          object_id: outcome.project?.project_id ?? null,
+          action: outcome.status,
+        },
+      };
+    });
+    this.commands.register("registry.remove", async (input) => {
+      const result = await this.projectRegistry.remove(input);
+      return {
+        value: result,
+        audit: {
+          object_type: "project_registry",
+          object_id: result.project_id,
+          action: "remove",
+          metadata: { removed: result.removed },
+        },
+      };
+    });
+    this.commands.register("registry.relocate", async (input) => {
+      const result = await this.projectRegistry.relocate(input);
+      return {
+        value: { status: result.status, project: result.project },
+        audit: {
+          object_type: "project_registry",
+          object_id: result.project.project_id,
+          action: "relocate",
         },
       };
     });
