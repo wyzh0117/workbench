@@ -876,8 +876,8 @@ async function bootGridHarness(
   store.bridge = bridge;
   store.data = structuredClone(projects["/tmp/grid"]);
   store.ui.screen = "project";
-  store.ui.route = "editor";
-  store.ui.mode = "layout";
+  store.ui.route = "free-layout";
+  store.ui.mode = "writing";
   store.ui.activeId = store.data.content_items[0]?.id ?? null;
   store.ui.gridEditing = options.gridEditing ?? false;
   store.createLayout("grid");

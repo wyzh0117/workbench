@@ -34,6 +34,13 @@ interface BridgeCall {
   args: Record<string, unknown>;
 }
 
+interface FileFingerprint {
+  exists: boolean;
+  mtime_ms: number | null;
+  size: number | null;
+  hash: string | null;
+}
+
 /** The reader position a native restart has to restore. */
 interface SessionShape {
   project_dir?: string | null;
@@ -49,6 +56,8 @@ interface SessionShape {
 /** The slice of the running store these tests need. */
 interface NativeStore {
   data: ProjectData;
+  projectFingerprint: FileFingerprint | null;
+  projectFingerprintGeneration: number;
   ui: {
     activeId: string | null;
     layoutPageId: string | null;
@@ -72,10 +81,11 @@ interface NativeStore {
     previewAssetVideoSource: (assetId: string) => Promise<unknown>;
   };
   hasNativeLease: () => boolean;
+  adoptProjectSnapshot: (state: unknown) => boolean;
+  persistProjectSnapshot: (project: ProjectData) => Promise<unknown>;
   addMapItem: (title?: string) => void;
   enterProject: () => void;
   flush: () => Promise<unknown>;
-  prepareParsedMarkdownPlan: (plan: Record<string, unknown>) => Promise<any>;
   selectExplorerEntry: (relativePath: string) => Promise<void>;
   clearExplorerPreview: () => void;
 }
@@ -104,12 +114,21 @@ async function bootNative(options: {
   launchProjectDir: string | null;
   persistedSession?: SessionShape | null;
   locationHref?: string;
-  /** When set, `project_open` fails with this shell message. */
+  /** When set, the native open-state command fails with this shell message. */
   openError?: string;
 }) {
+  let fingerprintRevision = 1;
+  const fingerprintFor = (project: ProjectData): FileFingerprint => ({
+    exists: true,
+    mtime_ms: 1_780_000_000_000 + fingerprintRevision,
+    size: new TextEncoder().encode(JSON.stringify(project)).byteLength,
+    hash: fingerprintRevision.toString(16).padStart(64, "0"),
+  });
   const state = {
     /** Last project the shell persisted through `project_save`. */
     project: structuredClone(options.project),
+    /** Fingerprint paired with the persisted project snapshot. */
+    fingerprint: fingerprintFor(options.project),
     /** `null` until `save_session` writes the file. */
     session: options.persistedSession ? structuredClone(options.persistedSession) : null,
     sessionWrites: 0,
@@ -169,6 +188,12 @@ async function bootNative(options: {
             // that is gone or leased elsewhere fails here.
             if (options.openError) throw new Error(options.openError);
             return structuredClone(state.project);
+          case "project_open_state":
+            if (options.openError) throw new Error(options.openError);
+            return {
+              project: structuredClone(state.project),
+              fingerprint: structuredClone(state.fingerprint),
+            };
           case "read_recovery_journal":
             return null;
           case "clear_recovery_journal":
@@ -183,8 +208,19 @@ async function bootNative(options: {
           }
           case "project_save": {
             const project = args.project as ProjectData | undefined;
-            if (project) state.project = structuredClone(project);
-            return { saved_at: "2026-01-01T00:00:00.000Z" };
+            assert(project, "native save must include canonical project data");
+            assertEquals(
+              args.expectedFingerprint,
+              state.fingerprint,
+              "native save must use the fingerprint paired with its loaded snapshot",
+            );
+            state.project = structuredClone(project);
+            fingerprintRevision += 1;
+            state.fingerprint = fingerprintFor(state.project);
+            return {
+              fingerprint: structuredClone(state.fingerprint),
+              recovery_warning: null,
+            };
           }
           case "project_close":
             return null;
@@ -334,12 +370,79 @@ Deno.test("native launch opens the --project-dir project and persists it", async
   try {
     await until(() => store.data.content_items.length >= 2, "载入课程内容");
     assert(
-      state.calls.some((call) => call.command === "project_open"),
-      "启动时必须打开 --project-dir 指向的项目",
+      state.calls.some((call) => call.command === "project_open_state"),
+      "启动时必须读取与项目同一快照的 fingerprint",
+    );
+    const opened = state.calls.find((call) => call.command === "project_open_state");
+    assertEquals(
+      opened?.args.projectDir,
+      "/tmp/native-boot-project",
+      "启动时必须为 --project-dir 打开原生项目",
+    );
+    assertEquals(
+      store.projectFingerprint,
+      state.fingerprint,
+      "启动后 store 必须采用 open_state 返回的 fingerprint",
     );
     assertEquals(store.bridge.projectDir, "/tmp/native-boot-project", "启动目录必须成为当前项目");
     assertEquals(state.session?.project_dir, "/tmp/native-boot-project", "会话必须记录新项目目录");
     assert(state.sessionWrites > 0, "启动流程必须把会话写回磁盘");
+  } finally {
+    restore();
+  }
+});
+
+Deno.test("a late save acknowledgement cannot replace a newer accepted project baseline", async () => {
+  const { store, state, restore } = await bootNative({
+    project: seededProject(),
+    launchProjectDir: "/tmp/native-stale-ack-project",
+    persistedSession: null,
+  });
+  try {
+    await until(() => store.hasNativeLease(), "stale-ack test project lease");
+    let revision = 100;
+    const testFingerprint = (project: ProjectData): FileFingerprint => ({
+      exists: true,
+      mtime_ms: 1_780_000_000_000 + revision,
+      size: new TextEncoder().encode(JSON.stringify(project)).byteLength,
+      hash: revision.toString(16).padStart(64, "0"),
+    });
+    let finishSave!: (value: unknown) => void;
+    let markSaveStarted!: () => void;
+    let staleFingerprint!: FileFingerprint;
+    const saveStarted = new Promise<void>((resolve) => {
+      markSaveStarted = resolve;
+    });
+    state.invokeOverrides.set("project_save", async (args) => {
+      state.project = structuredClone(args.project as ProjectData);
+      revision += 1;
+      state.fingerprint = testFingerprint(state.project);
+      staleFingerprint = structuredClone(state.fingerprint);
+      markSaveStarted();
+      return await new Promise((resolve) => {
+        finishSave = resolve;
+      });
+    });
+
+    const saving = store.persistProjectSnapshot(structuredClone(store.data));
+    await saveStarted;
+    const newerProject = structuredClone(state.project);
+    newerProject.project.title = "已采用的新版本";
+    state.project = structuredClone(newerProject);
+    revision += 1;
+    state.fingerprint = testFingerprint(state.project);
+    const newerFingerprint = structuredClone(state.fingerprint);
+    assert(
+      store.adoptProjectSnapshot({ project: newerProject, fingerprint: newerFingerprint }),
+      "a trusted read must adopt the newer project and fingerprint together",
+    );
+    const acceptedGeneration = store.projectFingerprintGeneration;
+
+    finishSave({ fingerprint: staleFingerprint, recovery_warning: null });
+    await saving;
+    assertEquals(store.data.project.title, "已采用的新版本", "late ack must not replace accepted data");
+    assertEquals(store.projectFingerprint, newerFingerprint, "late ack must not roll back the accepted fingerprint");
+    assertEquals(store.projectFingerprintGeneration, acceptedGeneration, "late ack must not advance the newer generation");
   } finally {
     restore();
   }
@@ -390,7 +493,17 @@ Deno.test("native session keeps the reader position for restart", async () => {
     first.store.ui.activeId = second.id;
     first.store.ui.rightPanel = "media";
     first.store.ui.route = "media";
+    const priorFingerprint = structuredClone(first.store.projectFingerprint);
     await first.store.flush();
+    assertEquals(
+      first.store.projectFingerprint,
+      first.state.fingerprint,
+      "成功保存必须把新 fingerprint 与已保存项目一起采用",
+    );
+    assert(
+      JSON.stringify(first.store.projectFingerprint) !== JSON.stringify(priorFingerprint),
+      "成功保存必须推进 fingerprint",
+    );
     // The reader position is persisted by the session timer, not by `flush`.
     await until(() => (first.state.session?.mode ?? "") === "structure", "写入读者位置");
     const saved: SessionShape | null = structuredClone(first.state.session);
@@ -481,8 +594,8 @@ Deno.test("native launch locator restores the matching persisted layout page", a
       2,
       "a launch locator requires one follow-up read of the app-data session",
     );
-    const opened = state.calls.find((call) => call.command === "project_open");
-    assertEquals(opened?.args.projectDir, projectDir, "project.open must use the canonical launch directory");
+    const opened = state.calls.find((call) => call.command === "project_open_state");
+    assertEquals(opened?.args.projectDir, projectDir, "project.open_state must use the canonical launch directory");
   } finally {
     restore();
   }
@@ -635,38 +748,32 @@ Deno.test("native import, media, and AI bridge calls match Tauri command argumen
     persistedSession: { project_dir: "/tmp/native-bridge-project" },
   });
   try {
-    const parsed = await store.prepareParsedMarkdownPlan({
+    const adoptPlan = {
       root: "/tmp/native-bridge-source",
-      items: [{
-        relative_path: "lesson.md",
-        kind: "file",
-        mapping: "lesson",
-        selected: true,
-        markdown_dependency_preview: {
-          state: "ready",
-          source_hash: "a".repeat(64),
-          images: [],
-          counts: { total: 0, local_readable: 0, missing: 0, outside_root: 0, remote_or_unsafe: 0 },
-        },
-      }],
+      confirmed: true,
+      items: [],
+    };
+    await store.bridge.command("folder.adopt", {
+      plan: adoptPlan,
+      document_paths: ["reading/lesson.md"],
     });
     assertEquals(
-      state.calls.find((call) => call.command === "folder_read_source")?.args,
-      { root: "/tmp/native-bridge-source", relativePath: "lesson.md" },
-      "Tauri's default command argument casing requires relativePath",
+      state.calls.find((call) => call.command === "folder_adopt_with_documents")?.args,
+      { plan: adoptPlan, documentPaths: ["reading/lesson.md"] },
+      "native adoption sends the flat confirmed plan and the direct-child selection",
     );
-    assert(parsed.items[0].parsed_markdown, "native Markdown must be parsed from the read source");
 
     const appendPlan = { root: "/tmp/native-bridge-source", confirmed: true, items: [] };
     await store.bridge.command("folder.append", { plan: appendPlan, duplicate_choice: "keep" });
     assertEquals(
-      state.calls.find((call) => call.command === "folder_append")?.args,
+      state.calls.find((call) => call.command === "folder_append_with_documents")?.args,
       {
         plan: appendPlan,
         projectDir: "/tmp/native-bridge-project",
+        documentPaths: [],
         duplicateChoice: "keep",
       },
-      "folder.append's flat Rust parameters must receive Tauri camelCase projectDir",
+      "folder.append's flat Rust parameters must receive Tauri camelCase projectDir and document paths",
     );
 
     await store.bridge.previewFolderVideoSource("/tmp/native-bridge-source", "clips/large.mp4");

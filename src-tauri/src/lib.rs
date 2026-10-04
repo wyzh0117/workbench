@@ -64,7 +64,7 @@ struct ProjectLockRecord {
     heartbeat: String,
 }
 
-#[derive(Clone, Debug, Serialize, PartialEq, Eq)]
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 struct FileFingerprint {
     exists: bool,
     mtime_ms: Option<u64>,
@@ -2176,6 +2176,24 @@ fn project_open(project_dir: String) -> Result<Option<Value>, String> {
     }
 }
 
+#[tauri::command]
+fn project_open_state(project_dir: String) -> Result<Option<Value>, String> {
+    let opened = project_open(project_dir.clone())?;
+    let Some(opened) = opened else {
+        return Ok(None);
+    };
+    if opened.get("status").is_some() {
+        return Ok(Some(opened));
+    }
+    let project_dir = explicit_project_dir(&project_dir, false)?;
+    let _lease_guard = require_active_project_lock(&project_dir)?;
+    let (project, fingerprint) = read_project_state(&project_dir)?;
+    store_project_baseline(&project_dir, fingerprint.clone(), Some(project.clone()))?;
+    Ok(Some(
+        json!({ "project": project, "fingerprint": fingerprint }),
+    ))
+}
+
 /// Compatibility name for the browser shell. It still requires an explicit
 /// project directory; it never falls back to app-local-data.
 #[tauri::command]
@@ -2189,10 +2207,38 @@ fn read_project(project_dir: String) -> Result<Option<Value>, String> {
 }
 
 #[tauri::command]
-fn project_save(project_dir: String, project: Value) -> Result<(), String> {
+fn project_save(
+    project_dir: String,
+    expected_fingerprint: FileFingerprint,
+    recovery_journal: Option<Value>,
+    project: Value,
+) -> Result<Value, String> {
     let project_dir = explicit_project_dir(&project_dir, false)?;
     let _lease_guard = require_active_project_lock(&project_dir)?;
-    write_project_value_unlocked(&project_dir, &project)
+    let current = project_fingerprint(&project_dir)?;
+    if fingerprints_differ(&expected_fingerprint, &current) {
+        return Err(external_conflict_error(
+            Some(&expected_fingerprint),
+            &current,
+        ));
+    }
+    ensure_no_external_modification(&project_dir)?;
+    if let Some(journal) = recovery_journal {
+        reject_sensitive(&journal)?;
+        if let Some(journal_project) = journal.get("project") {
+            if journal_project != &project {
+                return Err("恢复记录必须与保存的项目快照一致".into());
+            }
+        }
+        let contents = serde_json::to_string(&journal).map_err(|error| error.to_string())?;
+        write_recovery_journal_unlocked(&project_dir, &contents)?;
+    }
+    let recovery_warning = write_project_value_with_warning_unlocked(&project_dir, &project)?;
+    let fingerprint = project_fingerprint(&project_dir)?;
+    Ok(json!({
+        "fingerprint": fingerprint,
+        "recovery_warning": recovery_warning,
+    }))
 }
 
 #[tauri::command]
@@ -2954,10 +3000,10 @@ fn scan_suggested_role(path: &Path, kind: &str, relative: &str) -> &'static str 
         .unwrap_or_default()
         .to_ascii_lowercase();
     match ext.as_str() {
-        "md" | "markdown" | "txt" | "text" => "lesson",
+        "md" | "markdown" | "txt" | "text" | "tex" | "latex" => "lesson",
         "png" | "jpg" | "jpeg" | "gif" | "webp" | "svg" | "avif" | "mp4" | "webm" | "mov"
         | "m4v" | "mp3" | "wav" | "m4a" | "ogg" => "asset",
-        "pdf" | "doc" | "docx" | "odt" | "rtf" => "reference",
+        "pdf" | "doc" | "docx" | "epub" | "odt" | "rtf" => "reference",
         _ => "unsupported",
     }
 }
@@ -3261,6 +3307,229 @@ fn folder_scan(
     Ok(json!({
         "root": root.to_string_lossy(),
         "entries": entries,
+        "warnings": warnings,
+        "errors": errors,
+    }))
+}
+
+/// Scan only the direct supported-document children of selected stage/lesson folders.
+/// The confirmed Mapping plan owns each child's role and destination.
+#[tauri::command]
+fn folder_scan_documents(root: Option<String>, plan: Value) -> Result<Value, String> {
+    let plan_object = plan
+        .as_object()
+        .ok_or_else(|| "folder.scan_documents requires a mapping plan".to_string())?;
+    if plan_object.get("confirmed").and_then(Value::as_bool) != Some(true) {
+        return Err("只能扫描已确认映射计划中的文档候选".into());
+    }
+    let plan_root = plan_object
+        .get("root")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .trim();
+    let raw_root = root.as_deref().unwrap_or(plan_root).trim();
+    if raw_root.is_empty() || !Path::new(raw_root).is_absolute() {
+        return Err("文档扫描需要已选择的绝对路径".into());
+    }
+    let requested_root = PathBuf::from(raw_root);
+    reject_symlink(&requested_root, "导入文件夹")?;
+    let metadata = fs::symlink_metadata(&requested_root)
+        .map_err(|error| format!("无法打开所选文件夹：{error}"))?;
+    if metadata.file_type().is_symlink() || !metadata.is_dir() {
+        return Err("文档扫描需要已选择的文件夹根目录".into());
+    }
+    let resolved_root = fs::canonicalize(&requested_root)
+        .map_err(|error| format!("无法解析所选文件夹：{error}"))?;
+    let resolved_plan_root = fs::canonicalize(plan_root)
+        .map_err(|error| format!("无法解析已确认计划的源文件夹：{error}"))?;
+    if resolved_root != resolved_plan_root {
+        return Err("文档扫描路径必须与已确认映射计划的源文件夹一致".into());
+    }
+
+    let mut groups = Vec::new();
+    let mut warnings = Vec::new();
+    let mut errors = Vec::new();
+    let plan_items = plan_object
+        .get("items")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    for parent in plan_items.iter().filter(|item| {
+        item.get("kind").and_then(Value::as_str) == Some("directory")
+            && item.get("selected").and_then(Value::as_bool) == Some(true)
+            && item.get("error").map_or(true, Value::is_null)
+            && matches!(
+                item.get("mapping").and_then(Value::as_str),
+                Some("stage" | "lesson")
+            )
+    }) {
+        let directory = parent
+            .get("relative_path")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .replace('\\', "/");
+        if directory.is_empty()
+            || directory.contains('/')
+            || directory.contains('\0')
+            || Path::new(&directory).is_absolute()
+            || directory == "."
+            || directory == ".."
+        {
+            warnings.push(format!("{directory}: 映射目录无效，未扫描直接子文件"));
+            continue;
+        }
+        let mapping = parent
+            .get("mapping")
+            .and_then(Value::as_str)
+            .unwrap_or("stage");
+        let parent_destination = parent
+            .get("destination")
+            .cloned()
+            .filter(|value| !value.is_null())
+            .unwrap_or(Value::Null);
+        let destination = if mapping == "lesson" {
+            parent_destination.clone()
+        } else {
+            Value::Null
+        };
+        let mut items = Vec::new();
+        let directory_path = resolved_root.join(&directory);
+        if path_has_symlink_component(&resolved_root, &directory)? {
+            warnings.push(format!("{directory}: 已跳过符号链接，避免越过所选文件夹"));
+            groups.push(json!({
+                "directory": directory,
+                "mapping": mapping,
+                "destination": parent_destination.clone(),
+                "items": items,
+            }));
+            continue;
+        }
+        match fs::symlink_metadata(&directory_path) {
+            Ok(value) if !value.file_type().is_symlink() && value.is_dir() => {}
+            Ok(_) => {
+                warnings.push(format!("{directory}: 映射目录已不是文件夹，未扫描"));
+                groups.push(json!({
+                    "directory": directory,
+                    "mapping": mapping,
+                    "destination": parent_destination.clone(),
+                    "items": items,
+                }));
+                continue;
+            }
+            Err(error) => {
+                let message = format!("无法读取映射目录：{error}");
+                errors.push(format!("{directory}: {message}"));
+                groups.push(json!({
+                    "directory": directory,
+                    "mapping": mapping,
+                    "destination": parent_destination.clone(),
+                    "items": items,
+                }));
+                continue;
+            }
+        };
+        let resolved_directory = fs::canonicalize(&directory_path)
+            .map_err(|error| format!("无法解析映射目录：{error}"))?;
+        if !resolved_directory.starts_with(&resolved_root) {
+            warnings.push(format!("{directory}: 映射目录超出所选文件夹，未扫描"));
+            groups.push(json!({
+                "directory": directory,
+                "mapping": mapping,
+                "destination": parent_destination.clone(),
+                "items": items,
+            }));
+            continue;
+        }
+        let reader = match fs::read_dir(&resolved_directory) {
+            Ok(reader) => reader,
+            Err(error) => {
+                let message = format!("无法读取目录：{error}");
+                errors.push(format!("{directory}: {message}"));
+                groups.push(json!({
+                    "directory": directory,
+                    "mapping": mapping,
+                    "destination": parent_destination.clone(),
+                    "items": items,
+                }));
+                continue;
+            }
+        };
+        let mut children: Vec<std::fs::DirEntry> = reader.filter_map(Result::ok).collect();
+        children.sort_by_key(|entry| entry.file_name());
+        for child in children {
+            let filename = child.file_name().to_string_lossy().into_owned();
+            if filename.starts_with('.') {
+                continue;
+            }
+            let relative_path = format!("{directory}/{filename}");
+            if managed_import_name(&filename) {
+                warnings.push(format!("{relative_path}: 已跳过工作台管理文件或构建目录"));
+                continue;
+            }
+            if !documents::is_supported_document(&filename) {
+                continue;
+            }
+            let path = child.path();
+            let file_meta = match fs::symlink_metadata(&path) {
+                Ok(value) if value.file_type().is_symlink() => {
+                    warnings.push(format!(
+                        "{relative_path}: 已跳过符号链接，避免越过所选文件夹"
+                    ));
+                    continue;
+                }
+                Ok(value) if value.is_file() => value,
+                Ok(_) => continue,
+                Err(error) => {
+                    let message = format!("无法读取：{error}");
+                    errors.push(format!("{relative_path}: {message}"));
+                    items.push(json!({
+                        "relative_path": relative_path,
+                        "kind": "file",
+                        "mime": mime_for_filename(&filename),
+                        "size": Value::Null,
+                        "suggested": "lesson",
+                        "mapping": "lesson",
+                        "selected": false,
+                        "is_suggestion": true,
+                        "error": message,
+                        "destination": destination.clone(),
+                    }));
+                    continue;
+                }
+            };
+            if let Err(message) = scan_relative(&resolved_root, &path) {
+                warnings.push(format!("{relative_path}: {message}"));
+                continue;
+            }
+            let error = fs::File::open(&path)
+                .err()
+                .map(|error| format!("无法读取文件：{error}"));
+            if let Some(message) = &error {
+                errors.push(format!("{relative_path}: {message}"));
+            }
+            items.push(json!({
+                "relative_path": relative_path,
+                "kind": "file",
+                "mime": mime_for_filename(&filename),
+                "size": file_meta.len(),
+                "suggested": "lesson",
+                "mapping": "lesson",
+                "selected": error.is_none(),
+                "is_suggestion": true,
+                "error": error,
+                "destination": destination.clone(),
+            }));
+        }
+        groups.push(json!({
+            "directory": directory,
+            "mapping": mapping,
+            "destination": parent_destination,
+            "items": items,
+        }));
+    }
+    Ok(json!({
+        "root": resolved_root.to_string_lossy(),
+        "groups": groups,
         "warnings": warnings,
         "errors": errors,
     }))
@@ -4018,6 +4287,47 @@ fn folder_append(
     )
 }
 
+/// Native command paired with the direct-child document chooser. The checked
+/// paths remain separate from the confirmed root plan and are revalidated here.
+#[tauri::command]
+fn folder_adopt_with_documents(
+    plan: Value,
+    duplicate_choice: Option<String>,
+    project_title: Option<String>,
+    replace_invalid_project: Option<bool>,
+    document_paths: Option<Vec<String>>,
+) -> Result<Value, String> {
+    folder_apply_import_with_documents(
+        plan,
+        duplicate_choice,
+        project_title,
+        None,
+        replace_invalid_project.unwrap_or(false),
+        document_paths.as_deref().unwrap_or_default(),
+    )
+}
+
+#[tauri::command]
+fn folder_append_with_documents(
+    plan: Value,
+    project_dir: String,
+    duplicate_choice: Option<String>,
+    document_paths: Option<Vec<String>>,
+) -> Result<Value, String> {
+    let project_dir = explicit_project_dir(&project_dir, false)?;
+    let _lease_guard = require_active_project_lock(&project_dir)?;
+    let current = read_project_value(&project_dir)?;
+    validate_project(&current)?;
+    folder_apply_import_with_documents(
+        plan,
+        duplicate_choice,
+        None,
+        Some((project_dir, current)),
+        false,
+        document_paths.as_deref().unwrap_or_default(),
+    )
+}
+
 fn local_markdown_image_href(href: &str) -> bool {
     let value = href.trim();
     if value.is_empty()
@@ -4112,6 +4422,247 @@ fn verify_markdown_image_refs(
         }
     }
     Ok(())
+}
+
+#[derive(Default)]
+struct MarkdownImportBlock {
+    start: usize,
+    end: usize,
+    kind: String,
+    level: Option<u64>,
+    language: Option<String>,
+    checked: Option<bool>,
+    code_text: String,
+    image_refs: Vec<Value>,
+}
+
+fn markdown_heading_level(level: pulldown_cmark::HeadingLevel) -> u64 {
+    match level {
+        pulldown_cmark::HeadingLevel::H1 => 1,
+        pulldown_cmark::HeadingLevel::H2 => 2,
+        pulldown_cmark::HeadingLevel::H3 => 3,
+        pulldown_cmark::HeadingLevel::H4 => 4,
+        pulldown_cmark::HeadingLevel::H5 => 5,
+        pulldown_cmark::HeadingLevel::H6 => 6,
+    }
+}
+
+fn markdown_import_block(source: &str, block: MarkdownImportBlock) -> Value {
+    let start = block.start.min(source.len());
+    let end = block.end.max(start).min(source.len());
+    let raw = source.get(start..end).unwrap_or_default();
+    let trimmed = raw.trim_end_matches(['\r', '\n']);
+    let text = match block.kind.as_str() {
+        "heading" => {
+            let first = trimmed.lines().next().unwrap_or_default().trim_start();
+            let hashes = first
+                .chars()
+                .take_while(|character| *character == '#')
+                .count();
+            if (1..=6).contains(&hashes) {
+                first[hashes..]
+                    .trim_start()
+                    .trim_end_matches('#')
+                    .trim_end()
+                    .to_owned()
+            } else {
+                first.to_owned()
+            }
+        }
+        "quote" => trimmed
+            .lines()
+            .map(|line| {
+                let line = line.trim_start();
+                line.strip_prefix('>')
+                    .map(|value| value.strip_prefix(' ').unwrap_or(value))
+                    .unwrap_or(line)
+            })
+            .collect::<Vec<_>>()
+            .join("\n"),
+        "code" => block.code_text.trim_end_matches(['\r', '\n']).to_owned(),
+        "divider" => String::new(),
+        "table" => raw.to_owned(),
+        "list" | "paragraph" | "html" | "other" => trimmed.to_owned(),
+        _ => trimmed.to_owned(),
+    };
+    json!({
+        "type": block.kind,
+        "raw": trimmed,
+        "text": text,
+        "level": block.level,
+        "language": block.language,
+        "checked": block.checked,
+        "imageRefs": block.image_refs,
+    })
+}
+
+/// Native Markdown counterpart to the shell's `parseMarkdown()`. It projects
+/// only the selected source file at import time and retains GFM block order and
+/// exact source slices for lists, tables, paragraphs and raw HTML.
+fn parse_native_markdown(source: &str) -> Result<Value, String> {
+    if source.len() > documents::MAX_SOURCE_BYTES {
+        return Err("Markdown文件超过可解析大小上限".into());
+    }
+    let options = MarkdownOptions::ENABLE_TABLES
+        | MarkdownOptions::ENABLE_STRIKETHROUGH
+        | MarkdownOptions::ENABLE_TASKLISTS;
+    let mut blocks = Vec::new();
+    let mut all_refs = Vec::new();
+    let mut local_refs = Vec::new();
+    let mut occurrences: HashMap<String, u64> = HashMap::new();
+    let mut token_index = 0_u64;
+    let mut current: Option<MarkdownImportBlock> = None;
+    let mut depth = 0_usize;
+    let mut image: Option<(String, Option<String>, String, usize)> = None;
+    let mut saw_html = false;
+
+    for (event, range) in MarkdownParser::new_ext(source, options).into_offset_iter() {
+        match &event {
+            MarkdownEvent::Start(tag) => {
+                if current.is_none() {
+                    let (kind, level, language) = match tag {
+                        MarkdownTag::Heading { level, .. } => {
+                            ("heading", Some(markdown_heading_level(*level)), None)
+                        }
+                        MarkdownTag::Paragraph => ("paragraph", None, None),
+                        MarkdownTag::BlockQuote(_) => ("quote", None, None),
+                        MarkdownTag::CodeBlock(kind) => {
+                            let language = match kind {
+                                pulldown_cmark::CodeBlockKind::Fenced(info) => info
+                                    .split(|character: char| {
+                                        character.is_whitespace() || character == ','
+                                    })
+                                    .next()
+                                    .filter(|value| !value.is_empty())
+                                    .map(str::to_owned),
+                                pulldown_cmark::CodeBlockKind::Indented => None,
+                            };
+                            ("code", None, language)
+                        }
+                        MarkdownTag::List(_) => ("list", None, None),
+                        MarkdownTag::Table(_) => ("table", None, None),
+                        MarkdownTag::HtmlBlock => ("html", None, None),
+                        _ => ("other", None, None),
+                    };
+                    current = Some(MarkdownImportBlock {
+                        start: range.start,
+                        end: range.end,
+                        kind: kind.to_owned(),
+                        level,
+                        language,
+                        ..Default::default()
+                    });
+                    depth = 1;
+                } else {
+                    depth += 1;
+                }
+                if let MarkdownTag::Image {
+                    dest_url, title, ..
+                } = tag
+                {
+                    image = Some((
+                        dest_url.to_string(),
+                        (!title.is_empty()).then(|| title.to_string()),
+                        String::new(),
+                        blocks.len(),
+                    ));
+                }
+            }
+            MarkdownEvent::End(pulldown_cmark::TagEnd::Image) => {
+                if let Some((href, title, alt, block_index)) = image.take() {
+                    let occurrence = *occurrences.get(&href).unwrap_or(&0);
+                    occurrences.insert(href.clone(), occurrence + 1);
+                    let reference = json!({
+                        "href": href,
+                        "title": title,
+                        "alt": alt,
+                        "tokenIndex": token_index,
+                        "occurrence": occurrence,
+                        "blockIndex": block_index,
+                    });
+                    token_index += 1;
+                    if local_markdown_image_href(&href) {
+                        local_refs.push(reference.clone());
+                        if let Some(block) = current.as_mut() {
+                            block.image_refs.push(json!({
+                                "href": href,
+                                "title": title,
+                                "alt": alt,
+                                "tokenIndex": token_index - 1,
+                                "occurrence": occurrence,
+                            }));
+                        }
+                    }
+                    all_refs.push(reference);
+                }
+            }
+            MarkdownEvent::TaskListMarker(checked) => {
+                if let Some(block) = current.as_mut() {
+                    block.checked = Some(block.checked.unwrap_or(false) || *checked);
+                }
+            }
+            MarkdownEvent::Text(value) if image.is_some() => {
+                if let Some((_, _, alt, _)) = image.as_mut() {
+                    alt.push_str(value);
+                }
+            }
+            MarkdownEvent::Code(value) if image.is_some() => {
+                if let Some((_, _, alt, _)) = image.as_mut() {
+                    alt.push_str(value);
+                }
+            }
+            MarkdownEvent::Text(value)
+                if current.as_ref().is_some_and(|block| block.kind == "code") =>
+            {
+                if let Some(block) = current.as_mut() {
+                    block.code_text.push_str(value);
+                }
+            }
+            MarkdownEvent::Rule if current.is_none() => {
+                blocks.push(markdown_import_block(
+                    source,
+                    MarkdownImportBlock {
+                        start: range.start,
+                        end: range.end,
+                        kind: "divider".to_owned(),
+                        ..Default::default()
+                    },
+                ));
+            }
+            MarkdownEvent::Html(_) | MarkdownEvent::InlineHtml(_) => saw_html = true,
+            _ => {}
+        }
+
+        if let Some(block) = current.as_mut() {
+            block.end = block.end.max(range.end);
+        }
+
+        if let MarkdownEvent::End(_) = event {
+            if depth > 0 {
+                depth -= 1;
+                if depth == 0 {
+                    if let Some(block) = current.take() {
+                        blocks.push(markdown_import_block(source, block));
+                    }
+                }
+            }
+        }
+    }
+    if let Some(block) = current.take() {
+        blocks.push(markdown_import_block(source, block));
+    }
+
+    let warnings = if saw_html {
+        vec!["Markdown 中的原始 HTML 按纯文本显示，不会执行。"]
+    } else {
+        Vec::<&str>::new()
+    };
+    Ok(json!({
+        "blocks": blocks,
+        "imageRefs": all_refs,
+        "explicitLocalImageRefs": local_refs,
+        "warnings": warnings,
+    }))
 }
 
 fn markdown_dependency_path(
@@ -5085,8 +5636,46 @@ fn adopt_native_document_lesson(
     file: &AdoptFile,
     destination: &AdoptLessonDestination,
 ) -> Result<(DocumentOutcome, String, Option<String>), String> {
-    let parsed = documents::parse_document(file.filename, file.bytes)
+    let mut parsed = documents::parse_document(file.filename, file.bytes)
         .map_err(|error| format!("{}: 文档解析失败（{error}）", file.rel))?;
+    let latex = matches!(
+        documents::extension_of(file.filename).as_str(),
+        "tex" | "latex"
+    );
+    if latex {
+        // The LaTeX parser emits direct `\includegraphics{path}` commands as
+        // Markdown image links. Reparse each emitted block with the same GFM
+        // parser used for Markdown so image position, alt text and occurrence
+        // metadata use the shared adoption contract.
+        let mut token_index = 0_u64;
+        let mut occurrences: HashMap<String, u64> = HashMap::new();
+        for (block_index, block) in parsed.blocks.iter_mut().enumerate() {
+            let raw = block.get("raw").and_then(Value::as_str).unwrap_or_default();
+            let generated = parse_native_markdown(raw)?;
+            let mut references = Vec::new();
+            for mut reference in generated["imageRefs"]
+                .as_array()
+                .cloned()
+                .unwrap_or_default()
+            {
+                let href = reference
+                    .get("href")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default()
+                    .to_owned();
+                let occurrence = *occurrences.get(&href).unwrap_or(&0);
+                occurrences.insert(href.clone(), occurrence + 1);
+                if let Some(object) = reference.as_object_mut() {
+                    object.insert("tokenIndex".to_owned(), json!(token_index));
+                    object.insert("occurrence".to_owned(), json!(occurrence));
+                    object.insert("blockIndex".to_owned(), json!(block_index));
+                }
+                token_index += 1;
+                references.push(reference);
+            }
+            block["imageRefs"] = Value::Array(references);
+        }
+    }
     if !parsed.usable_text {
         // A scanned PDF: never an empty lesson body, only a Source Reference.
         let reason = "没有文字层，已保留为来源参考";
@@ -5124,6 +5713,102 @@ fn adopt_native_document_lesson(
     let mut assets_by_block: HashMap<usize, Vec<Value>> = HashMap::new();
     let mut managed: HashMap<String, (String, String)> = HashMap::new();
     let mut unresolved: Vec<String> = Vec::new();
+    if latex {
+        for (block_index, block) in parsed.blocks.iter().enumerate() {
+            for reference in block
+                .get("imageRefs")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+            {
+                let href = reference
+                    .get("href")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default();
+                if href.is_empty()
+                    || managed.contains_key(href)
+                    || unresolved.iter().any(|item| item == href)
+                {
+                    continue;
+                }
+                let resolved =
+                    match markdown_dependency_path(roots.resolved_source_root, file.rel, href) {
+                        Ok(Some(path)) => path,
+                        Ok(None) => {
+                            acc.warnings.push(format!(
+                                "{}: LaTeX 图片引用「{href}」未找到；已保留正文原文。",
+                                file.rel
+                            ));
+                            unresolved.push(href.to_owned());
+                            continue;
+                        }
+                        Err(error) => {
+                            acc.warnings.push(format!(
+                            "{}: LaTeX 图片引用「{href}」无法安全读取（{error}）；已保留正文原文。",
+                            file.rel
+                        ));
+                            unresolved.push(href.to_owned());
+                            continue;
+                        }
+                    };
+                let bytes = match fs::read(&resolved) {
+                    Ok(bytes) => bytes,
+                    Err(error) => {
+                        acc.warnings.push(format!(
+                            "{}: LaTeX 图片引用「{href}」读取失败（{error}）；已保留正文原文。",
+                            file.rel
+                        ));
+                        unresolved.push(href.to_owned());
+                        continue;
+                    }
+                };
+                let filename = resolved
+                    .file_name()
+                    .and_then(|name| name.to_str())
+                    .unwrap_or("latex-image");
+                let checksum = sha256_hex(&bytes);
+                let asset_id = match adopt_import_asset(
+                    project,
+                    roots.resolved_root,
+                    roots.project_id,
+                    &safe_asset_filename(filename),
+                    &bytes,
+                    &checksum,
+                    Some(&resolved),
+                    roots.duplicate_choice,
+                    None,
+                    &mut acc.warnings,
+                    &mut acc.reused_asset_ids,
+                    &mut acc.copied_files,
+                    &mut acc.staged_pairs,
+                    roots.staging_relative_root,
+                )? {
+                    Some(id) => id,
+                    None => {
+                        acc.warnings.push(format!(
+                            "{}: LaTeX 图片引用「{href}」未纳入素材库；已保留正文原文。",
+                            file.rel
+                        ));
+                        unresolved.push(href.to_owned());
+                        continue;
+                    }
+                };
+                let Some(storage_path) = asset_storage_path(project, &asset_id) else {
+                    acc.warnings.push(format!(
+                        "{}: LaTeX 图片引用「{href}」没有可用的素材路径；已保留正文原文。",
+                        file.rel
+                    ));
+                    unresolved.push(href.to_owned());
+                    continue;
+                };
+                if !acc.asset_ids.contains(&asset_id) {
+                    acc.asset_ids.push(asset_id.clone());
+                }
+                managed.insert(href.to_owned(), (storage_path, asset_id));
+                let _ = block_index;
+            }
+        }
+    }
     for image in &parsed.images {
         let bytes = match decode_base64(&image.base64) {
             Ok(bytes) => bytes,
@@ -5304,6 +5989,160 @@ fn folder_apply_import(
     append_target: Option<(PathBuf, Value)>,
     allow_invalid_replacement: bool,
 ) -> Result<Value, String> {
+    folder_apply_import_with_documents(
+        plan,
+        duplicate_choice,
+        project_title,
+        append_target,
+        allow_invalid_replacement,
+        &[],
+    )
+}
+
+fn selected_folder_document_items(
+    source_root: &Path,
+    plan_items: &[Value],
+    document_paths: &[String],
+    warnings: &mut Vec<String>,
+) -> Vec<Value> {
+    let mut selected_parents: HashMap<String, (String, Value)> = HashMap::new();
+    for item in plan_items {
+        if item.get("kind").and_then(Value::as_str) != Some("directory")
+            || item.get("selected").and_then(Value::as_bool) != Some(true)
+            || item.get("error").is_some_and(|error| !error.is_null())
+        {
+            continue;
+        }
+        let mapping = item.get("mapping").and_then(Value::as_str).unwrap_or("");
+        if !matches!(mapping, "stage" | "lesson") {
+            continue;
+        }
+        let relative = item
+            .get("relative_path")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .replace('\\', "/");
+        if relative.is_empty()
+            || relative.contains('/')
+            || relative.contains('\0')
+            || relative == "."
+            || relative == ".."
+        {
+            continue;
+        }
+        let destination = if mapping == "lesson" {
+            item.get("destination").cloned().unwrap_or(Value::Null)
+        } else {
+            Value::Null
+        };
+        selected_parents.insert(relative, (mapping.to_owned(), destination));
+    }
+
+    let mut paths: Vec<String> = document_paths
+        .iter()
+        .map(|path| path.replace('\\', "/"))
+        .collect();
+    paths.sort();
+    paths.dedup();
+    let mut selected = Vec::new();
+    for relative in paths {
+        let parts: Vec<&str> = relative.split('/').collect();
+        if relative.is_empty()
+            || relative.contains('\0')
+            || Path::new(&relative).is_absolute()
+            || parts.len() != 2
+            || parts
+                .iter()
+                .any(|part| part.is_empty() || *part == "." || *part == "..")
+        {
+            warnings.push(format!(
+                "{relative}: 只允许导入已选根级文件夹中的直接子文档"
+            ));
+            continue;
+        }
+        let (directory, filename) = (parts[0], parts[1]);
+        let Some((parent_mapping, destination)) = selected_parents.get(directory) else {
+            warnings.push(format!(
+                "{relative}: 父文件夹未按当前映射选入阶段或课时，已跳过"
+            ));
+            continue;
+        };
+        if filename.starts_with('.') || managed_import_name(filename) {
+            warnings.push(format!("{relative}: 已跳过隐藏或工作台管理文件"));
+            continue;
+        }
+        if !documents::is_supported_document(filename) {
+            warnings.push(format!("{relative}: 不是支持的正文文档格式，已跳过"));
+            continue;
+        }
+        match path_has_symlink_component(source_root, &relative) {
+            Ok(false) => {}
+            Ok(true) => {
+                warnings.push(format!("{relative}: 已跳过符号链接，避免越过所选文件夹"));
+                continue;
+            }
+            Err(error) => {
+                warnings.push(format!(
+                    "{relative}: 无法安全检查文档路径（{error}），已跳过"
+                ));
+                continue;
+            }
+        }
+        let path = source_root.join(&relative);
+        let metadata = match fs::symlink_metadata(&path) {
+            Ok(metadata) if !metadata.file_type().is_symlink() && metadata.is_file() => metadata,
+            Ok(_) => {
+                warnings.push(format!("{relative}: 不是普通文档文件，已跳过"));
+                continue;
+            }
+            Err(error) => {
+                warnings.push(format!("{relative}: 无法读取文档（{error}），已跳过"));
+                continue;
+            }
+        };
+        let canonical = match fs::canonicalize(&path) {
+            Ok(path) if path.starts_with(source_root) => path,
+            _ => {
+                warnings.push(format!("{relative}: 文档路径超出所选文件夹，已跳过"));
+                continue;
+            }
+        };
+        let relative = match scan_relative(source_root, &canonical) {
+            Ok(relative) => relative,
+            Err(error) => {
+                warnings.push(format!("{relative}: {error}"));
+                continue;
+            }
+        };
+        let shares_new_lesson = parent_mapping == "lesson"
+            && destination.get("kind").and_then(Value::as_str) != Some("existing_lesson");
+        selected.push(json!({
+            "relative_path": relative,
+            "kind": "file",
+            "mime": mime_for_filename(filename),
+            "size": metadata.len(),
+            "suggested": "lesson",
+            "mapping": "lesson",
+            "selected": true,
+            "is_suggestion": true,
+            "error": Value::Null,
+            "destination": if parent_mapping == "lesson" { destination.clone() } else { Value::Null },
+            "folder_lesson_group": if shares_new_lesson { json!(directory) } else { Value::Null },
+            "folder_lesson_title": if shares_new_lesson { json!(directory) } else { Value::Null },
+            "allow_duplicate": false,
+        }));
+    }
+    selected
+}
+
+fn folder_apply_import_with_documents(
+    plan: Value,
+    duplicate_choice: Option<String>,
+    project_title: Option<String>,
+    append_target: Option<(PathBuf, Value)>,
+    allow_invalid_replacement: bool,
+    document_paths: &[String],
+) -> Result<Value, String> {
     let plan_obj = plan
         .as_object()
         .ok_or_else(|| "folder.adopt requires a mapping plan object".to_string())?;
@@ -5418,6 +6257,19 @@ fn folder_apply_import(
         .and_then(Value::as_array)
         .cloned()
         .unwrap_or_default();
+    let selected_documents = selected_folder_document_items(
+        &resolved_source_root,
+        &items,
+        document_paths,
+        &mut acc.warnings,
+    );
+    for item in &mut items {
+        if let Some(object) = item.as_object_mut() {
+            object.remove("folder_lesson_group");
+            object.remove("folder_lesson_title");
+        }
+    }
+    items.extend(selected_documents);
     expand_selected_directory_media(&resolved_source_root, &mut items, &mut acc.warnings);
 
     // §28: every supported document that did not reach the body pipeline is still
@@ -5472,6 +6324,7 @@ fn folder_apply_import(
 
     let mut stage_by_rel: std::collections::HashMap<String, String> =
         std::collections::HashMap::new();
+    let mut folder_lesson_targets: HashMap<String, String> = HashMap::new();
 
     // Pass 1: stages
     for item in &items {
@@ -5574,6 +6427,12 @@ fn folder_apply_import(
             .and_then(|value| value.to_str())
             .unwrap_or(&filename)
             .to_string();
+        let file_title = item
+            .get("folder_lesson_title")
+            .and_then(Value::as_str)
+            .filter(|title| !title.is_empty())
+            .unwrap_or(&file_title)
+            .to_owned();
         // The containment checks below refuse a path before it is ever opened. For
         // the text/document rows that refusal is also a §28 "skipped" line, so the
         // user sees why a listed file produced nothing.
@@ -5683,18 +6542,28 @@ fn folder_apply_import(
             filename: &filename,
             file_title: &file_title,
         };
+        let content_item_count_before = acc.content_item_ids.len();
         let snapshot = AdoptItemSnapshot::capture(&project, &acc);
         let report: Result<Option<(DocumentOutcome, String)>, String> = (|| {
             let mut report: Option<(DocumentOutcome, String)> = None;
             'item: {
                 match mapping {
                     "lesson" => {
-                        let destination = adopt_lesson_destination(
-                            &project,
-                            &project_id,
-                            item,
-                            stage_id.clone(),
-                        )?;
+                        let grouped_item = item
+                            .get("folder_lesson_group")
+                            .and_then(Value::as_str)
+                            .and_then(|group| {
+                                folder_lesson_targets.get(group).map(|id| (group, id))
+                            })
+                            .map(|(_, content_item_id)| {
+                                let mut clone = item.clone();
+                                clone["destination"] = json!({
+                                    "kind": "existing_lesson",
+                                    "content_item_id": content_item_id
+                                });
+                                clone
+                            });
+                        let destination_item = grouped_item.as_ref().unwrap_or(item);
                         let markdown = matches!(
                             Path::new(&filename)
                                 .extension()
@@ -5711,6 +6580,12 @@ fn folder_apply_import(
                         let native = !markdown && documents::is_supported_document(&filename);
                         let mut unresolved_images = 0_usize;
                         let content_id = if native {
+                            let destination = adopt_lesson_destination(
+                                &project,
+                                &project_id,
+                                destination_item,
+                                stage_id.clone(),
+                            )?;
                             let (outcome, reason, content_id) = adopt_native_document_lesson(
                                 &mut project,
                                 &mut acc,
@@ -5721,12 +6596,25 @@ fn folder_apply_import(
                             report = Some((outcome, reason));
                             content_id
                         } else if markdown {
-                            let parsed = item
+                            let source_text = std::str::from_utf8(&bytes)
+                                .map_err(|_| format!("{rel}: Markdown源不是UTF-8文本"))?;
+                            let parsed = match item
                                 .get("parsed_markdown")
                                 .filter(|value| value.is_object())
-                                .ok_or_else(|| {
-                                    format!("{rel}: 缺少共享Markdown解析结果，请重新打开映射预览")
-                                })?;
+                            {
+                                Some(parsed) => parsed.clone(),
+                                None => {
+                                    let generated = parse_native_markdown(source_text)?;
+                                    // Retain the existing common downstream path while
+                                    // making client parser output optional.
+                                    let parsed_value = json!({
+                                        "source_hash": checksum,
+                                        "blocks": generated["blocks"].clone(),
+                                        "explicitLocalImageRefs": generated["explicitLocalImageRefs"].clone(),
+                                    });
+                                    parsed_value
+                                }
+                            };
                             let expected_hash = parsed
                                 .get("source_hash")
                                 .and_then(Value::as_str)
@@ -5734,8 +6622,6 @@ fn folder_apply_import(
                             if expected_hash != checksum {
                                 return Err(format!("{rel}: 源文件在解析后发生变化，未提交导入"));
                             }
-                            let source_text = std::str::from_utf8(&bytes)
-                                .map_err(|_| format!("{rel}: Markdown源不是UTF-8文本"))?;
                             let parsed_blocks =
                                 parsed.get("blocks").ok_or("Markdown解析结果缺少blocks")?;
                             let refs = parsed
@@ -5762,6 +6648,12 @@ fn folder_apply_import(
                                     break 'item;
                                 }
                             }
+                            let destination = adopt_lesson_destination(
+                                &project,
+                                &project_id,
+                                destination_item,
+                                stage_id.clone(),
+                            )?;
                             let mut assets_by_block: HashMap<usize, Vec<Value>> = HashMap::new();
                             for reference in refs {
                                 let block_index = reference
@@ -5898,6 +6790,12 @@ fn folder_apply_import(
                             )?;
                             Some(content_id)
                         } else {
+                            let destination = adopt_lesson_destination(
+                                &project,
+                                &project_id,
+                                destination_item,
+                                stage_id.clone(),
+                            )?;
                             let text = String::from_utf8_lossy(&bytes).into_owned();
                             let content_id =
                                 if let Some(existing_id) = destination.existing_lesson_id {
@@ -6026,6 +6924,15 @@ fn folder_apply_import(
                     "{rel}: 该文件导入失败，已跳过并继续处理其余文件（{reason}）"
                 ));
                 tally.record_file(kind, &rel, &filename, DocumentOutcome::Failed, &reason);
+            }
+        }
+        if let Some(group) = item
+            .get("folder_lesson_group")
+            .and_then(Value::as_str)
+            .filter(|group| !folder_lesson_targets.contains_key(*group))
+        {
+            if let Some(content_item_id) = acc.content_item_ids.get(content_item_count_before) {
+                folder_lesson_targets.insert(group.to_owned(), content_item_id.clone());
             }
         }
     }
@@ -8683,10 +9590,14 @@ fn load_session(app: AppHandle) -> Result<Option<Value>, String> {
 fn write_recovery_journal(project_dir: String, contents: String) -> Result<(), String> {
     let project_dir = explicit_project_dir(&project_dir, true)?;
     let _lease_guard = require_active_project_lock(&project_dir)?;
+    write_recovery_journal_unlocked(&project_dir, &contents)
+}
+
+fn write_recovery_journal_unlocked(project_dir: &Path, contents: &str) -> Result<(), String> {
     let value: Value = serde_json::from_str(&contents).map_err(|error| error.to_string())?;
     reject_sensitive(&value)?;
-    let path = project_file(&project_dir, ".workspace/recovery.json")?;
-    atomic_write_path(&path, &contents, true)
+    let path = project_file(project_dir, ".workspace/recovery.json")?;
+    atomic_write_path(&path, contents, true)
 }
 
 #[tauri::command]
@@ -8939,7 +9850,9 @@ fn mime_for_filename(filename: &str) -> &'static str {
         .as_str()
     {
         "md" | "markdown" => "text/markdown",
-        "txt" => "text/plain",
+        "txt" | "text" => "text/plain",
+        "tex" | "latex" => "text/x-tex",
+        "epub" => "application/epub+zip",
         "json" => "application/json",
         "png" => "image/png",
         "jpg" | "jpeg" => "image/jpeg",
@@ -8960,7 +9873,6 @@ fn mime_for_filename(filename: &str) -> &'static str {
         // file name identically, or a folder imported through Deno and reopened
         // in Rust would disagree with itself.
         "html" | "htm" => "text/html",
-        "text" => "text/plain",
         "pdf" => "application/pdf",
         "docx" => "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
         "doc" => "application/msword",
@@ -14986,8 +15898,13 @@ mod tests {
         let lock_path = project_lock_path(&directory).unwrap();
         assert!(!lock_path.exists());
         let empty = test_directory("unopened-save");
-        let error = project_save(empty.to_string_lossy().into_owned(), json!({}))
-            .expect_err("save must require an opened lease");
+        let error = project_save(
+            empty.to_string_lossy().into_owned(),
+            project_fingerprint(&empty).unwrap(),
+            None,
+            json!({}),
+        )
+        .expect_err("save must require an opened lease");
         assert!(error.starts_with("project_not_open:") || error.starts_with("project_lock_lost:"));
         assert!(!project_lock_path(&empty).unwrap().exists());
         let _ = fs::remove_dir_all(directory);
@@ -15080,6 +15997,7 @@ mod tests {
         let initial = json!({ "project": { "id": "p1", "title": "base" }, "items": [] });
         project_create(directory.to_string_lossy().into_owned(), initial.clone())
             .expect("project should be created");
+        let stale_fingerprint = project_fingerprint(&directory).expect("created baseline");
         let external = json!({ "project": { "id": "p1", "title": "external" }, "items": [] });
         fs::write(
             directory.join("project.json"),
@@ -15087,8 +16005,13 @@ mod tests {
         )
         .expect("external edit should be written");
         let local = json!({ "project": { "id": "p1", "title": "local" }, "items": [] });
-        let rejected = project_save(directory.to_string_lossy().into_owned(), local)
-            .expect_err("native save must reject the external edit");
+        let rejected = project_save(
+            directory.to_string_lossy().into_owned(),
+            stale_fingerprint,
+            None,
+            local,
+        )
+        .expect_err("native save must reject the external edit");
         assert!(rejected.contains("external_modification_conflict"));
         assert_eq!(read_project_value(&directory).unwrap(), external);
         let report =
@@ -15098,12 +16021,69 @@ mod tests {
         let mut reloaded = project_reload(directory.to_string_lossy().into_owned())
             .expect("reload should refresh the baseline");
         reloaded["project"]["title"] = json!("after-reload");
-        project_save(directory.to_string_lossy().into_owned(), reloaded)
-            .expect("save after reload should succeed");
+        project_save(
+            directory.to_string_lossy().into_owned(),
+            project_fingerprint(&directory).expect("reloaded baseline"),
+            None,
+            reloaded,
+        )
+        .expect("save after reload should succeed");
         assert_eq!(
             read_project_value(&directory).unwrap()["project"]["title"],
             json!("after-reload")
         );
+        project_close(directory.to_string_lossy().into_owned()).unwrap();
+        let _ = fs::remove_dir_all(directory);
+    }
+
+    #[test]
+    fn native_save_rejects_a_stale_client_after_an_internal_project_write() {
+        let directory = test_directory("save-cas");
+        let initial = json!({
+            "project": { "id": "p1", "title": "before" },
+            "items": []
+        });
+        project_create(directory.to_string_lossy().into_owned(), initial.clone()).unwrap();
+        let stale = project_fingerprint(&directory).unwrap();
+
+        let mut imported = initial.clone();
+        imported["project"]["title"] = json!("imported");
+        {
+            let _guard = require_active_project_lock(&directory).unwrap();
+            write_project_value_unlocked(&directory, &imported).unwrap();
+        }
+        let mut stale_edit = initial;
+        stale_edit["project"]["title"] = json!("stale edit");
+        let rejected = project_save(
+            directory.to_string_lossy().into_owned(),
+            stale,
+            None,
+            stale_edit,
+        )
+        .expect_err("a stale loaded snapshot must not overwrite an internal writer");
+        assert!(rejected.contains("external_modification_conflict"));
+        assert_eq!(read_project_value(&directory).unwrap(), imported);
+
+        let state = project_open_state(directory.to_string_lossy().into_owned())
+            .unwrap()
+            .expect("opened project state");
+        assert_eq!(state["project"], imported);
+        let fresh: FileFingerprint = serde_json::from_value(state["fingerprint"].clone()).unwrap();
+        assert_eq!(
+            serde_json::from_value::<FileFingerprint>(serde_json::to_value(&fresh).unwrap())
+                .unwrap(),
+            fresh
+        );
+        let mut fresh_edit = imported.clone();
+        fresh_edit["project"]["title"] = json!("fresh edit");
+        project_save(
+            directory.to_string_lossy().into_owned(),
+            fresh,
+            None,
+            fresh_edit.clone(),
+        )
+        .expect("a freshly loaded baseline should save");
+        assert_eq!(read_project_value(&directory).unwrap(), fresh_edit);
         project_close(directory.to_string_lossy().into_owned()).unwrap();
         let _ = fs::remove_dir_all(directory);
     }
@@ -15145,8 +16125,13 @@ mod tests {
         )
         .expect("explicit resolution should write the merged branch");
         assert_eq!(read_project_value(&directory).unwrap(), merged);
-        project_save(directory.to_string_lossy().into_owned(), merged)
-            .expect("resolved baseline should allow a subsequent save");
+        project_save(
+            directory.to_string_lossy().into_owned(),
+            project_fingerprint(&directory).expect("resolved baseline"),
+            None,
+            merged,
+        )
+        .expect("resolved baseline should allow a subsequent save");
         project_close(directory.to_string_lossy().into_owned()).unwrap();
         let _ = fs::remove_dir_all(directory);
     }
@@ -18445,6 +19430,70 @@ mod tests {
     }
 
     #[test]
+    fn folder_scan_documents_obeys_selected_stage_and_lesson_rows() {
+        let root = test_directory("folder-scan-documents");
+        for directory in [
+            "S01-00",
+            "S01-01",
+            "lesson-target",
+            "asset-folder",
+            "ignored",
+        ] {
+            fs::create_dir_all(root.join(directory)).expect("mapping directory");
+        }
+        fs::create_dir_all(root.join("S01-00/deep")).expect("nested directory");
+        fs::write(root.join("S01-00/a.md"), "# A").expect("markdown");
+        fs::write(root.join("S01-00/deep/not-direct.md"), "# nested").expect("nested markdown");
+        fs::write(root.join("S01-01/b.tex"), "\\section{B}").expect("latex");
+        fs::write(root.join("lesson-target/c.epub"), b"epub").expect("epub");
+        fs::write(root.join("asset-folder/no.md"), "# asset").expect("asset doc");
+        fs::write(root.join("ignored/no.md"), "# ignored").expect("ignored doc");
+
+        let plan = json!({
+            "root": root.to_string_lossy(),
+            "confirmed": true,
+            "items": [
+                { "relative_path": "S01-00", "kind": "directory", "mapping": "stage", "selected": true, "destination": null },
+                { "relative_path": "S01-01", "kind": "directory", "mapping": "stage", "selected": true, "destination": null },
+                { "relative_path": "lesson-target", "kind": "directory", "mapping": "lesson", "selected": true, "destination": { "kind": "existing_lesson", "content_item_id": "lesson-1" } },
+                { "relative_path": "asset-folder", "kind": "directory", "mapping": "asset", "selected": true },
+                { "relative_path": "ignored", "kind": "directory", "mapping": "ignore", "selected": true }
+            ]
+        });
+        let report = folder_scan_documents(Some(root.to_string_lossy().into_owned()), plan)
+            .expect("direct document chooser scan");
+        let groups = report["groups"].as_array().expect("groups");
+        let group_for = |name: &str| groups.iter().find(|group| group["directory"] == name);
+        assert_eq!(
+            groups.len(),
+            3,
+            "asset and ignore folders are not body candidates"
+        );
+        assert_eq!(
+            group_for("S01-00").unwrap()["items"][0]["relative_path"],
+            json!("S01-00/a.md")
+        );
+        assert!(
+            group_for("S01-00").unwrap()["items"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .all(|item| item["relative_path"] != json!("S01-00/deep/not-direct.md")),
+            "the second chooser is direct-child only"
+        );
+        assert_eq!(group_for("S01-01").unwrap()["mapping"], json!("stage"));
+        assert_eq!(
+            group_for("S01-01").unwrap()["items"][0]["destination"],
+            Value::Null
+        );
+        assert_eq!(
+            group_for("lesson-target").unwrap()["items"][0]["destination"],
+            json!({ "kind": "existing_lesson", "content_item_id": "lesson-1" })
+        );
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
     fn folder_scan_lists_directory_without_reading_its_contents() {
         let root = test_directory("folder-scan-unreadable");
         let locked = root.join("locked");
@@ -20035,6 +21084,113 @@ mod tests {
         let _ = fs::remove_dir_all(root);
     }
 
+    #[test]
+    fn folder_adopt_selected_lesson_folder_groups_checked_documents() {
+        let root = test_directory("folder-adopt-lesson-folder-group");
+        fs::create_dir_all(root.join("reading/images")).expect("reading images");
+        let gif = vec![
+            0x47, 0x49, 0x46, 0x38, 0x39, 0x61, 1, 0, 1, 0, 0x80, 0, 0, 0, 0, 0, 0xff, 0xff, 0xff,
+            0x21, 0xf9, 0x04, 0x01, 0, 0, 0, 0, 0x2c, 0, 0, 0, 0, 1, 0, 1, 0, 0, 2, 2, 0x44, 0x01,
+            0,
+        ];
+        let markdown = "# First section\n\n![figure](images/figure.gif)\n";
+        let followup = "## Follow-up\n\nSecond document body\n";
+        let unchecked = "Must remain unchecked and unparsed\n";
+        fs::write(root.join("reading/01-intro.md"), markdown).expect("first document");
+        fs::write(root.join("reading/02-followup.md"), followup).expect("second document");
+        fs::write(root.join("reading/03-unchecked.md"), unchecked).expect("unchecked document");
+        fs::write(root.join("reading/images/figure.gif"), &gif).expect("image");
+
+        let plan = json!({
+            "root": root.to_string_lossy(),
+            "confirmed": true,
+            "confirmed_at": "2026-01-01T00:00:00.000Z",
+            "items": [{
+                "relative_path": "reading",
+                "kind": "directory",
+                "mapping": "lesson",
+                "selected": true,
+                "destination": null,
+                "folder_lesson_group": "forged-group",
+                "folder_lesson_title": "forged title"
+            }]
+        });
+        let paths = vec![
+            "reading/02-followup.md".to_owned(),
+            "reading/01-intro.md".to_owned(),
+        ];
+        let result = folder_adopt_with_documents(plan, None, None, None, Some(paths))
+            .expect("checked children share one new Lesson");
+
+        assert_eq!(result["content_item_ids"].as_array().unwrap().len(), 1);
+        let lesson = &result["data"]["content_items"][0];
+        assert_eq!(lesson["title"], json!("reading"));
+        let document_id = lesson["document_id"].as_str().expect("lesson document");
+        let blocks: Vec<&Value> = result["data"]["blocks"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|block| block["document_id"] == json!(document_id))
+            .collect();
+        assert_eq!(
+            blocks
+                .iter()
+                .map(|block| block["type"].as_str().unwrap_or_default())
+                .collect::<Vec<_>>(),
+            vec!["heading", "paragraph", "heading", "paragraph"],
+            "first source document semantic blocks precede the appended second source"
+        );
+        assert_eq!(blocks[0]["content"], json!("First section"));
+        assert!(
+            blocks[1]["content"].as_str().unwrap().contains("figure"),
+            "semantic image block was not preserved: {:?}",
+            blocks[1]
+        );
+        assert_eq!(blocks[2]["content"], json!("Follow-up"));
+        assert_eq!(blocks[3]["content"], json!("Second document body"));
+        assert_eq!(
+            blocks[0]["settings"]["markdown_import"]["relative_path"],
+            json!("reading/01-intro.md")
+        );
+        assert_eq!(
+            blocks[2]["settings"]["markdown_import"]["relative_path"],
+            json!("reading/02-followup.md")
+        );
+        let provenance = result["data"]["project"]["settings"]["markdown_import_sources"]
+            .as_array()
+            .expect("durable source ledger");
+        assert_eq!(
+            provenance.len(),
+            2,
+            "each checked document has a ledger row"
+        );
+        assert_eq!(result["data"]["asset_usages"].as_array().unwrap().len(), 1);
+        let usage = &result["data"]["asset_usages"][0];
+        assert_eq!(usage["block_id"], blocks[1]["id"]);
+        assert_eq!(test_document_import(&result)["succeeded"], json!(2));
+        assert_eq!(
+            test_tally_files(&result)
+                .iter()
+                .map(|(path, _, _)| path.as_str())
+                .collect::<Vec<_>>(),
+            vec!["reading/01-intro.md", "reading/02-followup.md"]
+        );
+        assert!(!blocks.iter().any(|block| block["content"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("Must remain unchecked")));
+        assert_eq!(
+            fs::read(root.join("reading/03-unchecked.md")).unwrap(),
+            unchecked.as_bytes()
+        );
+        let managed_path = result["data"]["assets"][0]["storage_path"]
+            .as_str()
+            .expect("managed image path");
+        assert_eq!(fs::read(root.join(managed_path)).unwrap(), gif);
+        let _ = project_close(root.to_string_lossy().into_owned());
+        let _ = fs::remove_dir_all(root);
+    }
+
     /// The sweep is scoped to what the user actually chose: an unselected or
     /// ignored directory row contributes nothing.
     #[test]
@@ -20779,6 +21935,233 @@ mod tests {
     }
 
     #[test]
+    fn folder_adopt_preserves_semantic_images_across_selected_formats() {
+        let root = test_directory("folder-adopt-semantic-format-fixture");
+        fs::create_dir_all(root.join("S01-00/images")).expect("stage images");
+        fs::create_dir_all(root.join("shared")).expect("shared image folder");
+
+        let gif = vec![
+            0x47, 0x49, 0x46, 0x38, 0x39, 0x61, 1, 0, 1, 0, 0x80, 0, 0, 0, 0, 0, 0xff, 0xff, 0xff,
+            0x21, 0xf9, 0x04, 0x01, 0, 0, 0, 0, 0x2c, 0, 0, 0, 0, 1, 0, 1, 0, 0, 2, 2, 0x44, 0x01,
+            0,
+        ];
+        let referenced_gif = [gif.as_slice(), b"markdown"].concat();
+        let unused_gif = [gif.as_slice(), b"unused"].concat();
+        let epub_gif = [gif.as_slice(), b"epub"].concat();
+        let latex_gif = [gif.as_slice(), b"latex"].concat();
+        let docx_png = test_png_bytes("docx-embedded");
+        fs::write(root.join("S01-00/images/reference.gif"), &referenced_gif)
+            .expect("markdown image");
+        fs::write(root.join("S01-00/images/library-only.gif"), &unused_gif)
+            .expect("recursive media only");
+        fs::write(root.join("shared/latex figure.gif"), &latex_gif).expect("latex image");
+
+        fs::write(
+            root.join("S01-00/intro.md"),
+            concat!(
+                "# Markdown heading\n\n",
+                "> quoted line\n\n",
+                "- list one\n- list two\n\n",
+                "| Item | Value |\n| --- | --- |\n| row | 1 |\n\n",
+                "```rust\nlet answer = 42;\n```\n\n",
+                "before [link](https://example.invalid) ![GIF reference](images/reference.gif) after\n\n",
+                "Markdown end\n"
+            ),
+        )
+        .expect("markdown source");
+
+        let docx_body = format!(
+            "{}<w:p>{}</w:p>",
+            test_docx_heading("DOCX heading"),
+            test_docx_image("rId2", "DOCX figure")
+        );
+        let docx = test_docx_bytes(
+            &docx_body,
+            &test_docx_image_rels("media/image1.png"),
+            &[("word/media/image1.png", &docx_png)],
+        );
+        fs::write(root.join("S01-00/word.docx"), &docx).expect("docx source");
+
+        let container = concat!(
+            r#"<?xml version="1.0" encoding="UTF-8"?>"#,
+            r#"<container version="1.0" xmlns="urn:oasis:names:tc:opendocument:xmlns:container">"#,
+            r#"<rootfiles><rootfile full-path="OEBPS/content.opf" media-type="application/oebps-package+xml"/>"#,
+            r#"</rootfiles></container>"#
+        );
+        let package = concat!(
+            r#"<?xml version="1.0" encoding="UTF-8"?>"#,
+            r#"<package xmlns="http://www.idpf.org/2007/opf" version="3.0">"#,
+            r#"<manifest><item id="chapter" href="Text/chapter.xhtml" media-type="application/xhtml+xml"/>"#,
+            r#"<item id="figure" href="Images/figure.gif" media-type="image/gif"/></manifest>"#,
+            r#"<spine><itemref idref="chapter"/></spine></package>"#
+        );
+        let chapter = concat!(
+            r#"<?xml version="1.0" encoding="UTF-8"?>"#,
+            r#"<html xmlns="http://www.w3.org/1999/xhtml"><body>"#,
+            r#"<h1>EPUB heading</h1><p>before <img src="../Images/figure.gif" alt="EPUB figure"/> after</p>"#,
+            r#"<p>EPUB end</p></body></html>"#
+        );
+        let epub = test_zip_build(&[
+            ("mimetype", b"application/epub+zip"),
+            ("META-INF/container.xml", container.as_bytes()),
+            ("OEBPS/content.opf", package.as_bytes()),
+            ("OEBPS/Text/chapter.xhtml", chapter.as_bytes()),
+            ("OEBPS/Images/figure.gif", epub_gif.as_slice()),
+        ]);
+        fs::write(root.join("S01-00/book.epub"), &epub).expect("epub source");
+
+        fs::write(
+            root.join("S01-00/plan.tex"),
+            "\\section{LaTeX heading}\n\nBefore \\includegraphics[width=1cm]{../shared/latex figure.gif} after.\n\nLaTeX end.\n",
+        )
+        .expect("latex source");
+
+        let plan = json!({
+            "root": root.to_string_lossy(),
+            "confirmed": true,
+            "confirmed_at": "2026-01-01T00:00:00.000Z",
+            "items": [{
+                "relative_path": "S01-00",
+                "kind": "directory",
+                "mapping": "stage",
+                "selected": true
+            }]
+        });
+        let paths = vec![
+            "S01-00/intro.md".to_owned(),
+            "S01-00/word.docx".to_owned(),
+            "S01-00/book.epub".to_owned(),
+            "S01-00/plan.tex".to_owned(),
+        ];
+        let result = folder_adopt_with_documents(plan, None, None, None, Some(paths))
+            .expect("all selected formats adopt");
+        let lessons = result["data"]["content_items"].as_array().expect("lessons");
+        assert_eq!(lessons.len(), 4, "one lesson per checked source document");
+        let expected = [
+            ("intro", "Markdown heading", "GIF reference", "Markdown end"),
+            ("word", "DOCX heading", "DOCX figure", "DOCX figure"),
+            ("book", "EPUB heading", "EPUB figure", "EPUB end"),
+            ("plan", "LaTeX heading", "latex figure", "LaTeX end"),
+        ];
+        for (title, first, image, last) in expected {
+            let texts = test_lesson_block_texts(&result, title);
+            assert_eq!(
+                texts.first().map(String::as_str),
+                Some(first),
+                "{title}: {texts:?}"
+            );
+            let image_index = texts
+                .iter()
+                .position(|text| text.contains(image))
+                .unwrap_or_else(|| panic!("{title} image position missing: {texts:?}"));
+            assert!(
+                texts.last().is_some_and(|text| text.contains(last)),
+                "{title}: {texts:?}"
+            );
+            assert!(image_index > 0, "{title}: {texts:?}");
+            assert_eq!(
+                lessons
+                    .iter()
+                    .find(|lesson| lesson["title"] == json!(title))
+                    .expect("lesson")
+                    .get("stage_id"),
+                Some(&result["stage_ids"][0]),
+                "{title} inherits its selected stage"
+            );
+        }
+        let markdown_lesson = lessons
+            .iter()
+            .find(|lesson| lesson["title"] == json!("intro"))
+            .expect("Markdown lesson");
+        let markdown_document_id = markdown_lesson["document_id"]
+            .as_str()
+            .expect("Markdown document id");
+        let markdown_blocks: Vec<&Value> = result["data"]["blocks"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|block| block["document_id"] == json!(markdown_document_id))
+            .collect();
+        let markdown_types: Vec<&str> = markdown_blocks
+            .iter()
+            .map(|block| block["type"].as_str().unwrap_or_default())
+            .collect();
+        assert_eq!(
+            markdown_types,
+            vec![
+                "heading",
+                "quote",
+                "paragraph",
+                "table",
+                "code",
+                "paragraph",
+                "paragraph"
+            ],
+            "native Markdown fallback retains GFM block sequence"
+        );
+        assert!(markdown_blocks[2]["content"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("- list one"));
+        assert!(markdown_blocks[5]["content"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("[link](https://example.invalid)"));
+
+        let assets = result["data"]["assets"].as_array().expect("assets");
+        for bytes in [
+            &referenced_gif,
+            &unused_gif,
+            &epub_gif,
+            &latex_gif,
+            &docx_png,
+        ] {
+            let asset = assets
+                .iter()
+                .find(|asset| asset["checksum"] == json!(sha256_hex(bytes)))
+                .unwrap_or_else(|| {
+                    panic!("missing asset for bytes {:x?}", &sha256_hex(bytes)[..8])
+                });
+            let storage_path = asset["storage_path"].as_str().expect("managed path");
+            assert!(storage_path.starts_with("assets/"));
+            assert_eq!(
+                fs::read(root.join(storage_path)).expect("managed bytes"),
+                *bytes
+            );
+        }
+        assert_eq!(
+            result["data"]["asset_usages"]
+                .as_array()
+                .expect("usages")
+                .len(),
+            4,
+            "Markdown, DOCX, EPUB and LaTeX each create semantic usage; recursive media does not"
+        );
+        let library_asset_id = assets
+            .iter()
+            .find(|asset| asset["checksum"] == json!(sha256_hex(&unused_gif)))
+            .expect("recursive-only GIF")
+            .get("id")
+            .and_then(Value::as_str)
+            .expect("asset id");
+        assert!(result["data"]["asset_usages"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|usage| usage["asset_id"] != json!(library_asset_id)));
+        assert_eq!(test_document_import(&result)["succeeded"], json!(4));
+        assert_tally_is_consistent(&result);
+
+        let reopened = project_open(root.to_string_lossy().into_owned())
+            .expect("reopen project")
+            .expect("reopened project state");
+        assert_eq!(reopened["content_items"].as_array().unwrap().len(), 4);
+        assert_eq!(reopened["asset_usages"].as_array().unwrap().len(), 4);
+        let _ = project_close(root.to_string_lossy().into_owned());
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
     fn folder_adopt_marks_latex_math_as_degraded_and_surfaces_the_warning() {
         let root = test_directory("folder-adopt-latex-degraded");
         fs::write(
@@ -20879,6 +22262,49 @@ mod tests {
             .unwrap()
             .is_empty());
         assert_tally_is_consistent(&result);
+        let _ = project_close(root.to_string_lossy().into_owned());
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn folder_append_skips_a_duplicate_markdown_before_resolving_a_stale_target() {
+        let root = test_directory("folder-append-duplicate-stale-target");
+        fs::write(root.join("lesson.md"), "# Already imported\n").expect("markdown");
+        let plan = |destination: Value| {
+            json!({
+                "root": root.to_string_lossy(),
+                "confirmed": true,
+                "confirmed_at": "2026-01-01T00:00:00.000Z",
+                "items": [{
+                    "relative_path": "lesson.md",
+                    "kind": "file",
+                    "mapping": "lesson",
+                    "selected": true,
+                    "destination": destination
+                }]
+            })
+        };
+        let adopted =
+            folder_adopt(plan(Value::Null), None, None, None).expect("initial Markdown adoption");
+        assert_eq!(
+            adopted["data"]["content_items"].as_array().unwrap().len(),
+            1
+        );
+
+        let repeated = folder_append(
+            plan(json!({
+                "kind": "existing_lesson",
+                "content_item_id": "deleted-or-stale-target"
+            })),
+            root.to_string_lossy().into_owned(),
+            None,
+        )
+        .expect("duplicate source should skip before checking the stale destination");
+        assert_eq!(test_document_import(&repeated)["skipped"], json!(1));
+        assert_eq!(
+            repeated["data"]["content_items"].as_array().unwrap().len(),
+            1
+        );
         let _ = project_close(root.to_string_lossy().into_owned());
         let _ = fs::remove_dir_all(root);
     }
@@ -21233,6 +22659,7 @@ pub fn run() {
         .manage(BridgeState::new())
         .invoke_handler(tauri::generate_handler![
             project_open,
+            project_open_state,
             project_inspect,
             project_create,
             project_save,
@@ -21263,12 +22690,15 @@ pub fn run() {
             import_confirm,
             folder_scan,
             folder_scan_media,
+            folder_scan_documents,
             folder_read_preview,
             folder_preview_source,
             folder_read_source,
             folder_markdown_image_status,
             folder_adopt,
             folder_append,
+            folder_adopt_with_documents,
+            folder_append_with_documents,
             course_seed_create,
             blueprint_build,
             asset_import,

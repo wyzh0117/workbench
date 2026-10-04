@@ -19,6 +19,7 @@ import {
 /** Only these high-level operations may cross the desktop bridge. */
 export const HIGH_LEVEL_COMMANDS = [
   "project.open",
+  "project.open_state",
   "project.inspect",
   // §4 application-level project registry: app-global, rebuildable, never a
   // second copy of a course. Both shells expose the same four operations.
@@ -39,6 +40,7 @@ export const HIGH_LEVEL_COMMANDS = [
   "import.preview",
   "import.confirm",
   "folder.scan",
+  "folder.scan_documents",
   "folder.scan_media",
   "folder.read_preview",
   "folder.read_source",

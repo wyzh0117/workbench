@@ -23,6 +23,7 @@ import { DesktopService } from "../src/service/desktop.ts";
 import {
   buildImportMappingPlan,
   confirmImportMappingPlan,
+  scanFolderDocuments,
   type ImportMappingPlan,
   setImportMappingAllowDuplicate,
   setImportMappingDestination,
@@ -617,18 +618,14 @@ Deno.test("folder.adopt command applies confirmed plan into the chosen folder", 
 
 let importCounter = 0;
 
-async function waitForMarkdownPreview(store: { ui: Record<string, unknown> }) {
-  for (let attempt = 0; attempt < 40; attempt += 1) {
-    const plan = store.ui.importMappingPlan as ImportMappingPlan | undefined;
-    const pending = plan?.items.some((item) =>
-      item.selected && item.mapping === "lesson" &&
-      /\.(md|markdown)$/i.test(item.relative_path) &&
-      !["ready", "error"].includes(item.markdown_dependency_preview?.state || "")
-    );
-    if (!pending) return;
-    await new Promise((resolve) => setTimeout(resolve, 5));
-  }
-  throw new Error("Markdown dependency preview did not settle");
+async function createUiLessonFolder(): Promise<string> {
+  const root = await Deno.makeTempDir({ prefix: "acw-adoption-ui-source-" });
+  await Deno.mkdir(join(root, "01-基础"));
+  await Deno.writeTextFile(
+    join(root, "01-基础", "导论.md"),
+    "# 导论\n\n第一课正文\n",
+  );
+  return root;
 }
 
 /**
@@ -647,7 +644,7 @@ async function acceptDocumentImportDialog(store: {
   await new Promise((resolve) => setTimeout(resolve, 0));
 }
 
-async function bootStore() {
+async function bootStore(projectRoot = "") {
   const source = createEmptyProjectData("接管 UI 测试");
   const seed = createCourseSeed(source, {
     source_type: "blank",
@@ -670,6 +667,14 @@ async function bootStore() {
     appends: [],
     adoptFailure: "",
   };
+  let revision = 1;
+  const fingerprintFor = (project: ProjectData, version: number) => ({
+    exists: true,
+    mtime_ms: 1_780_000_000_000 + version,
+    size: new TextEncoder().encode(JSON.stringify(project)).byteLength,
+    hash: version.toString(16).padStart(64, "0"),
+  });
+  const currentFingerprint = () => fingerprintFor(state.project, revision);
   const root = {
     innerHTML: "",
     querySelector: () => null,
@@ -705,12 +710,21 @@ async function bootStore() {
     currentProject: () => state.project,
     loadSession: async () => null,
     readProject: async () => structuredClone(state.project),
+    readProjectState: async () => ({
+      project: structuredClone(state.project),
+      fingerprint: currentFingerprint(),
+    }),
     readRecoveryJournal: async () => null,
     listenNativeDrops: async () => () => {},
     writeRecoveryJournal: async () => {},
-    writeProject: async (project: ProjectData) => {
+    writeProject: async (project: ProjectData, expectedFingerprint: unknown) => {
+      if (JSON.stringify(expectedFingerprint) !== JSON.stringify(currentFingerprint())) {
+        throw new Error("external_modification_conflict");
+      }
       state.writes += 1;
       state.project = structuredClone(project);
+      revision += 1;
+      return { fingerprint: currentFingerprint(), recovery_warning: null };
     },
     clearRecoveryJournal: async () => {},
     saveSession: async () => {},
@@ -722,109 +736,45 @@ async function bootStore() {
     projectIdentity: async () => state.project.project.id,
     command: async (name: string, input: Record<string, unknown> = {}) => {
       if (name === "folder.scan") {
-        return {
-          root: String(input.path || "/tmp/course"),
-          entries: [
-            {
-              path: "/tmp/course/01-基础",
-              relative_path: "01-基础",
-              kind: "directory",
-              mime: null,
-              size: null,
-              suggested_role: "stage",
-            },
-            {
-              path: "/tmp/course/01-基础/导论.md",
-              relative_path: "01-基础/导论.md",
-              kind: "file",
-              mime: "text/markdown",
-              size: 12,
-              suggested_role: "lesson",
-            },
-            {
-              path: "/tmp/course/01-基础/intro.png",
-              relative_path: "01-基础/intro.png",
-              kind: "file",
-              mime: "image/png",
-              size: 3,
-              suggested_role: "asset",
-            },
-          ],
-          warnings: [],
-          errors: [],
-        };
+        return await scanFolder(String(input.path || input.root || ""));
       }
-      if (name === "folder.read_source") {
-        const text = "# 导论\n第一课正文\n";
-        const digest = new Uint8Array(await crypto.subtle.digest(
-          "SHA-256",
-          new TextEncoder().encode(text),
-        ));
-        const sha256 = [...digest].map((byte) => byte.toString(16).padStart(2, "0")).join("");
-        return {
-          relative_path: String(input.relativePath || "01-基础/导论.md"),
-          size: new TextEncoder().encode(text).length,
-          sha256,
-          text,
-        };
-      }
-      if (name === "folder.markdown_image_status") {
-        return { status: "present", relative_path: "images/fixture.png", size: 1, mime: "image/png" };
+      if (name === "folder.scan_documents") {
+        return await scanFolderDocuments(
+          String(input.root || ""),
+          input.plan as ImportMappingPlan,
+        );
       }
       if (name === "folder.adopt") {
         state.adopts.push({ name, input });
         if (state.adoptFailure) throw new Error(state.adoptFailure);
         const plan = input.plan as ImportMappingPlan;
         assert(plan?.confirmed === true, "UI must only adopt confirmed plans");
-        const adopted = createEmptyProjectData("已接管课程");
-        adopted.stages.push({
-          id: "stage-1",
-          project_id: adopted.project.id,
-          parent_stage_id: null,
-          code: "S01",
-          title: "01-基础",
-          description: "",
-          learning_action: "",
-          order_index: 0,
-          archived: false,
-          created_at: new Date().toISOString(),
-          updated_at: new Date().toISOString(),
+        const result = await confirmFolderAdoption(plan, {
+          document_paths: Array.isArray(input.document_paths)
+            ? input.document_paths.map(String)
+            : [],
         });
-        state.project = adopted;
+        state.project = structuredClone(result.data);
         state.writes += 1;
-        return {
-          data: adopted,
-          root: plan.root,
-          stage_ids: ["stage-1"],
-          content_item_ids: [],
-          asset_ids: [],
-          source_ids: [],
-          reused_asset_ids: [],
-          warnings: [],
-          copied_files: [],
-        };
+        revision += 1;
+        return result;
       }
       if (name === "folder.append") {
         state.appends.push({ name, input });
         const plan = input.plan as ImportMappingPlan;
         assert(plan?.confirmed === true, "append UI must only write a confirmed plan");
-        const appended = structuredClone(state.project);
-        const item = appended.content_items[0];
-        assert(item, "append fixture needs an existing content item");
-        appendBlock(appended, item.id, "paragraph", "通过追加计划导入的正文");
-        state.project = appended;
-        state.writes += 1;
-        return {
-          data: appended,
-          root: plan.root,
-          stage_ids: [],
-          content_item_ids: [item.id],
-          asset_ids: [],
-          source_ids: [],
-          reused_asset_ids: [],
-          warnings: [],
-          copied_files: [],
-        };
+        return await confirmFolderAdoption(plan, {
+          data: structuredClone(state.project),
+          project_root: projectRoot || plan.root,
+          document_paths: Array.isArray(input.document_paths)
+            ? input.document_paths.map(String)
+            : [],
+          persist_project: async (project) => {
+            state.project = structuredClone(project);
+            state.writes += 1;
+            revision += 1;
+          },
+        });
       }
       if (name === "ai.connection.list") return { providers: [] };
       if (name === "ai.execution.list") return { records: [] };
@@ -841,13 +791,19 @@ async function bootStore() {
     confirmDocumentImportSelection: () => Promise<void>;
     undo: () => void;
     redo: () => void;
+    adoptProjectSnapshot: (state: unknown) => boolean;
     flush: () => Promise<boolean>;
     history: unknown[];
     future: unknown[];
     blocks: (item?: unknown) => ProjectData["blocks"];
     notify: () => void;
   })(bridge);
-  store.data = structuredClone(state.project);
+  if (!store.adoptProjectSnapshot({
+    project: structuredClone(state.project),
+    fingerprint: currentFingerprint(),
+  })) {
+    throw new Error("test bridge must seed a valid project/fingerprint pair");
+  }
   return {
     store,
     state,
@@ -861,11 +817,11 @@ async function bootStore() {
 }
 
 Deno.test("UI confirmation performs one adopt action and keeps row controls distinct", async () => {
+  const sourceRoot = await createUiLessonFolder();
   const { store, state, restore } = await bootStore();
   try {
-    await store.importExistingFolder("/tmp/course");
+    await store.importExistingFolder(sourceRoot);
     store.openImportMappingPreview();
-    await waitForMarkdownPreview(store);
     assert(store.ui.importMappingPlan, "preview must exist");
     assert(
       (store.ui.importMappingPlan as ImportMappingPlan).confirmed === false,
@@ -896,10 +852,25 @@ Deno.test("UI confirmation performs one adopt action and keeps row controls dist
       adoptsAfter === 1,
       `one confirm must call folder.adopt once (got ${adoptsAfter})`,
     );
+    assert(
+      JSON.stringify((state.adopts[0] as { input: Record<string, unknown> }).input.document_paths) ===
+        JSON.stringify(["01-基础/导论.md"]),
+      "the chooser's checked direct-child path must reach the executor",
+    );
     assert(state.writes >= 1, "apply must persist Canonical project");
     assert(
       store.data.stages.some((stage) => stage.title === "01-基础"),
       "store must load adopted Canonical stages",
+    );
+    const lesson = store.data.content_items.find((item) => item.title === "导论");
+    assert(lesson, "the executor must create the selected document as a Lesson");
+    const importedBlocks = store.data.blocks.filter((block) =>
+      block.document_id === lesson.document_id
+    );
+    assert(
+      importedBlocks.some((block) => block.type === "heading" && block.content === "导论") &&
+        importedBlocks.some((block) => block.type === "paragraph" && String(block.content ?? "").trim() === "第一课正文"),
+      "the actual executor parse must preserve Markdown heading and paragraph blocks",
     );
     assert(
       typeof store.ui.toast === "string" &&
@@ -910,15 +881,16 @@ Deno.test("UI confirmation performs one adopt action and keeps row controls dist
     );
   } finally {
     restore();
+    await Deno.remove(sourceRoot, { recursive: true }).catch(() => {});
   }
 });
 
 Deno.test("failed import keeps the editable plan, shows a persistent safe reason, and can retry", async () => {
+  const sourceRoot = await createUiLessonFolder();
   const { store, state, restore } = await bootStore();
   try {
-    await store.importExistingFolder("/tmp/course");
+    await store.importExistingFolder(sourceRoot);
     store.openImportMappingPreview();
-    await waitForMarkdownPreview(store);
     const originalItems = structuredClone(
       (store.ui.importMappingPlan as ImportMappingPlan).items,
     );
@@ -963,16 +935,23 @@ Deno.test("failed import keeps the editable plan, shows a persistent safe reason
     assert(state.adopts.length === 2, "a second confirmation must retry the same plan");
     assert(String(store.ui.route) === "map", "successful retry must open the course map");
     assert(!store.ui.importMappingError, "success must clear the persistent error");
+    assert(
+      store.data.blocks.some((block) => block.type === "heading" && block.content === "导论") &&
+        store.data.blocks.some((block) => block.type === "paragraph" && String(block.content ?? "").trim() === "第一课正文"),
+      "the successful retry must execute the real Markdown parser and write its blocks",
+    );
   } finally {
     restore();
+    await Deno.remove(sourceRoot, { recursive: true }).catch(() => {});
   }
 });
 
 Deno.test("folder append is one undoable Canonical change and never removes source files", async () => {
   const sourceRoot = await Deno.makeTempDir({ prefix: "acw-append-undo-source-" });
+  const projectRoot = await Deno.makeTempDir({ prefix: "acw-append-undo-project-" });
   const sourceFile = join(sourceRoot, "lesson.md");
-  await Deno.writeTextFile(sourceFile, "# appended source remains");
-  const { store, state, restore } = await bootStore();
+  await Deno.writeTextFile(sourceFile, "# 追加正文\n\n来源文件保留\n");
+  const { store, state, restore } = await bootStore(projectRoot);
   try {
     const existing = store.data.blocks.at(-1)!;
     const original = structuredClone(store.data);
@@ -983,13 +962,14 @@ Deno.test("folder append is one undoable Canonical change and never removes sour
 
     await store.importExistingFolder(sourceRoot, "append");
     store.openImportMappingPreview();
-    await waitForMarkdownPreview(store);
     await store.confirmImportMapping();
     await acceptDocumentImportDialog(store);
 
     assert(state.appends.length === 1, "confirmed append should execute once");
-    const imported = store.data.blocks.find((block) => block.content === "通过追加计划导入的正文");
-    assert(imported, "appended Canonical content should appear");
+    const imported = store.data.blocks.find((block) =>
+      block.type === "heading" && block.content === "追加正文"
+    );
+    assert(imported, "the execution-time Markdown parse should append its heading to Canonical");
     const importedId = imported.id;
     assert(store.history.length === historyBefore + 1, "append should add exactly one undo entry");
     assert((store.history.at(-1) as { label: string }).label === "追加文件夹资料", "undo history should explain the append");
@@ -1008,9 +988,14 @@ Deno.test("folder append is one undoable Canonical change and never removes sour
     assert(store.data.blocks.some((block) => block.id === importedId), "redo should restore the same imported block ID");
     assert(state.project.blocks.some((block) => block.id === importedId), "redo should persist the appended project");
     assert((await Deno.stat(sourceFile)).isFile, "redo must leave the original source file untouched");
+    assert(
+      await Deno.readTextFile(sourceFile) === "# 追加正文\n\n来源文件保留\n",
+      "the executor must parse a copy while keeping source bytes unchanged",
+    );
   } finally {
     restore();
     await Deno.remove(sourceRoot, { recursive: true }).catch(() => {});
+    await Deno.remove(projectRoot, { recursive: true }).catch(() => {});
   }
 });
 

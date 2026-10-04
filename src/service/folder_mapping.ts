@@ -5,6 +5,7 @@
  * Preview builds an editable plan; Confirm collects it. Neither writes Canonical
  * / project.json — call confirmFolderAdoption (folder.adopt) after confirm.
  */
+import { scanFolderDirectChildren } from "./folder_scan.ts";
 import type {
   MediaDescendantKind,
   ScanKind,
@@ -86,6 +87,10 @@ export interface ImportMappingItem {
   is_suggestion: true;
   error?: string | null;
   destination?: ImportMappingDestination | null;
+  /** Executor-only key for checked documents sharing a newly-created Lesson folder target. */
+  folder_lesson_group?: string;
+  /** Folder title used for the first successfully imported document in that group. */
+  folder_lesson_title?: string;
   markdown_dependency_preview?: MarkdownDependencyPreview | null;
   markdown_source_match?: MarkdownSourceMatch | null;
   allow_duplicate?: boolean;
@@ -97,6 +102,20 @@ export interface ImportMappingPlan {
   /** Set only by confirmImportMappingPlan — never by preview builders. */
   confirmed: boolean;
   confirmed_at: string | null;
+}
+
+export interface FolderDocumentCandidateGroup {
+  directory: string;
+  mapping: "stage" | "lesson";
+  destination: ImportMappingDestination | null;
+  items: ImportMappingItem[];
+}
+
+export interface FolderDocumentCandidateScan {
+  root: string;
+  groups: FolderDocumentCandidateGroup[];
+  warnings: string[];
+  errors: string[];
 }
 
 const ROLE_LABELS: Record<MappingRole, string> = {
@@ -145,6 +164,74 @@ export const DOCUMENT_IMPORT_EXTENSIONS: readonly string[] = [
   ".epub",
   ".pdf",
 ];
+
+/**
+ * Read only immediate supported document files in selected stage/lesson folders.
+ * The selected Mapping row supplies the child semantics; this scan never infers
+ * a second target from child names or deeper directory structure.
+ */
+export async function scanFolderDocuments(
+  root: string,
+  plan: ImportMappingPlan,
+): Promise<FolderDocumentCandidateScan> {
+  if (!plan || plan.confirmed !== true) {
+    throw new Error("只能读取已确认映射计划中的文档候选");
+  }
+  const requestedRoot = String(root || "").trim();
+  if (!requestedRoot || requestedRoot !== String(plan.root || "").trim()) {
+    throw new Error("文档扫描路径必须与已确认映射计划的源文件夹一致");
+  }
+  const parents = plan.items.filter((item): item is ImportMappingItem & { mapping: "stage" | "lesson" } =>
+    item?.kind === "directory" && item.selected === true && !item.error &&
+    (item.mapping === "stage" || item.mapping === "lesson")
+  );
+  const scan = await scanFolderDirectChildren(
+    requestedRoot,
+    parents.map((item) => item.relative_path),
+  );
+  const byDirectory = new Map(parents.map((item) => [item.relative_path, item]));
+  const groups: FolderDocumentCandidateGroup[] = [];
+  for (const scanned of scan.groups) {
+    const parent = byDirectory.get(scanned.directory);
+    if (!parent) continue;
+    const destination = parent.mapping === "lesson" && parent.destination
+      ? { ...parent.destination }
+      : null;
+    const items = scanned.entries
+      .filter((entry) =>
+        (DOCUMENT_IMPORT_EXTENSIONS as readonly string[]).includes(
+          documentImportExtension(entry.relative_path),
+        )
+      )
+      .map((entry): ImportMappingItem => ({
+        relative_path: entry.relative_path,
+        kind: "file",
+        mime: entry.mime,
+        size: entry.size,
+        suggested: "lesson",
+        mapping: "lesson",
+        selected: !entry.error,
+        is_suggestion: true,
+        error: entry.error ?? null,
+        destination: destination ? { ...destination } : null,
+        markdown_dependency_preview: null,
+        markdown_source_match: null,
+        allow_duplicate: false,
+      }));
+    groups.push({
+      directory: scanned.directory,
+      mapping: parent.mapping,
+      destination: destination ? { ...destination } : null,
+      items,
+    });
+  }
+  return {
+    root: scan.root,
+    groups,
+    warnings: scan.warnings,
+    errors: scan.errors,
+  };
+}
 
 /** §28 — the only outcomes one document import may report. */
 export type DocumentImportOutcome = "succeeded" | "degraded" | "skipped" | "failed";

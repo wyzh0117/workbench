@@ -77,7 +77,15 @@ function importBridge(options: {
   failFor?: (path: string) => boolean;
   duplicates?: string[];
 } = {}) {
-  const project = projectWith("批量导入");
+  let project = projectWith("批量导入");
+  let revision = 1;
+  const fingerprint = (value: ProjectData, version: number) => ({
+    exists: true,
+    mtime_ms: 1_780_000_000_000 + version,
+    size: new TextEncoder().encode(JSON.stringify(value)).byteLength,
+    hash: version.toString(16).padStart(64, "0"),
+  });
+  const currentFingerprint = () => fingerprint(project, revision);
   for (const path of options.duplicates ?? []) {
     project.assets.push(assetRow(project.project.id, "asset-existing", path) as never);
   }
@@ -94,12 +102,20 @@ function importBridge(options: {
     setProjectDir: () => {},
     restoreProjectDir: () => {},
     readProject: async () => structuredClone(project),
+    readProjectState: async () => ({
+      project: structuredClone(project),
+      fingerprint: currentFingerprint(),
+    }),
     readRecoveryJournal: async () => null,
     listenNativeDrops: async () => () => {},
     writeRecoveryJournal: async () => {},
-    writeProject: async (value: ProjectData) => {
-      project.assets = structuredClone(value.assets);
-      project.asset_usages = structuredClone(value.asset_usages ?? []);
+    writeProject: async (value: ProjectData, expectedFingerprint: unknown) => {
+      if (JSON.stringify(expectedFingerprint) !== JSON.stringify(currentFingerprint())) {
+        throw new Error("external_modification_conflict");
+      }
+      project = structuredClone(value);
+      revision += 1;
+      return { fingerprint: currentFingerprint(), recovery_warning: null };
     },
     clearRecoveryJournal: async () => {},
     projectIdentity: async () => project.project.id,
@@ -145,7 +161,9 @@ async function bootStore(bridge: unknown) {
     `../app/main.js?asset-batch-${importCounter}`
   );
   const store = new (WorkbenchStore as new (bridge: unknown) => any)(bridge);
-  store.data = structuredClone((bridge as any).currentProject());
+  if (!store.adoptProjectSnapshot(await (bridge as any).readProjectState())) {
+    throw new Error("test bridge must seed a valid project/fingerprint pair");
+  }
   return {
     store,
     restore: () => {

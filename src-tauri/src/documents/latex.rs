@@ -775,6 +775,29 @@ impl Parser<'_> {
             ));
             return Some(markdown_escape(&format!("\\{name}{{{target}}}")));
         }
+        if name == "includegraphics" {
+            let options = cursor.read_optional_group();
+            if let Some(target) = cursor
+                .read_group()
+                .filter(|target| !target.trim().is_empty())
+            {
+                let target = target.trim();
+                let href = markdown_image_href(target);
+                let alt = target
+                    .rsplit('/')
+                    .next()
+                    .filter(|value| !value.is_empty())
+                    .unwrap_or("图片");
+                return Some(format!("![{}](<{href}>)", markdown_escape(alt)));
+            }
+            let suffix = options
+                .map(|value| format!("[{value}]"))
+                .unwrap_or_default();
+            self.out.degrade(format!(
+                "LaTeX 图片命令参数无法识别，已保留原文：\\includegraphics{suffix}"
+            ));
+            return Some(markdown_escape(&format!("\\includegraphics{suffix}")));
+        }
         if GRAPHICS_COMMANDS.contains(&name.as_str()) {
             let mut args = String::new();
             while let Some(group) = cursor.read_optional_group_or_group() {
@@ -950,6 +973,20 @@ impl Parser<'_> {
         }
         sanitize_cell(&self.convert_inline(trimmed).unwrap_or_default())
     }
+}
+
+/// Encode filesystem paths as safe Markdown destinations. The importer decodes
+/// percent escapes before applying its canonical-root and symlink checks.
+fn markdown_image_href(path: &str) -> String {
+    let mut encoded = String::with_capacity(path.len());
+    for byte in path.bytes() {
+        if byte.is_ascii_alphanumeric() || matches!(byte, b'/' | b'-' | b'_' | b'.' | b'~') {
+            encoded.push(byte as char);
+        } else {
+            encoded.push_str(&format!("%{byte:02X}"));
+        }
+    }
+    encoded
 }
 
 fn render_line(
@@ -1801,7 +1838,7 @@ mod tests {
             .warnings
             .iter()
             .any(|warning| warning.contains("未展开（导入不读取磁盘上的其他文件）")));
-        assert!(parsed
+        assert!(!parsed
             .warnings
             .iter()
             .any(|warning| warning.contains("外部图片未读取（导入不访问源文件目录）")));
@@ -1809,10 +1846,21 @@ mod tests {
             .as_str()
             .unwrap_or_default()
             .contains("chapter2")));
-        assert!(parsed
-            .blocks
-            .iter()
-            .any(|block| block["text"].as_str().unwrap_or_default().contains("fig1")));
+        assert!(parsed.blocks.iter().any(|block| block["text"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("![fig1\\.pdf](<fig1.pdf>)")));
+    }
+
+    #[test]
+    fn latex_includegraphics_emits_a_percent_encoded_local_image_reference() {
+        let parsed = parse("\\includegraphics[width=2cm]{../images/图 1.png}\n");
+        assert_eq!(parsed.blocks.len(), 1);
+        assert_eq!(
+            text(&parsed, 0),
+            "![图 1\\.png](<../images/%E5%9B%BE%201.png>)"
+        );
+        assert!(parsed.warnings.is_empty(), "{:?}", parsed.warnings);
     }
 
     #[test]

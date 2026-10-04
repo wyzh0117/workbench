@@ -133,6 +133,20 @@ function stubDocument(): () => void {
 
 async function bootRoutingStore(): Promise<Harness> {
   const data = createEmptyProjectData("当前课程");
+  const state: { project: ReturnType<typeof createEmptyProjectData> | null; revision: number } = {
+    project: null,
+    revision: 0,
+  };
+  const missingFingerprint = { exists: false, mtime_ms: null, size: null, hash: null };
+  const fingerprintFor = (project: ReturnType<typeof createEmptyProjectData>, revision: number) => ({
+    exists: true,
+    mtime_ms: 1_780_000_000_000 + revision,
+    size: new TextEncoder().encode(JSON.stringify(project)).byteLength,
+    hash: revision.toString(16).padStart(64, "0"),
+  });
+  const currentFingerprint = () => state.project
+    ? fingerprintFor(state.project, state.revision)
+    : missingFingerprint;
   const restore = stubDocument();
   const calls: Array<{ name: string; payload: LooseRecord }> = [];
   bootCount += 1;
@@ -143,8 +157,22 @@ async function bootRoutingStore(): Promise<Harness> {
     isNative: () => false,
     currentProject: () => data,
     loadSession: async () => null,
-    readProject: async () => null,
-    writeProject: async () => {},
+    readProject: async () => state.project ? structuredClone(state.project) : null,
+    readProjectState: async () => ({
+      project: state.project ? structuredClone(state.project) : null,
+      fingerprint: currentFingerprint(),
+    }),
+    writeProject: async (
+      project: ReturnType<typeof createEmptyProjectData>,
+      expectedFingerprint: unknown,
+    ) => {
+      if (!state.project || JSON.stringify(expectedFingerprint) !== JSON.stringify(currentFingerprint())) {
+        throw new Error("external_modification_conflict");
+      }
+      state.project = structuredClone(project);
+      state.revision += 1;
+      return { fingerprint: currentFingerprint(), recovery_warning: null };
+    },
     readRecoveryJournal: async () => null,
     writeRecoveryJournal: async () => {},
     clearRecoveryJournal: async () => {},
@@ -158,7 +186,9 @@ async function bootRoutingStore(): Promise<Harness> {
       calls.push({ name, payload });
       if (name === "folder.scan") return structuredClone(SCAN);
       if (name === "folder.adopt") {
-        return { data: structuredClone(createEmptyProjectData("重新导入的课程")) };
+        state.project = createEmptyProjectData("重新导入的课程");
+        state.revision += 1;
+        return { data: structuredClone(state.project) };
       }
       throw new Error(`unexpected command ${name}`);
     },

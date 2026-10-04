@@ -62,6 +62,7 @@ import { inspectMarkdownImage, readFolderPreview, readFolderSource, scanFolder, 
 import { confirmFolderAdoption } from "./folder_adoption.ts";
 import { ProjectRegistryStore } from "./project_registry.ts";
 import type { ImportMappingPlan } from "./folder_mapping.ts";
+import { scanFolderDocuments } from "./folder_mapping.ts";
 import type { ExportPreset } from "../domain/types.ts";
 
 function decodeBase64(value: string): Uint8Array {
@@ -71,6 +72,15 @@ function decodeBase64(value: string): Uint8Array {
     bytes[index] = binary.charCodeAt(index);
   }
   return bytes;
+}
+
+function isFileFingerprint(value: unknown): value is FileFingerprint {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const fingerprint = value as Partial<FileFingerprint>;
+  return typeof fingerprint.exists === "boolean" &&
+    (fingerprint.mtime_ms === null || typeof fingerprint.mtime_ms === "number") &&
+    (fingerprint.size === null || typeof fingerprint.size === "number") &&
+    (fingerprint.hash === null || typeof fingerprint.hash === "string");
 }
 
 function normalizeImportSources(value: unknown): ImportSource[] {
@@ -161,6 +171,12 @@ export class DesktopService {
   }
 
   private registerCommands(): void {
+    this.commands.register("project.open_state", async () => {
+      const state = await this.store.readProjectState();
+      this.context.project = state.project;
+      if (state.project) await this.search.rebuild(state.project);
+      return { value: state };
+    });
     this.commands.register("project.open", async () => {
       try {
         this.context.project = await this.store.readProject();
@@ -286,17 +302,39 @@ export class DesktopService {
       // The browser/native bridge sends { project: ProjectData }, while
       // service callers historically passed ProjectData directly. Accept both
       // at this boundary so the canonical writer never receives the envelope.
-      const envelope = input as { project?: unknown };
+      const envelope = input as {
+        project?: unknown;
+        expected_fingerprint?: unknown;
+      };
       const nested = envelope.project;
       const candidate = nested && typeof nested === "object" &&
           "project" in nested
         ? nested as ProjectData
         : input as ProjectData;
-      await this.store.saveWithRecovery(candidate);
+      if (!isFileFingerprint(envelope.expected_fingerprint)) {
+        throw error(
+          "save_baseline_required",
+          "保存基线已失效。请重新载入课程后再保存。",
+          "project.save requires the fingerprint of the project snapshot loaded by this client",
+          {
+            recoverable: true,
+            recommended_action: "重新载入磁盘版本或合并修改后再保存。",
+            details: {},
+          },
+        );
+      }
+      const saved = await this.store.saveWithRecovery(
+        candidate,
+        envelope.expected_fingerprint,
+      );
       this.context.project = candidate;
       await this.search.rebuild(candidate);
       return {
-        value: candidate,
+        value: {
+          project: candidate,
+          fingerprint: saved.fingerprint,
+          recovery_warning: saved.recovery_warning,
+        },
         audit: {
           object_type: "project",
           object_id: candidate.project.id,
@@ -315,13 +353,14 @@ export class DesktopService {
       };
     });
     this.commands.register("project.reload", async () => {
-      this.context.project = await this.store.readProject();
-      await this.search.rebuild(this.context.project);
+      const state = await this.store.readProjectState();
+      this.context.project = state.project;
+      if (state.project) await this.search.rebuild(state.project);
       return {
-        value: this.context.project,
+        value: state,
         audit: {
           object_type: "project",
-          object_id: this.context.project.project.id,
+          object_id: state.project?.project.id,
           action: "reload_external",
         },
       };
@@ -344,14 +383,14 @@ export class DesktopService {
       if (!candidate.project || !candidate.expected_current) {
         throw new Error("project.resolve requires project and expected_current");
       }
-      await this.store.resolveExternalChanges(
+      const fingerprint = await this.store.resolveExternalChanges(
         candidate.project,
         candidate.expected_current,
       );
       this.context.project = candidate.project;
       await this.search.rebuild(candidate.project);
       return {
-        value: candidate.project,
+        value: { project: candidate.project, fingerprint },
         audit: {
           object_type: "project",
           object_id: candidate.project.project.id,
@@ -971,6 +1010,27 @@ export class DesktopService {
         },
       };
     });
+    this.commands.register("folder.scan_documents", async (input) => {
+      const candidate = input && typeof input === "object"
+        ? input as { root?: string; plan?: ImportMappingPlan }
+        : {};
+      const root = String(candidate.root ?? candidate.plan?.root ?? "").trim();
+      if (!root || !candidate.plan) {
+        throw new Error("folder.scan_documents requires a root and confirmed mapping plan");
+      }
+      const report = await scanFolderDocuments(root, candidate.plan);
+      return {
+        value: report,
+        audit: {
+          object_type: "import",
+          action: "folder_scan_documents",
+          metadata: {
+            count: report.groups.reduce((total, group) => total + group.items.length, 0),
+            root: report.root,
+          },
+        },
+      };
+    });
     // Read-only preview for Workspace Explorer. Never writes project.json.
     this.commands.register("folder.read_preview", async (input) => {
       const candidate = input && typeof input === "object"
@@ -1047,6 +1107,7 @@ export class DesktopService {
         ? input as {
           plan?: ImportMappingPlan;
           duplicate_choice?: "existing" | "copy" | "cancel";
+          document_paths?: string[];
           project_title?: string;
           replace_invalid_project?: boolean;
         }
@@ -1057,6 +1118,7 @@ export class DesktopService {
       }
       const result = await confirmFolderAdoption(candidate.plan, {
         duplicate_choice: candidate.duplicate_choice,
+        document_paths: candidate.document_paths,
         project_title: candidate.project_title,
         replace_invalid_project: candidate.replace_invalid_project === true,
       });
@@ -1090,22 +1152,35 @@ export class DesktopService {
     });
     this.commands.register("folder.append", async (input) => {
       const candidate = input && typeof input === "object"
-        ? input as { plan?: ImportMappingPlan; duplicate_choice?: "existing" | "copy" | "cancel" }
+        ? input as {
+          plan?: ImportMappingPlan;
+          duplicate_choice?: "existing" | "copy" | "cancel";
+          document_paths?: string[];
+        }
         : {};
       if (!candidate.plan) throw new Error("folder.append requires a mapping plan");
       if (candidate.plan.confirmed !== true) throw new Error("只能对已确认的导入计划执行文件追加");
       if (!this.context.project) throw new Error("请先打开课程项目，再追加文件");
       const data = structuredClone(this.context.project);
+      let fingerprint: FileFingerprint | null = null;
+      let recoveryWarning: string | null = null;
       const result = await confirmFolderAdoption(candidate.plan, {
         data,
         project_root: this.store.directory,
         duplicate_choice: candidate.duplicate_choice,
-        persist_project: (project) => this.store.saveWithRecovery(project),
+        document_paths: candidate.document_paths,
+        persist_project: async (project) => {
+          const saved = await this.store.saveWithRecovery(project);
+          fingerprint = saved.fingerprint;
+          recoveryWarning = saved.recovery_warning;
+        },
       });
       this.context.project = result.data;
       await this.search.rebuild(result.data);
       return {
-        value: result,
+        value: fingerprint
+          ? { ...result, fingerprint, recovery_warning: recoveryWarning }
+          : result,
         events: [EventBus.domainEvent({
           type: "ProjectChanged",
           project_id: result.data.project.id,
@@ -1244,16 +1319,34 @@ export class DesktopService {
     this.commands.register("snapshot.create", async (input) => {
       if (!this.context.project) throw new Error("No project is open");
       const candidate = input && typeof input === "object"
-        ? input as { name?: string; note?: string }
+        ? input as {
+          snapshot_id?: string;
+          name?: string;
+          note?: string;
+          project?: unknown;
+        }
         : {};
-      const project = structuredClone(this.context.project);
-      const snapshot = await this.store.createSnapshot(
-        project,
-        candidate.name ?? "未命名版本",
-        candidate.note ?? "",
-      );
-      this.context.project = project;
-      await this.search.rebuild(this.context.project);
+      const project = candidate.project && typeof candidate.project === "object" &&
+          !Array.isArray(candidate.project)
+        ? candidate.project as ProjectData
+        : null;
+      if (!project) throw new Error("snapshot.create requires project data");
+      if (
+        candidate.snapshot_id !== undefined &&
+        typeof candidate.snapshot_id !== "string"
+      ) throw new Error("snapshot_id must be a string");
+      const snapshotId = candidate.snapshot_id ?? crypto.randomUUID();
+      const name = candidate.name ?? "未命名版本";
+      const note = candidate.note ?? "";
+      await this.store.writeSnapshotCopy(snapshotId, project);
+      const snapshot = project.snapshots.find((entry) => entry.id === snapshotId) ?? {
+        id: snapshotId,
+        project_id: project.project.id,
+        name,
+        note,
+        git_commit_hash: null,
+        created_at: new Date().toISOString(),
+      };
       return {
         value: snapshot,
         events: [

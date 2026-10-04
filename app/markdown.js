@@ -431,6 +431,10 @@ function unescapeMarkdownText(text) {
   return String(text ?? "").replace(/\\([\\`*_{}\[\]()#+\-.!>~|])/g, "$1");
 }
 
+export function editorValueChangedSinceBaseline(value, baseline) {
+  return typeof baseline === "string" && baseline !== value;
+}
+
 function markdownCodeSpan(text) {
   const value = String(text ?? "").replace(/\n/g, " ");
   let ticks = "`";
@@ -786,7 +790,7 @@ export function compileInlineAtCaret(element) {
  *
  * @param {string} source raw Canonical block content
  * @param {{type?:string,level?:number|null}} [current]
- * @returns {{type:string, level:number|null, content:string, offsetLoss:number}|null}
+ * @returns {{type:string, level:number|null, content:string, offsetLoss:number, deferUntilBlur?:boolean}|null}
  */
 export function structuralConversion(source, current = {}) {
   const text = String(source ?? "");
@@ -796,7 +800,22 @@ export function structuralConversion(source, current = {}) {
   // block syntax is invisible to the lexer.  The stored form is lexed first because
   // it is the only view in which a pasted fenced body stays verbatim; only when it
   // yields nothing does the converter re-lex the characters as they were typed.
-  return convertOnce(text, current) ?? convertOnce(unescapeMarkdownText(text), current);
+  const converted = convertOnce(text, current) ?? convertOnce(unescapeMarkdownText(text), current);
+  if (converted) return converted;
+  if (current.type !== "paragraph") return null;
+
+  const unescaped = unescapeMarkdownText(text);
+  const tokens = marked.lexer(unescaped, MARKED_OPTIONS).filter((token) => token.type !== "space");
+  if (!tokens.some((token) => token.type === "list")) return null;
+  const content = text
+    .replace(/^([ \t]*)\\([-+*])(?=[ \t])/gm, "$1$2")
+    .replace(/^([ \t]*)([0-9]+)\\([.)])(?=[ \t])/gm, "$1$2$3");
+  if (content === text) return null;
+  // The Domain keeps editable prose as a paragraph; unescaping only the list
+  // markers lets its Markdown renderer produce real list semantics without
+  // inventing a new block type. Wait for blur so the cursor stays stable while
+  // the editor is still text.
+  return { type: "paragraph", level: null, content, offsetLoss: 0, deferUntilBlur: true };
 }
 
 function convertOnce(text, current) {

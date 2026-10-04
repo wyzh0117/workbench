@@ -1,0 +1,20 @@
+# v0.2.6 Deno gate evidence (2026-10-05, +0800)
+
+Final frozen-source gates ran on 2026-10-05 (+0800). `deno task check` passed, and `deno task test` passed 602/602 in 21 seconds with the task's `--allow-net=127.0.0.1` permission for local HTTP fixtures. This supersedes the earlier 600-test full run. Loopback access was granted for the complete suite. The final tested source includes the saved-state adoption and Free Layout target-panel fixes.
+
+| Command | Result |
+|---|---|
+| `deno task check` | PASS on the final frozen source tree; the full production and test entry list completed without diagnostics. |
+| `deno task test` | PASS on the final frozen source tree: 602 passed / 0 failed in 21 seconds. The task runs `deno test --allow-read --allow-write --allow-net=127.0.0.1`; loopback was granted for local HTTP tests. |
+| `deno test --allow-read --allow-write tests/authoring_ui_test.ts tests/dogfooding_test.ts tests/native_boot_test.ts` | PASS after the save-status fix, 98/98 (65 authoring, 22 dogfooding, 11 native boot). Covers trusted-fingerprint saved-state adoption, invalid pair preserving state, no-file/legacy baseline remaining unsaved, and delayed stale acknowledgement protection. |
+| `deno test --allow-read --allow-write tests/authoring_ui_test.ts` | Independently rerun after the Free Layout import fix: PASS, 66/66. Includes `page move target renders available cells on the selected page` and the persisted snapshot/save-indicator regression. |
+| `deno test --allow-read --allow-write tests/native_boot_test.ts tests/native_boundary_test.ts tests/save_cas_test.ts` | PASS. This focused check was also run before the final full suite; native open/save fakes use the project/fingerprint pair, save acknowledgements require a valid existing-file fingerprint, and the boot test verifies a delayed save acknowledgement cannot replace a newer accepted project generation. |
+| `deno test -A tests/save_cas_test.ts` | PASS, 2/2. Covers missing-token rejection, append followed by stale-save rejection while preserving imported data, fresh-token save, snapshot sidecar creation without canonical/fingerprint changes, and snapshot ID length boundaries. |
+| Disposable HTTP `POST /api/command` CAS smoke (port 4193) | PASS. Missing token returned HTTP 400 `save_baseline_required`; Markdown `folder.append` returned HTTP 200; the old token returned HTTP 400 `external_modification_conflict` while the imported lesson remained; a fresh `project.open_state` token saved successfully and the edit persisted on reopen. |
+| Folder document chooser/adoption lifecycle | PASS. The full suite includes execution-time Markdown parsing, confirmation, selection, retry, source preservation, append undo/redo, lesson grouping from the confirmed parent mapping, unchecked-document exclusion, and stale-target duplicate handling. |
+
+The four acceptance-owned legacy consumer files were adapted to the CAS pair/ack contract without removing their behavior checks: `tests/asset_batch_import_test.ts`, `tests/dogfooding_test.ts`, `tests/smart_open_routing_test.ts`, and `tests/t04_adoption_test.ts`. Their focused run passed 56/56. Native boot/boundary adapter tests and the delayed-ack generation regression also passed in focused runs.
+
+An earlier full run without loopback permission had two environment-only failures in local HTTP tests; the final authorized loopback run passed. The UI owner fixed the Free Layout destination-panel `pageGrid` ReferenceError; acceptance_docs independently reran the authoring UI file at 66/66, and the owner’s browser retest exercised cross-page move, resize, page creation, and copy. The owner measured the Overview page at 1024, 1280, 1440 and 1728 px wide by 900 px high with no horizontal overflow or header overlap; this does not establish every page or sidebar combination at those widths.
+
+Related evidence: [format/backend and Rust tests](./mapping-backend.md), [browser CUA observations](./ui-evidence.md), and [frozen Universal candidate build](./candidate-build-final.md).

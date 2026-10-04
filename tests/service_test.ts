@@ -79,7 +79,13 @@ Deno.test("desktop save accepts the bridge project envelope", async () => {
   assert(!created.error, "project.create should succeed");
   const project = created.value as ReturnType<typeof createEmptyProjectData>;
   project.project.title = "桥接课程已修改";
-  const saved = await desktop.commands.execute("project.save", { project });
+  const state = await desktop.commands.execute("project.open_state", {});
+  assert(!state.error, "project.open_state should expose the save baseline");
+  const expectedFingerprint = (state.value as { fingerprint: unknown }).fingerprint;
+  const saved = await desktop.commands.execute("project.save", {
+    project,
+    expected_fingerprint: expectedFingerprint,
+  });
   assert(!saved.error, "wrapped project.save should succeed");
   const loaded = await desktop.queries.execute("project.get");
   assert(

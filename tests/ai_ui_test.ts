@@ -25,6 +25,22 @@ function assert(condition: unknown, message: string): asserts condition {
 
 let importCounter = 0;
 
+type TestFingerprint = {
+  exists: boolean;
+  mtime_ms: number | null;
+  size: number | null;
+  hash: string | null;
+};
+
+function testFingerprint(project: ProjectData, revision: number): TestFingerprint {
+  return {
+    exists: true,
+    mtime_ms: 1_780_000_000_000 + revision,
+    size: new TextEncoder().encode(JSON.stringify(project)).byteLength,
+    hash: revision.toString(16).padStart(64, "0"),
+  };
+}
+
 interface BridgeCall {
   command: string;
   input: Record<string, any>;
@@ -120,6 +136,7 @@ async function bootStore(options: { executionWritesFail?: boolean } = {}) {
   const source = createEmptyProjectData("AI UI 测试");
   const state = {
     project: structuredClone(source) as ProjectData,
+    fingerprint: testFingerprint(source, 1),
     writes: 0,
     sessions: [] as unknown[],
     providers: [] as Array<Record<string, any>>,
@@ -325,6 +342,10 @@ async function bootStore(options: { executionWritesFail?: boolean } = {}) {
   bridgeTarget.currentProject = () => state.project;
   bridgeTarget.loadSession = async () => null;
   bridgeTarget.readProject = async () => structuredClone(state.project);
+  bridgeTarget.readProjectState = async () => ({
+    project: structuredClone(state.project),
+    fingerprint: structuredClone(state.fingerprint),
+  });
   bridgeTarget.readRecoveryJournal = async () => null;
   bridgeTarget.listenNativeDrops = async () => () => {};
   bridgeTarget.writeRecoveryJournal = async () => {};
@@ -336,9 +357,18 @@ async function bootStore(options: { executionWritesFail?: boolean } = {}) {
   bridgeTarget.setProjectDir = () => {};
   bridgeTarget.restoreProjectDir = () => {};
   bridgeTarget.projectIdentity = async () => state.project.project.id;
-  bridgeTarget.writeProject = async (project: ProjectData) => {
+  bridgeTarget.writeProject = async (
+    project: ProjectData,
+    expectedFingerprint: TestFingerprint,
+  ) => {
+    assert(
+      JSON.stringify(expectedFingerprint) === JSON.stringify(state.fingerprint),
+      "the UI save must send the currently adopted project fingerprint",
+    );
     state.writes += 1;
     state.project = structuredClone(project);
+    state.fingerprint = testFingerprint(project, state.writes + 1);
+    return { fingerprint: structuredClone(state.fingerprint), recovery_warning: null };
   };
   bridgeTarget.command = command;
   bridgeFailure = (value: unknown) => store.bridge.bridgeError(value);
@@ -1209,7 +1239,11 @@ Deno.test("an external reload drops the AI state of the replaced project", async
       draftCount() === 1 && store.ui.aiDraftId !== null,
       "必须先有一份待审核的草稿",
     );
-    store.bridge.reloadExternalProject = async () => structuredClone(cleanDisk);
+    state.fingerprint = testFingerprint(cleanDisk, state.writes + 10);
+    store.bridge.reloadExternalProject = async () => ({
+      project: structuredClone(cleanDisk),
+      fingerprint: structuredClone(state.fingerprint),
+    });
     await store.resolveExternalConflict("reload");
     assert(draftCount() === 0, "重新载入必须采用磁盘版本");
     assert(store.ui.aiDraftId === null, "重新载入不得保留指向已消失草稿的指针");

@@ -70,7 +70,20 @@ export interface AtomicWriteRequest {
 
 export interface DesktopBridge {
   readProject(): Promise<unknown | null>;
-  writeProject(project: unknown): Promise<void>;
+  readProjectState?(): Promise<{
+    project: unknown | null;
+    fingerprint: {
+      exists: boolean;
+      mtime_ms: number | null;
+      size: number | null;
+      hash: string | null;
+    } | null;
+  }>;
+  writeProject(
+    project: unknown,
+    expectedFingerprint?: unknown,
+    recoveryJournal?: unknown,
+  ): Promise<unknown>;
   writeRecoveryJournal(journal: unknown): Promise<void>;
   readRecoveryJournal(): Promise<unknown | null>;
   saveSession(session: PersistedWorkbenchSession): Promise<void>;
@@ -90,6 +103,7 @@ export interface DesktopBridge {
 /** Names exposed by the desktop bridge are intentionally high-level. */
 export type BridgeCommandName =
   | "project.open"
+  | "project.open_state"
   | "project.create"
   | "project.save"
   | "import.preview"

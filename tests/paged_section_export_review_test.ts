@@ -242,7 +242,8 @@ Deno.test("legacy continuous Grid editor preview still shows each section", () =
   assert(html.includes("旧分区 B · 第 2 页"), "preview must label the second legacy section");
   assert(html.includes("LEGACY SECTION A BODY"), "preview must render first-section text");
   assert(html.includes("LEGACY SECTION B BODY"), "preview must render second-section text");
-  store.ui.mode = "layout";
+  store.ui.mode = "writing";
+  store.ui.route = "free-layout";
   const editor = createViews(store).shellView();
   assert(editor.includes(`data-placement="${data.placements[0]?.id}"`), "legacy placements must remain editable");
   assert(editor.includes(`data-placement="${data.placements[1]?.id}"`), "all legacy placements must remain visible to the editor");
@@ -305,7 +306,12 @@ Deno.test("DesktopService exports the selected paged HTML projection end to end"
       platform: "web",
     });
 
-    const saved = await desktop.commands.execute("project.save", { project: data });
+    const state = await desktop.commands.execute("project.open_state", {});
+    assert(!state.error, "review fixture baseline should be readable");
+    const saved = await desktop.commands.execute("project.save", {
+      project: data,
+      expected_fingerprint: (state.value as { fingerprint: unknown }).fingerprint,
+    });
     assert(!saved.error, "review fixture must be accepted by the project store");
     const options = {
       content_item_id: lesson.id,
@@ -444,8 +450,11 @@ Deno.test("DesktopService blocks ambiguous legacy section-local grid export", as
       platform: "web",
     });
 
+    const state = await desktop.commands.execute("project.open_state", {});
+    assert(!state.error, "review fixture baseline should be readable");
     const saved = await desktop.commands.execute("project.save", {
       project: data,
+      expected_fingerprint: (state.value as { fingerprint: unknown }).fingerprint,
     });
     assert(!saved.error, "review fixture must be accepted by the project store");
     const options = {

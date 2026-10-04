@@ -25,6 +25,7 @@ Deno.test("native shell exposes explicit project and high-level workflows", () =
   for (
     const command of [
       "project_open",
+      "project_open_state",
       "project_create",
       "project_save",
       "project_external_status",
@@ -191,13 +192,31 @@ Deno.test("native shell exposes explicit project and high-level workflows", () =
       !lib.slice(readProjectStart, readProjectEnd).includes("acquire_project_lock"),
     "read_project must remain read-only and never acquire an edit lease",
   );
-  const projectSaveStart = lib.indexOf("fn project_save(project_dir: String, project: Value)");
+  const projectSaveStart = lib.indexOf("fn project_save(");
   const projectSaveEnd = lib.indexOf("fn project_create", projectSaveStart);
+  const projectSave = lib.slice(projectSaveStart, projectSaveEnd);
   assert(
     projectSaveStart >= 0 && projectSaveEnd > projectSaveStart &&
-      lib.slice(projectSaveStart, projectSaveEnd).includes("require_active_project_lock") &&
-      !lib.slice(projectSaveStart, projectSaveEnd).includes("acquire_project_lock"),
+      projectSave.includes("project_dir: String") &&
+      projectSave.includes("expected_fingerprint: FileFingerprint") &&
+      projectSave.includes("require_active_project_lock") &&
+      projectSave.includes("fingerprints_differ") &&
+      projectSave.indexOf("fingerprints_differ") < projectSave.indexOf("write_recovery_journal_unlocked") &&
+      projectSave.indexOf("write_recovery_journal_unlocked") < projectSave.indexOf("write_project_value_with_warning_unlocked") &&
+      !projectSave.includes("expected_fingerprint: Option<FileFingerprint>") &&
+      !projectSave.includes("acquire_project_lock"),
     "project_save must require an existing lease; project_create owns acquisition",
+  );
+  const openStateStart = lib.indexOf("fn project_open_state(");
+  const openStateEnd = lib.indexOf("fn project_save(", openStateStart);
+  const openState = lib.slice(openStateStart, openStateEnd);
+  assert(
+    openStateStart >= 0 && openStateEnd > openStateStart &&
+      openState.includes("project_dir: String") &&
+      openState.includes("require_active_project_lock") &&
+      openState.includes("read_project_state(&project_dir)") &&
+      openState.includes("fingerprint"),
+    "project_open_state must read and return the project plus its fingerprint under the project lease",
   );
   const newProjectStart = app.indexOf("async newProject(title");
   const newProjectEnd = app.indexOf("async newProjectFromPicker", newProjectStart);
@@ -263,7 +282,8 @@ Deno.test("native shell exposes explicit project and high-level workflows", () =
   for (
     const signature of [
       "fn read_project(project_dir: String)",
-      "fn project_save(project_dir: String, project: Value)",
+      "fn project_open_state(project_dir: String)",
+      "fn project_save(",
       "fn write_recovery_journal(project_dir: String, contents: String)",
       "fn read_recovery_journal(project_dir: String)",
     ]
@@ -335,11 +355,12 @@ Deno.test("native shell exposes explicit project and high-level workflows", () =
     "native picker, drag/drop, recovery cleanup, unlinked media import and explicit insertion usage must stay in the UI boundary",
   );
   assert(
-    app.includes("const clearResult = await this.bridge.clearRecoveryJournal()") &&
-      app.includes("this.noteRecoveryWarning") &&
+    app.includes("this.noteRecoveryWarning(result)") &&
       app.includes("this.flushQueue = createSerialQueue()") &&
-      app.includes("files)) return nativePath(candidate.files[0])"),
-    "recovery cleanup must follow canonical save, stay serialized, and native export file/path envelopes must be readable",
+      app.includes("files)) return nativePath(candidate.files[0])") &&
+      lib.includes("write_project_value_with_warning_unlocked") &&
+      lib.includes("clear_recovery_journal_path(project_dir)"),
+    "canonical save must serialize writes, surface recovery cleanup warnings, and keep native export file/path envelopes readable",
   );
   const saveStart = lib.indexOf("fn project_save");
   const saveEnd = lib.indexOf("fn bridge_status", saveStart);
@@ -458,16 +479,16 @@ Deno.test("every single-struct shell command is nested by the app payload builde
   );
 });
 
-Deno.test("folder.adopt native IPC uses flat { plan } like folder.scan (no input nest)", () => {
-  // Critical Task 12 fix: folder_adopt must not be `fn folder_adopt(input: Value)`,
-  // or the UI invoke({ plan }) fails while Deno unit tests still pass.
+Deno.test("folder.adopt native IPC sends the confirmed plan and direct-child selection flat", () => {
+  // The mapping preview and direct-child chooser both finish before native
+  // execution; the wrapper accepts their flat plan and selected relative paths.
   const mapping = app.slice(
     app.indexOf("  nativeCommand(command) {"),
     app.indexOf("  async selectFolder()"),
   );
   assert(
-    mapping.includes('"folder.adopt": "folder_adopt"'),
-    "UI must map folder.adopt → folder_adopt",
+    mapping.includes('"folder.adopt": "folder_adopt_with_documents"'),
+    "UI must map folder.adopt → folder_adopt_with_documents",
   );
   assert(
     !app.slice(
@@ -476,24 +497,29 @@ Deno.test("folder.adopt native IPC uses flat { plan } like folder.scan (no input
     ).includes('"folder.adopt"'),
     "folder.adopt must stay outside NATIVE_PROJECT_COMMANDS (no open projectDir yet)",
   );
-  const signature = lib.match(/fn folder_adopt\(([^)]*)\)/);
-  assert(signature, "folder_adopt must exist in the native shell");
+  const signature = lib.match(/fn folder_adopt_with_documents\(([^)]*)\)/);
+  assert(signature, "folder_adopt_with_documents must exist in the native shell");
   const parameters = signature[1]!.split(",").map((part) => part.trim()).filter(
     Boolean,
   );
   assert(
     parameters.some((part) => /^plan:\s*Value$/.test(part)),
-    `folder_adopt must take a flat plan: Value arg (got: ${signature[1]})`,
+    `folder_adopt_with_documents must take a flat plan: Value arg (got: ${signature[1]})`,
+  );
+  assert(
+    parameters.some((part) => /^document_paths:\s*Option<Vec<String>>$/.test(part)),
+    `folder_adopt_with_documents must take flat direct-child paths (got: ${signature[1]})`,
   );
   assert(
     !(parameters.length === 1 && /^input:\s*Value$/.test(parameters[0]!)),
-    "folder_adopt must not be a single input: Value command requiring { input: … } nesting",
+    "folder_adopt_with_documents must not require { input: … } nesting",
   );
   // Adoption stays flat; append adds only the currently open project target.
   assert(
     app.includes('this.bridge.command(appending ? "folder.append" : "folder.adopt"') &&
-      app.includes("plan: executablePlan"),
-    "UI apply must select adopt/append explicitly and send the confirmed plan flat",
+      app.includes("plan: executablePlan") &&
+      app.includes("document_paths: [...(this.ui.documentImportPaths || [])]"),
+    "UI apply must send the confirmed plan and checked paths flat",
   );
   const nestedBlock = app.slice(
     app.indexOf("    // These commands take one `input: Value` struct"),

@@ -217,7 +217,7 @@ Deno.test("the start page lists every project this install has opened", async ()
       "newest first",
     );
     const markup = launcherMarkup();
-    assertContains(markup, "最近项目", "the section is labelled");
+    assertContains(markup, "最近打开", "the section is labelled");
     assertContains(markup, "课程 proj-b", "a stored title is shown");
     assertContains(markup, "课程 proj-a", "the oldest project is still shown");
     assertContains(markup, "刚刚打开", "a project opened moments ago does not read as a stale date");
@@ -297,7 +297,7 @@ Deno.test("an empty registry leaves the start page usable instead of blank", asy
   const { launcherMarkup, restore } = await bootRegistryHarness({ rows: [] });
   try {
     const markup = launcherMarkup();
-    assertContains(markup, "还没有打开过项目", "the empty state explains itself");
+    assertContains(markup, "还没有最近项目", "the empty state explains itself");
     assertContains(markup, 'data-action="new-project"', "and the way in is still there");
     assertContains(markup, 'data-action="open-project-dir"', "including opening a folder directly");
     assertLacks(markup, 'data-action="open-registry-project"', "no row is invented");

@@ -2104,7 +2104,13 @@ Deno.test("a failing execution append surfaces an AI-scoped error, not a save fa
       "the message must say the AI log failed, not the course save",
     );
     const project = await desktop.queries.execute("project.get");
-    const saved = await desktop.commands.execute("project.save", { project });
+    const state = await desktop.commands.execute("project.open_state", {});
+    assert(!state.error, "the current project baseline should be readable");
+    const expectedFingerprint = (state.value as { fingerprint: unknown }).fingerprint;
+    const saved = await desktop.commands.execute("project.save", {
+      project,
+      expected_fingerprint: expectedFingerprint,
+    });
     assert(
       !saved.error,
       "course saving must keep working after an execution log failure",

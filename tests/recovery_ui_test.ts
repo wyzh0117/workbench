@@ -4,12 +4,36 @@ import {
   createEmptyProjectData,
   initializeContentStatuses,
   now,
+  type ProjectData,
 } from "../src/domain/index.ts";
 import { createSerialQueue, recoveryWarning } from "../app/recovery.js";
 
 function assert(condition: unknown, message: string): asserts condition {
   if (!condition) throw new Error(message);
 }
+
+type TestFingerprint = {
+  exists: boolean;
+  mtime_ms: number | null;
+  size: number | null;
+  hash: string | null;
+};
+
+function fingerprintFor(project: unknown, revision: number): TestFingerprint {
+  return {
+    exists: true,
+    mtime_ms: 1_780_000_000_000 + revision,
+    size: new TextEncoder().encode(JSON.stringify(project)).byteLength,
+    hash: revision.toString(16).padStart(64, "0"),
+  };
+}
+
+const missingFingerprint: TestFingerprint = {
+  exists: false,
+  mtime_ms: null,
+  size: null,
+  hash: null,
+};
 
 function switchProject(title: string): any {
   const data = createEmptyProjectData(title);
@@ -45,6 +69,11 @@ function nativeSwitchBridge(
   const sessions: any[] = [];
   const calls: string[] = [];
   const locked = new Set<string>();
+  const revisions = new Map(Object.keys(projects).map((dir) => [dir, 1]));
+  const getFingerprint = (dir: string | null): TestFingerprint => {
+    if (!dir || !projects[dir]) return structuredClone(missingFingerprint);
+    return fingerprintFor(projects[dir], revisions.get(dir) ?? 1);
+  };
   const bridge: any = {
     projectDir: currentDir,
     projectDirFromUrl: false,
@@ -66,11 +95,20 @@ function nativeSwitchBridge(
     readProject: async () => currentDir && projects[currentDir]
       ? structuredClone(projects[currentDir])
       : null,
+    readProjectState: () => ({
+      project: currentDir && projects[currentDir]
+        ? structuredClone(projects[currentDir])
+        : null,
+      fingerprint: getFingerprint(currentDir),
+    }),
     readRecoveryJournal: async () => null,
     listenNativeDrops: async () => () => {},
     writeRecoveryJournal: async () => {},
     writeProject: async (project: any) => {
-      if (currentDir) projects[currentDir] = structuredClone(project);
+      if (!currentDir) return { fingerprint: structuredClone(missingFingerprint), recovery_warning: null };
+      projects[currentDir] = structuredClone(project);
+      revisions.set(currentDir, (revisions.get(currentDir) ?? 1) + 1);
+      return { fingerprint: getFingerprint(currentDir), recovery_warning: null };
     },
     clearRecoveryJournal: async () => {},
     projectIdentity: async () => currentDir && projects[currentDir]
@@ -174,6 +212,8 @@ Deno.test("native project transitions keep A to B to A reader positions and sess
     store.ui.route = "media";
     store.tabs = [{ content_item_id: store.ui.activeId, mode: "structure", pinned: true, scroll_top: 42 }];
     store.markNativeLease("A");
+    store.projectFingerprint = first.bridge.readProjectState().fingerprint;
+    store.projectFingerprintGeneration = 1;
     await store.persistSession(store.session());
 
     await store.openProject("B");
@@ -260,6 +300,8 @@ Deno.test("native failed transitions keep the old session for missing, invalid, 
     store.ui.mode = "preview";
     store.ui.route = "media";
     store.markNativeLease("A");
+    store.projectFingerprint = first.bridge.readProjectState().fingerprint;
+    store.projectFingerprintGeneration = 1;
     await store.persistSession(store.session());
 
     await store.openProject("B");
@@ -307,23 +349,30 @@ Deno.test("WorkbenchStore flush retries a mutation that lands during save", asyn
     await new Promise((resolve) => setTimeout(resolve, 0));
     const journals: Array<{ saved_at: string; project: { project: { updated_at: string } } }> = [];
     const writes: Array<{ project: { title: string; updated_at: string } }> = [];
-    let clearCount = 0;
     let sessionCount = 0;
     let store: InstanceType<typeof WorkbenchStore>;
     const bridge = {
       isNative: () => false,
-      writeRecoveryJournal: async (journal: typeof journals[number]) => { journals.push(journal); },
-      writeProject: async (snapshot: typeof writes[number]) => {
+      writeRecoveryJournal: async () => {},
+      writeProject: async (
+        snapshot: typeof writes[number],
+        _expected: TestFingerprint,
+        journal: typeof journals[number],
+      ) => {
         writes.push(structuredClone(snapshot));
+        journals.push(structuredClone(journal));
         if (writes.length === 1) {
           store.data.project.title = "最新标题";
           store.markDirty();
         }
+        return { fingerprint: fingerprintFor(snapshot, writes.length), recovery_warning: null };
       },
-      clearRecoveryJournal: async () => { clearCount += 1; },
+      clearRecoveryJournal: async () => {},
       saveSession: async () => { sessionCount += 1; },
     };
     store = new WorkbenchStore(bridge);
+    store.projectFingerprint = structuredClone(missingFingerprint);
+    store.projectFingerprintGeneration = 1;
     const saved = await store.flush();
     clearTimeout(store.saveTimer);
     assert(saved, "flush must succeed after retrying the changed snapshot");
@@ -337,7 +386,14 @@ Deno.test("WorkbenchStore flush retries a mutation that lands during save", asyn
         latestJournal.saved_at === latestWrite.project.updated_at,
       "canonical and recovery journal must share the latest revision",
     );
-    assert(clearCount === 1 && sessionCount === 1, "only the stable save should clear and finish the session");
+    assert(
+      journals.length === writes.length &&
+        journals.every((journal, index) =>
+          journal.project.project.updated_at === writes[index]?.project.updated_at
+        ),
+      "each canonical retry must carry its matching recovery journal",
+    );
+    assert(sessionCount === 1, "only the stable save should finish the session");
   } finally {
     runtime.document = previousDocument;
     globalThis.fetch = previousFetch;
@@ -361,16 +417,19 @@ Deno.test("WorkbenchStore surfaces autosave conflicts and reload establishes a u
   try {
     const { WorkbenchStore } = await import("../app/main.js?external-conflict-ui-test");
     let shouldConflict = true;
+    let fingerprint = structuredClone(missingFingerprint);
     let store: InstanceType<typeof WorkbenchStore>;
     const bridge = {
       isNative: () => false,
       writeRecoveryJournal: async () => {},
-      writeProject: async () => {
+      writeProject: async (project: ProjectData) => {
         if (shouldConflict) {
           const failure = new Error("保存已阻止") as Error & { code: string };
           failure.code = "external_modification_conflict";
           throw failure;
         }
+        fingerprint = fingerprintFor(project, 2);
+        return { fingerprint: structuredClone(fingerprint), recovery_warning: null };
       },
       inspectExternalModification: async () => ({
         changed: true,
@@ -381,12 +440,15 @@ Deno.test("WorkbenchStore surfaces autosave conflicts and reload establishes a u
       reloadExternalProject: async () => {
         const project = structuredClone(store.data);
         project.project.title = "磁盘版本";
-        return project;
+        fingerprint = fingerprintFor(project, 1);
+        return { project, fingerprint: structuredClone(fingerprint) };
       },
       clearRecoveryJournal: async () => {},
       saveSession: async () => {},
     };
     store = new WorkbenchStore(bridge);
+    store.projectFingerprint = structuredClone(missingFingerprint);
+    store.projectFingerprintGeneration = 1;
     assert(!(await store.flush()), "autosave must report a blocked write");
     assert(store.externalConflict?.changed, "the UI must retain structured conflict state");
     assert(store.saveStatus === "外部修改冲突", "conflict must not look like a successful save");
@@ -422,20 +484,43 @@ Deno.test("pending recovery keeps canonical data until restore snapshots it", as
     let clearCount = 0;
     let persisted: Record<string, unknown> | null = null;
     let journal: Record<string, unknown> | null = null;
+    let diskFingerprint = structuredClone(missingFingerprint);
+    let fingerprintRevision = 1;
     const bridge = {
       projectDir: "/tmp/recovery-project",
       isNative: () => true,
       loadSession: async () => null,
       readProject: async () => structuredClone(persisted),
+      readProjectState: async () => ({
+        project: structuredClone(persisted),
+        fingerprint: structuredClone(diskFingerprint),
+      }),
       readRecoveryJournal: async () => structuredClone(journal),
       listenNativeDrops: async () => () => {},
       writeRecoveryJournal: async () => {},
-      writeProject: async (project: typeof writes[number]) => { writes.push(structuredClone(project)); },
+      writeProject: async (
+        project: typeof writes[number],
+        expected: TestFingerprint,
+        recoveryJournal: Record<string, unknown>,
+      ) => {
+        assert(
+          JSON.stringify(expected) === JSON.stringify(diskFingerprint),
+          "recovery restore must save from the adopted canonical baseline",
+        );
+        writes.push(structuredClone(project));
+        persisted = structuredClone(project);
+        if (recoveryJournal) {
+          journal = null;
+          clearCount += 1;
+        }
+        diskFingerprint = fingerprintFor(project, ++fingerprintRevision);
+        return { fingerprint: structuredClone(diskFingerprint), recovery_warning: null };
+      },
       createSnapshot: async (input: typeof backups[number]) => {
         backups.push(structuredClone(input));
         return { id: "recovery-before", name: "恢复前备份", note: "backup", created_at: "2026-09-21T00:00:00.000Z" };
       },
-      clearRecoveryJournal: async () => { clearCount += 1; },
+      clearRecoveryJournal: async () => { journal = null; clearCount += 1; },
       saveSession: async () => {},
     };
     const store = new WorkbenchStore(bridge);
@@ -444,6 +529,7 @@ Deno.test("pending recovery keeps canonical data until restore snapshots it", as
     const recovered = structuredClone(canonical);
     recovered.project.title = "自动保存版本";
     persisted = canonical;
+    diskFingerprint = fingerprintFor(canonical, fingerprintRevision);
     journal = { project: recovered, saved_at: "2999-09-21T00:00:00.000Z" };
     await store.initialize();
     assert(store.data.project.title === "磁盘版本", "startup must keep canonical data visible");
@@ -546,9 +632,20 @@ Deno.test("native project switching rolls back the target when the old lease can
         project.project.title = "B";
         return project;
       },
+      readProjectState: async () => {
+        const project = structuredClone(store.data);
+        if (bridge.projectDir === "B") project.project.title = "B";
+        return {
+          project,
+          fingerprint: fingerprintFor(project, bridge.projectDir === "B" ? 2 : 1),
+        };
+      },
       saveSession: async (session: { project_dir: string | null }) => { sessions.push(session); },
       writeRecoveryJournal: async () => {},
-      writeProject: async () => {},
+      writeProject: async (project: ProjectData) => ({
+        fingerprint: fingerprintFor(project, 3),
+        recovery_warning: null,
+      }),
       clearRecoveryJournal: async () => {},
       closeProject: async (projectDir: string) => {
         calls.push(`close:${projectDir}`);
@@ -557,6 +654,8 @@ Deno.test("native project switching rolls back the target when the old lease can
     };
     store = new WorkbenchStore(bridge);
     store.markNativeLease("A");
+    store.projectFingerprint = fingerprintFor(store.data, 1);
+    store.projectFingerprintGeneration = 1;
     await store.openProject("B");
     assert(calls.join(",") === "close:A,close:B", "switch failure must close the target rollback lease");
     assert(bridge.projectDir === "A", "switch failure must restore the original project path");

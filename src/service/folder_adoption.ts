@@ -48,6 +48,8 @@ export interface FolderAdoptionOptions {
   project_root?: string;
   project_title?: string;
   duplicate_choice?: "existing" | "copy" | "cancel";
+  /** Checked, source-relative direct-child documents selected in the second dialog. */
+  document_paths?: readonly string[];
   /** When true, mutate data + copy assets but skip project.json write. */
   skip_project_write?: boolean;
   /** Persist through the caller's active project lease before promoting assets. */
@@ -218,6 +220,85 @@ function isIncluded(item: ImportMappingItem): boolean {
   if (!item.selected) return false;
   if (item.error) return false;
   return true;
+}
+
+async function selectedFolderDocumentItems(
+  sourceRoot: string,
+  plan: ImportMappingPlan,
+  documentPaths: readonly string[],
+  warnings: string[],
+): Promise<ImportMappingItem[]> {
+  const parents = new Map(
+    plan.items
+      .filter((item) =>
+        item.kind === "directory" && item.selected === true && !item.error &&
+        !item.relative_path.replaceAll("\\", "/").includes("/") &&
+        (item.mapping === "stage" || item.mapping === "lesson")
+      )
+      .map((item) => [item.relative_path.replaceAll("\\", "/"), item]),
+  );
+  const selected: ImportMappingItem[] = [];
+  const paths = [...new Set(
+    (Array.isArray(documentPaths) ? documentPaths : [])
+      .map((path) => String(path ?? "").replaceAll("\\", "/")),
+  )].sort((left, right) => left.localeCompare(right, "zh"));
+
+  for (const relativePath of paths) {
+    const parts = relativePath.split("/");
+    if (!relativePath || relativePath.includes("\0") || isAbsolute(relativePath) ||
+      parts.length !== 2 || parts.some((part) => !part || part === "." || part === "..")) {
+      warnings.push(`${relativePath || "."}: 只允许导入所选根级文件夹的直接子文档`);
+      continue;
+    }
+    const [directory, filename] = parts;
+    if (!directory || !filename) continue;
+    if (!DOCUMENT_IMPORT_EXTENSIONS.includes(extension(filename))) {
+      warnings.push(`${relativePath}: 不是支持的正文文档格式，已跳过`);
+      continue;
+    }
+    const parent = parents.get(directory);
+    if (!parent) {
+      warnings.push(`${relativePath}: 父文件夹未按当前映射选入阶段或课时，已跳过`);
+      continue;
+    }
+    try {
+      const sourceAbs = await sourceFilePath(sourceRoot, relativePath);
+      const stat = await Deno.stat(sourceAbs);
+      if (!stat.isFile) {
+        warnings.push(`${relativePath}: 不是文档文件，已跳过`);
+        continue;
+      }
+      const destination = parent.mapping === "lesson" && parent.destination
+        ? structuredClone(parent.destination)
+        : null;
+      selected.push({
+        relative_path: relativePath,
+        kind: "file",
+        mime: mimeFor(filename),
+        size: stat.size,
+        suggested: "lesson",
+        mapping: "lesson",
+        selected: true,
+        is_suggestion: true,
+        error: null,
+        destination,
+        ...(parent.mapping === "lesson" && parent.destination?.kind !== "existing_lesson"
+          ? {
+            folder_lesson_group: directory,
+            folder_lesson_title: entryTitle(directory),
+          }
+          : {}),
+        markdown_dependency_preview: null,
+        markdown_source_match: null,
+        allow_duplicate: false,
+      });
+    } catch (caught) {
+      warnings.push(
+        `${relativePath}: 已跳过不可读或越界文档（${caught instanceof Error ? caught.message : String(caught)}）`,
+      );
+    }
+  }
+  return selected;
 }
 
 function absPath(root: string, relativePath: string): string {
@@ -753,13 +834,28 @@ export async function confirmFolderAdoption(
   };
 
   try {
+  const selectedDocuments = await selectedFolderDocumentItems(
+    sourceRoot,
+    plan,
+    options.document_paths ?? [],
+    result.warnings,
+  );
   const items = await expandSelectedDirectoryMedia(
     sourceRoot,
-    plan.items,
+    [
+      ...plan.items.map((item) => {
+        const trusted = { ...item };
+        delete trusted.folder_lesson_group;
+        delete trusted.folder_lesson_title;
+        return trusted;
+      }),
+      ...selectedDocuments,
+    ],
     result.warnings,
   );
   const included = items.filter(isIncluded);
   const stageByRel = new Map<string, string>();
+  const folderLessonTargets = new Map<string, ContentItem>();
 
   // Pass 1: stages (directories)
   for (const item of included) {
@@ -811,6 +907,14 @@ export async function confirmFolderAdoption(
     const stageId = parentStageId(rel, stageByRel);
 
     if (role === "lesson") {
+      const folderLessonGroup = item.folder_lesson_group || "";
+      const groupedTarget = folderLessonGroup
+        ? folderLessonTargets.get(folderLessonGroup)
+        : undefined;
+      const folderDestination: ImportMappingDestination | null | undefined = groupedTarget
+        ? { kind: "existing_lesson", content_item_id: groupedTarget.id }
+        : item.destination;
+      const lessonTitle = item.folder_lesson_title || fileTitle;
       const ext = extension(filename);
       // §18 / §28 honesty: this shell has no parser for the container formats in
       // the §18 list, and decoding their bytes into a paragraph would be a false
@@ -864,6 +968,9 @@ export async function confirmFolderAdoption(
           ? `${rel}: 用户已明确选择导入来源的新版本；「${sourceMatch.title}」及其编辑内容保持不变。`
           : `${rel}: 用户已明确导入曾删除课时「${sourceMatch.title}」的来源新版本；按当前目标新建或追加。`);
       }
+      // A confirmed duplicate can be skipped even if its former destination was
+      // since deleted. Validate the target before importing dependencies or writing.
+      const destination = lessonDestination(data, folderDestination, stageId);
       const refsByBlock = new Map<number, Array<{ href: string; asset_id: string }>>();
       for (const ref of parsed?.explicitLocalImageRefs ?? []) {
         let dependencyPath: string;
@@ -941,7 +1048,6 @@ export async function confirmFolderAdoption(
           ...firstMarkdownBlock.settings,
           markdown_import: provenance,
         };
-        const destination = lessonDestination(data, item.destination, stageId);
         if (destination.item) {
           lesson = destination.item;
           const document = data.documents.find((candidate) =>
@@ -953,7 +1059,7 @@ export async function confirmFolderAdoption(
           );
         } else {
           lesson = createLesson(data, {
-            title: fileTitle,
+            title: lessonTitle,
             stage_id: destination.stageId,
             text,
             format,
@@ -984,13 +1090,12 @@ export async function confirmFolderAdoption(
           data.project.settings.markdown_import_sources = provenanceRows;
         }
       } else {
-        const destination = lessonDestination(data, item.destination, stageId);
         if (destination.item) {
           lesson = destination.item;
           appendBlock(data, lesson.id, "paragraph", text);
         } else {
           lesson = createLesson(data, {
-            title: fileTitle,
+            title: lessonTitle,
             stage_id: destination.stageId,
             text,
             format: "text",
@@ -1005,6 +1110,9 @@ export async function confirmFolderAdoption(
           ? `正文已导入，但有 ${parsed.warnings.length} 项格式未能原样保留：${parsed.warnings[0] ?? ""}`
           : "",
       );
+      if (folderLessonGroup && !folderLessonTargets.has(folderLessonGroup)) {
+        folderLessonTargets.set(folderLessonGroup, lesson);
+      }
       continue;
     }
 

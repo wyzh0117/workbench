@@ -78,7 +78,13 @@ async function createDesktopProject(): Promise<{
       }
     }
   }
-  const saved = await desktop.commands.execute("project.save", { project });
+  const state = await desktop.commands.execute("project.open_state", {});
+  assert(!state.error, "created project should expose its baseline");
+  const expectedFingerprint = (state.value as { fingerprint: unknown }).fingerprint;
+  const saved = await desktop.commands.execute("project.save", {
+    project,
+    expected_fingerprint: expectedFingerprint,
+  });
   assert(!saved.error, "test project should be saved");
   return { directory, desktop, project };
 }

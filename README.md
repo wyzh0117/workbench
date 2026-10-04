@@ -10,6 +10,8 @@
 
 > **当前状态：公开下载已恢复。** 仓库已重新设为 **public**，下面的链接对匿名访问者可用。
 
+当前开发候选为 v0.2.6；它尚未发布，`releases/latest`、固定下载链接和 SHA-256 sidecar 继续指向已冻结的 v0.2.5。最终冻结源码通过 `deno task check` 和 `deno task test`（602/602，含 loopback），Rust 测试 222/222；本地 Universal App/DMG 通过架构、版本和完整性检查，尚未做本机原生 smoke（Mac 锁屏），本地包未签名/公证。Overview 在 1024/1280/1440/1728×900 测量通过；其余页面、部分 overlay 和 Free Layout 删除/重开/导出仍按验收报告标记为 PARTIAL。详见 [v0.2.6 completion report](docs/reports/v0.2.6-ui-redesign-completion-report.html)、[候选 feature history](docs/feature-history/v0.2.6.md) 与 [候选构建证据](docs/reports/evidence/v0.2.6/candidate-build-final.md)。
+
 **下载最新 macOS 安装包（DMG）：**
 
 | 入口 | 链接 |
@@ -113,11 +115,12 @@ BLOCKER            = 缺正式 macOS signing / notarization credentials
 - V1-T04 — Workspace Explorer & Existing-Folder Adoption：**VERIFIED**
 - V1-T05 — Paged Canvas & Pagination：**VERIFIED**
 - V1-T06 — Layout-aware Export & PPTX：**VERIFIED**
-- 当前交接：**v0.2.5 已发布并冻结**（收口内容 = 项目身份与多项目入口、媒体库滚动稳定性、九类文本 / 文档导入、映射后二次正文选择；发布验证事实见 §45.4）
-- 当前状态：**V1 ACTIVE；v0.2.5 四块内容已实现、自测并按用户授权提交、打 tag、发布**（T01–T06 的 VERIFIED 为历史任务结论）
+- 当前交接：**v0.2.5 已发布并冻结；v0.2.6 为开发候选**（Mapping / Preview / Flow / Free Layout / 全局 UI 重设计）
+- 当前状态：**Latest public = v0.2.5；Current source = v0.2.6 candidate**。V1 ACTIVE；V1-T01–T06 的 VERIFIED 为历史任务结论，不因本轮新增任务改写。
 - [Completion Report](docs/V0.2.5_Closure_2026-10-03_Completion_Report.md) · [Master Control §45](PROJECT_MASTER_CONTROL.md)：§33 19 项验收矩阵、自动化 gate、真实 UI 证据与未闭合通道；媒体库闪烁的大白话根因见 [docs/v0.2.5_media_flicker_root_cause.md](docs/v0.2.5_media_flicker_root_cause.md)。
+- [v0.2.6 candidate feature history](docs/feature-history/v0.2.6.md) · [rolling UNRELEASED record](docs/feature-history/UNRELEASED.md) · [UI redesign completion report](docs/reports/v0.2.6-ui-redesign-completion-report.html)：列出本轮用户可见变化、当前证据和未闭合限制。
 - 公开版与源码态的区别：**v0.2.4 及更早的公开包不含本轮四块改动**；这些改动已随 `v0.2.5` 到达用户。`v0.2.5` 的下载地址、SHA-256 与验证结果见本页上方 `releases/latest` 链接与 `PROJECT_MASTER_CONTROL.md` §45.4。已发布版本一律冻结，不会被重建或覆盖。
-- 本轮改动清单（面向用户可见行为）见 [Feature Update Manual / v0.2.5](docs/feature-history/v0.2.5.md)：启动入口变成项目列表（重新定位 / 移除只动列表）、打开文件夹先诊断再动作且不会认错子项目、媒体库滚到底再往回滚不再闪烁、九类文本 / 文档作为正文导入（.txt/.text/.md/.markdown/.tex/.latex/.docx/.epub/.pdf）、映射确认后新增「选择要导入为正文的文档」窗口。
+- v0.2.5 的用户改动清单见 [Feature Update Manual / v0.2.5](docs/feature-history/v0.2.5.md)；当前 v0.2.6 功能说明暂列在 [UNRELEASED candidate](docs/feature-history/UNRELEASED.md)，不会误写成已包含于公开包。
 - 产品状态：**公开版 v0.2.5 = 已发布并完成公开产物验证**（上轮 v0.2.4 收口 15 项为 11 PASS / 2 PARTIAL / 1 BLOCKED）；**v0.2.5 的真实 Tauri 验收行按 UNCLOSED 如实记录**（原生窗口手势、真实在线 AI、媒体库真实滚动三条通道未闭合，见 Completion Report §2 与 §9），不作整体 VERIFIED 或 DOGFOOD READY 结论
 - 分发状态：**PARTIAL / 公开下载可用**（v0.2.5 Universal DMG 与 SHA-256 sidecar 已匿名下载校验；制品为 ad-hoc signed，无 `TeamIdentifier`，`spctl --assess --type execute` 为 `rejected`，未做 Developer ID 签名或公证）
 - V0 状态：**V0 CLOSED；V0-T01 / V0-T02 / V0-T03 / V0-T04 全部 VERIFIED**

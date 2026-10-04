@@ -10,6 +10,7 @@ import { validateProjectData } from "../src/domain/store.ts";
 import type { ProjectData } from "../src/domain/types.ts";
 import { courseMap, lessonView } from "../app/authoring.js";
 import { AssetPreviewCache, staticImagePoster, stopPreviewMedia } from "../app/canvas.js";
+import { createViews } from "../app/views.js";
 
 function assert(condition: unknown, message: string): asserts condition {
   if (!condition) throw new Error(message);
@@ -79,6 +80,12 @@ async function bootStore(bridgeOverrides: Record<string, unknown> = {}) {
       state.writes += 1;
       // `acceptWrites` lets a test stand in for "another writer owns the file".
       if (state.acceptWrites) state.project = structuredClone(project);
+      return {
+        exists: true,
+        mtime_ms: Date.now(),
+        size: JSON.stringify(project).length,
+        hash: "authoring-ui-test",
+      };
     },
     clearRecoveryJournal: async () => {},
     saveSession: async (session: unknown) => {
@@ -121,7 +128,7 @@ async function bootStore(bridgeOverrides: Record<string, unknown> = {}) {
     setBlockType: (id: string, type: string) => void;
     setBlockLevel: (id: string, level: unknown) => void;
     moveBlock: (id: string, direction: string) => void;
-    reorderBlockTo: (source: string, target: string) => void;
+    reorderBlockTo: (source: string, target: string | null) => void;
     deleteBlock: (id: string) => void;
     addPlaceholder: (type?: string, note?: string) => void;
     updateRequirement: (id: string, patch: Record<string, unknown>) => void;
@@ -133,6 +140,9 @@ async function bootStore(bridgeOverrides: Record<string, unknown> = {}) {
     deleteAsset: (assetId: string) => void;
     renameAsset: (assetId: string, title: string) => Promise<void>;
     startAssetRename: (assetId: string) => void;
+    cancelAssetRename: () => void;
+    retryLockedProjectOpen: () => Promise<void>;
+    dismissProjectProblem: () => void;
     createLayout: (mode?: string) => void;
     layoutPages: () => ProjectData["layout_pages"];
     beginPaginationConversion: () => void;
@@ -189,7 +199,7 @@ async function bootStore(bridgeOverrides: Record<string, unknown> = {}) {
     resumeLessonId: () => string | null;
     openWorkbench: () => void;
     setMode: (mode: string, options?: Record<string, unknown>) => void;
-    openProject: (dir?: string) => Promise<void>;
+    openProject: (dir?: string, options?: { reopen?: boolean }) => Promise<void>;
     flush: () => Promise<boolean>;
     flushNow: () => Promise<boolean>;
     saveTimer: number;
@@ -210,6 +220,187 @@ async function bootStore(bridgeOverrides: Record<string, unknown> = {}) {
     },
   };
 }
+
+Deno.test("project snapshots and save acknowledgements require valid fingerprints", async () => {
+  const { store, bridge, restore } = await bootStore();
+  const internal = store as any;
+  const originalData = structuredClone(store.data);
+  const originalFingerprint = {
+    exists: true,
+    mtime_ms: 10,
+    size: 20,
+    hash: "before",
+  };
+  const noFileFingerprint = {
+    exists: false,
+    mtime_ms: null,
+    size: null,
+    hash: null,
+  };
+  try {
+    internal.projectFingerprint = originalFingerprint;
+    const generation = internal.projectFingerprintGeneration;
+    const replacement = createEmptyProjectData("不可采用的磁盘版本");
+    assert(
+      !internal.adoptProjectSnapshot({ project: replacement, fingerprint: { exists: true } }),
+      "a malformed project/fingerprint pair must be rejected",
+    );
+    assert(
+      !internal.isFileFingerprint({ ...originalFingerprint, size: -1 }),
+      "a filesystem fingerprint cannot contain a negative size",
+    );
+    assert(
+      !internal.replaceProjectFrom({
+        project_state: { project: replacement, fingerprint: { exists: true } },
+        project: replacement,
+      }),
+      "a malformed pair must not fall back to adopting its unpaired project",
+    );
+    assert(
+      JSON.stringify(store.data) === JSON.stringify(originalData),
+      "rejecting a malformed pair must leave the in-memory project untouched",
+    );
+    assert(
+      JSON.stringify(internal.projectFingerprint) === JSON.stringify(originalFingerprint) &&
+        internal.projectFingerprintGeneration === generation,
+      "rejecting a malformed pair must leave the save baseline untouched",
+    );
+
+    assert(
+      internal.adoptProjectSnapshot({ project: replacement, fingerprint: noFileFingerprint }),
+      "the explicit all-null no-file fingerprint is valid",
+    );
+    assert(
+      internal.projectFingerprint.exists === false &&
+        internal.projectFingerprintGeneration === generation + 1,
+      "adopting a valid pair advances the baseline with its project",
+    );
+
+    const adoptedFingerprint = structuredClone(internal.projectFingerprint);
+    const adoptedGeneration = internal.projectFingerprintGeneration;
+    (bridge as any).writeProject = async () => ({ fingerprint: { exists: true } });
+    let rejectedAck = false;
+    try {
+      await internal.persistProjectSnapshot(store.data);
+    } catch {
+      rejectedAck = true;
+    }
+    assert(rejectedAck, "a malformed save acknowledgement must be rejected");
+    assert(
+      JSON.stringify(internal.projectFingerprint) === JSON.stringify(adoptedFingerprint) &&
+        internal.projectFingerprintGeneration === adoptedGeneration,
+      "a malformed save acknowledgement must not advance the baseline",
+    );
+    (bridge as any).writeProject = async () => ({ fingerprint: noFileFingerprint });
+    rejectedAck = false;
+    try {
+      await internal.persistProjectSnapshot(store.data);
+    } catch {
+      rejectedAck = true;
+    }
+    assert(rejectedAck, "a no-file fingerprint cannot acknowledge a successful save");
+    assert(
+      JSON.stringify(internal.projectFingerprint) === JSON.stringify(adoptedFingerprint) &&
+        internal.projectFingerprintGeneration === adoptedGeneration,
+      "a no-file save acknowledgement must not advance the baseline",
+    );
+
+    const savedFingerprint = {
+      exists: true,
+      mtime_ms: 30,
+      size: 40,
+      hash: "after",
+    };
+    (bridge as any).writeProject = async () => ({ fingerprint: savedFingerprint });
+    await internal.persistProjectSnapshot(store.data);
+    assert(
+      JSON.stringify(internal.projectFingerprint) === JSON.stringify(savedFingerprint) &&
+        internal.projectFingerprintGeneration === adoptedGeneration + 1,
+      "a valid save acknowledgement advances the baseline",
+    );
+  } finally {
+    restore();
+  }
+});
+
+Deno.test("persisted snapshot load and save indicators track the project baseline", async () => {
+  let persisted = createEmptyProjectData("已保存的项目");
+  const fingerprint = {
+    exists: true,
+    mtime_ms: 10,
+    size: JSON.stringify(persisted).length,
+    hash: "loaded-baseline",
+  };
+  const savedFingerprint = {
+    exists: true,
+    mtime_ms: 20,
+    size: 1,
+    hash: "saved-baseline",
+  };
+  const loaded = await bootStore({
+    currentProject: () => persisted,
+    projectIdentity: async () => persisted.project.id,
+    readProjectState: async () => ({
+      project: structuredClone(persisted),
+      fingerprint,
+    }),
+    writeProject: async (project: ProjectData) => {
+      persisted = structuredClone(project);
+      return { fingerprint: savedFingerprint };
+    },
+  });
+  try {
+    await loaded.store.initialize();
+    assert(
+      String(loaded.store.saveStatus) === "已保存",
+      `loading an existing project with a valid disk fingerprint starts saved (got ${String(loaded.store.saveStatus)})`,
+    );
+    loaded.store.addMapItem("新增课时");
+    assert(
+      String(loaded.store.saveStatus) === "正在保存…",
+      "editing a loaded project returns the status to saving",
+    );
+    assert(await loaded.store.flushNow(), "the edited loaded project saves successfully");
+    assert(
+      String(loaded.store.saveStatus) === "已保存",
+      "a valid save acknowledgement restores the saved status",
+    );
+  } finally {
+    loaded.restore();
+  }
+
+  const absent = await bootStore({
+    readProjectState: async () => ({
+      project: null,
+      fingerprint: { exists: false, mtime_ms: null, size: null, hash: null },
+    }),
+  });
+  try {
+    await absent.store.initialize();
+    assert(
+      String(absent.store.saveStatus) === "未保存",
+      "a valid no-file baseline remains unsaved until the first explicit save",
+    );
+  } finally {
+    absent.restore();
+  }
+
+  const invalid = await bootStore({
+    readProjectState: async () => ({
+      project: createEmptyProjectData("无效快照"),
+      fingerprint: { exists: true },
+    }),
+  });
+  try {
+    await invalid.store.initialize();
+    assert(
+      String(invalid.store.saveStatus) === "未保存",
+      "an invalid project/fingerprint pair must not claim a saved baseline",
+    );
+  } finally {
+    invalid.restore();
+  }
+});
 
 Deno.test("lesson creation, rename, reorder and delete keep the course consistent", async () => {
   const { store, restore } = await bootStore();
@@ -472,6 +663,80 @@ Deno.test("pointer reorder session commits canonical order_index via reorderBloc
   }
 });
 
+Deno.test("Flow drop targets insert before the indicator and null appends", async () => {
+  const { store, restore } = await bootStore();
+  try {
+    store.addMapItem("Flow 插入语义");
+    store.addBlock("paragraph", "A");
+    store.addBlock("paragraph", "B");
+    store.addBlock("paragraph", "C");
+    const item = store.currentItem()!;
+    const [a, b, c] = store.blocks(item);
+    store.reorderBlockTo(a!.id, c!.id);
+    assert(
+      store.blocks(item).map((block) => block.id).join(",") === `${b!.id},${a!.id},${c!.id}`,
+      "the dragged block must land immediately before the highlighted target",
+    );
+    store.reorderBlockTo(b!.id, null);
+    assert(
+      store.blocks(item).map((block) => block.id).join(",") === `${a!.id},${c!.id},${b!.id}`,
+      "a drop on the end sentinel must append after every block",
+    );
+    assert(
+      store.blocks(item).every((block, index) => block.order_index === index),
+      "Flow writes contiguous canonical order indices",
+    );
+  } finally {
+    restore();
+  }
+});
+
+Deno.test("Workbench exposes Flow and migrates the removed Layout route to Free Layout", async () => {
+  const { store, restore } = await bootStore();
+  try {
+    store.addMapItem("Flow 页面合同");
+    store.addBlock("paragraph", "Flow 预览正文");
+    store.ui.screen = "project";
+    store.ui.route = "editor";
+    store.ui.mode = "structure";
+    const { createViews } = await import(`../app/views.js?flow-contract-${importCounter}`);
+    const html = () => createViews(store).shellView() as string;
+    const workbench = html();
+    assert(workbench.includes('data-mode="structure"'), "the second Workbench view remains Flow");
+    assert(workbench.includes("data-flow-drag-handle"), "Flow rows expose their own drag handle");
+    assert(workbench.includes('data-action="flow-select-block"'), "the full Flow row returns to its body block");
+    assert(!workbench.includes('data-mode="layout"'), "Workbench no longer exposes the Layout tab");
+    assert(workbench.includes('data-route="free-layout"'), "Free Layout is a top-level navigation route");
+
+    store.setMode("layout");
+    assert(store.ui.route === "free-layout", "legacy Layout actions open the Free Layout page");
+    assert(store.ui.mode === "writing", "the removed Layout tab is never restored");
+
+    const migratedLayoutSession = store.normalizeReaderState(store.data, {
+      route: "editor",
+      mode: "layout",
+      tabs: [{ content_item_id: store.currentItem()!.id, mode: "layout", pinned: false, scroll_top: 0 }],
+    });
+    assert(migratedLayoutSession.route === "free-layout", "legacy editor Layout sessions migrate to the Free Layout route");
+    assert(migratedLayoutSession.mode === "writing", "legacy Layout session modes return to the body editor");
+    assert(
+      (migratedLayoutSession.tabs as Array<{ mode: string }>)[0]?.mode === "writing",
+      "legacy lesson tabs cannot reopen the removed Layout tab",
+    );
+    const migratedStructureRoute = store.normalizeReaderState(store.data, { route: "structure", mode: "writing" });
+    assert(migratedStructureRoute.route === "editor", "the removed Structure page returns to Workbench");
+    assert(migratedStructureRoute.mode === "structure", "legacy Structure sessions open the Flow tab");
+
+    store.createLayout("grid");
+    store.ui.route = "free-layout";
+    const freeLayout = html();
+    assert(freeLayout.includes("GRID CANVAS"), "Free Layout keeps the existing Grid renderer");
+    assert(!freeLayout.includes("Flow 是一维文档流"), "Grid renderer contains no legacy Flow page branch");
+  } finally {
+    restore();
+  }
+});
+
 /**
  * Thin DOM stand-in that lets `bindBlockDrag` attach real listeners, so a test
  * can fire pointerdown/move/up on a handle instead of only driving the session
@@ -644,7 +909,7 @@ async function bootPointerDom() {
     querySelector: () => root,
     querySelectorAll: () => [],
     addEventListener(type, handler, capture) {
-      if (!capture) return;
+      if (!capture && type !== "keydown") return;
       const list = documentListeners.get(type) ?? [];
       list.push(handler);
       documentListeners.set(type, list);
@@ -756,6 +1021,11 @@ async function bootPointerDom() {
       actionNode.dataset.id = id;
       actionNode.fire();
     },
+    triggerAction(action: string, id = "") {
+      actionNode.dataset.action = action;
+      actionNode.dataset.id = id;
+      actionNode.fire();
+    },
     focusedElement: () => focusedElement,
     focusField,
     restore: () => {
@@ -769,6 +1039,47 @@ async function bootPointerDom() {
     },
   };
 }
+
+Deno.test("delete confirmation leaves data intact on cancel or Escape and commits once on confirm", async () => {
+  const dom = await bootPointerDom();
+  try {
+    dom.store.ui.screen = "project";
+    dom.store.ui.route = "editor";
+    dom.store.ui.mode = "writing";
+    dom.store.addMapItem("确认后删除");
+    dom.store.addBlock("paragraph", "保留这段内容直到确认");
+    const block = dom.store.blocks()[0]!;
+    const historyBefore = dom.store.history.length;
+    const { createViews } = await import(`../app/views.js?delete-confirm-${importCounter}`);
+
+    dom.triggerAction("delete-block", block.id);
+    const confirmation = dom.store.ui.pendingDeleteConfirmation as { id: string } | undefined;
+    assert(confirmation?.id === block.id, "delete action opens the matching confirmation");
+    assert(dom.store.data.blocks.some((candidate) => candidate.id === block.id), "opening confirmation does not mutate canonical data");
+    assert(dom.store.history.length === historyBefore, "opening confirmation does not add an undo entry");
+    const markup = createViews(dom.store as never).overlayView() as string;
+    assert(markup.includes('role="dialog"') && markup.includes('aria-modal="true"'), "confirmation is a semantic modal dialog");
+    assert(markup.includes("delete-confirm-cancel") && markup.includes("delete-confirm-accept"), "dialog exposes cancel and confirm actions");
+
+    dom.triggerAction("delete-confirm-cancel");
+    assert(!dom.store.ui.pendingDeleteConfirmation, "cancel closes the dialog");
+    assert(dom.store.data.blocks.some((candidate) => candidate.id === block.id), "cancel preserves the block");
+    assert(dom.store.history.length === historyBefore, "cancel adds no undo entry");
+
+    dom.triggerAction("delete-block", block.id);
+    dom.fireDocument("keydown", { key: "Escape", preventDefault() {} });
+    assert(!dom.store.ui.pendingDeleteConfirmation, "Escape closes the dialog");
+    assert(dom.store.data.blocks.some((candidate) => candidate.id === block.id), "Escape preserves canonical data");
+    assert(dom.store.history.length === historyBefore, "Escape adds no undo entry");
+
+    dom.triggerAction("delete-block", block.id);
+    dom.triggerAction("delete-confirm-accept");
+    assert(!dom.store.data.blocks.some((candidate) => candidate.id === block.id), "confirm executes the delete action");
+    assert(dom.store.history.length === historyBefore + 1, "confirm commits exactly one undoable action");
+  } finally {
+    dom.restore();
+  }
+});
 
 Deno.test("bindBlockDrag commits reorder from handle pointerdown/move/up", async () => {
   const dom = await bootPointerDom();
@@ -1248,8 +1559,8 @@ Deno.test("paged canvas stays finite and editor, preview, and publish show real 
 
     const { createViews } = await import(`../app/views.js?paged-ui-${importCounter}`);
     store.ui.screen = "project";
-    store.ui.route = "editor";
-    store.ui.mode = "layout";
+    store.ui.route = "free-layout";
+    store.ui.mode = "writing";
     let html = createViews(store).shellView() as string;
     assert(html.includes("data-action=\"select-layout-page\""), "editor renders selectable page identities");
     assert(html.includes("data-action=\"toggle-pagination-edit\""), "editor exposes a separate pagination edit toggle");
@@ -1274,6 +1585,7 @@ Deno.test("paged canvas stays finite and editor, preview, and publish show real 
     html = createViews(store).shellView() as string;
     assert(html.includes("data-action=\"resize-placement\""), "re-entering pagination editing restores the same controls");
 
+    store.ui.route = "editor";
     store.setMode("preview");
     html = createViews(store).shellView() as string;
     assert(html.includes("page-preview-sheet"), "preview renders a physical page canvas");
@@ -1340,17 +1652,20 @@ Deno.test("whole-course PDF and PPTX fit preview includes every lesson page", as
     for (const format of ["pdf", "pptx"]) {
       const capability = store.publicationCapability(format);
       assert(
-        capability.code === "explicit_target_page_size_required",
-        `${format} requires an explicit size for mixed whole-course pages`,
+        capability.status === "unsupported" && capability.code === "explicit_target_page_size_required",
+        `${format} remains unavailable without an explicit target size for mixed whole-course pages`,
       );
     }
     const { createViews } = await import(`../app/views.js?course-fit-${importCounter}`);
     let html = createViews(store).shellView() as string;
+    const formatButton = (source: string, format: string) =>
+      source.match(new RegExp(`<button\\b(?=[^>]*\\bdata-format="${format}")[^>]*>`))?.[0] ?? "";
+    const isDisabled = (button: string) => /\sdisabled(?:\s|>|$)/.test(button);
     assert(html.includes("publish-size-warning"), "mixed sizes prompt for a unified target");
     assert(html.includes("页面尺寸不同，需选择统一尺寸"), "original-size option no longer implies a false shared size");
     assert(html.includes('data-action="publish-target-size"'), "target size remains selectable before PDF is active");
-    assert(html.includes('data-format="pdf" disabled'), "PDF is disabled until a target is chosen");
-    assert(html.includes('data-format="pptx" disabled'), "PPTX is disabled until a target is chosen");
+    assert(isDisabled(formatButton(html, "pdf")), "PDF button is disabled until a target is chosen");
+    assert(isDisabled(formatButton(html, "pptx")), "PPTX button is disabled until a target is chosen");
 
     store.setPublishTargetPageSize("16:9");
     store.ui.publishFormat = "pdf";
@@ -1361,6 +1676,8 @@ Deno.test("whole-course PDF and PPTX fit preview includes every lesson page", as
       );
     }
     html = createViews(store).shellView() as string;
+    assert(!isDisabled(formatButton(html, "pdf")), "PDF button enables after choosing a target size");
+    assert(!isDisabled(formatButton(html, "pptx")), "PPTX button enables after choosing a target size");
     assert(html.includes(landscapeLesson.code), "preview names the landscape lesson");
     assert(html.includes(portraitLesson.code), "preview names the portrait lesson");
     assert(html.includes("横版页面") && html.includes("竖版页面"), "preview includes page cards from both lessons");
@@ -1982,6 +2299,11 @@ Deno.test("completing a layout requirement with an asset stays consistent", asyn
     store.addBlock("paragraph", "需要配图");
     store.createLayout("grid");
     const layout = store.data.layout_instances[0]!;
+    store.ui.route = "free-layout";
+    store.ui.mode = "writing";
+    const context = (store as any).assetContext();
+    assert(context.role === "layout", "Free Layout keeps its layout asset role after the tab migration");
+    assert(context.layout_instance_id === layout.id, "Free Layout asset context carries its current layout instance");
     // A layout-scope requirement has no anchor block at all.
     store.commit("排版待补", (data) => {
       data.requirements.push({
@@ -2228,6 +2550,86 @@ function seedImageAsset(
     });
   });
 }
+
+Deno.test("Preview counts mapped Markdown images once and explains video image references", async () => {
+  const { store, restore } = await bootStore();
+  try {
+    store.addMapItem("Preview inline refs");
+    const item = store.currentItem()!;
+    store.addBlock("paragraph", [
+      "![照片](photo.png)",
+      "![动画](loop.gif)",
+      "![视频](clip.mp4)",
+    ].join("\n\n"));
+    const block = store.blocks(item)[0]!;
+    const makeAsset = (
+      id: string,
+      type: ProjectData["assets"][number]["type"],
+      filename: string,
+      mime_type: string,
+    ): ProjectData["assets"][number] => ({
+      id,
+      project_id: store.data.project.id,
+      type,
+      filename,
+      storage_path: `assets/${filename}`,
+      mime_type,
+      width: null,
+      height: null,
+      duration_ms: type === "video" ? 2000 : null,
+      file_size: 4,
+      checksum: `checksum-${id}`,
+      title: filename,
+      description: "",
+      source_type: "imported",
+      source_url: null,
+      copyright_note: null,
+      created_at: "2026-01-01T00:00:00.000Z",
+      archived: false,
+    });
+    store.commit("导入 Markdown 图片映射", (data) => {
+      const assets = [
+        makeAsset("asset-inline-photo", "image", "photo.png", "image/png"),
+        makeAsset("asset-inline-gif", "gif", "loop.gif", "image/gif"),
+        makeAsset("asset-inline-video", "video", "clip.mp4", "video/mp4"),
+        makeAsset("asset-stale-map", "image", "removed.png", "image/png"),
+      ];
+      data.assets.push(...assets);
+      const target = data.blocks.find((candidate) => candidate.id === block.id)!;
+      target.settings.markdown_assets = [
+        { href: "photo.png", asset_id: "asset-inline-photo" },
+        { href: "loop.gif", asset_id: "asset-inline-gif" },
+        { href: "clip.mp4", asset_id: "asset-inline-video" },
+        { href: "removed.png", asset_id: "asset-stale-map" },
+      ];
+      for (const asset of assets.slice(0, 3)) {
+        data.asset_usages.push({
+          id: `usage-${asset.id}`,
+          asset_id: asset.id,
+          content_item_id: item.id,
+          block_id: block.id,
+          layout_instance_id: null,
+          role: "content",
+          created_at: "2026-01-01T00:00:00.000Z",
+        });
+      }
+    });
+    store.ui.screen = "project";
+    store.ui.route = "editor";
+    store.ui.mode = "preview";
+    const { createViews } = await import(`../app/views.js?inline-preview-${importCounter}`);
+    const html = createViews(store).shellView() as string;
+
+    assert(block.type === "paragraph", "inline Markdown stays in its canonical paragraph block");
+    assert(html.includes("2 个已在正文中显示"), "the Preview summary counts only renderable inline images and GIFs");
+    assert(html.includes("photo.png · 图片") && html.includes("loop.gif · GIF"), "the summary names inline image and GIF assets");
+    assert(!html.includes("clip.mp4 · 视频"), "a video-as-image warning is not counted as successfully displayed media");
+    assert(!html.includes("removed.png"), "stale resolver mappings do not count as visible media");
+    assert(html.includes("Markdown 图片语法只支持图片和 GIF") && html.includes("从媒体库插入视频区块"), "video referenced as a Markdown image gets a clear supported-path message");
+  } finally {
+    restore();
+  }
+});
 
 Deno.test("block palette includes + 媒体 as a peer of + 正文", async () => {
   const views = await Deno.readTextFile(
@@ -2576,6 +2978,14 @@ Deno.test("renaming an asset renames the managed file and stays reversible", asy
     );
 
     store.startAssetRename("asset-rename");
+    const renameDialog = createViews(store as any).overlayView();
+    assert(
+      renameDialog.includes('role="dialog"') &&
+        renameDialog.includes('data-action="confirm-rename-asset"') &&
+        renameDialog.includes("托管文件") &&
+        renameDialog.includes("data-asset-title"),
+      "renaming uses an accessible dialog that explains the managed-file change",
+    );
     const historyBeforeRename = store.history.length;
     await store.renameAsset("asset-rename", "课程封面");
     // Enter commits and the field then blurs carrying the same value: one intent
@@ -2678,6 +3088,65 @@ Deno.test("renaming an asset renames the managed file and stays reversible", asy
         "课程封面.png",
       "a refused rename changes nothing",
     );
+    assert(
+      store.ui.editingAssetId === "asset-rename" &&
+        store.ui.assetRenameValue === "占用" &&
+        String(store.ui.assetRenameError).includes("已有一个素材使用这个文件名"),
+      "a refused rename keeps its input and visible error in the dialog",
+    );
+    store.cancelAssetRename();
+    assert(
+      store.ui.editingAssetId === null &&
+        store.data.assets.find((asset) => asset.id === "asset-rename")!.filename === "课程封面.png",
+      "cancel closes the dialog without changing the managed file",
+    );
+  } finally {
+    restore();
+  }
+});
+
+Deno.test("a locked project offers safe retry and return without taking its lock", async () => {
+  let openCalls = 0;
+  const lockedBridge: Record<string, unknown> = {
+    projectDir: null,
+    projectDirFromUrl: false,
+    isNative: () => true,
+    setProjectDir: (value: string) => { lockedBridge.projectDir = value; },
+    restoreProjectDir: (value: string | null) => { lockedBridge.projectDir = value; },
+    openProject: async () => {
+      openCalls += 1;
+      throw new Error("project_locked: 该项目已在另一窗口或进程中编辑。");
+    },
+  };
+  const { store, restore } = await bootStore(lockedBridge);
+  try {
+    await store.openProject("/locked/course");
+    assert(
+      (store.ui.projectProblem as { status?: string; dir?: string; problem?: { code?: string } })
+          ?.status === "locked" &&
+        (store.ui.projectProblem as { dir?: string })?.dir === "/locked/course" &&
+        (store.ui.projectProblem as { problem?: { code?: string } })?.problem?.code === "project_locked",
+      "a lock rejection is surfaced as a project-open problem with its directory",
+    );
+    const lockMarkup = createViews(store as any).overlayView();
+    assert(
+      lockMarkup.includes("项目正在使用") &&
+        lockMarkup.includes('data-action="retry-locked-project"') &&
+        lockMarkup.includes('data-action="dismiss-project-problem"') &&
+        lockMarkup.includes("没有接管项目锁"),
+      "the lock dialog explains the conflict and offers only retry or return",
+    );
+    await store.retryLockedProjectOpen();
+    assert(openCalls === 2, "retry asks the normal project-open path again");
+    assert(
+      (store.ui.projectProblem as { status?: string })?.status === "locked",
+      "a still-held lock remains visible after retry",
+    );
+    store.dismissProjectProblem();
+    assert(
+      store.ui.projectProblem === null && openCalls === 2,
+      "return dismisses the message without another open or lock mutation",
+    );
   } finally {
     restore();
   }
@@ -2702,19 +3171,21 @@ Deno.test("openWorkbench returns to the current lesson editor, defaulting to 正
   }
 });
 
-Deno.test("openWorkbench restores 正文/结构/排版/预览 from a valid lesson session", async () => {
+Deno.test("openWorkbench restores 正文/Flow/Preview and migrates legacy Layout to Free Layout", async () => {
   const { store, restore } = await bootStore();
   try {
     store.addMapItem("会话恢复课");
     const lessonId = String(store.ui.activeId || "");
     store.setMode("layout");
+    assert(String(store.ui.route) === "free-layout", "旧排版视图映射到一级自由排版");
+    assert(String(store.ui.mode) === "writing", "旧排版子视图回到正文模式");
     store.ui.route = "inbox";
     store.notify();
 
     store.openWorkbench();
     assert(String(store.ui.route) === "editor", "工作台 returns to authoring");
     assert(String(store.ui.activeId) === lessonId, "same lesson stays active");
-    assert(String(store.ui.mode) === "layout", "合法 session 恢复排版子视图");
+    assert(String(store.ui.mode) === "writing", "工作台恢复时回到正文子视图");
 
     store.setMode("preview");
     store.ui.route = "board";
@@ -3429,14 +3900,40 @@ async function pagedEditingFixture(title: string) {
   const pages = store.layoutPages();
   store.selectLayoutPage(first.id);
   store.ui.screen = "project";
-  store.ui.route = "editor";
-  store.ui.mode = "layout";
+  store.ui.route = "free-layout";
+  store.ui.mode = "writing";
   const { createViews } = await import(`../app/views.js?pagination-editing-${importCounter}`);
   const render = () => createViews(store).shellView() as string;
   const toggle = () =>
     (store as unknown as { togglePaginationEditing: () => void }).togglePaginationEditing();
   return { ...booted, store, pages, render, toggle };
 }
+
+Deno.test("page move target renders available cells on the selected page", async () => {
+  const { store, pages, render, restore } = await pagedEditingFixture("跨页目标面板");
+  try {
+    const placement = store.data.placements[0]!;
+    const pageMove = store as unknown as {
+      startPageMove: (placementId: string) => void;
+      choosePageMoveTarget: (pageId: string) => void;
+    };
+    pageMove.startPageMove(placement.id);
+    pageMove.choosePageMoveTarget(pages[1]!.id);
+
+    const html = render();
+    assert(
+      html.includes(`选择「${pages[1]!.title}」里的可用位置`),
+      "the target page must render its destination-cell panel",
+    );
+    assert(
+      html.includes(`data-action="move-placement-page-cell"`) &&
+        html.includes(`data-page-id="${pages[1]!.id}"`),
+      "available destination cells must retain their page and move action",
+    );
+  } finally {
+    restore();
+  }
+});
 
 Deno.test("continuous Grid shows no output-section editor but keeps 启用分页 reachable", async () => {
   const { store, restore } = await bootStore();
@@ -3446,8 +3943,8 @@ Deno.test("continuous Grid shows no output-section editor but keeps 启用分页
     store.createLayout("grid");
     store.placeBlock(store.blocks()[0]!.id);
     store.ui.screen = "project";
-    store.ui.route = "editor";
-    store.ui.mode = "layout";
+    store.ui.route = "free-layout";
+    store.ui.mode = "writing";
     const { createViews } = await import(`../app/views.js?continuous-grid-${importCounter}`);
     assert(store.data.layout_pages.length === 0, "the layout must still be continuous");
     assert(store.data.layout_sections.length > 0, "legacy section rows must still be maintained");

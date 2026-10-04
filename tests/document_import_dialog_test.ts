@@ -14,7 +14,7 @@
  * is where the honesty rule lives: that pipeline has no `.docx` / `.pdf` parser
  * and must say so per file instead of failing or silently inventing content.
  */
-import { createEmptyProjectData } from "../src/domain/index.ts";
+import { addStage, createEmptyProjectData } from "../src/domain/index.ts";
 import type { ProjectData } from "../src/domain/types.ts";
 import {
   applyDocumentImportDeselection,
@@ -22,7 +22,10 @@ import {
   collectDocumentImportCandidates,
   confirmImportMappingPlan,
   DOCUMENT_IMPORT_EXTENSIONS as SERVICE_DOCUMENT_EXTENSIONS,
+  scanFolderDocuments,
+  setImportMappingDestination,
   setImportMappingRole,
+  setImportMappingSelected,
   type ImportMappingPlan,
 } from "../src/service/folder_mapping.ts";
 import { scanFolder } from "../src/service/folder_scan.ts";
@@ -196,6 +199,7 @@ async function bootDocumentHarness(
   const answers: LooseRecord = {
     "folder.adopt": adoptAnswer(),
     "folder.append": adoptAnswer(),
+    "folder.scan_documents": { root: ROOT, groups: [], warnings: [], errors: [] },
     "ai.execution.list": { records: [] },
     "folder.read_source": (input: LooseRecord) =>
       markdownSourceAnswer(String(input.relativePath || "")),
@@ -265,13 +269,11 @@ async function bootDocumentHarness(
 Deno.test("a confirmed plan with document candidates stops at the body dialog", async () => {
   const { store, calls, adoptCalls, overlayMarkup, restore } = await bootDocumentHarness({
     plan: plan([
-      item({ relative_path: "s01-00/outline.md", mime: "text/markdown" }),
-      item({ relative_path: "s01-00/reading.pdf", mime: "application/pdf", size: 4096 }),
+      item({ relative_path: "outline.md", mime: "text/markdown" }),
+      item({ relative_path: "reading.pdf", mime: "application/pdf", size: 4096 }),
     ]),
   });
   try {
-    // §16's preview gate runs first, exactly as it does on the mapping page.
-    await store.refreshMarkdownDependencyPreviews();
     await store.confirmImportMapping();
     assertEqual(adoptCalls().length, 0, "confirm adopts nothing before the body choice is made");
     assertEqual(
@@ -282,7 +284,7 @@ Deno.test("a confirmed plan with document candidates stops at the body dialog", 
     assert(store.ui.documentImportDialog, "the §18 dialog opened");
     assertEqual(
       (store.ui.documentImportDialog.items as LooseRecord[]).map((row) => row.relative_path),
-      ["s01-00/outline.md", "s01-00/reading.pdf"],
+      ["outline.md", "reading.pdf"],
       "the dialog lists the plan's document candidates",
     );
     const markup = overlayMarkup();
@@ -323,6 +325,7 @@ Deno.test("a media-only folder keeps its single confirm click and imports at onc
     const adopted = adoptCalls();
     assertEqual(adopted.length, 1, "the import proceeds exactly as it does today");
     assertEqual(must(adoptCalls()[0], "the adopt call").payload.plan.items.length, 4, "the confirmed plan is forwarded whole");
+    assertEqual(must(adoptCalls()[0], "the adopt call").payload.document_paths, [], "no nested documents is an explicit empty choice");
     assert(
       calls.every((call) => call.name !== "folder.read_source"),
       "nothing extra is asked of the shell for a folder without documents",
@@ -337,18 +340,37 @@ Deno.test("a media-only folder keeps its single confirm click and imports at onc
 // §18.2 / §18.3 — the list itself
 // ---------------------------------------------------------------------------
 
-Deno.test("candidates are grouped by their original directory, never flattened", async () => {
+Deno.test("direct documents are grouped by their selected root-level parent", async () => {
   const { store, overlayMarkup, restore } = await bootDocumentHarness({
     plan: plan([
-      item({ relative_path: "s01-00/outline.md" }),
-      item({ relative_path: "s01-00/reading.pdf", mime: "application/pdf" }),
-      item({ relative_path: "s01-01/intro.docx", mime: "application/vnd.openxmlformats-officedocument.wordprocessingml.document" }),
-      item({ relative_path: "s01-01/notes.txt" }),
+      item({ relative_path: "s01-00", kind: "directory", mapping: "stage", destination: null }),
+      item({ relative_path: "s01-01", kind: "directory", mapping: "lesson", destination: { kind: "unassigned_lesson" } }),
       item({ relative_path: "说明.text" }),
     ]),
+    answers: {
+      "folder.scan_documents": {
+        root: ROOT,
+        groups: [
+          {
+            directory: "s01-00",
+            mapping: "stage",
+            destination: null,
+            items: [{ relative_path: "s01-00/outline.md", size: 12, selected: true }],
+          },
+          {
+            directory: "s01-01",
+            mapping: "lesson",
+            destination: { kind: "unassigned_lesson" },
+            items: [{ relative_path: "s01-01/intro.docx", size: 16, selected: true }],
+          },
+        ],
+        warnings: [],
+        errors: [],
+      },
+    },
   });
   try {
-    store.openDocumentImportDialog(store.ui.importMappingPlan);
+    await store.openDocumentImportDialog(store.ui.importMappingPlan);
     const markup = overlayMarkup();
     assertContains(markup, "s01-00/", "the first source folder is a group of its own");
     assertContains(markup, "s01-01/", "and the second one is not merged into it");
@@ -364,7 +386,7 @@ Deno.test("candidates are grouped by their original directory, never flattened",
     assertEqual(
       (markup.match(/class="document-import-group"/g) ?? []).length,
       3,
-      "three source directories, three groups",
+      "two selected parent folders and the root each keep a group",
     );
   } finally {
     restore();
@@ -379,7 +401,7 @@ Deno.test("every candidate row shows name, relative path, type and size", async 
     ]),
   });
   try {
-    store.openDocumentImportDialog(store.ui.importMappingPlan);
+    await store.openDocumentImportDialog(store.ui.importMappingPlan);
     const markup = overlayMarkup();
     assertContains(markup, ">导论.md<", "the file name is the row's headline");
     assertContains(markup, "s01-00/导论.md · Markdown · 2 KB", "§18.3 metadata: path, type, size");
@@ -403,7 +425,7 @@ Deno.test("全选 and 取消全选 move every candidate together", async () => {
     ]),
   });
   try {
-    store.openDocumentImportDialog(store.ui.importMappingPlan);
+    await store.openDocumentImportDialog(store.ui.importMappingPlan);
     assertContains(overlayMarkup(), "已选 3 / 3 项", "the dialog opens with the plan's own selection");
     store.setAllDocumentImportSelected(false);
     let markup = overlayMarkup();
@@ -436,18 +458,17 @@ Deno.test("clicking the row — not only its checkbox — toggles that document"
   });
   try {
     store.openDocumentImportDialog(store.ui.importMappingPlan);
-    // The whole row is the hit target: it carries the path and its current state,
-    // and the shell binds a click on the row to the same selection call the
-    // checkbox makes — with the shared predicate that ignores real controls.
+    // The whole row is the hit target: its binding shares the checkbox state
+    // method and the shared predicate ignores real controls.
     assertContains(
       mainSource,
-      'root.querySelectorAll("[data-document-import-row]")',
-      "the shell binds clicks on the row itself",
+      "function bindDocumentImportRow(row)",
+      "the shell binds clicks on each row",
     );
     assertContains(
       mainSource,
-      "store.setDocumentImportSelected(\n        row.dataset.path || \"\",\n        row.dataset.selected !== \"true\",\n      )",
-      "a row click flips the row's own state",
+      "store.setDocumentImportSelected(",
+      "the row's click binding updates the selected document",
     );
     const markup = overlayMarkup();
     assertContains(markup, 'data-document-import-row data-path="s01-00/a.txt" data-selected="true"', "the row is addressable");
@@ -471,6 +492,128 @@ Deno.test("clicking the row — not only its checkbox — toggles that document"
     const after = overlayMarkup();
     assertContains(after, 'data-path="s01-00/a.txt" data-selected="false"', "the row now reads as unselected");
     assertContains(after, "已选 1 / 2 项", "and the counter follows");
+  } finally {
+    restore();
+  }
+});
+
+Deno.test("failed child scans block import until a retry succeeds", async () => {
+  const { store, calls, overlayMarkup, setAnswer, adoptCalls, restore } = await bootDocumentHarness({
+    plan: plan([
+      item({ relative_path: "s01-00", kind: "directory", mapping: "stage", destination: null }),
+    ]),
+    answers: {
+      "folder.scan_documents": { groups: [], errors: ["s01-00: permission denied"], warnings: [] },
+    },
+  });
+  try {
+    await store.confirmImportMapping();
+    let markup = overlayMarkup();
+    assertContains(markup, "文档扫描没有完成", "the scan problem is stated");
+    assertContains(markup, 'data-action="document-import-retry"', "a retry action is available");
+    assertContains(markup, 'data-action="document-import-confirm" disabled', "the user cannot silently continue with incomplete candidates");
+    assertEqual(adoptCalls().length, 0, "failed candidate discovery writes nothing");
+
+    setAnswer("folder.scan_documents", {
+      groups: [{
+        directory: "s01-00",
+        mapping: "stage",
+        destination: null,
+        items: [{ relative_path: "s01-00/outline.md", selected: true, size: 12 }],
+      }],
+      errors: [],
+      warnings: [],
+    });
+    await store.retryDocumentImportScan();
+    markup = overlayMarkup();
+    assertContains(markup, "s01-00/outline.md", "the retry exposes direct child documents");
+    assertLacks(markup, "文档扫描没有完成", "successful retry clears the blocking error");
+    assertEqual(calls.filter((call) => call.name === "folder.scan_documents").length, 2, "the retry performs one fresh scan");
+  } finally {
+    restore();
+  }
+});
+
+Deno.test("twenty mapping reopen cycles reuse one scan and rebuild from its snapshot", async () => {
+  const { store, calls, restore } = await bootDocumentHarness();
+  try {
+    store.bridge.command = async (name: string, payload: LooseRecord) => {
+      calls.push({ name, payload });
+      if (name === "folder.scan") {
+        return {
+          root: ROOT,
+          entries: [{
+            relative_path: "lesson.md",
+            kind: "file",
+            mime: "text/markdown",
+            size: 18,
+            suggested_role: "lesson",
+            error: null,
+          }],
+        };
+      }
+      throw new Error(`unexpected command ${name}`);
+    };
+    await store.importExistingFolder(ROOT);
+    const snapshot = structuredClone(store.ui.mappingScanSnapshot);
+    const scanCount = calls.filter((call) => call.name === "folder.scan").length;
+    assertEqual(scanCount, 1, "opening Mapping starts with one scan");
+
+    for (let index = 0; index < 20; index += 1) {
+      store.openImportMappingPreview();
+      const planId = store.ui.importMappingPlan;
+      assert(planId.confirmed === false, `open ${index + 1} starts unconfirmed`);
+      assert(planId.items[0].selected === true, `open ${index + 1} restores the scan's selection`);
+      store.setImportMappingSelected("lesson.md", false);
+      assert(store.ui.importMappingPlan.items[0].selected === false, `edit ${index + 1} changes the working plan`);
+      assertEqual(store.ui.mappingScanSnapshot, snapshot, `edit ${index + 1} leaves the scan snapshot intact`);
+      const priorGeneration = store.mappingGeneration;
+      store.closeMappingPreview();
+      assert(store.mappingGeneration > priorGeneration, `close ${index + 1} invalidates the session`);
+      store.ui.route = "explorer";
+    }
+
+    store.openImportMappingPreview();
+    assert(store.ui.importMappingPlan.items[0].selected === true, "the next open rebuilds from the retained scan snapshot");
+    assertEqual(calls.filter((call) => call.name === "folder.scan").length, 1, "reopening never rescans the folder");
+  } finally {
+    restore();
+  }
+});
+
+Deno.test("closing Mapping invalidates a pending nested-document scan", async () => {
+  const scanGate: { release?: (value: LooseRecord) => void; started?: () => void } = {};
+  const started = new Promise<void>((resolve) => { scanGate.started = resolve; });
+  const { store, adoptCalls, restore } = await bootDocumentHarness({
+    plan: plan([
+      item({ relative_path: "s01-00", kind: "directory", mapping: "stage", destination: null }),
+    ], false),
+    answers: {
+      "folder.scan_documents": () => new Promise((resolve) => {
+        scanGate.release = resolve;
+        scanGate.started?.();
+      }),
+    },
+  });
+  try {
+    const confirming = store.confirmImportMapping();
+    await started;
+    assert(store.ui.documentImportDialog.loading === true, "the chooser shows its loading state");
+    store.closeMappingPreview();
+    store.ui.route = "explorer";
+    scanGate.release?.({
+      groups: [{
+        directory: "s01-00",
+        mapping: "stage",
+        destination: null,
+        items: [{ relative_path: "s01-00/late.md", selected: true }],
+      }],
+      errors: [],
+      warnings: [],
+    });
+    await confirming;
+    assertEqual(store.ui.documentImportDialog, null, "late scan output cannot reopen the chooser");
+    assertEqual(adoptCalls().length, 0, "a closed Mapping session cannot adopt files");
   } finally {
     restore();
   }
@@ -643,11 +786,7 @@ Deno.test("the §28 tally renders from the shell's document_import", async () =>
       "the per-file list arrives in the shell's order",
     );
     const markup = mappingMarkup();
-    assertContains(markup, "正文导入结果", "the tally has a home beside the import warnings");
-    assertContains(markup, "成功 2 · 降级 1 · 跳过 0 · 失败 1", "§28 headline, verbatim");
-    assertContains(markup, "s01-02/scan.pdf", "the failed file is named");
-    assertContains(markup, "无法解析文字层，已保留为来源参考", "with the shell's reason for display");
-    assertContains(markup, "浮动图片与页眉已省略", "a degraded file explains what was dropped");
+    assertLacks(markup, "正文导入结果", "the legacy outcome panel is not mounted in Mapping");
     // One file failing must not read as nothing happened, nor as a dead import.
     assertContains(store.ui.toast, "正文导入：成功 2 · 降级 1 · 跳过 0 · 失败 1", "the toast carries the tally");
     assertContains(store.ui.toast, "未进入正文：s01-02/scan.pdf", "and names what did not come in");
@@ -756,10 +895,11 @@ Deno.test("long and hostile document names are escaped, never injected", async (
     assertEqual((markup.match(/data-document-import-row/g) ?? []).length, 2, "one row each");
     assertContains(markup, `很长的章节名称`.repeat(12), "a long name is shown, not truncated away");
     await store.confirmDocumentImportSelection();
-    const result = mappingMarkup();
-    assertLacks(result, "<img src=x onerror=alert(2)>", "a shell-supplied reason is escaped");
-    assertLacks(result, "<script>", "no markup from the report at all");
-    assertContains(result, "&lt;img src=x onerror=alert(2)&gt;", "and it reads as the text it is");
+    assertEqual(
+      store.ui.documentImportReport.files[0].reason,
+      "<img src=x onerror=alert(2)>",
+      "the raw per-document result stays in data and is not injected into Mapping markup",
+    );
   } finally {
     restore();
   }
@@ -889,5 +1029,299 @@ Deno.test("a browser import with no documents sends no document tally", async ()
     assertEqual(shell, null, "and the frontend's own normaliser reads the same absence: nothing to show");
   } finally {
     await Deno.remove(root, { recursive: true });
+  }
+});
+
+Deno.test("selected stage and lesson folders expose direct documents with inherited destinations", async () => {
+  const root = await Deno.makeTempDir({ prefix: "acw-folder-document-scan-" });
+  try {
+    await Deno.mkdir(`${root}/S01-00/nested`, { recursive: true });
+    await Deno.mkdir(`${root}/S01-01`);
+    await Deno.mkdir(`${root}/lesson-target`);
+    await Deno.mkdir(`${root}/asset-folder`);
+    await Deno.mkdir(`${root}/ignored-folder`);
+    await Deno.writeTextFile(`${root}/S01-00/a.md`, "# 第一阶段");
+    await Deno.writeTextFile(`${root}/S01-00/nested/deep.md`, "不能递归");
+    await Deno.writeFile(`${root}/S01-01/b.pdf`, new Uint8Array([37, 80, 68, 70]));
+    await Deno.writeFile(`${root}/lesson-target/c.docx`, new Uint8Array([1, 2, 3]));
+    await Deno.writeFile(`${root}/asset-folder/asset.epub`, new Uint8Array([4, 5, 6]));
+    await Deno.writeTextFile(`${root}/ignored-folder/ignored.md`, "不显示");
+
+    const scanned = await scanFolder(root);
+    let plan = buildImportMappingPlan(scanned.root, scanned.entries);
+    plan = setImportMappingRole(plan, "lesson-target", "lesson");
+    plan = setImportMappingDestination(plan, "lesson-target", {
+      kind: "existing_lesson",
+      content_item_id: "existing-lesson",
+    });
+    plan = setImportMappingRole(plan, "asset-folder", "asset");
+    plan = setImportMappingRole(plan, "ignored-folder", "ignore");
+    const result = await scanFolderDocuments(scanned.root, confirmImportMappingPlan(plan));
+    const byDirectory = new Map(result.groups.map((group) => [group.directory, group]));
+
+    assertEqual([...byDirectory.keys()].sort(), ["S01-00", "S01-01", "lesson-target"], "only selected stage/lesson groups are scanned");
+    assertEqual(byDirectory.get("S01-00")?.mapping, "stage", "first stage role is retained");
+    assertEqual(byDirectory.get("S01-01")?.mapping, "stage", "second stage role is retained");
+    assertEqual(byDirectory.get("S01-00")?.items.map((item) => item.relative_path), ["S01-00/a.md"], "nested documents are not scanned");
+    assertEqual(byDirectory.get("S01-01")?.items.map((item) => item.relative_path), ["S01-01/b.pdf"], "second stage direct documents appear");
+    assertEqual(byDirectory.get("S01-00")?.items[0]?.destination, null, "stage documents use their confirmed parent stage");
+    assertEqual(byDirectory.get("lesson-target")?.items[0]?.destination, {
+      kind: "existing_lesson",
+      content_item_id: "existing-lesson",
+    }, "lesson documents inherit the mapped lesson target");
+    assertEqual(
+      result.groups.flatMap((group) => group.items).every((item) => item.mapping === "lesson" && item.selected),
+      true,
+      "only supported body candidates are offered, preselected and mapped by their parent",
+    );
+  } finally {
+    await Deno.remove(root, { recursive: true });
+  }
+});
+
+Deno.test("selected child documents are revalidated against the current mapping plan", async () => {
+  const root = await Deno.makeTempDir({ prefix: "acw-folder-document-adopt-" });
+  try {
+    await Deno.writeTextFile(`${root}/seed.md`, "# Existing\nOriginal body");
+    const seedScan = await scanFolder(root);
+    const seedPlan = confirmImportMappingPlan(buildImportMappingPlan(seedScan.root, seedScan.entries));
+    const seed = await confirmFolderAdoption(seedPlan, {
+      data: createEmptyProjectData("Import test"),
+      project_root: root,
+      skip_project_write: true,
+    });
+    const target = seed.data.content_items[0];
+    assert(target, "the seed lesson exists");
+
+    await Deno.mkdir(`${root}/lesson-folder`);
+    await Deno.mkdir(`${root}/asset-folder`);
+    await Deno.writeTextFile(`${root}/lesson-folder/a.md`, "# Section A\nA body");
+    await Deno.writeTextFile(`${root}/lesson-folder/b.txt`, "B body");
+    await Deno.writeTextFile(`${root}/asset-folder/not-body.md`, "Must stay out of body");
+    await Deno.writeFile(`${root}/asset-folder/photo.png`, new Uint8Array([1, 2, 3, 4]));
+
+    const scanned = await scanFolder(root);
+    let plan = buildImportMappingPlan(scanned.root, scanned.entries);
+    plan = setImportMappingSelected(plan, "seed.md", false);
+    plan = setImportMappingRole(plan, "lesson-folder", "lesson");
+    plan = setImportMappingDestination(plan, "lesson-folder", {
+      kind: "existing_lesson",
+      content_item_id: target.id,
+    });
+    plan = setImportMappingRole(plan, "asset-folder", "asset");
+    const result = await confirmFolderAdoption(confirmImportMappingPlan(plan), {
+      data: seed.data,
+      project_root: root,
+      skip_project_write: true,
+      document_paths: ["lesson-folder/b.txt", "asset-folder/not-body.md", "lesson-folder/a.md"],
+    });
+    const imported = result.data.content_items.filter((item) => !item.archived);
+    assertEqual(imported.length, 1, "lesson-folder documents append to the one confirmed lesson target");
+    assertEqual(imported[0]?.id, target.id, "the existing lesson keeps its identity");
+    assert(
+      result.data.blocks.some((block) => block.document_id === target.document_id && typeof block.content === "string" && block.content.includes("Section A")) &&
+        result.data.blocks.some((block) => block.document_id === target.document_id && block.content === "B body"),
+      "each selected document contributes separate blocks to the same lesson",
+    );
+    assert(
+      !result.data.blocks.some((block) => typeof block.content === "string" && block.content.includes("Must stay out of body")),
+      "an asset-mapped folder never contributes body text",
+    );
+    assertEqual(result.data.assets.length, 1, "selected-folder media still enters the asset library");
+    assertEqual(result.data.asset_usages.length, 0, "automatic media import does not create usage links");
+    assertEqual(
+      result.document_import?.files.map((file) => file.relative_path),
+      ["lesson-folder/a.md", "lesson-folder/b.txt"],
+      "only checked, lesson-mapped direct documents receive import outcomes in stable path order",
+    );
+  } finally {
+    await Deno.remove(root, { recursive: true });
+  }
+});
+
+Deno.test("checked documents under one new lesson folder share its folder-named lesson", async () => {
+  const sourceRoot = await Deno.makeTempDir({ prefix: "acw-folder-lesson-group-source-" });
+  const targetRoot = await Deno.makeTempDir({ prefix: "acw-folder-lesson-group-target-" });
+  const imageBytes = new Uint8Array([71, 73, 70, 56, 57, 97, 2, 4, 6]);
+  try {
+    await Deno.mkdir(`${sourceRoot}/reading/images`, { recursive: true });
+    await Deno.writeFile(`${sourceRoot}/reading/images/figure.gif`, imageBytes);
+    const firstMarkdown = "# First section\n\n![figure](images/figure.gif)\n";
+    await Deno.writeTextFile(`${sourceRoot}/reading/01-intro.md`, firstMarkdown);
+    await Deno.writeTextFile(`${sourceRoot}/reading/02-followup.md`, "## Follow-up\n\nSecond document body\n");
+    const uncheckedText = "Must remain unchecked and unparsed";
+    await Deno.writeTextFile(`${sourceRoot}/reading/03-unchecked.md`, uncheckedText);
+
+    const scan = await scanFolder(sourceRoot);
+    let plan = buildImportMappingPlan(scan.root, scan.entries);
+    plan = setImportMappingRole(plan, "reading", "lesson");
+    plan = setImportMappingDestination(plan, "reading", { kind: "unassigned_lesson" });
+    const confirmed = confirmImportMappingPlan(plan);
+    const clientDirectory = confirmed.items.find((item) => item.relative_path === "reading");
+    assert(clientDirectory, "the parent mapping row is present");
+    (clientDirectory as unknown as Record<string, unknown>).folder_lesson_group = "forged-group";
+    (clientDirectory as unknown as Record<string, unknown>).folder_lesson_title = "forged title";
+    const chooser = await scanFolderDocuments(sourceRoot, confirmed);
+    const group = chooser.groups.find((candidate) => candidate.directory === "reading");
+    assert(group, "the selected lesson folder appears in the chooser");
+    assertEqual(group.mapping, "lesson", "the chooser retains the confirmed folder role");
+    assertEqual(group.destination, { kind: "unassigned_lesson" }, "the folder target remains confirmed");
+
+    const result = await confirmFolderAdoption(confirmed, {
+      data: createEmptyProjectData("Lesson group"),
+      project_root: targetRoot,
+      skip_project_write: true,
+      document_paths: ["reading/02-followup.md", "reading/01-intro.md"],
+    });
+    assertEqual(result.data.content_items.length, 1, "both checked documents share one new Lesson");
+    const lesson = result.data.content_items[0];
+    assert(lesson, "the grouped Lesson exists");
+    assertEqual(lesson.title, "reading", "the confirmed folder supplies the new Lesson title");
+    const blocks = result.data.blocks.filter((block) => block.document_id === lesson.document_id);
+    assertEqual(
+      blocks.map((block) => block.type),
+      ["heading", "paragraph", "heading", "paragraph"],
+      "first document semantic blocks stay before the second document append",
+    );
+    assertEqual(blocks[0]?.content, "First section", "the first document heading remains first");
+    assertContains(String(blocks[1]?.content), "figure", "the Markdown image remains in its original block");
+    assertEqual(blocks[2]?.content, "Follow-up", "the second document heading appends after the first");
+    assertEqual(blocks[3]?.content, "Second document body\n", "the second document body stays in source order");
+    assertEqual(
+      blocks.flatMap((block) => {
+        const provenance = block.settings.markdown_import;
+        const path = isRecord(provenance)
+          ? (provenance as Record<string, unknown>).relative_path
+          : null;
+        return typeof path === "string" ? [path] : [];
+      }),
+      ["reading/01-intro.md", "reading/02-followup.md"],
+      "each checked Markdown source retains its own block provenance",
+    );
+    const sourceLedger = result.data.project.settings.markdown_import_sources;
+    assert(Array.isArray(sourceLedger), "the project import ledger is present");
+    assertEqual(
+      sourceLedger.map((source) => source && typeof source === "object" && "relative_path" in source ? source.relative_path : null),
+      ["reading/01-intro.md", "reading/02-followup.md"],
+      "both sources remain in the durable import ledger",
+    );
+    assertEqual(result.data.asset_usages.length, 1, "the selected Markdown image has one semantic usage");
+    assertEqual(result.document_import?.files.map((file) => file.relative_path), [
+      "reading/01-intro.md",
+      "reading/02-followup.md",
+    ], "only the two checked documents are parsed and reported");
+    assertEqual(await Deno.readTextFile(`${sourceRoot}/reading/03-unchecked.md`), uncheckedText, "unchecked source remains untouched");
+
+    const stagedData = createEmptyProjectData("Lesson group under existing stage");
+    const stage = addStage(stagedData, { code: "S07", title: "Confirmed stage" });
+    const stagedPlan = confirmImportMappingPlan(
+      setImportMappingDestination(plan, "reading", { kind: "existing_stage", stage_id: stage.id }),
+    );
+    const stagedDirectory = stagedPlan.items.find((item) => item.relative_path === "reading");
+    assert(stagedDirectory, "the staged parent mapping row is present");
+    (stagedDirectory as unknown as Record<string, unknown>).folder_lesson_group = "forged-stage-group";
+    (stagedDirectory as unknown as Record<string, unknown>).folder_lesson_title = "forged stage title";
+    const stagedResult = await confirmFolderAdoption(stagedPlan, {
+      data: stagedData,
+      project_root: targetRoot,
+      skip_project_write: true,
+      document_paths: ["reading/01-intro.md", "reading/02-followup.md"],
+    });
+    assertEqual(stagedResult.data.content_items.length, 1, "existing-stage destination still creates one folder Lesson");
+    assertEqual(stagedResult.data.content_items[0]?.title, "reading", "client grouping fields cannot rename the Lesson");
+    assertEqual(stagedResult.data.content_items[0]?.stage_id, stage.id, "the folder Lesson inherits its confirmed stage");
+  } finally {
+    await Deno.remove(sourceRoot, { recursive: true });
+    await Deno.remove(targetRoot, { recursive: true });
+  }
+});
+
+Deno.test("Deno adoption parses only checked child Markdown and links only referenced GIFs", async () => {
+  const sourceRoot = await Deno.makeTempDir({ prefix: "acw-document-import-source-" });
+  const targetRoot = await Deno.makeTempDir({ prefix: "acw-document-import-target-" });
+  const referencedGif = new Uint8Array([
+    71, 73, 70, 56, 57, 97, 1, 0, 1, 0, 128, 0, 0, 0, 0, 0, 255, 255, 255,
+    33, 249, 4, 1, 0, 0, 0, 0, 44, 0, 0, 0, 0, 1, 0, 1, 0, 0, 2, 2, 68, 1,
+    0, 59,
+  ]);
+  const recursiveGif = new Uint8Array([71, 73, 70, 56, 57, 97, 8, 7, 6]);
+  try {
+    await Deno.mkdir(`${sourceRoot}/S01-00/images`, { recursive: true });
+    await Deno.mkdir(`${sourceRoot}/S01-00/deep`, { recursive: true });
+    await Deno.writeFile(`${sourceRoot}/S01-00/images/reference.gif`, referencedGif);
+    await Deno.writeFile(`${sourceRoot}/S01-00/deep/library-only.gif`, recursiveGif);
+    const markdown = "# Direct document\n\n开场。\n\n![GIF示例](images/reference.gif)\n\n结尾。\n";
+    await Deno.writeTextFile(`${sourceRoot}/S01-00/body.md`, markdown);
+    await Deno.writeTextFile(`${sourceRoot}/S01-00/unchecked.md`, "不可进入正文");
+
+    const scanned = await scanFolder(sourceRoot);
+    const confirmed = confirmImportMappingPlan(
+      buildImportMappingPlan(scanned.root, scanned.entries),
+    );
+    const result = await confirmFolderAdoption(confirmed, {
+      project_root: targetRoot,
+      document_paths: ["S01-00/body.md"],
+    });
+    const lesson = result.data.content_items.find((item) => item.title === "body");
+    assert(lesson, "the selected child document is parsed during Deno adoption");
+    const bodyBlocks = result.data.blocks.filter((block) => block.document_id === lesson.document_id);
+    assertEqual(
+      bodyBlocks.map((block) => block.type),
+      ["heading", "paragraph", "paragraph", "paragraph"],
+      "Markdown block order and image paragraph position are retained",
+    );
+    assertContains(String(bodyBlocks[2]?.content), "GIF示例", "image alt remains in its semantic block");
+    assertContains(String(bodyBlocks[3]?.content), "结尾", "text after the image stays after it");
+    assert(
+      !result.data.blocks.some((block) => typeof block.content === "string" && block.content.includes("不可进入正文")),
+      "unchecked child Markdown is never parsed into a lesson",
+    );
+    assertEqual(result.data.assets.length, 2, "the referenced and recursive GIFs are both managed assets");
+    assertEqual(result.data.asset_usages.length, 1, "only the semantic Markdown reference creates usage");
+
+    const referencedAsset = result.data.assets.find((asset) => asset.filename === "reference.gif");
+    const libraryAsset = result.data.assets.find((asset) => asset.filename === "library-only.gif");
+    assert(referencedAsset && libraryAsset, "both fixture GIF assets are present");
+    assertEqual(
+      [...await Deno.readFile(`${targetRoot}/${referencedAsset.storage_path}`)],
+      [...referencedGif],
+      "referenced managed asset bytes match the source fixture",
+    );
+    assertEqual(
+      [...await Deno.readFile(`${targetRoot}/${libraryAsset.storage_path}`)],
+      [...recursiveGif],
+      "recursive media-only bytes match the source fixture",
+    );
+    assert(
+      bodyBlocks.some((block) => {
+        const markdownAssets = block.settings.markdown_assets;
+        return Array.isArray(markdownAssets) && markdownAssets.some((entry) =>
+          typeof entry === "object" && entry !== null && !Array.isArray(entry) &&
+            entry.asset_id === referencedAsset.id
+        );
+      }),
+      "the image occurrence points to its managed file",
+    );
+    assertEqual(
+      result.data.asset_usages[0]?.asset_id,
+      referencedAsset.id,
+      "the Usage targets the semantically referenced GIF",
+    );
+    assertEqual(
+      result.data.asset_usages.some((usage) => usage.asset_id === libraryAsset.id),
+      false,
+      "recursive media import alone never creates Usage",
+    );
+    const reopened = JSON.parse(await Deno.readTextFile(`${targetRoot}/project.json`)) as ProjectData;
+    assertEqual(reopened.asset_usages.length, 1, "the persisted project reopens with its semantic Usage");
+    assertEqual(
+      reopened.blocks.filter((block) => block.document_id === lesson.document_id).map((block) => block.type),
+      ["heading", "paragraph", "paragraph", "paragraph"],
+      "the reopened canonical lesson retains block order",
+    );
+    assertEqual(await Deno.readTextFile(`${sourceRoot}/S01-00/body.md`), markdown, "the original document stays untouched");
+  } finally {
+    await Deno.remove(sourceRoot, { recursive: true }).catch(() => {});
+    await Deno.remove(targetRoot, { recursive: true }).catch(() => {});
   }
 });

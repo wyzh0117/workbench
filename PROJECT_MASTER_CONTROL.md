@@ -4206,3 +4206,37 @@ latest          /releases/latest 指向 v0.2.5；固定直链 releases/latest/do
 未闭合通道      三条（§45.3）：原生窗口指针 / 面板手势 smoke、真实在线 AI 调用、
                 真实触控板 / 滚轮滚动验证；如实记录，不记成通过
 ```
+
+---
+
+# 46. v0.2.6 — Mapping / Preview / Flow / Free Layout / Full UI Redesign（2026-10-05，candidate）
+
+> 本节只记录当前开发候选，不改写 §45 及更早版本的历史验收结论。最新公开版仍为 v0.2.5；V0 CLOSED、V1 ACTIVE，V1-T01–T06 保持原 VERIFIED，不创建 V1-T07 或关闭 V1。用户已明确授权本轮完成后同步 GitHub、tag 与 Release；实际发布状态仅在对应动作完成后回填。
+>
+> 验收入口：[v0.2.6 HTML completion report](docs/reports/v0.2.6-ui-redesign-completion-report.html) · [中文 candidate feature history](docs/feature-history/v0.2.6.md) · [rolling UNRELEASED](docs/feature-history/UNRELEASED.md) · [Mapping backend evidence](docs/reports/evidence/v0.2.6/mapping-backend.md) · [Deno gate evidence](docs/reports/evidence/v0.2.6/deno-gates.md).
+
+## 46.1 七项需求当前状态
+
+| # | 需求 | 状态 |
+|---:|---|---|
+| 1 | Mapping 勾选、快照与精简 | PARTIAL — Deno 覆盖稳定 scan snapshot、选择/reopen 和 stale-scan 作废；native UI rapid-toggle / repeated-open 因本机锁屏未测。 |
+| 2 | 确认映射后的直接子文档选择与媒体递归扫描 | PARTIAL — Deno/Rust 夹具覆盖多目标、未选文件、既有目标、lesson-folder 分组和信任边界；native chooser 完整流程未测。 |
+| 3 | Mapping 多次打开稳定性 | PARTIAL — 20 次 reopen 与 stale scan 作废测试通过；native UI 重开验收未测。 |
+| 4 | 正文 Preview 图片 / GIF / 视频 | PARTIAL — UI owner 的 run6 browser CUA 实测 rich Markdown、PNG/GIF、MP4 图片语法提示、GIF 动画/关闭、video block poster/暂停/播放/关闭；native 重测受锁屏阻断。 |
+| 5 | Flow 迁移、正文定位、拖动重排 | PARTIAL — UI owner 实测 handle 04→03、Undo/Redo、Body/Preview 同序与保存重开磁盘 order 2/3。可信快照接收时误显「未保存」已修复，受影响的 98 项检查通过，UI owner 的 run6 browser reload 已观察到「已保存」；native CUA 因锁屏 BLOCKED。 |
+| 6 | 顶层 Free Layout 与既有 Grid/Page/export | PARTIAL — `pageGrid` 缺失导入已修，目标面板回归 66/66 PASS；browser CUA 实测跨页移动、span 调整、新建页、复制页并确认 on-disk placement 持久。Delete 未执行；Free Layout 重开/导出仍待实测。 |
+| 7 | 全局页面和 overlay 重设计 | PARTIAL — 页面/弹窗 IA 改造及共用视觉系统已落地；Overview 在 1024/1280/1440/1728×900 测量无横向溢出或顶栏重叠。其他 15 页、侧栏组合、系统 text scaling 与完整键盘审计仍未闭环；run7 控件未触发动作但独立源码检查未确认绑定缺陷。 |
+
+## 46.2 自动化快照
+
+最终冻结源码通过 `deno task check` 与 `deno task test`（602/602，21 秒；授予 `127.0.0.1` loopback）。saveStatus 修复后的受影响检查为 98/98，Free Layout `pageGrid` target-panel regression 为 66/66，UI owner 最终 editor/authoring targeted 检查为 87/87。早期无 loopback 权限的两项失败属于本地 HTTP 测试环境，最终 loopback run 全绿。命令、CAS smoke 与历史 gate 见 `docs/reports/evidence/v0.2.6/deno-gates.md`。
+
+Rust 记录 `docs/reports/evidence/v0.2.6/mapping-backend.md`：`cargo fmt --check`、`cargo check --all-targets`、完整 `cargo test`（222 tests，binary/doc targets 通过）与 `cargo build` 通过；文件包括 Markdown/DOCX/EPUB/LaTeX/GIF/PDF 位置与明确降级、目标分组和源文件保全证据。最终冻结源码已重建 Universal App/DMG：version 0.2.6、`x86_64 arm64`、`hdiutil verify` VALID、只读挂载内容与 App 元数据一致，SHA-256 `c4594037e0c9d4e908c9896e2aff9b39c55b23c883e19c0429fb73654d2e354f`。本地候选无 Developer ID 签名/公证；native CUA 因 Mac 锁屏 BLOCKED。详见 `docs/reports/evidence/v0.2.6/candidate-build-final.md`。
+
+## 46.3 候选 UI / 桌面证据
+
+当前 browser CUA run6 由 UI owner 在隔离 run6/tab 6、`http://127.0.0.1:4194/` 执行：导入 Markdown Preview 显示 heading / bold / italic / quote / list / PNG / GIF；Preview footer 报告 3 项显示素材（Markdown PNG、GIF 与独立视频 block）。`![...](clip.mp4)` 显示正确的视频图片语法提示；Media 插入的实际 video block 显示 poster、默认暂停、显式播放后前进，关闭移除播放器并恢复焦点。两帧 GIF 在 viewer 中红→蓝动画，关闭移除 viewer，inline 静态红色 poster 与 source 保持；Body 键入两行 dash list 后 blur 转为 semantic list，未编辑 escaped list 不变。Rename 对话框 Esc 不改数据、空名称保留对话框并报错、有效重命名实际移动托管文件、Undo 恢复原文件。Flow handle 04→03 拖动、Undo/Redo、Body/Preview 同序、保存重开及磁盘顺序 2/3 通过；重开后「未保存」错误状态已做源码修复、98 项受影响检查和 browser reload 复验，显示「已保存」。Free Layout `pageGrid` 运行时错误已修并通过 66/66 regression；browser CUA 实测跨页移动、span resize、新建页、复制页并确认 placement 持久。Delete 未执行，Free Layout 重开/导出待完成。UI owner 测量 Overview/shared shell 在 1024、1280、1440、1728 px × 900 时无横向溢出或顶栏重叠；其他路由、sidebar 组合与系统 text scaling 未覆盖。run7 可见且启用的路由/Overview 控件通过 locator、AX、坐标与键盘输入均未触发动作；独立源码审查确认 startup→render→bindEvents→bindActionControls→route handler 链完整，未发现已确认的业务源码缺陷。本 reviewer 的独立 CUA 观察因 Mac 锁屏、无可见 tabs 且 URL lookup 找不到 owner tab 而 BLOCKED。project-lock dialog 的实机可用性未测。截图仅在 CUA 内联显示，未保存二进制。完整区分见 HTML report 与 `docs/reports/evidence/v0.2.6/ui-evidence.md`。
+
+## 46.4 Release boundary 与下一步
+
+本轮用户原始授权覆盖开发完成后 GitHub sync、tag、Release；本节仍准确记录 v0.2.6 尚未发布，latest public 为 v0.2.5。v0.2.5 及更早 tag / DMG / sidecar 永久冻结。独立 reviewer 未发现已证实未修复的实现缺陷，且最终 Deno/Rust gates 与本地 Universal 包验证通过；建议可按报告明确披露的 PARTIAL/BLOCKED 限制继续发布。原生 smoke、除 Overview 外的全页四宽度/侧栏/text-scale、Free Layout 删除/重开/导出和本地截图文件仍未闭环。发布成功后追加 public workflow、资产、SHA-256 与签名状态 verification，不重写 §45.4。

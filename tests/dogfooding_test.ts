@@ -151,9 +151,12 @@ function createNode(
 async function bootDom() {
   const htmlWrites: string[] = [];
   const documentListeners = new Map<string, Listener[]>();
+  const rootListeners = new Map<string, Listener[]>();
   const registered = new Map<string, FakeNode>();
   const scrollNodes = new Map<string, FakeNode[]>();
   const actionNodes: FakeNode[] = [];
+  let activeDialog: any = null;
+  let dialogRendered = false;
   let currentHtml = "";
 
   const root: any = {
@@ -162,6 +165,7 @@ async function bootDom() {
     },
     set innerHTML(value: string) {
       currentHtml = value;
+      dialogRendered = value.includes('role="dialog" aria-modal="true"');
       htmlWrites.push(value);
       // Replacing innerHTML throws the old subtree away, so every scroll
       // container starts at the top again — exactly what render() must undo.
@@ -174,9 +178,18 @@ async function bootDom() {
     },
     dataset: {},
     classList: { add: () => {}, remove: () => {}, toggle: () => {} },
-    addEventListener: () => {},
+    addEventListener: (type: string, handler: Listener) => {
+      const list = rootListeners.get(type) ?? [];
+      list.push(handler);
+      rootListeners.set(type, list);
+    },
     contains: (node: FakeNode | null) => Boolean(node && node.inRoot),
-    querySelector: (selector: string) => registered.get(selector) ?? null,
+    querySelector: (selector: string) => {
+      if (selector === '[role="dialog"][aria-modal="true"]') {
+        return dialogRendered ? activeDialog : null;
+      }
+      return registered.get(selector) ?? null;
+    },
     querySelectorAll: (selector: string) =>
       selector === "[data-action]" ? actionNodes : (scrollNodes.get(selector) ?? []),
   };
@@ -186,7 +199,7 @@ async function bootDom() {
     querySelector: () => root,
     querySelectorAll: () => [],
     addEventListener: (type: string, handler: Listener, capture?: boolean) => {
-      if (!capture) return;
+      if (!capture && type !== "keydown") return;
       const list = documentListeners.get(type) ?? [];
       list.push(handler);
       documentListeners.set(type, list);
@@ -229,6 +242,12 @@ async function bootDom() {
     return handlers.length;
   };
 
+  const fireRoot = (type: string, event: Record<string, unknown>) => {
+    const handlers = rootListeners.get(type) ?? [];
+    for (const handler of handlers) handler(event);
+    return handlers.length;
+  };
+
   /** Show a project screen and render it, with the given selectors registered. */
   const renderProject = (data: ProjectData, ui: Record<string, unknown> = {}) => {
     store.data = data;
@@ -253,6 +272,8 @@ async function bootDom() {
     createNode,
     renderProject,
     fireDocument,
+    fireRoot,
+    setActiveDialog: (dialog: unknown) => { activeDialog = dialog; },
     lastHtml: () => currentHtml,
     restore: () => {
       runtime.document = previous.document;
@@ -301,6 +322,20 @@ function nativeBridge(
 ) {
   let currentDir = initialDir;
   let latestSession: any = null;
+  const revisions = new Map(Object.keys(projects).map((dir) => [dir, 1]));
+  const fingerprintFor = (project: ProjectData, revision: number) => ({
+    exists: true,
+    mtime_ms: 1_780_000_000_000 + revision,
+    size: new TextEncoder().encode(JSON.stringify(project)).byteLength,
+    hash: revision.toString(16).padStart(64, "0"),
+  });
+  const currentFingerprint = () => {
+    const project = currentDir ? projects[currentDir] : null;
+    if (!currentDir || !project) {
+      return { exists: false, mtime_ms: null, size: null, hash: null };
+    }
+    return fingerprintFor(project, revisions.get(currentDir) ?? 1);
+  };
   const calls: string[] = [];
   const bridge: any = {
     projectDir: currentDir,
@@ -327,11 +362,28 @@ function nativeBridge(
     },
     readProject: async () =>
       currentDir && projects[currentDir] ? structuredClone(projects[currentDir]) : null,
+    readProjectState: async () => ({
+      project: currentDir && projects[currentDir]
+        ? structuredClone(projects[currentDir])
+        : null,
+      fingerprint: currentFingerprint(),
+    }),
     readRecoveryJournal: async () => null,
     listenNativeDrops: async () => () => {},
     writeRecoveryJournal: async () => {},
-    writeProject: async (project: ProjectData) => {
-      if (currentDir) projects[currentDir] = structuredClone(project);
+    writeProject: async (project: ProjectData, expectedFingerprint: unknown) => {
+      const dir = currentDir;
+      if (!dir || !projects[dir] || JSON.stringify(expectedFingerprint) !== JSON.stringify(currentFingerprint())) {
+        throw new Error("external_modification_conflict");
+      }
+      const nextProject = structuredClone(project);
+      projects[dir] = nextProject;
+      const nextRevision = (revisions.get(dir) ?? 1) + 1;
+      revisions.set(dir, nextRevision);
+      return {
+        fingerprint: fingerprintFor(nextProject, nextRevision),
+        recovery_warning: null,
+      };
     },
     clearRecoveryJournal: async () => {},
     projectIdentity: async () =>
@@ -471,7 +523,7 @@ Deno.test("invalid project JSON open explains damage instead of opaque-only copy
   const { bridge } = nativeBridge(projects, "/tmp/a", picker);
   const { store, restore } = await bootStore(bridge);
   try {
-    store.data = structuredClone(a);
+    assert(store.adoptProjectSnapshot(await bridge.readProjectState()), "A opens with its fingerprint");
     store.trackProjectIdentity();
     store.markNativeLease("/tmp/a");
     bridge.openProject = async () => {
@@ -499,7 +551,7 @@ Deno.test("malformed project payload open explains structure, not opaque-only co
   const { bridge } = nativeBridge(projects, "/tmp/a", picker);
   const { store, restore } = await bootStore(bridge);
   try {
-    store.data = structuredClone(a);
+    assert(store.adoptProjectSnapshot(await bridge.readProjectState()), "A opens with its fingerprint");
     store.trackProjectIdentity();
     store.markNativeLease("/tmp/a");
     bridge.openProject = async () => ({ malformed: true });
@@ -836,7 +888,7 @@ Deno.test("the course title edits inline and survives a reload", async () => {
   const { bridge } = nativeBridge(projects, "/tmp/a", { next: null });
   const { store, restore } = await bootStore(bridge);
   try {
-    store.data = data;
+    assert(store.adoptProjectSnapshot(await bridge.readProjectState()), "the opened course has its baseline");
     store.ui.screen = "project";
     store.editProjectTitle();
     assert(store.ui.editingProjectTitle === true, "clicking the title must open the editor");
@@ -1200,8 +1252,8 @@ Deno.test("P2-2 and P2-4 markup matches the interaction model it promises", asyn
     store.ui.screen = "project";
     store.ui.activeId = item.id;
     store.createLayout("grid");
-    store.ui.mode = "layout";
-    store.ui.route = "editor";
+    store.ui.mode = "writing";
+    store.ui.route = "free-layout";
     const blocks = store.blocks(item);
     store.placeBlock(blocks[0]!.id);
     const placement = store.data.placements[0]!;
@@ -1225,6 +1277,70 @@ Deno.test("P2-2 and P2-4 markup matches the interaction model it promises", asyn
       html.includes("data-action=\"place-block\"") && html.includes("data-placement="),
       "the strip and the canvas must both be present",
     );
+  } finally {
+    restore();
+  }
+});
+
+Deno.test("modal keyboard trap wraps Tab, skips hidden controls and Escape restores its trigger", async () => {
+  const { store, document, registered, fireRoot, fireDocument, setActiveDialog, createNode, lastHtml, restore } = await bootDom();
+  try {
+    const makeControl = (focusKey: string, options: { disabled?: boolean; hidden?: boolean; ariaHidden?: string } = {}) => {
+      const node: any = createNode({ focusKey });
+      node.tagName = "BUTTON";
+      node.disabled = options.disabled === true;
+      node.hidden = options.hidden === true;
+      node.getAttribute = (name: string) => name === "aria-hidden" ? options.ariaHidden ?? null : null;
+      return node;
+    };
+    const disabled = makeControl("disabled", { disabled: true });
+    const hidden = makeControl("hidden", { hidden: true });
+    const ariaHidden = makeControl("aria-hidden", { ariaHidden: "true" });
+    const first = makeControl("first");
+    const last = makeControl("last");
+    const controls = [disabled, hidden, ariaHidden, first, last];
+    const dialog = {
+      contains: (node: unknown) => controls.includes(node as any),
+      querySelectorAll: (selector: string) => {
+        assert(selector.includes(":not([disabled])"), "disabled controls must be excluded by the focusable selector");
+        return controls.filter((control) => !control.disabled);
+      },
+      querySelector: (_selector: string) => first,
+      focus: () => {},
+    };
+    setActiveDialog(dialog);
+    const trigger: any = createNode({ action: "open-palette" });
+    registered.set('[data-action="open-palette"]', trigger);
+    trigger.focus();
+    store.ui.palette = true;
+    store.notify();
+    assert(
+      lastHtml().includes('class="palette modal" role="dialog" aria-modal="true"'),
+      "the command palette must expose its modal semantics in the live view",
+    );
+    assert(document.activeElement === first, "opening the dialog must move focus inside it");
+
+    const press = (shiftKey: boolean) => {
+      let prevented = false;
+      assert(fireRoot("keydown", {
+        key: "Tab",
+        shiftKey,
+        preventDefault: () => { prevented = true; },
+      }) > 0, "the app root must own a live dialog focus trap");
+      assert(prevented, "Tab at the dialog edge must be intercepted");
+    };
+    press(true);
+    assert(document.activeElement === last, "Shift+Tab at the first control must wrap to the last");
+    press(false);
+    assert(document.activeElement === first, "Tab at the last control must wrap to the first");
+    assert(
+      ![disabled, hidden, ariaHidden].includes(document.activeElement),
+      "disabled and hidden controls must never receive wrapped focus",
+    );
+
+    fireDocument("keydown", { key: "Escape" });
+    assert(!store.ui.palette, "Escape must close a dismissible dialog");
+    assert(document.activeElement === trigger, "closing the dialog must restore focus to its opener");
   } finally {
     restore();
   }

@@ -1008,10 +1008,35 @@ export class ProjectDirectoryStore {
     };
   }
 
+  async readProjectState(): Promise<{
+    project: ProjectData | null;
+    fingerprint: FileFingerprint;
+  }> {
+    return await this.withLockGuard(async () => {
+      try {
+        const state = await readProjectState(this.projectPath);
+        this.baseline = state.fingerprint;
+        this.baselineProject = clone(state.project);
+        return { project: state.project, fingerprint: state.fingerprint };
+      } catch (caught) {
+        if (!isNotFound(caught)) throw caught;
+        const fingerprint = await fileFingerprint(this.projectPath);
+        if (fingerprint.exists) {
+          const state = await readProjectState(this.projectPath);
+          this.baseline = state.fingerprint;
+          this.baselineProject = clone(state.project);
+          return { project: state.project, fingerprint: state.fingerprint };
+        }
+        this.baseline = null;
+        this.baselineProject = null;
+        return { project: null, fingerprint };
+      }
+    });
+  }
+
   async readProject(): Promise<ProjectData> {
-    const state = await readProjectState(this.projectPath);
-    this.baseline = state.fingerprint;
-    this.baselineProject = clone(state.project);
+    const state = await this.readProjectState();
+    if (!state.project) throw new Deno.errors.NotFound("project.json is missing");
     return state.project;
   }
 
@@ -1140,7 +1165,10 @@ export class ProjectDirectoryStore {
     });
   }
 
-  async saveWithRecovery(data: ProjectData): Promise<void> {
+  async saveWithRecovery(
+    data: ProjectData,
+    expectedFingerprint?: FileFingerprint,
+  ): Promise<{ fingerprint: FileFingerprint; recovery_warning: string | null }> {
     const canonical = migrateProject(JSON.parse(serializeProject(data)));
     const journal: RecoveryJournal = {
       transaction_id: id(),
@@ -1149,31 +1177,62 @@ export class ProjectDirectoryStore {
       saved_at: now(),
       project: clone(canonical),
     };
-    // Reject a known conflict before creating a new journal. writeProject
-    // repeats the comparison so an external edit racing this check is still
-    // blocked at the canonical write boundary.
-    const externalState = await this.externalChange();
-    if (
-      externalState.changed ||
-      (!externalState.baseline && externalState.current.exists)
-    ) {
-      throw error(
-        "external_modification_conflict",
-        "课程文件在其他地方发生了变化，自动保存已暂停以免覆盖内容。课程内容没有改变，你可以继续查看；请处理保存提示后再继续。",
-        "Refusing autosave after an external canonical modification",
-        {
-          recoverable: true,
-          recommended_action: "查看差异，然后重新载入或合并修改。",
-          details: {
-            baseline: externalState.baseline,
-            current: externalState.current,
+    return await this.withWritableLease(async () => {
+      const current = await fileFingerprint(this.projectPath);
+      if (expectedFingerprint && fingerprintsDiffer(expectedFingerprint, current)) {
+        throw error(
+          "external_modification_conflict",
+          "课程文件已由另一个写入更新，保存已暂停以免覆盖内容。请重新载入或合并修改。",
+          "Refusing project save from a stale loaded fingerprint",
+          {
+            recoverable: true,
+            recommended_action: "重新载入磁盘版本或合并修改后再保存。",
+            details: { baseline: expectedFingerprint, current },
           },
-        },
-      );
-    }
-    await this.writeRecoveryJournal(journal);
-    await this.writeProject(canonical);
-    await this.clearRecoveryJournal();
+        );
+      }
+      const externalState = await this.externalChange();
+      if (
+        externalState.changed ||
+        (!externalState.baseline && externalState.current.exists)
+      ) {
+        throw error(
+          "external_modification_conflict",
+          "课程文件在其他地方发生了变化，自动保存已暂停以免覆盖内容。课程内容没有改变，你可以继续查看；请处理保存提示后再继续。",
+          "Refusing autosave after an external canonical modification",
+          {
+            recoverable: true,
+            recommended_action: "查看差异，然后重新载入或合并修改。",
+            details: {
+              baseline: externalState.baseline,
+              current: externalState.current,
+            },
+          },
+        );
+      }
+      // The compare and both writes share one OS lock. A sibling service
+      // command cannot advance the canonical file between the CAS and rename.
+      await this.writeAtomicText(JOURNAL_FILE, JSON.stringify(journal), false);
+      try {
+        await this.writeProjectUnlocked(canonical);
+      } catch (caught) {
+        // If the canonical write failed, keep the recovery data only when its
+        // transaction was actually the last one placed in the journal.
+        throw caught;
+      }
+      let recoveryWarning: string | null = null;
+      try {
+        await Deno.remove(this.journalPath);
+      } catch (caught) {
+        if (!isNotFound(caught)) {
+          recoveryWarning = "恢复日志清理失败，但课程内容已经保存。";
+        }
+      }
+      return {
+        fingerprint: structuredClone(this.baseline!),
+        recovery_warning: recoveryWarning,
+      };
+    });
   }
 
   async externalChange(): Promise<
@@ -1256,7 +1315,7 @@ export class ProjectDirectoryStore {
   async resolveExternalChanges(
     resolvedProject: ProjectData,
     expectedCurrent: FileFingerprint,
-  ): Promise<void> {
+  ): Promise<FileFingerprint> {
     await this.withWritableLease(async () => {
       const current = await fileFingerprint(this.projectPath);
       if (fingerprintsDiffer(expectedCurrent, current)) {
@@ -1276,6 +1335,7 @@ export class ProjectDirectoryStore {
       this.baselineProject = external ? clone(external) : null;
       await this.writeProjectUnlocked(resolvedProject);
     });
+    return structuredClone(this.baseline!);
   }
 
   /** Diff two persisted file snapshots without exposing Git primitives. */
@@ -1378,6 +1438,46 @@ export class ProjectDirectoryStore {
     return await this.withWritableLease(() =>
       this.createSnapshotUnlocked(data, name, note, options)
     );
+  }
+
+  /** Store the caller's version copy without changing Canonical. */
+  async writeSnapshotCopy(snapshotId: string, data: ProjectData): Promise<void> {
+    if (snapshotId.length > 128 || !/^[A-Za-z0-9_-]+$/.test(snapshotId)) {
+      throw error(
+        "snapshot_invalid",
+        "历史版本编号无效。",
+        `Invalid snapshot id: ${snapshotId}`,
+        { recoverable: false, recommended_action: null, details: {} },
+      );
+    }
+    const canonical = migrateProject(JSON.parse(serializeProject(data)));
+    const contents = serializeProject(canonical);
+    await this.withWritableLease(async () => {
+      const externalState = await this.externalChange();
+      if (
+        externalState.changed ||
+        (!externalState.baseline && externalState.current.exists)
+      ) {
+        throw error(
+          "external_modification_conflict",
+          "课程文件在其他地方发生了变化，历史版本保存已暂停。请先重新载入或合并修改后再试。",
+          "Refusing snapshot copy after external modification",
+          {
+            recoverable: true,
+            recommended_action: "重新载入磁盘版本或合并修改后再保存。",
+            details: {
+              baseline: externalState.baseline,
+              current: externalState.current,
+            },
+          },
+        );
+      }
+      await this.writeAtomicText(
+        join(".workspace", "snapshots", `${snapshotId}.json`),
+        contents,
+        false,
+      );
+    });
   }
 
   private async createSnapshotUnlocked(

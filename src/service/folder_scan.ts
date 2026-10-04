@@ -37,10 +37,29 @@ export interface FolderScanReport {
   errors: string[];
 }
 
+export interface FolderDirectChildGroup {
+  directory: string;
+  entries: ScanResult[];
+}
+
+export interface FolderDirectChildScanReport {
+  root: string;
+  groups: FolderDirectChildGroup[];
+  warnings: string[];
+  errors: string[];
+}
+
 /** Metadata-only scan; warn when a file exceeds this size (do not read bytes). */
 export const SCAN_LARGE_FILE_BYTES = 100 * 1024 * 1024;
 
-const TEXT_EXTENSIONS = new Set([".md", ".markdown", ".txt", ".text"]);
+const TEXT_EXTENSIONS = new Set([
+  ".md",
+  ".markdown",
+  ".txt",
+  ".text",
+  ".tex",
+  ".latex",
+]);
 const WORD_EXTENSIONS = new Set([".doc", ".docx", ".odt", ".rtf"]);
 const SCRIPT_EXTENSIONS = new Set([
   ".js",
@@ -128,6 +147,9 @@ function mimeFor(name: string): string | null {
     ".markdown": "text/markdown",
     ".txt": "text/plain",
     ".text": "text/plain",
+    ".tex": "text/x-tex",
+    ".latex": "text/x-tex",
+    ".epub": "application/epub+zip",
     ".json": "application/json",
     ".html": "text/html",
     ".pdf": "application/pdf",
@@ -364,6 +386,117 @@ export async function scanFolder(root: string): Promise<FolderScanReport> {
     left.relative_path.localeCompare(right.relative_path, "zh")
   );
   return { root: resolved, entries, warnings, errors };
+}
+
+/**
+ * Read metadata for direct files in selected root-level Mapping folders.
+ * This intentionally does not descend into a child's subdirectories.
+ */
+export async function scanFolderDirectChildren(
+  root: string,
+  relativeDirs: readonly string[],
+): Promise<FolderDirectChildScanReport> {
+  const resolvedRoot = await assertScanRoot(root);
+  const realRoot = await Deno.realPath(resolvedRoot);
+  const warnings: string[] = [];
+  const errors: string[] = [];
+  const groups: FolderDirectChildGroup[] = [];
+  const seen = new Set<string>();
+
+  for (const rawDirectory of Array.isArray(relativeDirs) ? relativeDirs : []) {
+    const directory = String(rawDirectory ?? "").replaceAll("\\", "/");
+    if (!directory || directory.includes("\0") || isAbsolute(directory) ||
+      directory.includes("/") || directory === "." || directory === "..") {
+      warnings.push(`${directory || "."}: 映射目录无效，未扫描直接子文件`);
+      continue;
+    }
+    if (seen.has(directory)) continue;
+    seen.add(directory);
+
+    const entries: ScanResult[] = [];
+    const absoluteDir = join(realRoot, directory);
+    try {
+      toRelative(realRoot, absoluteDir);
+      if (await hasSymlinkComponent(realRoot, directory)) {
+        warnings.push(`${directory}: 已跳过符号链接，避免越过所选文件夹`);
+        groups.push({ directory, entries });
+        continue;
+      }
+      const stat = await Deno.lstat(absoluteDir);
+      if (stat.isSymlink) {
+        warnings.push(`${directory}: 已跳过符号链接，避免越过所选文件夹`);
+        groups.push({ directory, entries });
+        continue;
+      }
+      if (!stat.isDirectory) {
+        warnings.push(`${directory}: 映射目录已不是文件夹，未扫描直接子文件`);
+        groups.push({ directory, entries });
+        continue;
+      }
+      const resolvedDir = await Deno.realPath(absoluteDir);
+      if (resolvedDir !== realRoot && !resolvedDir.startsWith(`${realRoot}/`)) {
+        warnings.push(`${directory}: 映射目录超出所选文件夹，未扫描`);
+        groups.push({ directory, entries });
+        continue;
+      }
+
+      const children: Deno.DirEntry[] = [];
+      try {
+        for await (const child of Deno.readDir(resolvedDir)) children.push(child);
+      } catch (caught) {
+        const message = `无法读取目录：${caught instanceof Error ? caught.message : String(caught)}`;
+        errors.push(`${directory}: ${message}`);
+        groups.push({ directory, entries });
+        continue;
+      }
+      children.sort((left, right) => left.name.localeCompare(right.name, "zh"));
+
+      for (const child of children) {
+        if (child.name.startsWith(".")) continue;
+        const relativePath = `${directory}/${child.name}`;
+        if (isManagedImportName(child.name)) {
+          warnings.push(`${relativePath}: 已跳过工作台管理文件或构建目录`);
+          continue;
+        }
+        const path = join(resolvedDir, child.name);
+        let childStat: Deno.FileInfo;
+        try {
+          childStat = await Deno.lstat(path);
+        } catch (caught) {
+          const message = `无法读取：${caught instanceof Error ? caught.message : String(caught)}`;
+          entries.push(degrade(path, relativePath, "file", message));
+          errors.push(`${relativePath}: ${message}`);
+          continue;
+        }
+        if (childStat.isSymlink) {
+          warnings.push(`${relativePath}: 已跳过符号链接，避免越过所选文件夹`);
+          continue;
+        }
+        if (!childStat.isFile) continue;
+        try {
+          toRelative(realRoot, path);
+        } catch (caught) {
+          const message = caught instanceof Error ? caught.message : String(caught);
+          warnings.push(`${relativePath}: ${message}`);
+          continue;
+        }
+        entries.push({
+          path,
+          relative_path: relativePath,
+          kind: "file",
+          mime: mimeFor(child.name),
+          size: childStat.size,
+          suggested_role: suggestedRoleForFile(child.name),
+        });
+      }
+    } catch (caught) {
+      const message = caught instanceof Error ? caught.message : String(caught);
+      errors.push(`${directory}: ${message}`);
+    }
+    groups.push({ directory, entries });
+  }
+
+  return { root: realRoot, groups, warnings, errors };
 }
 
 /** A visual-media descendant found under a selected directory row. */

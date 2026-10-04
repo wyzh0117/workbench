@@ -18,6 +18,7 @@
 | v0.2.3 | 2026-10-01 | `0ce229a` | [v0.2.3](https://github.com/wyzh0117/workbench/releases/tag/v0.2.3) | 公开可用（历史版本） | 可以把一批 Markdown 文件或多个文件夹，带着**看得见、可修改的映射计划**导入并追加到已有课程，整个导入能一次撤销；正文里的 Markdown 按语义呈现；AI 设置把 OpenAI Chat Completions、OpenAI Responses、Anthropic Messages 当成三种不同协议处理，并新增原生 Sign in with ChatGPT 订阅登录。 |
 | v0.2.4 | 2026-10-02 | `4db396b` | [v0.2.4](https://github.com/wyzh0117/workbench/releases/tag/v0.2.4) | 公开可用（历史版本） | 编辑器去掉干扰（B/I/S 与 Markdown 源码切换消失，Markdown 语义直接编译且可撤销）、区块工具条与属性改成浮层、Grid 恢复左键落位 / 右键移出、素材改名会真的改磁盘文件、素材支持多选批量导入、打开文件夹会先看懂再说话、子目录图片视频进素材库、PNG 缩略图修好且卡片重做、AI 连接改为自配服务商与真实模型清单、ChatGPT 订阅登录逐阶段报错。 |
 | **v0.2.5** | 2026-10-03 | `d16b622` | [v0.2.5](https://github.com/wyzh0117/workbench/releases/tag/v0.2.5) | **公开可用 / Latest / 冻结** | 打开入口变成项目列表（最近优先、可重新定位）；打开文件夹不再认错项目（旧 schema 先修复、坏文件说具体原因、父目录不顶替子项目）；`.txt .text .md .markdown .tex .latex .docx .epub .pdf` 九类文本 / 文档按原结构导入正文（无 OCR、PDF 只取文本层、LaTeX 公式存代码、编码自动识别）；映射确认后可逐份挑选要导入的文档；媒体库大列表来回滚动不再闪屏 / UI 抽搐 / 卡片卡住。 |
+| v0.2.6 | — | — | **尚无** | **候选 / 未发布** | [中文 feature history](./v0.2.6.md)：Mapping 稳定化与映射后文档选择、带语义图片的跨格式导入、正文 Preview 媒体、Flow 顺序视图、顶层自由排版，以及全局页面重设计。以 [HTML 验收报告](../reports/v0.2.6-ui-redesign-completion-report.html) 为准；最新公开版仍为 v0.2.5。 |
 
 ### 关于 v0.2.0
 

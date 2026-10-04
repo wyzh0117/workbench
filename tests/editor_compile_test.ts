@@ -7,7 +7,8 @@
  *    DOM is edited around the finished run instead of re-rendering the block, so
  *    the caret keeps its plain-text offset and an IME session is never broken.
  *  - Item 6: structural Markdown becomes a structural block only when the whole
- *    meaningful body is one unambiguous unit, and never mid-typing.
+ *    meaningful body is one unambiguous unit, and never mid-typing. Typed list
+ *    markers stay in paragraph storage and become list semantics at blur.
  *  - Item 3/5: block chrome is markup the stylesheet can turn into an overlay,
  *    and the source/B/I/S editing surface is gone from the rendered shell.
  *  - Item 6/§6.5: one auto-format is one Undo step.
@@ -25,8 +26,10 @@ import { createViews } from "../app/views.js";
 import {
   caretTextOffset,
   compileInlineAtCaret,
+  editorValueChangedSinceBaseline,
   focusTextOffset,
   markdownFromEditable,
+  renderMarkdown,
   structuralConversion,
 } from "../app/markdown.js";
 
@@ -478,7 +481,7 @@ Deno.test("focusTextOffset puts the caret back after a converting render", () =>
 // Item 6 — conservative structural conversion (§7.1-§7.4)
 // ---------------------------------------------------------------------------
 
-type Conversion = { type: string; level: number | null; content: string; offsetLoss: number };
+type Conversion = { type: string; level: number | null; content: string; offsetLoss: number; deferUntilBlur?: boolean };
 
 function converted(source: string, current: { type: string; level?: number | null }): Conversion | null {
   return structuralConversion(source, current) as Conversion | null;
@@ -560,7 +563,7 @@ Deno.test("a fenced body keeps its literal backslashes through conversion", () =
   assert(result?.content === "let re = /a\\\\*b/;", `code body stays verbatim: ${result?.content}`);
 });
 
-Deno.test("conversion refuses mixed, ambiguous and half-typed content", () => {
+Deno.test("conversion refuses ambiguous structures and enables typed list rendering", () => {
   const partials = ["`", "**", ">", "#", "# ", "-", "标题\n正文一行", "## 标题\n正文"];
   for (const source of partials) {
     assert(
@@ -568,9 +571,29 @@ Deno.test("conversion refuses mixed, ambiguous and half-typed content", () => {
       `${JSON.stringify(source)} is not one finished structural unit`,
     );
   }
+  const listSource = [
+    markdownFromEditable(typed("- 项目一 *字面星号*").root),
+    markdownFromEditable(typed("- 项目二").root),
+  ].join("\n\n");
+  const list = converted(listSource, { type: "paragraph" });
+  assert(list?.type === "paragraph", "the Domain keeps a list inside the paragraph's Markdown");
+  assert(list.content === "- 项目一 \\*字面星号\\*\n\n- 项目二", "only escaped list markers are restored");
+  assert(list.deferUntilBlur, "list markup waits for blur so the live editor caret stays put");
+  const renderedList = renderMarkdown(list.content);
+  assert(renderedList.includes("<ul>") && renderedList.includes("<li><p>项目一 *字面星号*</p>"), "a typed list becomes a rendered list");
+  assert(!renderedList.includes("<em>字面星号</em>"), "escaped punctuation inside list text stays literal");
+
+  const ordered = converted(markdownFromEditable(typed("1. 有序项").root), { type: "paragraph" });
+  assert(ordered?.content === "1. 有序项", "ordered list marker escapes are restored");
+  const escapedLiteral = markdownFromEditable(typed(`${String.fromCharCode(92)}- literal`).root);
+  assert(converted(escapedLiteral, { type: "paragraph" }) === null, "an intentionally escaped literal dash stays prose");
   assert(
-    converted("- 项目一\n- 项目二", { type: "paragraph" }) === null,
-    "the Domain has no list block, so a list never converts",
+    !editorValueChangedSinceBaseline(escapedLiteral, escapedLiteral),
+    "focus and blur without editing existing escaped prose must not enable structural conversion",
+  );
+  assert(
+    editorValueChangedSinceBaseline(escapedLiteral + "!", escapedLiteral),
+    "typing during the focus session enables the structural boundary check",
   );
   assert(
     converted("[链接](https://example.com)", { type: "paragraph" }) === null,
@@ -839,6 +862,34 @@ Deno.test("typing ## 标题 converts the block and costs exactly one Undo step",
       redone.type === "heading" && redone.content === "标题",
       "Redo re-applies the whole format action",
     );
+  } finally {
+    restore();
+  }
+});
+
+Deno.test("typed Markdown lists keep paragraph storage, render as lists and stay undoable", async () => {
+  const initial = "原文";
+  const listSource = [
+    markdownFromEditable(typed("- 第一项").root),
+    markdownFromEditable(typed("- 第二项").root),
+  ].join("\n\n");
+  const retype = converted(listSource, { type: "paragraph" });
+  assert(retype?.type === "paragraph" && retype.deferUntilBlur, "list normalization is a paragraph edit deferred until blur");
+  const { store, block, restore } = await bootCompileStore(initial);
+  try {
+    const before = store.history.length;
+    block.content = listSource;
+    store.recordBlockTextEdit(block.id, initial, listSource, {
+      notify: false,
+      retype,
+    });
+    assert(store.history.length === before + 1, "marker normalization shares one undo entry with typing");
+    assert(block.type === "paragraph", "list semantics do not invent a Domain list block");
+    assert(block.content === retype.content, "canonical Markdown keeps list markers without the escaping slash");
+    store.undo();
+    assert(store.data.blocks.find((candidate) => candidate.id === block.id)!.content === initial, "one Undo restores the paragraph before typing");
+    store.redo();
+    assert(store.data.blocks.find((candidate) => candidate.id === block.id)!.content === retype.content, "Redo restores the formatted list source");
   } finally {
     restore();
   }
