@@ -8,9 +8,9 @@
 
 ## Download
 
-> **当前状态：公开下载已恢复。** 仓库已重新设为 **public**，下面的链接对匿名访问者可用。
+> **当前状态：v0.2.6 已公开。** 仓库为 **public**，下面的 latest 页面、固定下载链接与校验 sidecar 对匿名访问者可用。
 
-当前开发候选为 v0.2.6；它尚未发布，`releases/latest`、固定下载链接和 SHA-256 sidecar 继续指向已冻结的 v0.2.5。最终冻结源码通过 `deno task check` 和 `deno task test`（602/602，含 loopback），Rust 测试 222/222；本地 Universal App/DMG 通过架构、版本和完整性检查，尚未做本机原生 smoke（Mac 锁屏），本地包未签名/公证。Overview 在 1024/1280/1440/1728×900 测量通过；其余页面、部分 overlay 和 Free Layout 删除/重开/导出仍按验收报告标记为 PARTIAL。详见 [v0.2.6 completion report](docs/reports/v0.2.6-ui-redesign-completion-report.html)、[候选 feature history](docs/feature-history/v0.2.6.md) 与 [候选构建证据](docs/reports/evidence/v0.2.6/candidate-build-final.md)。
+v0.2.6 于 2026-10-05（+0800）发布并成为 `releases/latest`。最终源码 gate 为 Deno 602/602、Rust 222/222；公开 Universal DMG 已匿名下载核验，SHA-256 为 `08ecebe9ea20d848244c750598d2cf1e4f921e942532bd9126f395b1487cc27e`，sidecar SHA-256 为 `0577fc8af02e661cea7d3b831409c0d5f805efa56d9b16579e31d3b63123b8eb`。`hdiutil verify` 为 VALID，挂载 App 为 0.2.6、`x86_64 arm64`。该包为 ad-hoc signed，未做 Developer ID 签名或 Apple 公证；native UI smoke 因 Mac 锁屏为 BLOCKED。只有 Overview 在四种宽度通过测量；其余页面与部分交互仍按报告标记 PARTIAL。详见 [v0.2.6 completion report](docs/reports/v0.2.6-ui-redesign-completion-report.html)、[feature history](docs/feature-history/v0.2.6.md)、[公开资产验证](docs/reports/evidence/v0.2.6/public-release-verification.md) 与 [本地候选构建证据](docs/reports/evidence/v0.2.6/candidate-build-final.md)。
 
 **下载最新 macOS 安装包（DMG）：**
 
@@ -90,16 +90,15 @@ DISTRIBUTION STATE = PARTIAL
 BLOCKER            = 缺正式 macOS signing / notarization credentials
 ```
 
-- **已有公开版**：最新正式 Release 为 v0.2.5，Universal（Apple Silicon + Intel）DMG、固定 latest 直链与 SHA-256 sidecar 均已发布并校验；已发布 tag 与资产保持冻结。
+- **已有公开版**：最新正式 Release 为 v0.2.6。匿名下载的 Universal DMG（14,414,435 bytes）SHA-256 `08ecebe9ea20d848244c750598d2cf1e4f921e942532bd9126f395b1487cc27e` 与 96-byte sidecar 内容一致，GitHub asset digest 一致，`hdiutil verify` 为 VALID，架构为 `x86_64 arm64`。
 - **当前可见性**：仓库为 **public**，Release 页面与 latest 直链对匿名访问者可用。
-- **未完成**：Developer ID Application 签名与 Apple 公证（notarization / stapling）。
+- **未完成**：Developer ID Application 签名与 Apple 公证（notarization / stapling）。v0.2.6 公开包为 ad-hoc signed、无 `TeamIdentifier`；公开 CI 的 `spctl --assess --type execute` 为 `rejected`。
   本机 `security find-identity -v -p codesigning` 返回 0 valid identities，没有可用的
   Apple Developer Program 分发凭据，因此**不能宣称「普通用户无安全阻碍安装」**，
   也不宣称 `PUBLIC RELEASE READY`。
 - 拿到正确的 Apple Developer 分发资格后，只需要补做签名、公证、重新上传 Release 与
   一次安装 smoke，**不需要重新开发 Workbench 本体**（见 `.github/workflows/release.yml`）。
-- **实测**：把 Release 资产重新匿名下载、按浏览器行为加上隔离属性后，
-  `spctl --assess --type execute` 判定 `rejected` —— 上面「首次打开说明」写的就是用户真实会遇到的状态。
+- **实测**：v0.2.6 公开资产已匿名下载并验证；CI 的 `spctl --assess --type execute` 判定 `rejected` —— 上面「首次打开说明」写的就是用户真实会遇到的状态。公开 App 的签名验证报告有效（ad-hoc，无 Developer ID）；本机 `spctl` 返回 subsystem internal error，该条结果不作额外推断。
 - **一处未实测项**：「右键 → 打开」放行**之后**的首次启动没有在自动化环境里实测过
   （无法自动投递右键菜单操作），只实测了放行**之前**的拦截状态。
 
@@ -115,17 +114,17 @@ BLOCKER            = 缺正式 macOS signing / notarization credentials
 - V1-T04 — Workspace Explorer & Existing-Folder Adoption：**VERIFIED**
 - V1-T05 — Paged Canvas & Pagination：**VERIFIED**
 - V1-T06 — Layout-aware Export & PPTX：**VERIFIED**
-- 当前交接：**v0.2.5 已发布并冻结；v0.2.6 为开发候选**（Mapping / Preview / Flow / Free Layout / 全局 UI 重设计）
-- 当前状态：**Latest public = v0.2.5；Current source = v0.2.6 candidate**。V1 ACTIVE；V1-T01–T06 的 VERIFIED 为历史任务结论，不因本轮新增任务改写。
+- 当前交接：**v0.2.6 已发布并冻结**（Mapping / Preview / Flow / Free Layout / 全局 UI 重设计）
+- 当前状态：**Latest public = v0.2.6；release source commit = `223a5944e50ffdc6f4bdd09509eacf8f09c47b0e`**。V1 ACTIVE；V1-T01–T06 的 VERIFIED 为历史任务结论，不因本轮新增任务改写。
 - [Completion Report](docs/V0.2.5_Closure_2026-10-03_Completion_Report.md) · [Master Control §45](PROJECT_MASTER_CONTROL.md)：§33 19 项验收矩阵、自动化 gate、真实 UI 证据与未闭合通道；媒体库闪烁的大白话根因见 [docs/v0.2.5_media_flicker_root_cause.md](docs/v0.2.5_media_flicker_root_cause.md)。
-- [v0.2.6 candidate feature history](docs/feature-history/v0.2.6.md) · [rolling UNRELEASED record](docs/feature-history/UNRELEASED.md) · [UI redesign completion report](docs/reports/v0.2.6-ui-redesign-completion-report.html)：列出本轮用户可见变化、当前证据和未闭合限制。
-- 公开版与源码态的区别：**v0.2.4 及更早的公开包不含本轮四块改动**；这些改动已随 `v0.2.5` 到达用户。`v0.2.5` 的下载地址、SHA-256 与验证结果见本页上方 `releases/latest` 链接与 `PROJECT_MASTER_CONTROL.md` §45.4。已发布版本一律冻结，不会被重建或覆盖。
-- v0.2.5 的用户改动清单见 [Feature Update Manual / v0.2.5](docs/feature-history/v0.2.5.md)；当前 v0.2.6 功能说明暂列在 [UNRELEASED candidate](docs/feature-history/UNRELEASED.md)，不会误写成已包含于公开包。
-- 产品状态：**公开版 v0.2.5 = 已发布并完成公开产物验证**（上轮 v0.2.4 收口 15 项为 11 PASS / 2 PARTIAL / 1 BLOCKED）；**v0.2.5 的真实 Tauri 验收行按 UNCLOSED 如实记录**（原生窗口手势、真实在线 AI、媒体库真实滚动三条通道未闭合，见 Completion Report §2 与 §9），不作整体 VERIFIED 或 DOGFOOD READY 结论
-- 分发状态：**PARTIAL / 公开下载可用**（v0.2.5 Universal DMG 与 SHA-256 sidecar 已匿名下载校验；制品为 ad-hoc signed，无 `TeamIdentifier`，`spctl --assess --type execute` 为 `rejected`，未做 Developer ID 签名或公证）
+- [v0.2.6 feature history](docs/feature-history/v0.2.6.md) · [rolling UNRELEASED record](docs/feature-history/UNRELEASED.md) · [UI redesign completion report](docs/reports/v0.2.6-ui-redesign-completion-report.html)：列出本轮用户可见变化、真实证据和未闭合限制。
+- 公开版与源码态的区别：v0.2.6 已包含 Mapping / Preview / Flow / Free Layout / 全局 UI 重设计；v0.2.5 及更早的公开包不含这些改动。v0.2.6 的公开 DMG、校验值与签名状态见 [公开资产验证](docs/reports/evidence/v0.2.6/public-release-verification.md)。已发布版本一律冻结，不会被重建或覆盖。
+- v0.2.5 的用户改动清单见 [Feature Update Manual / v0.2.5](docs/feature-history/v0.2.5.md)；最新用户功能清单见 [Feature Update Manual / v0.2.6](docs/feature-history/v0.2.6.md)。
+- 产品状态：**v0.2.6 已公开并冻结**；验收限制按 [v0.2.6 completion report](docs/reports/v0.2.6-ui-redesign-completion-report.html) 如实标记，不作整体 VERIFIED 或 DOGFOOD READY 结论。
+- 分发状态：**PARTIAL / 公开下载可用**（v0.2.6 Universal DMG 与 sidecar 已匿名下载校验；制品为 ad-hoc signed，无 `TeamIdentifier`，CI `spctl --assess --type execute` 为 `rejected`，未做 Developer ID 签名或公证）
 - V0 状态：**V0 CLOSED；V0-T01 / V0-T02 / V0-T03 / V0-T04 全部 VERIFIED**
-- 最新公开版本为 [`v0.2.5`](https://github.com/wyzh0117/workbench/releases/tag/v0.2.5)（tag/source commit `d16b622c082720c3c386613df187deec3b7ec469`，workflow run `37100286505`）；[Universal DMG](https://github.com/wyzh0117/workbench/releases/download/v0.2.5/AI-Course-Workbench-macOS.dmg) 与 [SHA-256 sidecar](https://github.com/wyzh0117/workbench/releases/download/v0.2.5/AI-Course-Workbench-macOS.dmg.sha256) 已匿名下载核验（SHA-256 `a84884466b084cd674a4d0d32a52b3284863a9adb9706c11283009fb14b7f9fd`、`hdiutil verify` VALID、`x86_64 arm64`、版本 0.2.5）；[`v0.2.4`](https://github.com/wyzh0117/workbench/releases/tag/v0.2.4) 及其资产保持冻结。
-- NEXT ACTION：`v0.2.5` 已发布；用户在真实窗口里补做原生验收（启动页项目列表、原生打开面板、媒体库真实滚动、正文选择窗口点击、重启走查）并发起第一次真实 AI 调用，清单见 `PROJECT_MASTER_CONTROL.md` §45.3 与 Completion Report §2 的 UNCLOSED 行；新问题按下一个版本处理，下一次发布仍需单独授权；不创建 V1-T07，不关闭 V1。
+- 最新公开版本为 [`v0.2.6`](https://github.com/wyzh0117/workbench/releases/tag/v0.2.6)（发布于 2026-10-05 04:31:39 +0800；tag/source commit `223a5944e50ffdc6f4bdd09509eacf8f09c47b0e`，workflow run `37231984095`）。公开 Universal DMG 与 sidecar 的下载和校验事实见 [public verification](docs/reports/evidence/v0.2.6/public-release-verification.md)；v0.2.5 的 frozen DMG / sidecar digest 保持不变，详见 §45.4 与该验证页。
+- NEXT ACTION：v0.2.6 已发布并冻结；本轮 native smoke、未覆盖路由 / 侧栏 / 系统 text scale，以及 Free Layout 删除 / 重开 / 导出仍按报告列为 BLOCKED / PARTIAL，后续有可用桌面环境时再补验。新问题按下一版本处理；不创建 V1-T07，不关闭 V1。
 - 发版本身怎么操作（版本字段三处联动、Release Notes 规则、tag 与 workflow、发布后验证与回写、只有用户能做的部分）见 [docs/release-playbook.md](docs/release-playbook.md)。
 
 2026-10-03 v0.2.5 发布：用户授权「开发完成后同步 GitHub 以及 tag、release 页」后，源码提交 `d16b622c082720c3c386613df187deec3b7ec469` 推送 `main`，附注 tag `v0.2.5` 触发 workflow `37100286505`（`success`，8m4s），Release 为当前 Latest（`isDraft=false`）。公开 Universal DMG（14,293,951 bytes）与 `.sha256` sidecar 匿名下载校验一致：SHA-256 `a84884466b084cd674a4d0d32a52b3284863a9adb9706c11283009fb14b7f9fd`、`hdiutil verify` VALID、`lipo -archs` = `x86_64 arm64`、包内版本 0.2.5。发布前与 tag 所在源码状态的自动化 gate 全绿：`deno task check`、Deno 584/584、`cargo fmt --check`、Rust 216/216、`cargo build`。三条验收通道带着「未闭合」发布而非记成通过：原生窗口指针 / 面板手势 smoke、真实在线 AI 调用（`api.openai.com` 60 秒超时）、媒体库真实触控板 / 滚轮滚动；逐条清单见 `PROJECT_MASTER_CONTROL.md` §45.3。正式 DMG 为 ad-hoc signed、无 `TeamIdentifier`、未公证，`spctl --assess --type execute` 返回 `rejected`。`v0.2.4` 及更早 tag / DMG / sidecar 未移动、未覆盖。

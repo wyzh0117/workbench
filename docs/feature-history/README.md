@@ -17,8 +17,8 @@
 | v0.2.2 | 2026-09-29 | `d85c3f7` | [v0.2.2](https://github.com/wyzh0117/workbench/releases/tag/v0.2.2) | 公开可用（历史版本） | 素材库里可以直接看内容：图片和 GIF 能放大、PDF 看首页、视频音频能播、Markdown 能读；往素材库加文件不再被自动挂到当前课；服务商换了服务域名时，会先问你是否愿意把密钥发过去。 |
 | v0.2.3 | 2026-10-01 | `0ce229a` | [v0.2.3](https://github.com/wyzh0117/workbench/releases/tag/v0.2.3) | 公开可用（历史版本） | 可以把一批 Markdown 文件或多个文件夹，带着**看得见、可修改的映射计划**导入并追加到已有课程，整个导入能一次撤销；正文里的 Markdown 按语义呈现；AI 设置把 OpenAI Chat Completions、OpenAI Responses、Anthropic Messages 当成三种不同协议处理，并新增原生 Sign in with ChatGPT 订阅登录。 |
 | v0.2.4 | 2026-10-02 | `4db396b` | [v0.2.4](https://github.com/wyzh0117/workbench/releases/tag/v0.2.4) | 公开可用（历史版本） | 编辑器去掉干扰（B/I/S 与 Markdown 源码切换消失，Markdown 语义直接编译且可撤销）、区块工具条与属性改成浮层、Grid 恢复左键落位 / 右键移出、素材改名会真的改磁盘文件、素材支持多选批量导入、打开文件夹会先看懂再说话、子目录图片视频进素材库、PNG 缩略图修好且卡片重做、AI 连接改为自配服务商与真实模型清单、ChatGPT 订阅登录逐阶段报错。 |
-| **v0.2.5** | 2026-10-03 | `d16b622` | [v0.2.5](https://github.com/wyzh0117/workbench/releases/tag/v0.2.5) | **公开可用 / Latest / 冻结** | 打开入口变成项目列表（最近优先、可重新定位）；打开文件夹不再认错项目（旧 schema 先修复、坏文件说具体原因、父目录不顶替子项目）；`.txt .text .md .markdown .tex .latex .docx .epub .pdf` 九类文本 / 文档按原结构导入正文（无 OCR、PDF 只取文本层、LaTeX 公式存代码、编码自动识别）；映射确认后可逐份挑选要导入的文档；媒体库大列表来回滚动不再闪屏 / UI 抽搐 / 卡片卡住。 |
-| v0.2.6 | — | — | **尚无** | **候选 / 未发布** | [中文 feature history](./v0.2.6.md)：Mapping 稳定化与映射后文档选择、带语义图片的跨格式导入、正文 Preview 媒体、Flow 顺序视图、顶层自由排版，以及全局页面重设计。以 [HTML 验收报告](../reports/v0.2.6-ui-redesign-completion-report.html) 为准；最新公开版仍为 v0.2.5。 |
+| **v0.2.5** | 2026-10-03 | `d16b622` | [v0.2.5](https://github.com/wyzh0117/workbench/releases/tag/v0.2.5) | **公开可用 / 历史版本 / 冻结** | 打开入口变成项目列表（最近优先、可重新定位）；打开文件夹不再认错项目（旧 schema 先修复、坏文件说具体原因、父目录不顶替子项目）；`.txt .text .md .markdown .tex .latex .docx .epub .pdf` 九类文本 / 文档按原结构导入正文（无 OCR、PDF 只取文本层、LaTeX 公式存代码、编码自动识别）；映射确认后可逐份挑选要导入的文档；媒体库大列表来回滚动不再闪屏 / UI 抽搐 / 卡片卡住。 |
+| **v0.2.6** | **2026-10-05** | `223a594` | [v0.2.6](https://github.com/wyzh0117/workbench/releases/tag/v0.2.6) | **公开 / Latest / 冻结** | [中文 feature history](./v0.2.6.md)：Mapping 稳定化与映射后文档选择、带语义图片的跨格式导入、正文 Preview 媒体、Flow 顺序视图、顶层自由排版，以及全局页面重设计。公开 DMG 与 sidecar 已匿名下载和校验；验收限制见 [HTML 报告](../reports/v0.2.6-ui-redesign-completion-report.html) 与[公开资产验证](../reports/evidence/v0.2.6/public-release-verification.md)。 |
 
 ### 关于 v0.2.0
 
@@ -60,15 +60,15 @@
 Release 正文与总控冲突时以 Release 正文为准，并在版本文件里注明分歧。
 **没有证据的地方一律写「无记录」，不推测、不补全。**
 
-## 分发状态的长期事实（从 v0.1.0 到 v0.2.5 没有变过）
+## 分发状态的长期事实（从 v0.1.0 到 v0.2.6 没有变过）
 
 所有已发布的 DMG 都是 **ad-hoc 签名**：没有 Apple Developer ID 签名、没有 Apple 公证，
-`spctl --assess --type execute` 判定 **rejected**（v0.2.5 的公开包在 2026-10-03 复测仍是 `rejected`，见 `PROJECT_MASTER_CONTROL.md` §45.4）。每个用户首次打开都需要手动过一次 Gatekeeper 放行。
+`spctl --assess --type execute` 判定 **rejected**（v0.2.5 的公开包在 2026-10-03 复测、v0.2.6 的 CI 签名检查均为 `rejected`，分别见总控 §45.4 与 [v0.2.6 public verification](../reports/evidence/v0.2.6/public-release-verification.md)）。每个用户首次打开都需要手动过一次 Gatekeeper 放行。
 另外，**放行之后的首次启动从未被实测过**（自动化环境无法投递右键菜单与「系统设置」交互），
 实测到的只是放行**之前**的拦截状态。
 
 ## 当前循环
 
-`v0.2.5` 是 v0.2.4 之后的下一轮收口版本（2026-10-03），发布后即刻冻结。本轮把四个用户可见方向一起落地：打开入口变成项目列表、打开文件夹不再认错项目、九类文本 / 文档按原结构导入正文（映射确认后可逐份挑选）、媒体库大列表滚动不再闪屏。逐项矩阵与证据见 `PROJECT_MASTER_CONTROL.md` §45 与 `docs/V0.2.5_Closure_2026-10-03_Completion_Report.md`；媒体库闪烁根因的大白话说明见 `docs/v0.2.5_media_flicker_root_cause.md`。原生窗口指针 smoke、真实在线 AI 与真实触控板滚动三条通道仍未闭合，`v0.2.5.md` 的「已知限制」写明了它们，发布验证事实发布后回填本节与本表。
+`v0.2.6` 于 2026-10-05（+0800）公开发布，tag 指向源码提交 `223a5944e50ffdc6f4bdd09509eacf8f09c47b0e`；Release workflow 37231984095 成功，`releases/latest` 指向 v0.2.6。它将 Mapping 稳定化与映射后选择、语义图片导入、正文媒体 Preview、Flow 顺序、顶层 Free Layout 和全局 UI 重设计一并交付。公开 Universal DMG 已匿名下载并验证 SHA-256 与 sidecar 一致、`hdiutil verify` VALID、版本 0.2.6、架构 `x86_64 arm64`。公开包为 ad-hoc signed，未做 Developer ID 签名或公证；native UI smoke 仍因锁屏 BLOCKED，其他 UI 限制见 [`v0.2.6.md`](./v0.2.6.md)。完整公开包信息见 [v0.2.6 public verification](../reports/evidence/v0.2.6/public-release-verification.md) 与总控 §46。
 
 **v0.2.5 的公开产物已按 [`docs/release-playbook.md`](../release-playbook.md) §6 校验**：匿名下载的 Universal DMG（14,293,951 bytes）SHA-256 为 `a84884466b084cd674a4d0d32a52b3284863a9adb9706c11283009fb14b7f9fd`，与 `.sha256` sidecar 及 GitHub 自报 digest 一致，`hdiutil verify` 通过；包内 `lipo -archs` 给出 `x86_64 arm64`，版本 0.2.5，签名 ad-hoc（无 `TeamIdentifier`、未公证），`spctl` 为 `rejected`。完整事实块见 `PROJECT_MASTER_CONTROL.md` §45.4。

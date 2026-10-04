@@ -4209,11 +4209,11 @@ latest          /releases/latest 指向 v0.2.5；固定直链 releases/latest/do
 
 ---
 
-# 46. v0.2.6 — Mapping / Preview / Flow / Free Layout / Full UI Redesign（2026-10-05，candidate）
+# 46. v0.2.6 — Mapping / Preview / Flow / Free Layout / Full UI Redesign（2026-10-05，published）
 
-> 本节只记录当前开发候选，不改写 §45 及更早版本的历史验收结论。最新公开版仍为 v0.2.5；V0 CLOSED、V1 ACTIVE，V1-T01–T06 保持原 VERIFIED，不创建 V1-T07 或关闭 V1。用户已明确授权本轮完成后同步 GitHub、tag 与 Release；实际发布状态仅在对应动作完成后回填。
+> 本节记录 v0.2.6 的实际发布与验收，不改写 §45 及更早版本的历史验收结论。v0.2.6 是 latest public；V0 CLOSED、V1 ACTIVE，V1-T01–T06 保持原 VERIFIED，不创建 V1-T07 或关闭 V1。
 >
-> 验收入口：[v0.2.6 HTML completion report](docs/reports/v0.2.6-ui-redesign-completion-report.html) · [中文 candidate feature history](docs/feature-history/v0.2.6.md) · [rolling UNRELEASED](docs/feature-history/UNRELEASED.md) · [Mapping backend evidence](docs/reports/evidence/v0.2.6/mapping-backend.md) · [Deno gate evidence](docs/reports/evidence/v0.2.6/deno-gates.md).
+> 验收入口：[v0.2.6 HTML completion report](docs/reports/v0.2.6-ui-redesign-completion-report.html) · [中文 feature history](docs/feature-history/v0.2.6.md) · [rolling UNRELEASED](docs/feature-history/UNRELEASED.md) · [Mapping backend evidence](docs/reports/evidence/v0.2.6/mapping-backend.md) · [Deno gate evidence](docs/reports/evidence/v0.2.6/deno-gates.md) · [public release verification](docs/reports/evidence/v0.2.6/public-release-verification.md).
 
 ## 46.1 七项需求当前状态
 
@@ -4233,10 +4233,18 @@ latest          /releases/latest 指向 v0.2.5；固定直链 releases/latest/do
 
 Rust 记录 `docs/reports/evidence/v0.2.6/mapping-backend.md`：`cargo fmt --check`、`cargo check --all-targets`、完整 `cargo test`（222 tests，binary/doc targets 通过）与 `cargo build` 通过；文件包括 Markdown/DOCX/EPUB/LaTeX/GIF/PDF 位置与明确降级、目标分组和源文件保全证据。最终冻结源码已重建 Universal App/DMG：version 0.2.6、`x86_64 arm64`、`hdiutil verify` VALID、只读挂载内容与 App 元数据一致，SHA-256 `c4594037e0c9d4e908c9896e2aff9b39c55b23c883e19c0429fb73654d2e354f`。本地候选无 Developer ID 签名/公证；native CUA 因 Mac 锁屏 BLOCKED。详见 `docs/reports/evidence/v0.2.6/candidate-build-final.md`。
 
-## 46.3 候选 UI / 桌面证据
+## 46.3 浏览器 UI / 桌面证据
 
 当前 browser CUA run6 由 UI owner 在隔离 run6/tab 6、`http://127.0.0.1:4194/` 执行：导入 Markdown Preview 显示 heading / bold / italic / quote / list / PNG / GIF；Preview footer 报告 3 项显示素材（Markdown PNG、GIF 与独立视频 block）。`![...](clip.mp4)` 显示正确的视频图片语法提示；Media 插入的实际 video block 显示 poster、默认暂停、显式播放后前进，关闭移除播放器并恢复焦点。两帧 GIF 在 viewer 中红→蓝动画，关闭移除 viewer，inline 静态红色 poster 与 source 保持；Body 键入两行 dash list 后 blur 转为 semantic list，未编辑 escaped list 不变。Rename 对话框 Esc 不改数据、空名称保留对话框并报错、有效重命名实际移动托管文件、Undo 恢复原文件。Flow handle 04→03 拖动、Undo/Redo、Body/Preview 同序、保存重开及磁盘顺序 2/3 通过；重开后「未保存」错误状态已做源码修复、98 项受影响检查和 browser reload 复验，显示「已保存」。Free Layout `pageGrid` 运行时错误已修并通过 66/66 regression；browser CUA 实测跨页移动、span resize、新建页、复制页并确认 placement 持久。Delete 未执行，Free Layout 重开/导出待完成。UI owner 测量 Overview/shared shell 在 1024、1280、1440、1728 px × 900 时无横向溢出或顶栏重叠；其他路由、sidebar 组合与系统 text scaling 未覆盖。run7 可见且启用的路由/Overview 控件通过 locator、AX、坐标与键盘输入均未触发动作；独立源码审查确认 startup→render→bindEvents→bindActionControls→route handler 链完整，未发现已确认的业务源码缺陷。本 reviewer 的独立 CUA 观察因 Mac 锁屏、无可见 tabs 且 URL lookup 找不到 owner tab 而 BLOCKED。project-lock dialog 的实机可用性未测。截图仅在 CUA 内联显示，未保存二进制。完整区分见 HTML report 与 `docs/reports/evidence/v0.2.6/ui-evidence.md`。
 
-## 46.4 Release boundary 与下一步
+## 46.4 公开 Release 与验证
 
-本轮用户原始授权覆盖开发完成后 GitHub sync、tag、Release；本节仍准确记录 v0.2.6 尚未发布，latest public 为 v0.2.5。v0.2.5 及更早 tag / DMG / sidecar 永久冻结。独立 reviewer 未发现已证实未修复的实现缺陷，且最终 Deno/Rust gates 与本地 Universal 包验证通过；建议可按报告明确披露的 PARTIAL/BLOCKED 限制继续发布。原生 smoke、除 Overview 外的全页四宽度/侧栏/text-scale、Free Layout 删除/重开/导出和本地截图文件仍未闭环。发布成功后追加 public workflow、资产、SHA-256 与签名状态 verification，不重写 §45.4。
+v0.2.6 于 2026-10-05 04:31:39 +0800 发布，annotated tag `v0.2.6` 指向源码提交 `223a5944e50ffdc6f4bdd09509eacf8f09c47b0e`。GitHub Actions workflow [37231984095](https://github.com/wyzh0117/workbench/actions/runs/37231984095) 成功；Release [v0.2.6](https://github.com/wyzh0117/workbench/releases/tag/v0.2.6) 为非 draft、非 prerelease，`releases/latest` 指向 v0.2.6。
+
+公开 DMG（14,414,435 bytes）已匿名下载，SHA-256 `08ecebe9ea20d848244c750598d2cf1e4f921e942532bd9126f395b1487cc27e` 与 GitHub digest 和 sidecar 内容一致；96-byte sidecar 的 SHA-256 为 `0577fc8af02e661cea7d3b831409c0d5f805efa56d9b16579e31d3b63123b8eb`。`hdiutil verify` 为 VALID；只读挂载的 App identifier 为 `io.github.wyzh0117.ai-course-workbench`、版本 0.2.6、架构 `x86_64 arm64`。公开 App 的签名为 ad-hoc、无 `TeamIdentifier`；`codesign --verify --deep --strict` 通过。没有 Developer ID 证书，未做 Developer ID 签名或 Apple 公证；CI `spctl --assess --type execute` 为 `rejected`。本地 `spctl` 返回 subsystem internal error；stapler 返回 `LSDataUnavailable`，不据此作额外推断。完整证据见 `docs/reports/evidence/v0.2.6/public-release-verification.md`。
+
+v0.2.5 及更早 tag / DMG / sidecar 永久冻结；v0.2.5 的 DMG digest `a84884466b084cd674a4d0d32a52b3284863a9adb9706c11283009fb14b7f9fd` 和 sidecar digest `b57141634353c61f4a49d0b0e32d0eacf5e027e7cee2410ca657cc47d8b70ce8` 与冻结基线一致。§45.4 保持原样。
+
+## 46.5 后续验收边界
+
+独立 reviewer 未发现已证实未修复的实现缺陷。Deno 602/602、Rust 222/222 与公开包校验通过；发布不抬高未观察到的 UI 行为状态。Mac 锁屏使 native smoke 为 BLOCKED；只对 Overview 完成 1024/1280/1440/1728×900 测量；其他路由、侧栏组合、系统 text scaling、部分 overlay 键盘路径以及 Free Layout 删除/重开/导出仍按 completion report 标为 PARTIAL。截图只在 CUA 内联出现，没有本地截图文件。后续可用桌面环境开放时补做，不改写 §45 与 v0.2.5 历史，也不创建 V1-T07 或关闭 V1。
