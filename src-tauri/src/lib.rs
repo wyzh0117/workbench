@@ -39,7 +39,23 @@ static PROJECT_BASELINES: OnceLock<Mutex<HashMap<PathBuf, ProjectBaseline>>> = O
 static SCANNED_FOLDER_VIDEOS: OnceLock<Mutex<HashSet<(PathBuf, String)>>> = OnceLock::new();
 #[cfg(test)]
 static SNAPSHOT_FAIL_ID: OnceLock<Mutex<Option<String>>> = OnceLock::new();
+#[cfg(test)]
+static PROJECT_IO_METRICS: OnceLock<Mutex<HashMap<PathBuf, ProjectIoMetrics>>> = OnceLock::new();
 static EXIT_READY: AtomicBool = AtomicBool::new(false);
+
+#[cfg(test)]
+#[derive(Clone, Copy, Debug, Default)]
+struct ProjectIoMetrics {
+    full_reads: usize,
+    full_read_bytes: u64,
+    hash_bytes: u64,
+    write_ops: usize,
+    write_bytes: u64,
+    copy_ops: usize,
+    copy_bytes: u64,
+    sync_ops: usize,
+    rename_ops: usize,
+}
 
 /// Project directory requested on the command line (`--project-dir <path>`).
 ///
@@ -1053,21 +1069,35 @@ fn atomic_write_path(target: &Path, contents: &str, keep_backup: bool) -> Result
         let _ = fs::remove_file(&temporary);
         return Err(format!("无法完成原子写入: {error}"));
     }
+    #[cfg(test)]
+    {
+        record_project_io(target, "write", contents.len() as u64);
+        record_project_io(target, "sync", 0);
+    }
     drop(file);
 
     if keep_backup && target.exists() {
         let backup = target.with_extension("bak");
         reject_symlink(&backup, "备份文件")?;
-        if let Err(error) = fs::copy(target, &backup) {
-            let _ = fs::remove_file(&temporary);
-            return Err(format!("无法创建备份: {error}"));
+        match fs::copy(target, &backup) {
+            Ok(bytes) => {
+                #[cfg(test)]
+                record_project_io(target, "copy", bytes);
+            }
+            Err(error) => {
+                let _ = fs::remove_file(&temporary);
+                return Err(format!("无法创建备份: {error}"));
+            }
         }
     }
     let result = fs::rename(&temporary, target);
     if result.is_err() {
         let _ = fs::remove_file(&temporary);
     }
-    result.map_err(|error| format!("无法替换目标文件: {error}"))
+    result.map_err(|error| format!("无法替换目标文件: {error}"))?;
+    #[cfg(test)]
+    record_project_io(target, "rename", 0);
+    Ok(())
 }
 
 fn atomic_write_bytes_path(target: &Path, contents: &[u8]) -> Result<(), String> {
@@ -1161,6 +1191,8 @@ fn read_project_state(project_dir: &Path) -> Result<(Value, FileFingerprint), St
     }
     reject_symlink(&path, "项目文件")?;
     let contents = fs::read(&path).map_err(|error| format!("无法读取项目文件: {error}"))?;
+    #[cfg(test)]
+    record_project_io(&path, "read", contents.len() as u64);
     let value: Value =
         serde_json::from_slice(&contents).map_err(|error| format!("项目 JSON 无效: {error}"))?;
     validate_project(&value)?;
@@ -1216,6 +1248,49 @@ fn verify_lease_generation(project_dir: &Path, requested: Option<&str>) -> Resul
     Ok(current)
 }
 
+#[cfg(test)]
+fn project_io_root(path: &Path) -> Option<PathBuf> {
+    let parent = path.parent()?;
+    let root = if parent.file_name().and_then(|name| name.to_str()) == Some(".workspace") {
+        parent.parent()?
+    } else {
+        parent
+    };
+    fs::canonicalize(root).ok()
+}
+
+#[cfg(test)]
+fn record_project_io(path: &Path, event: &str, bytes: u64) {
+    let Some(root) = project_io_root(path) else {
+        return;
+    };
+    let mut counters = PROJECT_IO_METRICS
+        .get_or_init(|| Mutex::new(HashMap::new()))
+        .lock()
+        .unwrap();
+    let Some(metrics) = counters.get_mut(&root) else {
+        return;
+    };
+    match event {
+        "read" => {
+            metrics.full_reads += 1;
+            metrics.full_read_bytes += bytes;
+            metrics.hash_bytes += bytes;
+        }
+        "write" => {
+            metrics.write_ops += 1;
+            metrics.write_bytes += bytes;
+        }
+        "copy" => {
+            metrics.copy_ops += 1;
+            metrics.copy_bytes += bytes;
+        }
+        "sync" => metrics.sync_ops += 1,
+        "rename" => metrics.rename_ops += 1,
+        _ => {}
+    }
+}
+
 fn project_fingerprint(project_dir: &Path) -> Result<FileFingerprint, String> {
     let path = project_file(project_dir, "project.json")?;
     let metadata = match fs::metadata(&path) {
@@ -1231,6 +1306,8 @@ fn project_fingerprint(project_dir: &Path) -> Result<FileFingerprint, String> {
         Err(error) => return Err(format!("无法检查 project.json: {error}")),
     };
     let contents = fs::read(&path).map_err(|error| format!("无法读取 project.json: {error}"))?;
+    #[cfg(test)]
+    record_project_io(&path, "read", contents.len() as u64);
     let mtime_ms = metadata
         .modified()
         .ok()
@@ -1452,34 +1529,39 @@ fn write_project_value_with_warning_unlocked(
     validate_project(project)?;
     ensure_no_external_modification(project_dir)?;
     let contents = serde_json::to_string_pretty(project).map_err(|error| error.to_string())? + "\n";
-    let path = project_file(project_dir, "project.json")?;
     // Compare again after serialization and immediately before replacement.
     ensure_no_external_modification(project_dir)?;
+    write_project_contents_unlocked(project_dir, project, &contents).map(|(_, warning)| warning)
+}
+
+fn write_project_contents_unlocked(
+    project_dir: &Path,
+    project: &Value,
+    contents: &str,
+) -> Result<(FileFingerprint, Option<String>), String> {
+    let path = project_file(project_dir, "project.json")?;
     atomic_write_path(&path, &contents, true)?;
     let mtime_ms = fs::metadata(&path)
         .ok()
         .and_then(|metadata| metadata.modified().ok())
         .and_then(|value| value.duration_since(UNIX_EPOCH).ok())
         .map(|value| value.as_millis().min(u128::from(u64::MAX)) as u64);
+    let fingerprint = FileFingerprint {
+        exists: true,
+        mtime_ms,
+        size: Some(contents.len() as u64),
+        hash: Some(sha256_hex(contents.as_bytes())),
+    };
     // Keep the identity of the exact bytes written. If an external process
     // races immediately after rename, the next write still compares against
     // our content hash instead of accidentally adopting the raced version.
-    store_project_baseline(
-        project_dir,
-        FileFingerprint {
-            exists: true,
-            mtime_ms,
-            size: Some(contents.len() as u64),
-            hash: Some(sha256_hex(contents.as_bytes())),
-        },
-        Some(project.clone()),
-    )?;
+    store_project_baseline(project_dir, fingerprint.clone(), Some(project.clone()))?;
     // A successful canonical write makes the recovery copy stale.  Cleanup
     // failure is a warning because the canonical write already succeeded.
-    match clear_recovery_journal_path(project_dir) {
-        Ok(_) => Ok(None),
-        Err(error) => Ok(Some(format!("恢复日志清理失败，但项目已保存：{error}"))),
-    }
+    let warning = clear_recovery_journal_path(project_dir)
+        .err()
+        .map(|error| format!("恢复日志清理失败，但项目已保存：{error}"));
+    Ok((fingerprint, warning))
 }
 
 fn write_project_value_with_warning(
@@ -2433,37 +2515,287 @@ fn read_project(project_dir: String) -> Result<Option<Value>, String> {
     Ok(Some(read_project_value(&project_dir)?))
 }
 
+fn project_save_error_contract(
+    message: &str,
+    stage: &str,
+    retryable: bool,
+    fingerprint: Option<&FileFingerprint>,
+) -> String {
+    let mut root = serde_json::from_str::<Value>(message).unwrap_or(Value::Null);
+    let mut error = root
+        .get("error")
+        .filter(|value| value.is_object())
+        .cloned()
+        .unwrap_or_else(|| json!({}));
+    let code = error
+        .get("code")
+        .and_then(Value::as_str)
+        .map(ToOwned::to_owned)
+        .or_else(|| message.split_once(':').map(|(code, _)| code.to_owned()))
+        .unwrap_or_else(|| "project_save_failed".into());
+    let text = error
+        .get("message")
+        .or_else(|| error.get("user_message"))
+        .or_else(|| error.get("technical_message"))
+        .and_then(Value::as_str)
+        .map(ToOwned::to_owned)
+        .unwrap_or_else(|| message.to_owned());
+    error["code"] = json!(code);
+    error["message"] = json!(text);
+    error["commit_state"] = json!("not_committed");
+    error["stage"] = json!(stage);
+    error["retryable"] = json!(retryable);
+    if let Some(fingerprint) = fingerprint {
+        error["fingerprint"] = json!(fingerprint);
+    }
+    if !root.is_object() {
+        root = json!({});
+    }
+    root["error"] = error;
+    root.to_string()
+}
+
 #[tauri::command]
 fn project_save(
     project_dir: String,
     expected_fingerprint: FileFingerprint,
     recovery_journal: Option<Value>,
     project: Value,
+    expected_project_id: Option<String>,
+    lease_generation: Option<String>,
+    editor_generation: Option<u64>,
+    operation_id: Option<String>,
+    revision: Option<u64>,
+    recovery_metadata: Option<Value>,
 ) -> Result<Value, String> {
-    let project_dir = explicit_project_dir(&project_dir, false)?;
-    let _lease_guard = require_active_project_lock(&project_dir)?;
-    let current = project_fingerprint(&project_dir)?;
-    if fingerprints_differ(&expected_fingerprint, &current) {
-        return Err(external_conflict_error(
-            Some(&expected_fingerprint),
-            &current,
+    let project_dir = explicit_project_dir(&project_dir, false)
+        .map_err(|error| project_save_error_contract(&error, "project_path", false, None))?;
+    let _lease_guard = require_active_project_lock(&project_dir)
+        .map_err(|error| project_save_error_contract(&error, "lease_validate", false, None))?;
+    let active_generation = verify_lease_generation(&project_dir, lease_generation.as_deref())
+        .map_err(|error| project_save_error_contract(&error, "lease_validate", false, None))?;
+
+    // One project read supplies both the parsed value and the CAS fingerprint.
+    let (current_project, current_fingerprint) = read_project_state(&project_dir)
+        .map_err(|error| project_save_error_contract(&error, "project_read", false, None))?;
+    if fingerprints_differ(&expected_fingerprint, &current_fingerprint) {
+        let error = external_conflict_error(Some(&expected_fingerprint), &current_fingerprint);
+        return Err(project_save_error_contract(
+            &error,
+            "fingerprint_preflight",
+            false,
+            Some(&current_fingerprint),
         ));
     }
-    ensure_no_external_modification(&project_dir)?;
-    if let Some(journal) = recovery_journal {
-        reject_sensitive(&journal)?;
-        if let Some(journal_project) = journal.get("project") {
-            if journal_project != &project {
-                return Err("恢复记录必须与保存的项目快照一致".into());
-            }
-        }
-        let contents = serde_json::to_string(&journal).map_err(|error| error.to_string())?;
-        write_recovery_journal_unlocked(&project_dir, &contents)?;
+    let baseline = project_baselines()
+        .lock()
+        .unwrap()
+        .get(&project_dir)
+        .map(|baseline| baseline.fingerprint.clone());
+    if baseline
+        .as_ref()
+        .map(|fingerprint| fingerprints_differ(fingerprint, &current_fingerprint))
+        .unwrap_or(current_fingerprint.exists)
+    {
+        let error = external_conflict_error(baseline.as_ref(), &current_fingerprint);
+        return Err(project_save_error_contract(
+            &error,
+            "baseline_preflight",
+            false,
+            Some(&current_fingerprint),
+        ));
     }
-    let recovery_warning = write_project_value_with_warning_unlocked(&project_dir, &project)?;
-    let fingerprint = project_fingerprint(&project_dir)?;
+
+    validate_project(&project).map_err(|error| {
+        project_save_error_contract(
+            &error,
+            "payload_validate",
+            false,
+            Some(&current_fingerprint),
+        )
+    })?;
+    let current_project_id = project_id_of(&current_project).map_err(|error| {
+        project_save_error_contract(
+            &error,
+            "project_identity",
+            false,
+            Some(&current_fingerprint),
+        )
+    })?;
+    let requested_project_id = expected_project_id
+        .as_deref()
+        .unwrap_or(&current_project_id);
+    if requested_project_id != current_project_id
+        || project_id_of(&project).ok().as_deref() != Some(requested_project_id)
+    {
+        let error = json!({ "error": {
+            "code": "project_id_mismatch",
+            "message": "保存请求与当前项目身份不匹配。",
+        }})
+        .to_string();
+        return Err(project_save_error_contract(
+            &error,
+            "project_identity",
+            false,
+            Some(&current_fingerprint),
+        ));
+    }
+    if operation_id
+        .as_deref()
+        .is_some_and(|value| !valid_snapshot_id(value))
+    {
+        let error = json!({ "error": {
+            "code": "invalid_operation_id",
+            "message": "保存操作编号无效。",
+        }})
+        .to_string();
+        return Err(project_save_error_contract(
+            &error,
+            "operation_validate",
+            false,
+            Some(&current_fingerprint),
+        ));
+    }
+
+    if let Some(metadata) = recovery_metadata.as_ref() {
+        reject_sensitive(metadata).map_err(|error| {
+            project_save_error_contract(
+                &error,
+                "recovery_validate",
+                false,
+                Some(&current_fingerprint),
+            )
+        })?;
+        let metadata_project_id = metadata.get("project_id").and_then(Value::as_str);
+        let canonical_revision = metadata.get("canonical_revision").and_then(Value::as_str);
+        let current_revision = project
+            .get("project")
+            .and_then(|value| value.get("updated_at"))
+            .and_then(Value::as_str);
+        if metadata_project_id.is_some_and(|value| value != current_project_id)
+            || canonical_revision.is_some_and(|value| Some(value) != current_revision)
+        {
+            let error = json!({ "error": {
+                "code": "recovery_metadata_mismatch",
+                "message": "恢复记录与本次保存的项目版本不匹配。",
+            }})
+            .to_string();
+            return Err(project_save_error_contract(
+                &error,
+                "recovery_validate",
+                false,
+                Some(&current_fingerprint),
+            ));
+        }
+    }
+    if let Some(journal) = recovery_journal.as_ref() {
+        reject_sensitive(journal).map_err(|error| {
+            project_save_error_contract(
+                &error,
+                "recovery_validate",
+                false,
+                Some(&current_fingerprint),
+            )
+        })?;
+        if journal
+            .get("project")
+            .is_some_and(|journal_project| journal_project != &project)
+            || journal
+                .get("project_id")
+                .and_then(Value::as_str)
+                .is_some_and(|journal_project_id| journal_project_id != current_project_id)
+        {
+            let error = "恢复记录必须与保存的项目快照一致";
+            return Err(project_save_error_contract(
+                error,
+                "recovery_validate",
+                false,
+                Some(&current_fingerprint),
+            ));
+        }
+    }
+
+    let project_dir_text = project_dir.to_string_lossy().into_owned();
+    if current_project == project {
+        return Ok(json!({
+            "fingerprint": current_fingerprint,
+            "project_id": current_project_id,
+            "project_dir": project_dir_text,
+            "lease_generation": active_generation,
+            "editor_generation": editor_generation,
+            "operation_id": operation_id,
+            "revision": revision,
+            "outcome": "unchanged",
+            "commit_state": "committed",
+            "recovery_warning": Value::Null,
+        }));
+    }
+
+    let contents = serde_json::to_string_pretty(&project).map_err(|error| {
+        project_save_error_contract(
+            &error.to_string(),
+            "serialize",
+            false,
+            Some(&current_fingerprint),
+        )
+    })? + "\n";
+    let journal = if let Some(journal) = recovery_journal {
+        Some(journal)
+    } else if let Some(metadata) = recovery_metadata {
+        Some(json!({
+            "transaction_id": operation_id.clone().unwrap_or_else(|| native_id("save")),
+            "project_id": current_project_id,
+            "canonical_revision": metadata.get("canonical_revision").cloned().unwrap_or_else(|| {
+                project.get("project").and_then(|value| value.get("updated_at")).cloned().unwrap_or(Value::Null)
+            }),
+            "saved_at": metadata.get("saved_at").cloned().unwrap_or_else(|| json!(rfc3339_now())),
+            "project": project,
+        }))
+    } else {
+        None
+    };
+    if let Some(journal) = journal {
+        let journal_contents = serde_json::to_string(&journal).map_err(|error| {
+            project_save_error_contract(
+                &error.to_string(),
+                "recovery_serialize",
+                false,
+                Some(&current_fingerprint),
+            )
+        })?;
+        write_recovery_journal_unlocked(&project_dir, &journal_contents).map_err(|error| {
+            project_save_error_contract(&error, "recovery_write", true, Some(&current_fingerprint))
+        })?;
+    }
+
+    // A second and final full-file comparison closes the serialization and
+    // recovery-write window. The commit helper below performs no manifest reads.
+    let final_fingerprint = project_fingerprint(&project_dir).map_err(|error| {
+        project_save_error_contract(&error, "final_validate", false, Some(&current_fingerprint))
+    })?;
+    if fingerprints_differ(&current_fingerprint, &final_fingerprint) {
+        let error = external_conflict_error(Some(&current_fingerprint), &final_fingerprint);
+        return Err(project_save_error_contract(
+            &error,
+            "final_validate",
+            false,
+            Some(&final_fingerprint),
+        ));
+    }
+    let (fingerprint, recovery_warning) =
+        write_project_contents_unlocked(&project_dir, &project, &contents).map_err(|error| {
+            project_save_error_contract(&error, "canonical_write", false, Some(&final_fingerprint))
+        })?;
     Ok(json!({
         "fingerprint": fingerprint,
+        "project_id": current_project_id,
+        "project_dir": project_dir_text,
+        "lease_generation": active_generation,
+        "editor_generation": editor_generation,
+        "operation_id": operation_id,
+        "revision": revision,
+        "outcome": "written",
+        "commit_state": "committed",
         "recovery_warning": recovery_warning,
     }))
 }
@@ -16108,6 +16440,175 @@ mod tests {
         directory
     }
 
+    fn reset_project_validation_reads(directory: &Path) {
+        let directory = fs::canonicalize(directory).expect("project directory should canonicalize");
+        PROJECT_IO_METRICS
+            .get_or_init(|| Mutex::new(HashMap::new()))
+            .lock()
+            .unwrap()
+            .insert(directory, ProjectIoMetrics::default());
+    }
+
+    fn take_project_validation_reads(directory: &Path) -> ProjectIoMetrics {
+        let directory = fs::canonicalize(directory).expect("project directory should canonicalize");
+        PROJECT_IO_METRICS
+            .get_or_init(|| Mutex::new(HashMap::new()))
+            .lock()
+            .unwrap()
+            .remove(&directory)
+            .unwrap_or_default()
+    }
+
+    fn project_save_legacy(
+        project_dir: String,
+        expected_fingerprint: FileFingerprint,
+        recovery_journal: Option<Value>,
+        project: Value,
+    ) -> Result<Value, String> {
+        super::project_save(
+            project_dir,
+            expected_fingerprint,
+            recovery_journal,
+            project,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+        )
+    }
+
+    #[test]
+    fn unchanged_project_save_does_not_write_project_or_recovery_files() {
+        let directory = test_directory("save-unchanged");
+        let project_dir = directory.to_string_lossy().into_owned();
+        let project = json!({ "project": { "id": "p1", "title": "same" }, "items": [] });
+        project_create(project_dir.clone(), project.clone()).unwrap();
+        let recovery_path = directory.join(".workspace/recovery.json");
+        fs::write(&recovery_path, b"recovery sentinel").unwrap();
+        let recovery_backup_path = directory.join(".workspace/recovery.json.bak");
+        fs::write(&recovery_backup_path, b"recovery backup sentinel").unwrap();
+        let project_backup_path = directory.join("project.json.bak");
+        fs::write(&project_backup_path, b"project backup sentinel").unwrap();
+        let project_bytes = fs::read(directory.join("project.json")).unwrap();
+        let lease_generation = active_lease_generation(&directory).unwrap();
+        let result = project_save(
+            project_dir.clone(),
+            project_fingerprint(&directory).unwrap(),
+            None,
+            project.clone(),
+            Some("p1".into()),
+            Some(lease_generation.clone()),
+            Some(3),
+            Some("noop-operation".into()),
+            Some(1),
+            Some(json!({
+                "project_id": "p1",
+                "saved_at": rfc3339_now(),
+            })),
+        )
+        .expect("unchanged save should succeed");
+
+        assert_eq!(result["outcome"], json!("unchanged"));
+        assert_eq!(result["project_id"], json!("p1"));
+        assert_eq!(result["lease_generation"], json!(lease_generation));
+        assert_eq!(result["editor_generation"], json!(3));
+        assert_eq!(result["operation_id"], json!("noop-operation"));
+        assert_eq!(result["revision"], json!(1));
+        assert!(result.get("project").is_none(), "save ack stays compact");
+        assert_eq!(
+            fs::read(directory.join("project.json")).unwrap(),
+            project_bytes
+        );
+        assert_eq!(fs::read(&recovery_path).unwrap(), b"recovery sentinel");
+        assert_eq!(
+            fs::read(&recovery_backup_path).unwrap(),
+            b"recovery backup sentinel"
+        );
+        assert_eq!(
+            fs::read(&project_backup_path).unwrap(),
+            b"project backup sentinel"
+        );
+        project_close(project_dir).unwrap();
+        let _ = fs::remove_dir_all(directory);
+    }
+
+    #[test]
+    fn save_rejects_same_size_same_mtime_external_edit_by_hash() {
+        let directory = test_directory("save-same-size-mtime");
+        let project_dir = directory.to_string_lossy().into_owned();
+        let original = json!({ "project": { "id": "p1", "title": "base" }, "items": [] });
+        project_create(project_dir.clone(), original.clone()).unwrap();
+        let expected = project_fingerprint(&directory).unwrap();
+        let project_path = directory.join("project.json");
+        let original_mtime = fs::metadata(&project_path).unwrap().modified().unwrap();
+        let external = json!({ "project": { "id": "p1", "title": "evil" }, "items": [] });
+        let mut external_bytes = serde_json::to_vec_pretty(&external).unwrap();
+        external_bytes.push(b'\n');
+        fs::write(&project_path, &external_bytes).unwrap();
+        fs::OpenOptions::new()
+            .write(true)
+            .open(&project_path)
+            .unwrap()
+            .set_times(std::fs::FileTimes::new().set_modified(original_mtime))
+            .unwrap();
+        let current = project_fingerprint(&directory).unwrap();
+        assert_eq!(expected.size, current.size);
+        assert_eq!(expected.mtime_ms, current.mtime_ms);
+        assert_ne!(expected.hash, current.hash);
+
+        let error = project_save_legacy(project_dir.clone(), expected, None, original)
+            .expect_err("same metadata must not hide a content hash change");
+        let error: Value = serde_json::from_str(&error).unwrap();
+        assert_eq!(
+            error["error"]["code"],
+            json!("external_modification_conflict")
+        );
+        assert_eq!(error["error"]["commit_state"], json!("not_committed"));
+        assert_eq!(error["error"]["retryable"], json!(false));
+        assert!(!error["error"]["user_message"].is_null());
+        assert!(!error["error"]["details"].is_null());
+        assert_eq!(fs::read(&project_path).unwrap(), external_bytes);
+        project_close(project_dir).unwrap();
+        let _ = fs::remove_dir_all(directory);
+    }
+
+    #[test]
+    fn project_save_reads_the_full_manifest_at_most_twice() {
+        let directory = test_directory("save-read-budget");
+        let project_dir = directory.to_string_lossy().into_owned();
+        let original = json!({ "project": { "id": "p1", "title": "before" }, "items": [] });
+        project_create(project_dir.clone(), original.clone()).unwrap();
+        let expected = project_fingerprint(&directory).unwrap();
+        let mut changed = original;
+        changed["project"]["title"] = json!("after");
+        let lease_generation = active_lease_generation(&directory).unwrap();
+        reset_project_validation_reads(&directory);
+
+        project_save(
+            project_dir.clone(),
+            expected,
+            None,
+            changed,
+            Some("p1".into()),
+            Some(lease_generation),
+            Some(4),
+            Some("save-read-budget-op".into()),
+            Some(2),
+            Some(json!({"project_id":"p1", "saved_at":rfc3339_now()})),
+        )
+        .expect("validated save should succeed");
+        let metrics = take_project_validation_reads(&directory);
+        assert!(
+            metrics.full_reads <= 2,
+            "save read project.json {} times",
+            metrics.full_reads
+        );
+        project_close(project_dir).unwrap();
+        let _ = fs::remove_dir_all(directory);
+    }
+
     fn test_markdown_payload(source: &Path, blocks: Value, refs: Value) -> Value {
         let bytes = fs::read(source).expect("Markdown fixture should be readable");
         json!({
@@ -16536,7 +17037,7 @@ mod tests {
             Some(1),
         )
         .unwrap();
-        project_save(
+        project_save_legacy(
             project_dir.clone(),
             project_fingerprint(&directory).unwrap(),
             None,
@@ -16743,7 +17244,7 @@ mod tests {
             "an expired lease must not be extended by a delayed worker"
         );
         let before = fs::read(directory.join("project.json")).unwrap();
-        let save = project_save(
+        let save = project_save_legacy(
             project_dir.clone(),
             project_fingerprint(&directory).unwrap(),
             None,
@@ -16994,14 +17495,17 @@ mod tests {
         let lock_path = project_lock_path(&directory).unwrap();
         assert!(!lock_path.exists());
         let empty = test_directory("unopened-save");
-        let error = project_save(
+        let error = project_save_legacy(
             empty.to_string_lossy().into_owned(),
             project_fingerprint(&empty).unwrap(),
             None,
             json!({}),
         )
         .expect_err("save must require an opened lease");
-        assert!(error.starts_with("project_not_open:") || error.starts_with("project_lock_lost:"));
+        let error: Value = serde_json::from_str(&error).unwrap();
+        assert_eq!(error["error"]["code"], json!("project_not_open"));
+        assert_eq!(error["error"]["commit_state"], json!("not_committed"));
+        assert_eq!(error["error"]["retryable"], json!(false));
         assert!(!project_lock_path(&empty).unwrap().exists());
         let _ = fs::remove_dir_all(directory);
         let _ = fs::remove_dir_all(empty);
@@ -17101,7 +17605,7 @@ mod tests {
         )
         .expect("external edit should be written");
         let local = json!({ "project": { "id": "p1", "title": "local" }, "items": [] });
-        let rejected = project_save(
+        let rejected = project_save_legacy(
             directory.to_string_lossy().into_owned(),
             stale_fingerprint,
             None,
@@ -17117,7 +17621,7 @@ mod tests {
         let mut reloaded = project_reload(directory.to_string_lossy().into_owned())
             .expect("reload should refresh the baseline");
         reloaded["project"]["title"] = json!("after-reload");
-        project_save(
+        project_save_legacy(
             directory.to_string_lossy().into_owned(),
             project_fingerprint(&directory).expect("reloaded baseline"),
             None,
@@ -17150,7 +17654,7 @@ mod tests {
         }
         let mut stale_edit = initial;
         stale_edit["project"]["title"] = json!("stale edit");
-        let rejected = project_save(
+        let rejected = project_save_legacy(
             directory.to_string_lossy().into_owned(),
             stale,
             None,
@@ -17172,7 +17676,7 @@ mod tests {
         );
         let mut fresh_edit = imported.clone();
         fresh_edit["project"]["title"] = json!("fresh edit");
-        project_save(
+        project_save_legacy(
             directory.to_string_lossy().into_owned(),
             fresh,
             None,
@@ -17221,7 +17725,7 @@ mod tests {
         )
         .expect("explicit resolution should write the merged branch");
         assert_eq!(read_project_value(&directory).unwrap(), merged);
-        project_save(
+        project_save_legacy(
             directory.to_string_lossy().into_owned(),
             project_fingerprint(&directory).expect("resolved baseline"),
             None,
