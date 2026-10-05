@@ -12679,14 +12679,25 @@ fn ai_write_store_with_backup(
     label: &str,
     keep_backup: bool,
 ) -> Result<(), String> {
+    ai_write_store_with_backup_report(path, value, label, keep_backup).map(|_| ())
+}
+
+fn ai_write_store_with_backup_report(
+    path: &Path,
+    value: &Value,
+    label: &str,
+    keep_backup: bool,
+) -> Result<Option<String>, String> {
     let mut contents = serde_json::to_string_pretty(value)
         .map_err(|error| format!("无法序列化{label}: {error}"))?;
     contents.push('\n');
-    atomic_write_path(path, &contents, keep_backup)?;
+    let warning = atomic_write_path_report(path, &contents, keep_backup)
+        .map_err(|failure| failure.message)?;
     restrict_ai_file_mode(path);
-    Ok(())
+    Ok(warning)
 }
 
+#[cfg(test)]
 fn ai_write_store(path: &Path, value: &Value, label: &str) -> Result<(), String> {
     ai_write_store_with_backup(path, value, label, true)
 }
@@ -16979,9 +16990,18 @@ fn ai_execution_append_at(base: &Path, record: &Value) -> Result<Value, String> 
         }
     }
     // 这里刻意不取任何项目锁：执行记录写失败只能提示，不能影响 project_save。
-    ai_write_store(&paths.executions, &Value::Object(store), "AI 执行记录")
-        .map_err(|error| ai_execution_record_failed(&error))?;
-    Ok(json!({ "id": id }))
+    let durability_warning = ai_write_store_with_backup_report(
+        &paths.executions,
+        &Value::Object(store),
+        "AI 执行记录",
+        true,
+    )
+    .map_err(|error| ai_execution_record_failed(&error))?;
+    Ok(json!({
+        "id": id,
+        "commit_state": "committed",
+        "durability_warning": durability_warning,
+    }))
 }
 
 fn ai_execution_list_at(base: &Path, limit: usize) -> Result<Value, String> {
@@ -21422,12 +21442,33 @@ mod tests {
         let directory = test_directory("ai-exec-failed");
         let base = ai_test_base(&directory);
         fs::create_dir_all(&base).expect("store directory should be created");
-        fs::write(base.join(AI_EXECUTIONS_FILE), br#"{"records":[]}"#)
-            .expect("store should be writable");
-        // 备份目标被目录占位：原子写入必然失败。
+        let execution_path = base.join(AI_EXECUTIONS_FILE);
+        fs::write(&execution_path, br#"{"records":[]}"#).expect("store should be writable");
+        // A backup promotion failure happens after the canonical log commits;
+        // it must not be misreported as a lost append.
         fs::create_dir_all(base.join("executions.bak"))
             .expect("backup placeholder should be created");
-        let error = ai_execution_append_at(&base, &json!({ "id": "exec-1" }))
+        let committed = ai_execution_append_at(&base, &json!({ "id": "exec-1" }))
+            .expect("a committed execution record must stay successful if backup rotation fails");
+        assert_eq!(committed["id"], json!("exec-1"));
+        assert_eq!(committed["commit_state"], json!("committed"));
+        assert!(
+            committed["durability_warning"]
+                .as_str()
+                .is_some_and(|warning| warning.contains("新备份替换失败")),
+            "the committed acknowledgement must retain the backup warning: {committed}"
+        );
+        assert_eq!(
+            ai_read_execution_store(&execution_path).unwrap()["records"][0]["id"],
+            json!("exec-1"),
+            "the postcommit result must match the canonical log"
+        );
+
+        // Force a genuine precommit failure. A backup promotion failure after
+        // canonical rename is now a committed write with a warning.
+        fail_atomic_write_for_test(&execution_path, "temp_create");
+        let before_failure = fs::read(&execution_path).unwrap();
+        let error = ai_execution_append_at(&base, &json!({ "id": "exec-2" }))
             .expect_err("写入失败必须被上报");
         assert!(
             error.contains("ai_execution_record_failed"),
@@ -21435,6 +21476,11 @@ mod tests {
         );
         assert!(error.contains("课程内容不受影响"), "got: {error}");
         assert!(error.contains("ai.execution.append"), "got: {error}");
+        assert_eq!(
+            fs::read(&execution_path).unwrap(),
+            before_failure,
+            "a precommit log failure must leave the stored record unchanged"
+        );
 
         let _ = fs::remove_dir_all(directory);
     }

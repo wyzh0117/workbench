@@ -1,0 +1,45 @@
+   Compiling ai-course-workbench v0.2.6 (/private/tmp/io-ui-closure-t6-baseline/src-tauri)
+warning: unused import: `super::*`
+ --> src/documents/docx/tests.rs:5:5
+  |
+5 | use super::*;
+  |     ^^^^^^^^
+  |
+  = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: function `xml_text` is never used
+  --> src/documents/fixtures.rs:54:15
+   |
+54 | pub(crate) fn xml_text(value: &str) -> String {
+   |               ^^^^^^^^
+   |
+   = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: function `pdf_literal` is never used
+  --> src/documents/fixtures.rs:62:15
+   |
+62 | pub(crate) fn pdf_literal(value: &str) -> String {
+   |               ^^^^^^^^^^^
+
+warning: `ai-course-workbench` (lib test) generated 3 warnings (run `cargo fix --lib -p ai-course-workbench --tests` to apply 1 suggestion)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 13.81s
+     Running unittests src/lib.rs (/tmp/io-ui-closure-rust-baseline.Bugvel/debug/deps/ai_course_workbench_lib-cc28423643d1bb57)
+
+running 1 test
+test tests::ai_execution_append_reports_a_log_failure_not_a_course_save_failure ... FAILED
+
+failures:
+
+---- tests::ai_execution_append_reports_a_log_failure_not_a_course_save_failure stdout ----
+
+thread 'tests::ai_execution_append_reports_a_log_failure_not_a_course_save_failure' (1082509) panicked at src/lib.rs:20646:14:
+写入失败必须被上报: Object {"id": String("exec-1")}
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    tests::ai_execution_append_reports_a_log_failure_not_a_course_save_failure
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 240 filtered out; finished in 0.02s
+
+error: test failed, to rerun pass `--lib`
