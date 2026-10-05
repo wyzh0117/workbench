@@ -60,6 +60,10 @@ function isNotFound(caught: unknown): boolean {
   );
 }
 
+function isAlreadyExists(caught: unknown): boolean {
+  return caught instanceof Deno.errors.AlreadyExists;
+}
+
 function sessionError(operation: string, caught?: unknown): ServiceError {
   const technical = caught instanceof Error ? caught.message : "unknown failure";
   return error(
@@ -97,10 +101,12 @@ function invalidSession(message: string): ServiceError {
 export class BrowserSessionStore {
   readonly directory: string;
   readonly path: string;
+  readonly lockPath: string;
 
   constructor(directory: string) {
     this.directory = normalize(directory);
     this.path = join(this.directory, BROWSER_SESSION_FILE);
+    this.lockPath = `${this.path}.lock`;
   }
 
   /**
@@ -111,13 +117,16 @@ export class BrowserSessionStore {
   async load(projectId: string | null): Promise<BrowserReaderSession | null> {
     if (!isProjectId(projectId)) return null;
     try {
-      const raw = await this.readEnvelope();
-      if (!raw) return null;
-      if (raw.version !== BROWSER_SESSION_VERSION) return null;
-      if (raw.project_root !== this.directory || raw.project_id !== projectId) {
-        return null;
-      }
-      return normalizeSession(raw.session, projectId);
+      if (!await this.ensureSafeDirectory(false)) return null;
+      return await this.withLock(false, async () => {
+        const raw = await this.readEnvelope();
+        if (!raw) return null;
+        if (raw.version !== BROWSER_SESSION_VERSION) return null;
+        if (raw.project_root !== this.directory || raw.project_id !== projectId) {
+          return null;
+        }
+        return normalizeSession(raw.session, projectId);
+      });
     } catch {
       return null;
     }
@@ -144,20 +153,71 @@ export class BrowserSessionStore {
     }
     try {
       await this.ensureSafeDirectory();
-      const temporary = `${this.path}.tmp-${id()}`;
-      try {
-        await Deno.writeTextFile(temporary, contents, { createNew: true });
-        await Deno.rename(temporary, this.path);
-      } catch (caught) {
-        await Deno.remove(temporary).catch(() => undefined);
-        throw caught;
-      }
-      // Reader state is not secret, but a restrictive mode keeps the sidecar
-      // consistent with other local metadata on systems that support chmod.
-      if (Deno.build.os !== "windows") await Deno.chmod(this.path, 0o600).catch(() => undefined);
+      await this.withLock(true, async () => {
+        const current = await this.readEnvelope();
+        if (current && `${JSON.stringify(current)}\n` === contents) return;
+        const temporary = `${this.path}.tmp-${id()}`;
+        try {
+          await Deno.writeTextFile(temporary, contents, { createNew: true });
+          await Deno.rename(temporary, this.path);
+        } catch (caught) {
+          await Deno.remove(temporary).catch(() => undefined);
+          throw caught;
+        }
+        // Reader state is not secret, but a restrictive mode keeps the sidecar
+        // consistent with other local metadata on systems that support chmod.
+        if (Deno.build.os !== "windows") {
+          await Deno.chmod(this.path, 0o600).catch(() => undefined);
+        }
+      });
     } catch (caught) {
       if (caught instanceof ServiceError) throw caught;
       throw sessionError("write", caught);
+    }
+  }
+
+  private async withLock<T>(exclusive: boolean, action: () => Promise<T>): Promise<T> {
+    let current: Deno.FileInfo | null = null;
+    try {
+      current = await Deno.lstat(this.lockPath);
+    } catch (caught) {
+      if (!isNotFound(caught) || !exclusive) throw caught;
+    }
+    if (current && (current.isSymlink || !current.isFile)) {
+      throw new Error("session lock path is not a regular file");
+    }
+    if (!current && !exclusive) return await action();
+
+    const file = await Deno.open(this.lockPath, {
+      create: exclusive,
+      mode: 0o600,
+      read: true,
+      write: exclusive,
+    });
+    try {
+      const opened = await file.stat();
+      const beforeLock = await Deno.lstat(this.lockPath);
+      if (
+        beforeLock.isSymlink || !beforeLock.isFile || opened.dev !== beforeLock.dev ||
+        opened.ino !== beforeLock.ino
+      ) {
+        throw new Error("session lock path changed while opening");
+      }
+      await file.lock(exclusive);
+      const afterLock = await Deno.lstat(this.lockPath);
+      if (
+        afterLock.isSymlink || !afterLock.isFile || opened.dev !== afterLock.dev ||
+        opened.ino !== afterLock.ino
+      ) {
+        throw new Error("session lock path changed while acquiring lock");
+      }
+      try {
+        return await action();
+      } finally {
+        await file.unlock();
+      }
+    } finally {
+      file.close();
     }
   }
 
@@ -193,13 +253,26 @@ export class BrowserSessionStore {
     } catch (caught) {
       if (!isNotFound(caught)) throw caught;
       if (!createWorkspace) return false;
-      await Deno.mkdir(workspace, { recursive: false });
+      try {
+        await Deno.mkdir(workspace, { recursive: false });
+      } catch (mkdirError) {
+        if (!isAlreadyExists(mkdirError)) throw mkdirError;
+      }
+      const created = await Deno.lstat(workspace);
+      if (created.isSymlink || !created.isDirectory) throw new Error("workspace is not a directory");
     }
-    try {
-      const stat = await Deno.lstat(this.path);
-      if (stat.isSymlink || !stat.isFile) throw new Error("session path is not a regular file");
-    } catch (caught) {
-      if (!isNotFound(caught)) throw caught;
+    for (const [path, description] of [
+      [this.path, "session"],
+      [this.lockPath, "session lock"],
+    ] as const) {
+      try {
+        const stat = await Deno.lstat(path);
+        if (stat.isSymlink || !stat.isFile) {
+          throw new Error(`${description} path is not a regular file`);
+        }
+      } catch (caught) {
+        if (!isNotFound(caught)) throw caught;
+      }
     }
     return true;
   }

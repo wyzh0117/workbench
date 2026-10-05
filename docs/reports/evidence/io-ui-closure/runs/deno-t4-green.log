@@ -1,0 +1,8 @@
+Check tests/browser_session_lock_test.ts
+running 4 tests from ./tests/browser_session_lock_test.ts
+browser session reads and writes do not adopt external Canonical state ... ok (50ms)
+browser session identical serialization performs no sidecar replacement ... ok (2ms)
+browser session save waits for a lock held by another Deno process ... ok (154ms)
+browser session load waits for a lock held by another Deno process ... ok (151ms)
+
+ok | 4 passed | 0 failed (364ms)

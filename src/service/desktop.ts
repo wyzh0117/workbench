@@ -2820,9 +2820,9 @@ export class DesktopService {
    * to no pointer so the launcher remains usable.
    */
   async loadBrowserSession(): Promise<Record<string, unknown> | null> {
-    let project: ProjectData;
+    let project: ProjectData | null;
     try {
-      project = await this.store.readProject();
+      project = (await this.store.readProjectSnapshot()).project;
     } catch {
       return null;
     }
@@ -2833,9 +2833,9 @@ export class DesktopService {
 
   /** Save UI-only browser metadata after resolving the canonical identity. */
   async saveBrowserSession(value: unknown): Promise<void> {
-    let project: ProjectData;
+    let project: ProjectData | null;
     try {
-      project = await this.store.readProject();
+      project = (await this.store.readProjectSnapshot()).project;
     } catch (caught) {
       throw error(
         "browser_session_unavailable",
