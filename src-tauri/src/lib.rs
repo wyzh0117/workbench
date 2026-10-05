@@ -5163,6 +5163,7 @@ fn managed_import_name(name: &str) -> bool {
         "project.json"
             | "project.json.bak"
             | "project.json.backup"
+            | "project.bak"
             | "project.lock"
             | "project.lock.guard"
             | "providers.json"
@@ -18647,8 +18648,8 @@ mod tests {
         let files = [
             "project.json",
             ".workspace/recovery.json",
-            "project.json.bak",
-            ".workspace/recovery.json.bak",
+            "project.bak",
+            ".workspace/recovery.bak",
         ]
         .into_iter()
         .map(|path| {
@@ -18683,6 +18684,34 @@ mod tests {
         })
     }
 
+    #[test]
+    fn project_io_metrics_report_the_actual_backup_paths() {
+        let directory = test_directory("project-io-metrics-paths");
+        fs::create_dir_all(directory.join(".workspace")).expect("workspace");
+        let canonical_directory = fs::canonicalize(&directory).expect("canonical test directory");
+        reset_project_validation_reads(&directory);
+        record_project_io(&canonical_directory.join("project.bak"), "copy", 19);
+        record_project_io(
+            &canonical_directory.join(".workspace/recovery.bak"),
+            "copy",
+            7,
+        );
+
+        let metrics = project_io_metrics_value(&take_project_validation_reads(&directory));
+
+        assert_eq!(metrics["files"]["project.bak"]["copy_ops"], json!(1));
+        assert_eq!(metrics["files"]["project.bak"]["copy_bytes"], json!(19));
+        assert_eq!(
+            metrics["files"][".workspace/recovery.bak"]["copy_ops"],
+            json!(1)
+        );
+        assert_eq!(
+            metrics["files"][".workspace/recovery.bak"]["copy_bytes"],
+            json!(7)
+        );
+        let _ = fs::remove_dir_all(directory);
+    }
+
     fn project_save_legacy(
         project_dir: String,
         expected_fingerprint: FileFingerprint,
@@ -18711,9 +18740,9 @@ mod tests {
         project_create(project_dir.clone(), project.clone()).unwrap();
         let recovery_path = directory.join(".workspace/recovery.json");
         fs::write(&recovery_path, b"recovery sentinel").unwrap();
-        let recovery_backup_path = directory.join(".workspace/recovery.json.bak");
+        let recovery_backup_path = directory.join(".workspace/recovery.bak");
         fs::write(&recovery_backup_path, b"recovery backup sentinel").unwrap();
-        let project_backup_path = directory.join("project.json.bak");
+        let project_backup_path = directory.join("project.bak");
         fs::write(&project_backup_path, b"project backup sentinel").unwrap();
         let project_bytes = fs::read(directory.join("project.json")).unwrap();
         let lease_generation = active_lease_generation(&directory).unwrap();
@@ -18745,8 +18774,8 @@ mod tests {
         for path in [
             "project.json",
             ".workspace/recovery.json",
-            "project.json.bak",
-            ".workspace/recovery.json.bak",
+            "project.bak",
+            ".workspace/recovery.bak",
         ] {
             let file = io.files.get(path).copied().unwrap_or_default();
             assert_eq!(file.write_ops, 0, "unchanged save wrote {path}");
@@ -19031,7 +19060,7 @@ mod tests {
         let original = json!({ "project": { "id": "p1", "title": "before" }, "items": [] });
         project_create(project_dir.clone(), original.clone()).unwrap();
         let canonical_path = directory.join("project.json");
-        let backup_path = directory.join("project.json.bak");
+        let backup_path = directory.join("project.bak");
         fs::write(&backup_path, b"older verified backup").unwrap();
         let original_bytes = fs::read(&canonical_path).unwrap();
         let expected = project_fingerprint(&directory).unwrap();
@@ -19068,6 +19097,42 @@ mod tests {
     }
 
     #[test]
+    fn project_save_rotates_original_bytes_to_the_real_backup_path() {
+        let directory = test_directory("save-real-backup-rotation");
+        let project_dir = directory.to_string_lossy().into_owned();
+        let original = json!({ "project": { "id": "p1", "title": "before" }, "items": [] });
+        project_create(project_dir.clone(), original.clone()).unwrap();
+        let canonical_path = directory.join("project.json");
+        let backup_path = directory.join("project.bak");
+        let original_bytes = fs::read(&canonical_path).unwrap();
+        let expected = project_fingerprint(&directory).unwrap();
+        let lease_generation = active_lease_generation(&directory).unwrap();
+        let mut changed = original;
+        changed["project"]["title"] = json!("after");
+
+        let result = project_save(
+            project_dir.clone(),
+            expected,
+            None,
+            changed,
+            Some("p1".into()),
+            Some(lease_generation),
+            Some(4),
+            Some("real-backup-rotation".into()),
+            Some(2),
+            None,
+        )
+        .expect("changed save should commit");
+
+        assert_eq!(result["commit_state"], json!("committed"));
+        assert_eq!(result["outcome"], json!("written"));
+        assert_eq!(fs::read(&backup_path).unwrap(), original_bytes);
+        assert_ne!(fs::read(&canonical_path).unwrap(), original_bytes);
+        project_close(project_dir).unwrap();
+        let _ = fs::remove_dir_all(directory);
+    }
+
+    #[test]
     fn project_save_precommit_failures_keep_the_older_backup() {
         for (stage, expected_stage) in [
             ("temp_create_interrupted", "temp_create"),
@@ -19079,7 +19144,7 @@ mod tests {
             let original = json!({ "project": { "id": "p1", "title": "before" }, "items": [] });
             project_create(project_dir.clone(), original.clone()).unwrap();
             let canonical_path = directory.join("project.json");
-            let backup_path = directory.join("project.json.bak");
+            let backup_path = directory.join("project.bak");
             fs::write(&backup_path, b"older verified backup").unwrap();
             let original_bytes = fs::read(&canonical_path).unwrap();
             let expected = project_fingerprint(&directory).unwrap();
@@ -19134,7 +19199,7 @@ mod tests {
             });
             project_create(project_dir.clone(), original).unwrap();
             let canonical_path = directory.join("project.json");
-            let backup_path = directory.join("project.json.bak");
+            let backup_path = directory.join("project.bak");
             fs::write(&backup_path, b"older verified backup").unwrap();
             let expected = project_fingerprint(&directory).unwrap();
             let lease_generation = active_lease_generation(&directory).unwrap();
@@ -24246,6 +24311,7 @@ mod tests {
         fs::write(root.join("notes.txt"), "txt").expect("txt");
         fs::write(root.join("weird.bin"), "bin").expect("bin");
         fs::write(root.join("project.lock"), "lock").expect("lock");
+        fs::write(root.join("project.bak"), "native save backup").expect("backup");
         fs::write(root.join("credentials.json"), "secret metadata").expect("credentials");
         fs::create_dir_all(root.join("target")).expect("build output");
         fs::create_dir_all(root.join(".workspace")).expect("workspace metadata");
@@ -24294,6 +24360,7 @@ mod tests {
             "unknown type must be tagged, not crash"
         );
         assert!(folder_scan_entry(&report, "project.lock").is_none());
+        assert!(folder_scan_entry(&report, "project.bak").is_none());
         assert!(folder_scan_entry(&report, "credentials.json").is_none());
         assert!(folder_scan_entry(&report, "target").is_none());
         assert!(folder_scan_entry(&report, ".workspace").is_none());

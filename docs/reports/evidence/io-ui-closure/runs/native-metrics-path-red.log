@@ -1,0 +1,57 @@
+   Compiling ai-course-workbench v0.2.7 (/Users/youngi/.codex/worktrees/io-ui-closure/workbench/src-tauri)
+warning: unused import: `super::*`
+ --> src/documents/docx/tests.rs:5:5
+  |
+5 | use super::*;
+  |     ^^^^^^^^
+  |
+  = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: function `write_project_value_with_warning` is never used
+    --> src/lib.rs:2300:4
+     |
+2300 | fn write_project_value_with_warning(
+     |    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+     |
+     = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: function `write_project_value` is never used
+    --> src/lib.rs:2312:4
+     |
+2312 | fn write_project_value(project_dir: &Path, project: &Value) -> Result<(), String> {
+     |    ^^^^^^^^^^^^^^^^^^^
+
+warning: function `xml_text` is never used
+  --> src/documents/fixtures.rs:54:15
+   |
+54 | pub(crate) fn xml_text(value: &str) -> String {
+   |               ^^^^^^^^
+
+warning: function `pdf_literal` is never used
+  --> src/documents/fixtures.rs:62:15
+   |
+62 | pub(crate) fn pdf_literal(value: &str) -> String {
+   |               ^^^^^^^^^^^
+
+warning: `ai-course-workbench` (lib) generated 2 warnings
+warning: `ai-course-workbench` (lib test) generated 5 warnings (2 duplicates) (run `cargo fix --lib -p ai-course-workbench --tests` to apply 1 suggestion)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 10.04s
+     Running unittests src/lib.rs (/tmp/io-ui-closure-candidate-seeded/debug/deps/ai_course_workbench_lib-7ed887973fc21486)
+
+running 1 test
+
+thread 'tests::project_io_metrics_report_the_actual_backup_paths' (1268072) panicked at src/lib.rs:18696:9:
+assertion `left == right` failed
+  left: Null
+ right: Number(1)
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+test tests::project_io_metrics_report_the_actual_backup_paths ... FAILED
+
+failures:
+
+failures:
+    tests::project_io_metrics_report_the_actual_backup_paths
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 248 filtered out; finished in 0.00s
+
+error: test failed, to rerun pass `--lib`
