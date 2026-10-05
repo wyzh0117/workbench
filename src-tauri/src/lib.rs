@@ -37,6 +37,8 @@ static APP_INSTANCE_ID: OnceLock<String> = OnceLock::new();
 static ACTIVE_PROJECT_LOCKS: OnceLock<Mutex<HashMap<PathBuf, LeaseHandle>>> = OnceLock::new();
 static PROJECT_BASELINES: OnceLock<Mutex<HashMap<PathBuf, ProjectBaseline>>> = OnceLock::new();
 static SCANNED_FOLDER_VIDEOS: OnceLock<Mutex<HashSet<(PathBuf, String)>>> = OnceLock::new();
+#[cfg(test)]
+static SNAPSHOT_FAIL_ID: OnceLock<Mutex<Option<String>>> = OnceLock::new();
 static EXIT_READY: AtomicBool = AtomicBool::new(false);
 
 /// Project directory requested on the command line (`--project-dir <path>`).
@@ -2925,7 +2927,26 @@ fn bridge_send_selection(state: State<'_, BridgeState>, input: Value) -> Result<
     }))
 }
 
-fn snapshot_directory(project_dir: &Path) -> Result<PathBuf, String> {
+fn snapshot_directory(project_dir: &Path) -> PathBuf {
+    project_dir.join(".workspace").join("snapshots")
+}
+
+fn existing_snapshot_directory(project_dir: &Path) -> Result<Option<PathBuf>, String> {
+    let workspace = project_dir.join(".workspace");
+    let snapshots = snapshot_directory(project_dir);
+    for path in [&workspace, &snapshots] {
+        reject_symlink(path, "历史版本目录")?;
+        match fs::symlink_metadata(path) {
+            Ok(metadata) if !metadata.is_dir() => return Err("历史版本目录不是目录".into()),
+            Ok(_) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+            Err(error) => return Err(format!("无法检查历史版本目录: {error}")),
+        }
+    }
+    Ok(Some(snapshots))
+}
+
+fn ensure_snapshot_directory(project_dir: &Path) -> Result<PathBuf, String> {
     ensure_directory(&project_dir.join(".workspace"), "项目工作区目录")
         .and_then(|workspace| ensure_directory(&workspace.join("snapshots"), "历史版本目录"))
 }
@@ -2938,14 +2959,231 @@ fn valid_snapshot_id(snapshot_id: &str) -> bool {
             .all(|character| character.is_ascii_alphanumeric() || matches!(character, '-' | '_'))
 }
 
-fn snapshot_envelope(snapshot_id: String, name: String, note: String, project: Value) -> Value {
+#[derive(Clone, Debug)]
+struct SnapshotBinding {
+    project_id: String,
+    project_dir: String,
+    lease_generation: String,
+    editor_generation: Option<u64>,
+    operation_id: Option<String>,
+    revision: Option<u64>,
+}
+
+fn snapshot_content_hash(project: &Value) -> Result<String, String> {
+    let contents = serde_json::to_vec(project).map_err(|error| error.to_string())?;
+    Ok(sha256_hex(&contents))
+}
+
+fn snapshot_binding(
+    project_dir: &Path,
+    project: &Value,
+    expected_project_id: Option<&str>,
+    requested_lease_generation: Option<&str>,
+    editor_generation: Option<u64>,
+    operation_id: Option<String>,
+    revision: Option<u64>,
+) -> Result<SnapshotBinding, String> {
+    let project_id = project_id_of(project)?;
+    if expected_project_id.is_some_and(|expected| expected != project_id) {
+        return Err(snapshot_error(
+            "project_id_mismatch",
+            "快照项目身份已变化，请重新打开项目后重试。",
+            "snapshot_preflight",
+            "not_committed",
+            false,
+        ));
+    }
+    if let Some(operation_id) = operation_id.as_deref() {
+        if !valid_snapshot_id(operation_id) {
+            return Err(snapshot_error(
+                "invalid_operation_id",
+                "快照操作编号无效。",
+                "snapshot_preflight",
+                "not_committed",
+                false,
+            ));
+        }
+    }
+    let directory =
+        fs::canonicalize(project_dir).map_err(|error| format!("无法解析项目目录: {error}"))?;
+    let current = read_project_state(&directory)?.0;
+    if project_id_of(&current)? != project_id {
+        return Err(snapshot_error(
+            "project_id_mismatch",
+            "快照与当前项目不匹配。",
+            "snapshot_preflight",
+            "not_committed",
+            false,
+        ));
+    }
+    let lease_generation = verify_lease_generation(&directory, requested_lease_generation)?;
+    Ok(SnapshotBinding {
+        project_id,
+        project_dir: directory.to_string_lossy().into_owned(),
+        lease_generation,
+        editor_generation,
+        operation_id,
+        revision,
+    })
+}
+
+fn snapshot_error(
+    code: &str,
+    message: &str,
+    stage: &str,
+    commit_state: &str,
+    retryable: bool,
+) -> String {
     json!({
+        "error": {
+            "code": code,
+            "message": message,
+            "commit_state": commit_state,
+            "stage": stage,
+            "retryable": retryable,
+        }
+    })
+    .to_string()
+}
+
+fn snapshot_id_for_operation(operation_id: Option<&str>) -> Result<String, String> {
+    let Some(operation_id) = operation_id else {
+        return Ok(native_id("snapshot"));
+    };
+    if !valid_snapshot_id(operation_id) {
+        return Err(snapshot_error(
+            "invalid_operation_id",
+            "快照操作编号无效。",
+            "snapshot_preflight",
+            "not_committed",
+            false,
+        ));
+    }
+    let hash = sha256_hex(operation_id.as_bytes());
+    Ok(format!("snapshot-{}", &hash[..24]))
+}
+
+fn snapshot_envelope(
+    snapshot_id: String,
+    name: String,
+    note: String,
+    project: Value,
+    binding: Option<&SnapshotBinding>,
+) -> Result<Value, String> {
+    let mut envelope = json!({
         "id": snapshot_id,
         "name": name,
         "note": note,
         "created_at": unix_millis().to_string(),
+        "content_hash": snapshot_content_hash(&project)?,
         "project": project,
+    });
+    if let Some(binding) = binding {
+        envelope["project_id"] = json!(binding.project_id);
+        envelope["project_dir"] = json!(binding.project_dir);
+        envelope["lease_generation"] = json!(binding.lease_generation);
+        envelope["editor_generation"] = json!(binding.editor_generation);
+        envelope["operation_id"] = json!(binding.operation_id);
+        envelope["revision"] = json!(binding.revision);
+    }
+    Ok(envelope)
+}
+
+fn snapshot_binding_matches(envelope: &Value, binding: &SnapshotBinding) -> bool {
+    envelope.get("project_id") == Some(&json!(binding.project_id))
+        && envelope.get("project_dir") == Some(&json!(binding.project_dir))
+        && envelope.get("lease_generation") == Some(&json!(binding.lease_generation))
+        && envelope.get("editor_generation") == Some(&json!(binding.editor_generation))
+        && envelope.get("operation_id") == Some(&json!(binding.operation_id))
+        && envelope.get("revision") == Some(&json!(binding.revision))
+}
+
+fn snapshot_ack(envelope: Value, outcome: &str) -> Value {
+    let field = |name: &str| envelope.get(name).cloned().unwrap_or(Value::Null);
+    json!({
+        "id": field("id"),
+        "snapshot_id": field("id"),
+        "name": field("name"),
+        "note": field("note"),
+        "created_at": field("created_at"),
+        "content_hash": field("content_hash"),
+        "project_id": field("project_id"),
+        "project_dir": field("project_dir"),
+        "lease_generation": field("lease_generation"),
+        "editor_generation": field("editor_generation"),
+        "operation_id": field("operation_id"),
+        "revision": field("revision"),
+        "persisted": true,
+        "outcome": outcome,
     })
+}
+
+fn atomic_create_snapshot(path: &Path, contents: &[u8]) -> Result<Option<String>, String> {
+    let parent = path.parent().ok_or("历史版本文件没有父目录")?;
+    ensure_directory(parent, "历史版本目录")?;
+    reject_symlink(path, "历史版本文件")?;
+    let file_name = path
+        .file_name()
+        .ok_or("历史版本文件名无效")?
+        .to_string_lossy();
+    let temporary = parent.join(format!(
+        ".{file_name}.tmp-{}-{}",
+        std::process::id(),
+        native_id("snapshot")
+    ));
+    let mut file = OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&temporary)
+        .map_err(|error| format!("无法创建历史版本临时文件: {error}"))?;
+    if let Err(error) = file.write_all(contents).and_then(|_| file.sync_all()) {
+        let _ = fs::remove_file(&temporary);
+        return Err(format!("无法写入历史版本: {error}"));
+    }
+    drop(file);
+    match fs::hard_link(&temporary, path) {
+        Ok(()) => Ok(fs::remove_file(&temporary)
+            .err()
+            .map(|error| format!("历史版本已保存，但临时文件清理失败: {error}"))),
+        Err(error) => {
+            let _ = fs::remove_file(&temporary);
+            if error.kind() == std::io::ErrorKind::AlreadyExists {
+                Err(snapshot_error(
+                    "snapshot_id_conflict",
+                    "历史版本编号已被占用，请重新读取历史版本。",
+                    "snapshot_create",
+                    "not_committed",
+                    false,
+                ))
+            } else {
+                Err(format!("无法确认历史版本落盘: {error}"))
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+fn fail_snapshot_write_for_test(snapshot_id: &str) {
+    *SNAPSHOT_FAIL_ID
+        .get_or_init(|| Mutex::new(None))
+        .lock()
+        .unwrap() = Some(snapshot_id.to_owned());
+}
+
+fn snapshot_write_failure_requested(snapshot_id: &str) -> bool {
+    #[cfg(test)]
+    {
+        let mut fail_id = SNAPSHOT_FAIL_ID
+            .get_or_init(|| Mutex::new(None))
+            .lock()
+            .unwrap();
+        if fail_id.as_deref() == Some(snapshot_id) {
+            *fail_id = None;
+            return true;
+        }
+    }
+    let _ = snapshot_id;
+    false
 }
 
 fn write_snapshot_unlocked(
@@ -2954,25 +3192,78 @@ fn write_snapshot_unlocked(
     name: String,
     note: String,
     project: Value,
+    binding: &SnapshotBinding,
 ) -> Result<Value, String> {
     if !valid_snapshot_id(&snapshot_id) {
-        return Err("历史版本编号无效".into());
+        return Err(snapshot_error(
+            "invalid_snapshot_id",
+            "历史版本编号无效。",
+            "snapshot_preflight",
+            "not_committed",
+            false,
+        ));
     }
     validate_project(&project)?;
-    let envelope = snapshot_envelope(snapshot_id, name, note, project);
+    let envelope = snapshot_envelope(snapshot_id, name, note, project, Some(binding))?;
     reject_sensitive(&envelope)?;
-    let directory = snapshot_directory(project_dir)?;
+    let directory = ensure_snapshot_directory(project_dir)?;
     let id = envelope
         .get("id")
         .and_then(Value::as_str)
         .ok_or("历史版本编号缺失")?;
     let path = directory.join(format!("{id}.json"));
-    atomic_write_path(
-        &path,
-        &(serde_json::to_string_pretty(&envelope).map_err(|error| error.to_string())? + "\n"),
-        false,
-    )?;
-    Ok(envelope)
+    reject_symlink(&path, "历史版本文件")?;
+    match fs::symlink_metadata(&path) {
+        Ok(metadata) if metadata.is_file() => {
+            let existing =
+                read_snapshot_envelope(project_dir, id)?.ok_or("历史版本文件在读取时消失")?;
+            let existing_project = existing.get("project").ok_or("历史版本缺少项目数据")?;
+            let existing_hash = existing
+                .get("content_hash")
+                .and_then(Value::as_str)
+                .map(ToOwned::to_owned)
+                .unwrap_or(snapshot_content_hash(existing_project)?);
+            let requested_hash = envelope["content_hash"].as_str().unwrap_or_default();
+            if existing_hash == requested_hash && snapshot_binding_matches(&existing, binding) {
+                return Ok(snapshot_ack(existing, "unchanged"));
+            }
+            return Err(snapshot_error(
+                "snapshot_id_conflict",
+                "相同历史版本编号对应不同内容或操作代次，原有历史版本未覆盖。",
+                "snapshot_preflight",
+                "not_committed",
+                false,
+            ));
+        }
+        Ok(_) => {
+            return Err(snapshot_error(
+                "snapshot_id_conflict",
+                "历史版本编号已被其他文件占用，原有内容未覆盖。",
+                "snapshot_preflight",
+                "not_committed",
+                false,
+            ));
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => return Err(format!("无法检查历史版本文件: {error}")),
+    }
+    if snapshot_write_failure_requested(id) {
+        return Err(snapshot_error(
+            "snapshot_write_failed",
+            "历史版本未保存，原有内容未改变。",
+            "snapshot_write",
+            "not_committed",
+            true,
+        ));
+    }
+    let mut contents = serde_json::to_vec_pretty(&envelope).map_err(|error| error.to_string())?;
+    contents.push(b'\n');
+    let durability_warning = atomic_create_snapshot(&path, &contents)?;
+    let mut acknowledgement = snapshot_ack(envelope, "written");
+    if let Some(warning) = durability_warning {
+        acknowledgement["durability_warning"] = json!(warning);
+    }
+    Ok(acknowledgement)
 }
 
 fn write_snapshot(
@@ -2981,10 +3272,24 @@ fn write_snapshot(
     name: String,
     note: String,
     project: Value,
+    expected_project_id: Option<&str>,
+    lease_generation: Option<&str>,
+    editor_generation: Option<u64>,
+    operation_id: Option<String>,
+    revision: Option<u64>,
 ) -> Result<Value, String> {
     let _lease_guard = require_active_project_lock(project_dir)?;
     ensure_no_external_modification(project_dir)?;
-    write_snapshot_unlocked(project_dir, snapshot_id, name, note, project)
+    let binding = snapshot_binding(
+        project_dir,
+        &project,
+        expected_project_id,
+        lease_generation,
+        editor_generation,
+        operation_id,
+        revision,
+    )?;
+    write_snapshot_unlocked(project_dir, snapshot_id, name, note, project, &binding)
 }
 
 #[tauri::command]
@@ -2994,20 +3299,45 @@ fn create_snapshot(
     name: String,
     note: String,
     project: Value,
+    expected_project_id: Option<String>,
+    lease_generation: Option<String>,
+    editor_generation: Option<u64>,
+    operation_id: Option<String>,
+    revision: Option<u64>,
 ) -> Result<Value, String> {
     let project_dir = explicit_project_dir(&project_dir, true)?;
-    let id = snapshot_id.unwrap_or_else(|| native_id("snapshot"));
-    write_snapshot(&project_dir, id, name, note, project)
+    let id = match snapshot_id {
+        Some(snapshot_id) => snapshot_id,
+        None => snapshot_id_for_operation(operation_id.as_deref())?,
+    };
+    write_snapshot(
+        &project_dir,
+        id,
+        name,
+        note,
+        project,
+        expected_project_id.as_deref(),
+        lease_generation.as_deref(),
+        editor_generation,
+        operation_id,
+        revision,
+    )
 }
 
 fn read_snapshot_envelope(project_dir: &Path, snapshot_id: &str) -> Result<Option<Value>, String> {
     if !valid_snapshot_id(snapshot_id) {
         return Err("历史版本编号无效".into());
     }
-    let directory = snapshot_directory(project_dir)?;
-    let path = directory.join(format!("{snapshot_id}.json"));
-    if !path.exists() {
+    let Some(directory) = existing_snapshot_directory(project_dir)? else {
         return Ok(None);
+    };
+    let path = directory.join(format!("{snapshot_id}.json"));
+    reject_symlink(&path, "历史版本文件")?;
+    match fs::symlink_metadata(&path) {
+        Ok(metadata) if metadata.is_file() => {}
+        Ok(_) => return Err("历史版本文件不是普通文件".into()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(format!("无法检查历史版本文件: {error}")),
     }
     let value = read_json_file(&path)?;
     if value.get("id").is_some() && value.get("name").is_some() && value.get("project").is_some() {
@@ -3022,7 +3352,8 @@ fn read_snapshot_envelope(project_dir: &Path, snapshot_id: &str) -> Result<Optio
         "历史版本".into(),
         "".into(),
         value,
-    )))
+        None,
+    )?))
 }
 
 #[tauri::command]
@@ -3035,28 +3366,74 @@ fn read_snapshot(project_dir: String, snapshot_id: String) -> Result<Option<Valu
 #[tauri::command]
 fn list_snapshots(project_dir: String) -> Result<Value, String> {
     let project_dir = explicit_project_dir(&project_dir, false)?;
-    let directory = snapshot_directory(&project_dir)?;
+    let Some(directory) = existing_snapshot_directory(&project_dir)? else {
+        return Ok(Value::Array(Vec::new()));
+    };
     let mut entries = Vec::new();
-    for entry in fs::read_dir(&directory).map_err(|error| format!("无法读取历史版本: {error}"))?
-    {
-        let entry = entry.map_err(|error| format!("无法读取历史版本条目: {error}"))?;
+    let reader = match fs::read_dir(&directory) {
+        Ok(reader) => reader,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return Ok(Value::Array(Vec::new()))
+        }
+        Err(error) => return Err(format!("无法读取历史版本: {error}")),
+    };
+    for entry in reader {
+        let entry = match entry {
+            Ok(entry) => entry,
+            Err(error) => {
+                entries.push(json!({
+                    "id": Value::Null,
+                    "name": "历史版本条目无法读取",
+                    "note": "",
+                    "created_at": "",
+                    "status": "error",
+                    "error": {
+                        "code": "snapshot_entry_unreadable",
+                        "message": format!("无法读取历史版本条目: {error}"),
+                    },
+                }));
+                continue;
+            }
+        };
         let path = entry.path();
-        reject_symlink(&path, "历史版本文件")?;
         if path.extension().and_then(|value| value.to_str()) != Some("json") {
             continue;
         }
         let Some(id) = path.file_stem().and_then(|value| value.to_str()) else {
+            entries.push(json!({
+                "id": Value::Null,
+                "name": "历史版本编号无效",
+                "note": "",
+                "created_at": "",
+                "status": "error",
+                "error": {
+                    "code": "snapshot_invalid_id",
+                    "message": "历史版本文件名无效",
+                },
+            }));
             continue;
         };
-        let Some(envelope) = read_snapshot_envelope(&project_dir, id)? else {
-            continue;
-        };
-        entries.push(json!({
-            "id": envelope.get("id").cloned().unwrap_or_else(|| json!(id)),
-            "name": envelope.get("name").cloned().unwrap_or_else(|| json!("历史版本")),
-            "note": envelope.get("note").cloned().unwrap_or_else(|| json!("")),
-            "created_at": envelope.get("created_at").cloned().unwrap_or_else(|| json!("")),
-        }));
+        match read_snapshot_envelope(&project_dir, id) {
+            Ok(Some(envelope)) => entries.push(json!({
+                "id": envelope.get("id").cloned().unwrap_or_else(|| json!(id)),
+                "name": envelope.get("name").cloned().unwrap_or_else(|| json!("历史版本")),
+                "note": envelope.get("note").cloned().unwrap_or_else(|| json!("")),
+                "created_at": envelope.get("created_at").cloned().unwrap_or_else(|| json!("")),
+                "status": "available",
+            })),
+            Ok(None) => {}
+            Err(error) => entries.push(json!({
+                "id": id,
+                "name": "历史版本无法读取",
+                "note": "",
+                "created_at": "",
+                "status": "error",
+                "error": {
+                    "code": "snapshot_unreadable",
+                    "message": error,
+                },
+            })),
+        }
     }
     entries.sort_by(|left, right| {
         right
@@ -3068,24 +3445,63 @@ fn list_snapshots(project_dir: String) -> Result<Value, String> {
 }
 
 #[tauri::command]
-fn restore_snapshot(project_dir: String, snapshot_id: String) -> Result<Value, String> {
+fn restore_snapshot(
+    project_dir: String,
+    snapshot_id: String,
+    expected_project_id: Option<String>,
+    lease_generation: Option<String>,
+    editor_generation: Option<u64>,
+    operation_id: Option<String>,
+    revision: Option<u64>,
+) -> Result<Value, String> {
     let project_dir = explicit_project_dir(&project_dir, false)?;
     let _lease_guard = require_active_project_lock(&project_dir)?;
     ensure_no_external_modification(&project_dir)?;
     let current = read_project_value(&project_dir)?;
+    let binding = snapshot_binding(
+        &project_dir,
+        &current,
+        expected_project_id.as_deref(),
+        lease_generation.as_deref(),
+        editor_generation,
+        operation_id,
+        revision,
+    )?;
     let envelope =
         read_snapshot_envelope(&project_dir, &snapshot_id)?.ok_or("找不到这个历史版本")?;
     let mut restored = envelope
         .get("project")
         .cloned()
         .ok_or("历史版本缺少项目数据")?;
-    let backup_id = native_id("restore-before");
+    if project_id_of(&restored)? != binding.project_id
+        || envelope
+            .get("project_id")
+            .and_then(Value::as_str)
+            .is_some_and(|project_id| project_id != binding.project_id)
+    {
+        return Err(snapshot_error(
+            "snapshot_project_mismatch",
+            "历史版本属于其他项目，无法恢复。",
+            "restore_preflight",
+            "not_committed",
+            false,
+        ));
+    }
+    let backup_id = binding
+        .operation_id
+        .as_deref()
+        .map(|operation_id| {
+            let hash = sha256_hex(operation_id.as_bytes());
+            format!("restore-before-{}", &hash[..24])
+        })
+        .unwrap_or_else(|| native_id("restore-before"));
     let backup = write_snapshot_unlocked(
         &project_dir,
         backup_id.clone(),
         "恢复前备份".into(),
         "恢复旧版本前自动创建".into(),
         current,
+        &binding,
     )?;
     let restored_object = restored.as_object_mut().ok_or("历史版本项目数据格式无效")?;
     let snapshots = restored_object
@@ -3103,10 +3519,33 @@ fn restore_snapshot(project_dir: String, snapshot_id: String) -> Result<Value, S
             "name": backup.get("name").cloned().unwrap_or_else(|| json!("恢复前备份")),
             "note": backup.get("note").cloned().unwrap_or_else(|| json!("恢复旧版本前自动创建")),
             "created_at": backup.get("created_at").cloned().unwrap_or_else(|| json!(unix_millis().to_string())),
+            "content_hash": backup.get("content_hash").cloned().unwrap_or(Value::Null),
         }),
     );
-    write_project_value_unlocked(&project_dir, &restored)?;
-    Ok(json!({ "restored": true, "snapshot_id": snapshot_id, "backup_snapshot_id": backup_id }))
+    let recovery_warning = write_project_value_with_warning_unlocked(&project_dir, &restored)?;
+    let fingerprint = project_baselines()
+        .lock()
+        .unwrap()
+        .get(&project_dir)
+        .map(|baseline| baseline.fingerprint.clone())
+        .ok_or("恢复已写入，但无法读取提交指纹")?;
+    Ok(json!({
+        "restored": true,
+        "snapshot_id": snapshot_id,
+        "backup_snapshot_id": backup_id,
+        "project": restored,
+        "fingerprint": fingerprint,
+        "project_id": binding.project_id,
+        "project_dir": binding.project_dir,
+        "lease_generation": binding.lease_generation,
+        "editor_generation": binding.editor_generation,
+        "operation_id": binding.operation_id,
+        "revision": binding.revision,
+        "commit_state": "committed",
+        "backup_persisted": backup["persisted"] == true,
+        "recovery_warning": recovery_warning,
+        "durability_warning": backup.get("durability_warning").cloned(),
+    }))
 }
 
 fn source_path(value: &Value) -> Result<(PathBuf, PathBuf), String> {
@@ -15953,6 +16392,218 @@ mod tests {
         assert_eq!(first.app_instance_id, "first");
         release_project_lock_for(&directory, "first").expect("owner should release the lock");
         assert!(!path.exists());
+        let _ = fs::remove_dir_all(directory);
+    }
+
+    #[test]
+    fn snapshot_create_is_idempotent_and_refuses_content_conflict() {
+        let directory = test_directory("snapshot-bound");
+        let project_dir = directory.to_string_lossy().into_owned();
+        let project = json!({ "project": { "id": "p1", "title": "original" }, "items": [] });
+        project_create(project_dir.clone(), project.clone()).unwrap();
+        let lease_generation = active_lease_generation(&directory).unwrap();
+        let create = || {
+            create_snapshot(
+                project_dir.clone(),
+                Some("stable-snapshot".into()),
+                "Version 1".into(),
+                "source revision 7".into(),
+                project.clone(),
+                Some("p1".into()),
+                Some(lease_generation.clone()),
+                Some(4),
+                Some("snapshot-op-7".into()),
+                Some(7),
+            )
+        };
+        let first = create().expect("snapshot should persist");
+        let path = directory.join(".workspace/snapshots/stable-snapshot.json");
+        let persisted_bytes = fs::read(&path).expect("snapshot file should be durable");
+        assert_eq!(first["id"], json!("stable-snapshot"));
+        assert_eq!(first["snapshot_id"], first["id"]);
+        assert_eq!(first["project_id"], json!("p1"));
+        assert_eq!(
+            first["project_dir"],
+            json!(fs::canonicalize(&directory).unwrap().to_string_lossy())
+        );
+        assert_eq!(first["lease_generation"], json!(lease_generation));
+        assert_eq!(first["editor_generation"], json!(4));
+        assert_eq!(first["operation_id"], json!("snapshot-op-7"));
+        assert_eq!(first["revision"], json!(7));
+        assert_eq!(
+            first["content_hash"],
+            json!(snapshot_content_hash(&project).unwrap())
+        );
+        assert_eq!(first["persisted"], json!(true));
+        assert_eq!(first["outcome"], json!("written"));
+        assert!(
+            first.get("project").is_none(),
+            "create ack stays metadata-only"
+        );
+        let retried = create().expect("same operation should be idempotent");
+        assert_eq!(retried["outcome"], json!("unchanged"));
+        assert_eq!(retried["created_at"], first["created_at"]);
+        assert_eq!(fs::read(&path).unwrap(), persisted_bytes);
+
+        let changed = json!({ "project": { "id": "p1", "title": "changed" }, "items": [] });
+        let conflict = create_snapshot(
+            project_dir.clone(),
+            Some("stable-snapshot".into()),
+            "Version 2".into(),
+            "changed content".into(),
+            changed,
+            Some("p1".into()),
+            Some(lease_generation),
+            Some(4),
+            Some("snapshot-op-7".into()),
+            Some(7),
+        )
+        .expect_err("same ID with different content must conflict");
+        assert!(conflict.contains("snapshot_id_conflict"), "got {conflict}");
+        assert_eq!(fs::read(&path).unwrap(), persisted_bytes);
+        assert_eq!(
+            read_snapshot(project_dir.clone(), "stable-snapshot".into()).unwrap(),
+            Some(project)
+        );
+        project_close(project_dir).unwrap();
+        let _ = fs::remove_dir_all(directory);
+    }
+
+    #[test]
+    fn snapshot_listing_is_read_only_and_isolates_corrupt_files() {
+        let empty = test_directory("snapshot-list-read-only");
+        let listing = list_snapshots(empty.to_string_lossy().into_owned()).unwrap();
+        assert_eq!(listing, Value::Array(Vec::new()));
+        assert!(
+            !empty.join(".workspace").exists(),
+            "listing must not create a workspace"
+        );
+        let _ = fs::remove_dir_all(empty);
+
+        let directory = test_directory("snapshot-list-corrupt");
+        let project_dir = directory.to_string_lossy().into_owned();
+        let project = json!({ "project": { "id": "p1", "title": "snapshots" }, "items": [] });
+        project_create(project_dir.clone(), project.clone()).unwrap();
+        let lease_generation = active_lease_generation(&directory).unwrap();
+        create_snapshot(
+            project_dir.clone(),
+            Some("good-snapshot".into()),
+            "Good".into(),
+            "".into(),
+            project,
+            Some("p1".into()),
+            Some(lease_generation),
+            Some(1),
+            Some("list-op".into()),
+            Some(1),
+        )
+        .unwrap();
+        fs::write(directory.join(".workspace/snapshots/bad.json"), b"{broken").unwrap();
+        let listing = list_snapshots(project_dir.clone()).expect("one bad row should be isolated");
+        assert!(listing
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|entry| { entry["id"] == "good-snapshot" && entry["status"] == "available" }));
+        assert!(listing.as_array().unwrap().iter().any(|entry| {
+            entry["id"] == "bad"
+                && entry["status"] == "error"
+                && entry["error"]["code"] == "snapshot_unreadable"
+                && entry["error"]["message"].is_string()
+        }));
+        project_close(project_dir).unwrap();
+        let _ = fs::remove_dir_all(directory);
+    }
+
+    #[test]
+    fn restore_requires_a_persisted_backup_and_returns_the_committed_state() {
+        let directory = test_directory("restore-backup-gate");
+        let project_dir = directory.to_string_lossy().into_owned();
+        let original = json!({ "project": { "id": "p1", "title": "original" }, "items": [] });
+        let current = json!({ "project": { "id": "p1", "title": "current" }, "items": [] });
+        project_create(project_dir.clone(), original.clone()).unwrap();
+        let lease_generation = active_lease_generation(&directory).unwrap();
+        create_snapshot(
+            project_dir.clone(),
+            Some("restore-target".into()),
+            "Original".into(),
+            "".into(),
+            original,
+            Some("p1".into()),
+            Some(lease_generation.clone()),
+            Some(1),
+            Some("source-snapshot-op".into()),
+            Some(1),
+        )
+        .unwrap();
+        project_save(
+            project_dir.clone(),
+            project_fingerprint(&directory).unwrap(),
+            None,
+            current.clone(),
+        )
+        .unwrap();
+        let current_bytes = fs::read(directory.join("project.json")).unwrap();
+        let operation_id = "restore-op-9";
+        let backup_id = format!(
+            "restore-before-{}",
+            &sha256_hex(operation_id.as_bytes())[..24]
+        );
+        fail_snapshot_write_for_test(&backup_id);
+        let failed = restore_snapshot(
+            project_dir.clone(),
+            "restore-target".into(),
+            Some("p1".into()),
+            Some(lease_generation.clone()),
+            Some(9),
+            Some(operation_id.into()),
+            Some(9),
+        )
+        .expect_err("restore must stop when its backup cannot persist");
+        let failed_value: Value = serde_json::from_str(&failed).unwrap();
+        assert_eq!(
+            failed_value["error"]["commit_state"],
+            json!("not_committed")
+        );
+        assert_eq!(failed_value["error"]["stage"], json!("snapshot_write"));
+        assert_eq!(
+            fs::read(directory.join("project.json")).unwrap(),
+            current_bytes
+        );
+        assert!(read_snapshot(project_dir.clone(), backup_id.clone())
+            .unwrap()
+            .is_none());
+
+        let restored = restore_snapshot(
+            project_dir.clone(),
+            "restore-target".into(),
+            Some("p1".into()),
+            Some(lease_generation.clone()),
+            Some(9),
+            Some(operation_id.into()),
+            Some(9),
+        )
+        .expect("persisted backup should allow restore");
+        let committed_bytes = fs::read(directory.join("project.json")).unwrap();
+        let committed_project: Value = serde_json::from_slice(&committed_bytes).unwrap();
+        assert_eq!(restored["restored"], json!(true));
+        assert_eq!(restored["commit_state"], json!("committed"));
+        assert_eq!(restored["backup_persisted"], json!(true));
+        assert_eq!(restored["backup_snapshot_id"], json!(backup_id));
+        assert_eq!(restored["project"], committed_project);
+        assert_eq!(restored["project_id"], json!("p1"));
+        assert_eq!(restored["lease_generation"], json!(lease_generation));
+        assert_eq!(restored["operation_id"], json!(operation_id));
+        assert_eq!(restored["revision"], json!(9));
+        assert_eq!(
+            restored["fingerprint"]["hash"],
+            json!(sha256_hex(&committed_bytes))
+        );
+        assert_eq!(
+            read_snapshot(project_dir.clone(), backup_id.into()).unwrap(),
+            Some(current)
+        );
+        project_close(project_dir).unwrap();
         let _ = fs::remove_dir_all(directory);
     }
 
