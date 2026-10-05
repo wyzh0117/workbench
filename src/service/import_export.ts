@@ -24,6 +24,7 @@ import type {
 import { migrateProject, validateProjectData } from "../domain/store.ts";
 import { renderCourseMap } from "../domain/views.ts";
 import { sha256Bytes } from "../domain/util.ts";
+import { structuredError } from "./errors.ts";
 import {
   exportProjectJson,
   sanitizeHtml,
@@ -200,7 +201,18 @@ export interface ExportPreflightReport {
 export interface ExportFile {
   relative_path: string;
   mime_type: string;
-  bytes: Uint8Array;
+  size?: number;
+  sha256?: string;
+  asset_id?: string;
+  download_url?: string;
+  bytes?: Uint8Array;
+}
+
+interface InternalExportFile extends ExportFile {
+  source_path?: string;
+  source_state?: string;
+  expected_sha256?: string;
+  build_after_stream?: (files: InternalExportFile[]) => Uint8Array;
 }
 
 export interface ExportOptions {
@@ -217,12 +229,149 @@ export interface ExportOptions {
   asset_bytes?: Record<string, Uint8Array>;
   force_warnings?: boolean;
   replace_existing?: boolean;
+  signal?: AbortSignal;
 }
 
 export interface ExportResult {
   files: ExportFile[];
   preflight: ExportPreflightReport;
   target: ExportTarget;
+  warnings?: string[];
+}
+
+const EXPORT_IO_CHUNK_BYTES = 1024 * 1024;
+const EXPORT_INLINE_BYTES = 512 * 1024;
+
+const exportStreamMetrics = {
+  asset_bytes_read: 0,
+  asset_bytes_written: 0,
+  generated_bytes_written: 0,
+  asset_active_streams: 0,
+  peak_asset_active_streams: 0,
+  asset_buffered_bytes: 0,
+  peak_asset_buffered_bytes: 0,
+  download_active_streams: 0,
+  peak_download_active_streams: 0,
+  download_bytes_read: 0,
+  download_buffered_bytes: 0,
+  peak_download_buffered_bytes: 0,
+  export_active_streams: 0,
+  peak_export_active_streams: 0,
+  export_buffered_bytes: 0,
+  peak_export_buffered_bytes: 0,
+  commit_rollbacks: 0,
+};
+const MAX_ACTIVE_ASSET_STREAMS = 2;
+let activeAssetStreams = 0;
+const assetStreamWaiters: Array<{ grant(): boolean; cancel(): void }> = [];
+
+async function acquireAssetStream(signal?: AbortSignal): Promise<() => void> {
+  throwIfExportAborted(signal, "read_source");
+  if (activeAssetStreams < MAX_ACTIVE_ASSET_STREAMS) {
+    activeAssetStreams += 1;
+  } else {
+    await new Promise<void>((resolve, reject) => {
+      let waiting = true;
+      const waiter = {
+        grant: () => {
+          if (!waiting) return false;
+          waiting = false;
+          signal?.removeEventListener("abort", cancel);
+          activeAssetStreams += 1;
+          resolve();
+          return true;
+        },
+        cancel: () => {
+          if (!waiting) return;
+          waiting = false;
+          const index = assetStreamWaiters.indexOf(waiter);
+          if (index >= 0) assetStreamWaiters.splice(index, 1);
+          try {
+            throwIfExportAborted(signal, "read_source");
+          } catch (caught) {
+            reject(caught);
+          }
+        },
+      };
+      const cancel = () => waiter.cancel();
+      assetStreamWaiters.push(waiter);
+      signal?.addEventListener("abort", cancel, { once: true });
+      if (signal?.aborted) cancel();
+    });
+  }
+  let released = false;
+  return () => {
+    if (released) return;
+    released = true;
+    activeAssetStreams -= 1;
+    while (assetStreamWaiters.length > 0) {
+      if (assetStreamWaiters.shift()!.grant()) break;
+    }
+  };
+}
+
+export async function acquireExportStreamBuffer(
+  signal?: AbortSignal,
+  bytes = EXPORT_IO_CHUNK_BYTES,
+  kind: "asset" | "download" = "asset",
+): Promise<() => void> {
+  const releaseSlot = await acquireAssetStream(signal);
+  exportStreamMetrics.export_active_streams += 1;
+  exportStreamMetrics.peak_export_active_streams = Math.max(
+    exportStreamMetrics.peak_export_active_streams,
+    exportStreamMetrics.export_active_streams,
+  );
+  if (kind === "asset") {
+    exportStreamMetrics.asset_active_streams += 1;
+    exportStreamMetrics.peak_asset_active_streams = Math.max(
+      exportStreamMetrics.peak_asset_active_streams,
+      exportStreamMetrics.asset_active_streams,
+    );
+    exportStreamMetrics.asset_buffered_bytes += bytes;
+    exportStreamMetrics.peak_asset_buffered_bytes = Math.max(
+      exportStreamMetrics.peak_asset_buffered_bytes,
+      exportStreamMetrics.asset_buffered_bytes,
+    );
+  } else {
+    exportStreamMetrics.download_active_streams += 1;
+    exportStreamMetrics.peak_download_active_streams = Math.max(
+      exportStreamMetrics.peak_download_active_streams,
+      exportStreamMetrics.download_active_streams,
+    );
+    exportStreamMetrics.download_buffered_bytes += bytes;
+    exportStreamMetrics.peak_download_buffered_bytes = Math.max(
+      exportStreamMetrics.peak_download_buffered_bytes,
+      exportStreamMetrics.download_buffered_bytes,
+    );
+  }
+  exportStreamMetrics.export_buffered_bytes += bytes;
+  exportStreamMetrics.peak_export_buffered_bytes = Math.max(
+    exportStreamMetrics.peak_export_buffered_bytes,
+    exportStreamMetrics.export_buffered_bytes,
+  );
+  let released = false;
+  return () => {
+    if (released) return;
+    released = true;
+    exportStreamMetrics.export_active_streams -= 1;
+    if (kind === "asset") {
+      exportStreamMetrics.asset_active_streams -= 1;
+      exportStreamMetrics.asset_buffered_bytes -= bytes;
+    } else {
+      exportStreamMetrics.download_active_streams -= 1;
+      exportStreamMetrics.download_buffered_bytes -= bytes;
+    }
+    exportStreamMetrics.export_buffered_bytes -= bytes;
+    releaseSlot();
+  };
+}
+
+export function recordExportDownloadRead(bytes: number): void {
+  exportStreamMetrics.download_bytes_read += bytes;
+}
+
+export function getExportStreamMetrics(): typeof exportStreamMetrics {
+  return { ...exportStreamMetrics };
 }
 
 export class ExportBlockedError extends Error {
@@ -2434,13 +2583,38 @@ export async function preflightExport(
   return report;
 }
 
-async function bytesForAsset(
-  _data: ProjectData,
+function exportFileState(stat: Deno.FileInfo): string {
+  return [
+    stat.size,
+    stat.mtime?.getTime() ?? null,
+    stat.dev,
+    stat.ino,
+  ].join(":");
+}
+
+function canonicalSha256(value: unknown): string | undefined {
+  return typeof value === "string" && /^[a-f0-9]{64}$/i.test(value)
+    ? value.toLowerCase()
+    : undefined;
+}
+
+async function exportAssetFile(
   asset: ProjectData["assets"][number],
   options: ExportOptions,
-): Promise<Uint8Array | null> {
+  relativePath = asset.storage_path,
+): Promise<InternalExportFile | null> {
+  const file: InternalExportFile = {
+    relative_path: relativePath,
+    mime_type: asset.mime_type || mimeFor(asset.filename),
+    asset_id: asset.id,
+    expected_sha256: canonicalSha256(asset.checksum),
+  };
   const supplied = options.asset_bytes?.[asset.id];
-  if (supplied) return supplied;
+  if (supplied) {
+    file.bytes = supplied;
+    file.size = supplied.byteLength;
+    return file;
+  }
   if (!options.project_root || !relativeSafePath(asset.storage_path)) {
     return null;
   }
@@ -2448,11 +2622,170 @@ async function bytesForAsset(
     return null;
   }
   try {
-    return await Deno.readFile(
-      join(normalize(options.project_root), asset.storage_path),
-    );
+    const sourcePath = join(normalize(options.project_root), asset.storage_path);
+    const stat = await Deno.lstat(sourcePath);
+    if (stat.isSymlink || !stat.isFile) return null;
+    file.source_path = sourcePath;
+    file.source_state = exportFileState(stat);
+    file.size = stat.size;
+    return file;
   } catch {
     return null;
+  }
+}
+
+function exportSourceChanged(stage: string, relativePath: string): Error {
+  return structuredError(
+    "export_source_changed",
+    "导出素材在预检后发生变化，请重新预检并导出。",
+    `asset source changed during ${stage}: ${relativePath}`,
+    { details: { stage, commit_state: "not_committed", retryable: false } },
+  );
+}
+
+async function streamExportFile(
+  file: InternalExportFile,
+  destination?: Deno.FsFile,
+  signal?: AbortSignal,
+): Promise<{ size: number; sha256: string }> {
+  throwIfExportAborted(signal, "read_source");
+  const releaseAssetStream = file.asset_id && file.source_path
+    ? await acquireExportStreamBuffer(signal)
+    : null;
+  const hash = createHash("sha256");
+  const buffer = file.source_path
+    ? new Uint8Array(EXPORT_IO_CHUNK_BYTES)
+    : null;
+  let size = 0;
+  const writeChunk = async (chunk: Uint8Array) => {
+    if (!destination) return;
+    let offset = 0;
+    while (offset < chunk.byteLength) {
+      const written = await destination.write(chunk.subarray(offset));
+      if (!written) throw new Error("导出文件写入没有前进");
+      offset += written;
+      if (file.asset_id) exportStreamMetrics.asset_bytes_written += written;
+      else exportStreamMetrics.generated_bytes_written += written;
+    }
+  };
+  try {
+    if (file.source_path) {
+      let before: Deno.FileInfo;
+      try {
+        before = await Deno.lstat(file.source_path);
+      } catch {
+        throw exportSourceChanged("read_source", file.relative_path);
+      }
+      if (
+        before.isSymlink || !before.isFile ||
+        (file.source_state && exportFileState(before) !== file.source_state)
+      ) {
+        throw exportSourceChanged("read_source", file.relative_path);
+      }
+      let input: Deno.FsFile;
+      try {
+        input = await Deno.open(file.source_path, { read: true });
+      } catch {
+        throw exportSourceChanged("read_source", file.relative_path);
+      }
+      try {
+        if (exportFileState(await input.stat()) !== exportFileState(before)) {
+          throw exportSourceChanged("read_source", file.relative_path);
+        }
+        while (true) {
+          throwIfExportAborted(signal, "read_source");
+          const count = await input.read(buffer!);
+          if (count === null) break;
+          if (!count) continue;
+          const chunk = buffer!.subarray(0, count);
+          hash.update(chunk);
+          await writeChunk(chunk);
+          size += count;
+          exportStreamMetrics.asset_bytes_read += count;
+        }
+        const after = await input.stat();
+        let pathAfter: Deno.FileInfo;
+        try {
+          pathAfter = await Deno.lstat(file.source_path);
+        } catch {
+          throw exportSourceChanged("verify_source", file.relative_path);
+        }
+        if (
+          exportFileState(after) !== exportFileState(before) ||
+          pathAfter.isSymlink || !pathAfter.isFile ||
+          exportFileState(pathAfter) !== exportFileState(before) ||
+          size !== before.size
+        ) {
+          throw exportSourceChanged("verify_source", file.relative_path);
+        }
+      } finally {
+        input.close();
+      }
+    } else if (file.bytes) {
+      for (
+        let offset = 0;
+        offset < file.bytes.byteLength;
+        offset += EXPORT_IO_CHUNK_BYTES
+      ) {
+        throwIfExportAborted(signal, "read_source");
+        const chunk = file.bytes.subarray(
+          offset,
+          Math.min(file.bytes.byteLength, offset + EXPORT_IO_CHUNK_BYTES),
+        );
+        hash.update(chunk);
+        await writeChunk(chunk);
+        size += chunk.byteLength;
+        if (file.asset_id) {
+          exportStreamMetrics.asset_bytes_read += chunk.byteLength;
+        }
+      }
+    } else {
+      throw new Error(`导出文件缺少内容来源：${file.relative_path}`);
+    }
+    const sha256 = hash.digest("hex");
+    if (file.expected_sha256 && sha256 !== file.expected_sha256) {
+      throw structuredError(
+        "export_asset_checksum_mismatch",
+        "素材校验失败，导出已停止。",
+        `asset checksum does not match streamed bytes: ${file.relative_path}`,
+        { details: { stage: "verify_source", commit_state: "not_committed", retryable: false } },
+      );
+    }
+    file.size = size;
+    file.sha256 = sha256;
+    return { size, sha256 };
+  } finally {
+    if (buffer && releaseAssetStream) {
+      releaseAssetStream();
+    }
+  }
+}
+
+function throwIfExportAborted(signal: AbortSignal | undefined, stage: string): void {
+  if (!signal?.aborted) return;
+  throw structuredError(
+    "export_cancelled",
+    "导出已取消，目标目录未提交任何新文件。",
+    "export operation cancelled",
+    { details: { stage, commit_state: "not_committed", retryable: true } },
+  );
+}
+
+async function measureExportFiles(
+  files: InternalExportFile[],
+  signal?: AbortSignal,
+): Promise<void> {
+  for (const file of files) {
+    throwIfExportAborted(signal, "read_source");
+    if (file.build_after_stream) continue;
+    await streamExportFile(file, undefined, signal);
+  }
+  for (const file of files) {
+    throwIfExportAborted(signal, "build_manifest");
+    if (!file.build_after_stream) continue;
+    file.bytes = file.build_after_stream(files);
+    delete file.build_after_stream;
+    await streamExportFile(file, undefined, signal);
   }
 }
 
@@ -2493,11 +2826,15 @@ function svgForItem(
 }
 
 async function writeOutput(
-  files: ExportFile[],
+  files: InternalExportFile[],
   outputDir: string | undefined,
   replaceExisting = false,
-): Promise<void> {
-  if (!outputDir) return;
+  signal?: AbortSignal,
+): Promise<string[]> {
+  if (!outputDir) {
+    await measureExportFiles(files, signal);
+    return [];
+  }
   const rootPath = normalize(outputDir);
   await Deno.mkdir(rootPath, { recursive: true });
   const rootStat = await Deno.lstat(rootPath);
@@ -2511,7 +2848,10 @@ async function writeOutput(
     await assertNoSymlinkEscape(rootPath, file.relative_path);
     const target = join(rootPath, file.relative_path);
     try {
-      await Deno.lstat(target);
+      const existing = await Deno.lstat(target);
+      if (existing.isSymlink || !existing.isFile) {
+        throw new Error(`导出目标不是普通文件：${file.relative_path}`);
+      }
       if (!replaceExisting) {
         throw new Error(`导出目标已存在：${file.relative_path}`);
       }
@@ -2522,33 +2862,154 @@ async function writeOutput(
   const stagingName = `.acw-export-${crypto.randomUUID()}.tmp`;
   const staging = join(rootPath, stagingName);
   await Deno.mkdir(staging);
+  const stagedRoot = join(staging, "files");
+  const backupRoot = join(staging, "backups");
+  const installed: string[] = [];
+  const backedUp: Array<{ backup: string; target: string }> = [];
+  const cleanupWarnings: string[] = [];
+  let commitStarted = false;
+  let commitFinished = false;
   try {
-    for (const file of files) {
-      const target = join(staging, file.relative_path);
+    await Deno.mkdir(stagedRoot);
+    const writeStaged = async (file: InternalExportFile) => {
+      throwIfExportAborted(signal, "write_staging");
+      if (!relativeSafePath(file.relative_path)) {
+        throw new Error("导出文件名必须是项目内相对路径");
+      }
+      const target = join(stagedRoot, file.relative_path);
       await Deno.mkdir(dirname(target), { recursive: true });
-      await Deno.writeFile(target, file.bytes);
-    }
-    // All rendering and writes completed before the first final rename.  The
-    // collision pass above prevents replacing an existing valid artifact.
+      const output = await Deno.open(target, { write: true, createNew: true });
+      try {
+        await streamExportFile(file, output, signal);
+        await output.sync();
+        const stat = await output.stat();
+        if (!stat.isFile || stat.size !== file.size) {
+          throw new Error(`导出暂存文件校验失败：${file.relative_path}`);
+        }
+      } catch (caught) {
+        output.close();
+        await Deno.remove(target).catch(() => {});
+        throw caught;
+      }
+      output.close();
+    };
     for (const file of files) {
+      throwIfExportAborted(signal, "write_staging");
+      if (!file.build_after_stream) await writeStaged(file);
+    }
+    for (const file of files) {
+      throwIfExportAborted(signal, "build_manifest");
+      if (!file.build_after_stream) continue;
+      file.bytes = file.build_after_stream(files);
+      delete file.build_after_stream;
+      await writeStaged(file);
+    }
+    commitStarted = true;
+    for (const file of files) {
+      throwIfExportAborted(signal, "commit");
       const target = join(rootPath, file.relative_path);
       await Deno.mkdir(dirname(target), { recursive: true });
       if (replaceExisting) {
         try {
-          await Deno.remove(target, { recursive: true });
+          const existing = await Deno.lstat(target);
+          if (existing.isSymlink || !existing.isFile) {
+            throw new Error(`导出目标不是普通文件：${file.relative_path}`);
+          }
+          const backup = join(backupRoot, file.relative_path);
+          await Deno.mkdir(dirname(backup), { recursive: true });
+          await Deno.rename(target, backup);
+          backedUp.push({ backup, target });
         } catch (caught) {
           if (!(caught instanceof Deno.errors.NotFound)) throw caught;
         }
+        await Deno.rename(join(stagedRoot, file.relative_path), target);
+        installed.push(target);
+      } else {
+        // link() is atomic and fails if another writer created the target
+        // after the collision pass; rename() would silently replace it.
+        await Deno.link(join(stagedRoot, file.relative_path), target);
+        installed.push(target);
+        await Deno.remove(join(stagedRoot, file.relative_path));
       }
-      await Deno.rename(join(staging, file.relative_path), target);
     }
+    commitFinished = true;
   } finally {
-    try {
-      await Deno.remove(staging, { recursive: true });
-    } catch (caught) {
-      if (!(caught instanceof Deno.errors.NotFound)) throw caught;
+    if (commitStarted && !commitFinished) {
+      exportStreamMetrics.commit_rollbacks += 1;
+      const rollbackErrors: string[] = [];
+      for (const target of installed.reverse()) {
+        try {
+          await Deno.remove(target);
+        } catch (caught) {
+          if (!(caught instanceof Deno.errors.NotFound)) {
+            rollbackErrors.push(caught instanceof Error ? caught.message : String(caught));
+          }
+        }
+      }
+      for (const pair of backedUp.reverse()) {
+        try {
+          try {
+            await Deno.lstat(pair.target);
+            rollbackErrors.push(`rollback target was recreated: ${pair.target}`);
+            continue;
+          } catch (caught) {
+            if (!(caught instanceof Deno.errors.NotFound)) throw caught;
+          }
+          await Deno.mkdir(dirname(pair.target), { recursive: true });
+          await Deno.rename(pair.backup, pair.target);
+        } catch (caught) {
+          rollbackErrors.push(caught instanceof Error ? caught.message : String(caught));
+        }
+      }
+      if (rollbackErrors.length) {
+        throw structuredError(
+          "export_commit_uncertain",
+          "导出提交失败，部分旧输出已保留以便恢复。请先检查输出目录。",
+          rollbackErrors.join("; "),
+          {
+            recoverable: false,
+            details: {
+              stage: "commit",
+              commit_state: "outcome_uncertain",
+              retryable: false,
+              backup_preserved: true,
+            },
+          },
+        );
+      }
+      await Deno.remove(staging, { recursive: true }).catch(() => {});
+      if (signal?.aborted) throw structuredError(
+        "export_cancelled",
+        "导出已取消，已有输出已恢复。",
+        "export operation cancelled and previous outputs were restored",
+        { details: { stage: "commit_rollback", commit_state: "not_committed", retryable: true } },
+      );
+      throw structuredError(
+        "export_commit_failed",
+        "导出提交失败，已有输出已恢复。",
+        "export commit failed; previous output files were restored",
+        {
+          details: {
+            stage: "commit",
+            commit_state: "not_committed",
+            retryable: true,
+          },
+        },
+      );
+    }
+    if (!commitStarted || commitFinished) {
+      try {
+        await Deno.remove(staging, { recursive: true });
+      } catch (caught) {
+        if (!(caught instanceof Deno.errors.NotFound) && commitFinished) {
+          cleanupWarnings.push(
+            `导出已提交，但暂存清理失败：${caught instanceof Error ? caught.message : String(caught)}`,
+          );
+        }
+      }
     }
   }
+  return cleanupWarnings;
 }
 
 function makeExportPathsUnique(files: ExportFile[]): void {
@@ -2584,11 +3045,16 @@ export async function exportProject(
   preset: ExportPreset,
   options: ExportOptions = {},
 ): Promise<ExportResult> {
+  const signal = options.signal;
   data = structuredClone(data);
-  options = structuredClone(options);
+  const cloneableOptions = { ...options };
+  delete cloneableOptions.signal;
+  options = structuredClone(cloneableOptions);
+  throwIfExportAborted(signal, "preflight");
   options.layout_instance_id ??= preset.layout_instance_id ?? null;
   const target = resolveTarget(preset);
   const preflight = await preflightExport(data, preset, options);
+  throwIfExportAborted(signal, "preflight");
   const presetFormat = preset.format ?? preset.settings.format;
   if (
     presetFormat === "png" || presetFormat === "jpg" ||
@@ -2607,7 +3073,7 @@ export async function exportProject(
   if (missingWarnings.length) {
     throw new ExportWarningConfirmationError(preflight, missingWarnings);
   }
-  const files: ExportFile[] = [];
+  const files: InternalExportFile[] = [];
   const items = semanticItems(data, options.content_item_id);
   const projectionTargets: ExportTarget[] = [
     "markdown",
@@ -2755,35 +3221,28 @@ export async function exportProject(
       }
     });
   } else if (target === "asset_package") {
-    const manifest = {
-      schema_version: data.schema_version,
-      project_id: data.project.id,
-      assets: data.assets.filter((asset) => !asset.archived).map((asset) => ({
-        id: asset.id,
-        filename: cleanName(asset.filename),
-        type: asset.type,
-        mime_type: asset.mime_type,
-        checksum: asset.checksum,
-        path: relativeSafePath(asset.storage_path) ? asset.storage_path : null,
-      })),
-    };
+    const packageAssets = data.assets.filter((asset) => !asset.archived);
+    for (const asset of packageAssets) {
+      if (!relativeSafePath(asset.storage_path)) continue;
+      const file = await exportAssetFile(asset, options);
+      if (file) files.push(file);
+    }
     files.push({
       relative_path: "assets-manifest.json",
       mime_type: "application/json",
-      bytes: jsonBytes(manifest),
+      build_after_stream: (streamed) => jsonBytes({
+        schema_version: data.schema_version,
+        project_id: data.project.id,
+        assets: packageAssets.map((asset) => ({
+          id: asset.id,
+          filename: cleanName(asset.filename),
+          type: asset.type,
+          mime_type: asset.mime_type,
+          checksum: streamed.find((file) => file.asset_id === asset.id)?.sha256 ?? null,
+          path: relativeSafePath(asset.storage_path) ? asset.storage_path : null,
+        })),
+      }),
     });
-    for (
-      const asset of data.assets.filter((candidate) => !candidate.archived)
-    ) {
-      const bytes = await bytesForAsset(data, asset, options);
-      if (bytes && relativeSafePath(asset.storage_path)) {
-        files.push({
-          relative_path: asset.storage_path,
-          mime_type: asset.mime_type || mimeFor(asset.filename),
-          bytes,
-        });
-      }
-    }
   } else if (target === "full_project") {
     const sanitized = sanitizeProjectForExport(
       options.include_private_conversations ? data : (() => {
@@ -2799,7 +3258,14 @@ export async function exportProject(
     files.push({
       relative_path: "project.json",
       mime_type: "application/json",
-      bytes: textBytes(exportProjectJson(sanitized)),
+      build_after_stream: (streamed) => {
+        const project = structuredClone(sanitized);
+        for (const asset of project.assets) {
+          const actual = streamed.find((file) => file.asset_id === asset.id)?.sha256;
+          if (actual) asset.checksum = actual;
+        }
+        return textBytes(exportProjectJson(project));
+      },
     });
     files.push({
       relative_path: "COURSE_MAP.md",
@@ -2823,14 +3289,9 @@ export async function exportProject(
     for (
       const asset of data.assets.filter((candidate) => !candidate.archived)
     ) {
-      const bytes = await bytesForAsset(data, asset, options);
-      if (bytes && relativeSafePath(asset.storage_path)) {
-        files.push({
-          relative_path: asset.storage_path,
-          mime_type: asset.mime_type || mimeFor(asset.filename),
-          bytes,
-        });
-      }
+      if (!relativeSafePath(asset.storage_path)) continue;
+      const file = await exportAssetFile(asset, options);
+      if (file) files.push(file);
     }
   } else {
     throw new ExportCapabilityError(String(target));
@@ -2841,13 +3302,11 @@ export async function exportProject(
       if (
         !asset || files.some((file) => file.relative_path === media.output_path)
       ) continue;
-      const bytes = await bytesForAsset(data, asset, options);
-      if (!bytes) continue;
-      files.push({
-        relative_path: media.output_path,
-        mime_type: media.mime_type,
-        bytes,
-      });
+      const file = await exportAssetFile(asset, options, media.output_path);
+      if (file) {
+        file.mime_type = media.mime_type;
+        files.push(file);
+      }
     }
   }
   makeExportPathsUnique(files);
@@ -2856,12 +3315,26 @@ export async function exportProject(
     const bAsset = b.relative_path.startsWith("assets/") ? 1 : 0;
     return (aAsset - bAsset) || a.relative_path.localeCompare(b.relative_path);
   });
-  await writeOutput(
+  const warnings = await writeOutput(
     files,
     options.output_dir,
     options.replace_existing === true,
+    signal,
   );
-  return { files, preflight, target };
+  const publicFiles = files.map((file): ExportFile => {
+    const {
+      source_path: _sourcePath,
+      source_state: _sourceState,
+      expected_sha256: _expectedSha256,
+      build_after_stream: _buildAfterStream,
+      ...publicFile
+    } = file;
+    if (file.asset_id || (file.bytes && file.bytes.byteLength > EXPORT_INLINE_BYTES)) {
+      delete publicFile.bytes;
+    }
+    return publicFile;
+  });
+  return { files: publicFiles, preflight, target, ...(warnings.length ? { warnings } : {}) };
 }
 
 export class ManualPublishAdapter implements PublishAdapter {

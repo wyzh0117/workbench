@@ -1,3 +1,5 @@
+import { createHash } from "node:crypto";
+import { dirname, join } from "node:path";
 import {
   addAsset,
   addAssetUsage,
@@ -29,6 +31,7 @@ import {
   getPublicationCapabilities,
 } from "../app/publication.js";
 import { renderPublishHtml, renderPublishPdf } from "../src/service/publish.ts";
+import { getExportStreamMetrics } from "../src/service/import_export.ts";
 
 function assert(condition: unknown, message: string): asserts condition {
   if (!condition) throw new Error(message);
@@ -43,6 +46,97 @@ function courseData() {
   const draft = buildBlueprintDraft(data, seed.id);
   confirmBlueprint(data, draft.id);
   return data;
+}
+
+async function writePatternSource(path: string, size: number): Promise<string> {
+  await Deno.mkdir(dirname(path), { recursive: true });
+  const file = await Deno.open(path, { write: true, create: true, truncate: true });
+  const hash = createHash("sha256");
+  try {
+    for (let offset = 0, chunkIndex = 0; offset < size; chunkIndex++) {
+      const chunk = new Uint8Array(Math.min(1024 * 1024, size - offset));
+      chunk.fill((chunkIndex * 31 + 17) & 0xff);
+      hash.update(chunk);
+      let written = 0;
+      while (written < chunk.byteLength) {
+        const count = await file.write(chunk.subarray(written));
+        assert(count > 0, "fixture write should make progress");
+        written += count;
+      }
+      offset += chunk.byteLength;
+    }
+  } finally {
+    file.close();
+  }
+  return hash.digest("hex");
+}
+
+async function projectWithDiskAsset(directory: string, size: number) {
+  const data = courseData();
+  const assetPath = "assets/export-stream-fixture.bin";
+  const asset = addAsset(data, data.project.id, {
+    type: "image",
+    filename: "export-stream-fixture.bin",
+    storage_path: assetPath,
+    mime_type: "application/octet-stream",
+    checksum: "0".repeat(64),
+    file_size: size,
+  }).asset;
+  asset.file_size = size;
+  asset.checksum = await writePatternSource(join(directory, assetPath), size);
+  const preset = createExportPreset(data, {
+    name: "完整项目流式导出",
+    output_type: "custom",
+    platform: "项目",
+    settings: { target_type: "full_project" },
+  });
+  return { data, asset, preset, checksum: asset.checksum };
+}
+
+async function persistedDiskAssetProject(directory: string, size: number) {
+  const desktop = new DesktopService(directory, {
+    app_instance_id: `export-http-setup-${crypto.randomUUID()}`,
+  });
+  await desktop.open();
+  try {
+    const created = await desktop.commands.execute("project.create", {
+      title: "HTTP 流式导出测试",
+    });
+    assert(!created.error && desktop.context.project, "service setup should create the canonical project");
+    const data = structuredClone(desktop.context.project);
+    const assetPath = "assets/export-http-fixture.bin";
+    const asset = addAsset(data, data.project.id, {
+      type: "image",
+      filename: "export-http-fixture.bin",
+      storage_path: assetPath,
+      mime_type: "application/octet-stream",
+      checksum: "0".repeat(64),
+      file_size: size,
+    }).asset;
+    asset.checksum = await writePatternSource(join(directory, assetPath), size);
+    asset.file_size = size;
+    const preset = createExportPreset(data, {
+      name: "HTTP 完整项目",
+      output_type: "custom",
+      platform: "项目",
+      settings: { target_type: "full_project" },
+    });
+    await desktop.store.saveWithRecovery(data);
+    return { asset, preset, checksum: asset.checksum, asset_path: join(directory, assetPath) };
+  } finally {
+    await desktop.close();
+  }
+}
+
+async function exportTempArtifacts(): Promise<Set<string>> {
+  const root = Deno.env.get("TMPDIR") || "/tmp";
+  const names = new Set<string>();
+  try {
+    for await (const entry of Deno.readDir(root)) {
+      if (entry.name.startsWith("acw-export-download-")) names.add(entry.name);
+    }
+  } catch { /* test temp root may not be readable on every platform */ }
+  return names;
 }
 
 Deno.test("Markdown/TXT import is preview-first and content stays out of the course map", async () => {
@@ -465,8 +559,9 @@ Deno.test("full project export excludes private conversation data and PDF is rea
   });
   const pdf = await exportProject(data, pdfPreset);
   const pdfFile = pdf.files.find((file) => file.mime_type === "application/pdf");
+  const pdfBytes = pdfFile?.bytes;
   assert(
-    pdfFile && new TextDecoder("latin1").decode(pdfFile.bytes.slice(0, 8)).startsWith("%PDF-"),
+    pdfBytes && new TextDecoder("latin1").decode(pdfBytes.slice(0, 8)).startsWith("%PDF-"),
     "PDF output should be a readable PDF container",
   );
 });
@@ -882,6 +977,323 @@ Deno.test("static web package is portable and copies only referenced assets", as
   const html = await Deno.readTextFile(`${moved}/index.html`);
   assert(html.includes("可搬走的网页正文") && html.includes("assets/%E6%BC%94%E7%A4%BA%20%E5%8A%A8%E5%9B%BE.gif"), "moved package should retain relative Unicode asset references");
   assert(!html.includes(".workspace") && JSON.stringify(data) === before, "export must not leak workspace data or mutate Canonical");
+});
+
+Deno.test("full project export streams 256MiB with a measured bounded buffer", async () => {
+  const directory = await Deno.makeTempDir({ prefix: "acw-export-256m-" });
+  const size = 256 * 1024 * 1024;
+  try {
+    const { data, asset, preset, checksum } = await projectWithDiskAsset(directory, size);
+    const before = getExportStreamMetrics();
+    const output = join(directory, "output");
+    const result = await exportProject(data, preset, {
+      project_root: directory,
+      output_dir: output,
+    });
+    const after = getExportStreamMetrics();
+    const exported = result.files.find((file) => file.asset_id === asset.id);
+    assert(exported?.size === size && exported.sha256 === checksum, "asset descriptor must report the streamed source bytes");
+    assert(exported.bytes === undefined, "large media must not be returned as an all-bytes result");
+    assert(after.asset_bytes_read - before.asset_bytes_read === size, "production export must read the source exactly once");
+    assert(after.asset_bytes_written - before.asset_bytes_written === size, "production export must write the staged asset exactly once");
+    assert(after.asset_active_streams === 0 && after.export_buffered_bytes === 0, "completed export must release all stream slots and buffers");
+    assert(after.peak_asset_active_streams <= 2, "global asset stream concurrency must stay at two");
+    assert(after.peak_asset_buffered_bytes <= 2 * 1024 * 1024, "global source buffers must stay within two 1MiB chunks");
+    assert(after.peak_export_buffered_bytes <= 2 * 1024 * 1024, "all held export chunks must stay within the process-wide budget");
+    assert((await Deno.stat(join(output, asset.storage_path))).size === size, "the committed staged file must match the descriptor size");
+  } finally {
+    await Deno.remove(directory, { recursive: true });
+  }
+});
+
+Deno.test("export rejects same-size source changes despite restored mtime", async () => {
+  const directory = await Deno.makeTempDir({ prefix: "acw-export-source-change-" });
+  const { data, asset, preset } = await projectWithDiskAsset(directory, 4096);
+  const source = join(directory, asset.storage_path);
+  const before = await Deno.stat(source);
+  const originalOpen = Deno.open;
+  let changed = false;
+  try {
+    Deno.open = async (path, options) => {
+      if (!changed && path === source && options?.read) {
+        changed = true;
+        const writer = await originalOpen(source, { write: true });
+        try {
+          await writer.write(new Uint8Array(4096).fill(0xa9));
+        } finally {
+          writer.close();
+        }
+        await Deno.utime(source, before.atime!, before.mtime!);
+      }
+      return await originalOpen(path, options);
+    };
+    let caught: unknown;
+    try {
+      await exportProject(data, preset, {
+        project_root: directory,
+        output_dir: join(directory, "output"),
+      });
+    } catch (error) {
+      caught = error;
+    }
+    const error = (caught as { error?: { code?: string; details?: { retryable?: boolean } } })?.error;
+    assert(changed, "test must replace the source between source-state capture and read");
+    assert(error?.code === "export_asset_checksum_mismatch", "the streamed bytes must match the Canonical checksum, not just stat metadata");
+    assert(error.details?.retryable === false, "source changes require a fresh preflight");
+    let outputExists = true;
+    try {
+      await Deno.stat(join(directory, "output", asset.storage_path));
+    } catch { outputExists = false; }
+    assert(!outputExists, "a checksum mismatch must not publish staged asset bytes");
+  } finally {
+    Deno.open = originalOpen;
+    await Deno.remove(directory, { recursive: true });
+  }
+});
+
+Deno.test("concurrent exports share the two-stream process budget", async () => {
+  const directory = await Deno.makeTempDir({ prefix: "acw-export-concurrent-" });
+  const size = 3 * 1024 * 1024 + 53;
+  try {
+    const { data, preset } = await projectWithDiskAsset(directory, size);
+    const before = getExportStreamMetrics();
+    await Promise.all(Array.from({ length: 8 }, (_, index) =>
+      exportProject(data, preset, {
+        project_root: directory,
+        output_dir: join(directory, `output-${index}`),
+      })
+    ));
+    const after = getExportStreamMetrics();
+    assert(after.asset_bytes_read - before.asset_bytes_read === size * 8, "all concurrent exports must read their source bytes");
+    assert(after.asset_bytes_written - before.asset_bytes_written === size * 8, "all concurrent exports must commit their staged bytes");
+    assert(after.peak_asset_active_streams === 2, "concurrent requests should exercise the global two-stream limit");
+    assert(after.peak_export_buffered_bytes <= 2 * 1024 * 1024, "concurrent requests must not multiply per-call buffers");
+    assert(after.asset_active_streams === 0 && after.export_buffered_bytes === 0, "all concurrent requests must release their budget");
+  } finally {
+    await Deno.remove(directory, { recursive: true });
+  }
+});
+
+Deno.test("staged download holds one measured server chunk and release frees it", async () => {
+  const directory = await Deno.makeTempDir({ prefix: "acw-export-download-budget-" });
+  const size = 3 * 1024 * 1024 + 29;
+  const fixture = await persistedDiskAssetProject(directory, size);
+  const desktop = new DesktopService(directory, {
+    app_instance_id: `export-download-budget-${crypto.randomUUID()}`,
+  });
+  await desktop.open();
+  try {
+    const exportId = crypto.randomUUID().replaceAll("-", "");
+    const beforeExport = getExportStreamMetrics();
+    const execution = await desktop.commands.execute("export.run", {
+      export_id: exportId,
+      preset: fixture.preset,
+    });
+    assert(!execution.error, "service export should create its owned stage");
+    const result = execution.value as {
+      files: Array<{ asset_id?: string; size?: number; sha256?: string; path?: string }>;
+    };
+    const fileIndex = result.files.findIndex((file) => file.asset_id === fixture.asset.id);
+    assert(fileIndex >= 0, "service export should expose the staged asset descriptor");
+    const afterExport = getExportStreamMetrics();
+    assert(afterExport.asset_bytes_read - beforeExport.asset_bytes_read === size, "service source staging should read the asset once");
+    assert(afterExport.asset_bytes_written - beforeExport.asset_bytes_written === size, "service source staging should write the asset once");
+    assert(result.files[fileIndex]?.path === undefined, "service descriptor must not expose a local path");
+
+    const beforeDownload = getExportStreamMetrics();
+    const handle = await desktop.openExportDownload(exportId, fileIndex);
+    const duringDownload = getExportStreamMetrics();
+    assert(duringDownload.download_active_streams === 1, "opened download should count as an active staged read");
+    assert(duringDownload.download_buffered_bytes === 1024 * 1024, "one staged read should reserve one owned 1MiB chunk");
+    assert(duringDownload.export_buffered_bytes === 1024 * 1024, "global retained chunk metric should include the staged reader");
+    const chunk = new Uint8Array(1024 * 1024);
+    const count = await handle.read(chunk);
+    assert(count === chunk.byteLength, "staged reader should produce one full chunk");
+    assert(getExportStreamMetrics().download_bytes_read - beforeDownload.download_bytes_read === count, "actual download read bytes should be measured");
+
+    const release = await desktop.commands.execute("export.release", { export_id: exportId });
+    const afterRelease = getExportStreamMetrics();
+    assert(!release.error && (release.value as { released?: boolean }).released && handle.signal.aborted, `release should abort the active staged read: ${JSON.stringify(release.error)}; value=${JSON.stringify(release.value)}; aborted=${handle.signal.aborted}`);
+    assert(afterRelease.download_active_streams === 0 && afterRelease.download_buffered_bytes === 0, "release should free the active download buffer");
+    assert(afterRelease.export_active_streams === 0 && afterRelease.export_buffered_bytes === 0, "release should return the process-wide stream budget");
+  } finally {
+    await desktop.close();
+    await Deno.remove(directory, { recursive: true });
+  }
+});
+
+Deno.test("browser export downloads staged bytes over HTTP and release or shutdown closes them", async () => {
+  const directory = await Deno.makeTempDir({ prefix: "acw-export-http-project-" });
+  const size = 3 * 1024 * 1024 + 79;
+  const fixture = await persistedDiskAssetProject(directory, size);
+  const stagesBefore = await exportTempArtifacts();
+  const listener = Deno.listen({ hostname: "127.0.0.1", port: 0 });
+  const port = listener.addr.port;
+  listener.close();
+  const base = `http://127.0.0.1:${port}`;
+  const child = new Deno.Command(Deno.execPath(), {
+    args: ["run", "--allow-all", new URL("../scripts/dev_server.ts", import.meta.url).pathname],
+    env: { PROJECT_ROOT: directory, PORT: String(port) },
+    stdout: "null",
+    stderr: "null",
+  }).spawn();
+  const post = async (name: string, input: Record<string, unknown>) => {
+    const response = await fetch(`${base}/api/command`, {
+      method: "POST",
+      headers: { "content-type": "application/json", origin: base },
+      body: JSON.stringify({ name, input }),
+    });
+    const payload = await response.json() as { value?: unknown; error?: unknown };
+    assert(response.ok, `${name} should succeed: ${JSON.stringify(payload.error)}`);
+    return payload.value as Record<string, unknown>;
+  };
+  try {
+    let ready = false;
+    for (let attempt = 0; attempt < 100; attempt++) {
+      try {
+        if ((await fetch(`${base}/api/status`)).ok) {
+          ready = true;
+          break;
+        }
+      } catch { /* child server is still starting */ }
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+    assert(ready, "isolated browser service should start for the HTTP download test");
+
+    const firstId = crypto.randomUUID().replaceAll("-", "");
+    const first = await post("export.run", { export_id: firstId, preset: fixture.preset });
+    const firstFiles = first.files as Array<{
+      relative_path: string;
+      size: number;
+      sha256: string;
+      asset_id?: string;
+      download_url?: string;
+      path?: string;
+    }>;
+    assert(first.export_id === firstId && firstFiles.length > 1, "export should return staged, indexed file descriptors");
+    const assetFile = firstFiles.find((file) => file.asset_id === fixture.asset.id);
+    assert(assetFile?.download_url && !("path" in assetFile), "media descriptor must expose an HTTP capability and no local path");
+    assert(assetFile.size === size && assetFile.sha256 === fixture.checksum, "media descriptor should contain staged size and hash");
+    const stageNames = [...(await exportTempArtifacts())].filter((name) => !stagesBefore.has(name));
+    assert(stageNames.length > 0, "the export should own a private staging directory until downloads finish");
+
+    await Deno.writeFile(fixture.asset_path, new Uint8Array(size).fill(0xee));
+    for (const file of firstFiles) {
+      assert(file.download_url, "each staged file should have its own download URL");
+      const response = await fetch(new URL(file.download_url, base));
+      assert(response.ok, "HTTP GET should serve the completed staged file");
+      assert(Number(response.headers.get("content-length")) === file.size, "HTTP size should match the staged descriptor");
+      const reader = response.body!.getReader();
+      const hash = createHash("sha256");
+      let received = 0;
+      while (true) {
+        const next = await reader.read();
+        if (next.done) break;
+        received += next.value.byteLength;
+        if (file.asset_id === fixture.asset.id) hash.update(next.value);
+        await new Promise((resolve) => setTimeout(resolve, 1));
+      }
+      assert(received === file.size, "slow HTTP consumer should receive the entire staged file");
+      if (file.asset_id === fixture.asset.id) {
+        assert(hash.digest("hex") === fixture.checksum, "HTTP hash must match the staged original after source changes");
+      }
+    }
+    const expired = await fetch(new URL(assetFile.download_url!, base));
+    assert(!expired.ok, "the final successful download should release the completed artifact");
+    assert([...(await exportTempArtifacts())].every((name) => stagesBefore.has(name)), "all staged files should be removed after every file downloads");
+
+    await writePatternSource(fixture.asset_path, size);
+    const secondId = crypto.randomUUID().replaceAll("-", "");
+    const second = await post("export.run", { export_id: secondId, preset: fixture.preset });
+    const secondFiles = second.files as typeof firstFiles;
+    const secondAsset = secondFiles.find((file) => file.asset_id === fixture.asset.id)!;
+    const activeResponse = await fetch(new URL(secondAsset.download_url!, base));
+    assert(activeResponse.ok, "second staged download should open");
+    const reader = activeResponse.body!.getReader();
+    const firstChunk = await reader.read();
+    assert(!firstChunk.done && firstChunk.value.byteLength > 0, "HTTP stream should deliver its first bounded chunk");
+    let receivedBeforeRelease = firstChunk.value.byteLength;
+    await post("export.release", { export_id: secondId });
+    let interrupted = false;
+    try {
+      const next = await Promise.race([
+        reader.read(),
+        new Promise<never>((_, reject) => setTimeout(() => reject(new Error("download did not cancel")), 3000)),
+      ]);
+      if (next.done) interrupted = receivedBeforeRelease < size;
+      else {
+        receivedBeforeRelease += next.value.byteLength;
+        interrupted = receivedBeforeRelease < size;
+      }
+    } catch {
+      interrupted = true;
+    }
+    assert(interrupted, "release should abort the active HTTP stream before it reaches the full file");
+
+    const thirdId = crypto.randomUUID().replaceAll("-", "");
+    await post("export.run", { export_id: thirdId, preset: fixture.preset });
+    const beforeShutdown = await exportTempArtifacts();
+    const ownedAtShutdown = [...beforeShutdown].filter((name) => !stagesBefore.has(name));
+    assert(ownedAtShutdown.length > 0, "a pending download should retain its staged files until service shutdown");
+    child.kill("SIGTERM");
+    const status = await Promise.race([
+      child.status,
+      new Promise<never>((_, reject) => setTimeout(() => reject(new Error("server shutdown did not finish")), 5000)),
+    ]);
+    assert(status.success, "SIGTERM should run DesktopService close and stop the HTTP server cleanly");
+    const afterShutdown = await exportTempArtifacts();
+    assert(ownedAtShutdown.every((name) => !afterShutdown.has(name)), "service shutdown should remove every owned export stage");
+  } finally {
+    try { child.kill("SIGTERM"); } catch { /* already exited */ }
+    await child.status.catch(() => undefined);
+    await Deno.remove(directory, { recursive: true });
+  }
+});
+
+Deno.test("late export promotion failure restores every preexisting target", async () => {
+  const directory = await Deno.makeTempDir({ prefix: "acw-export-rollback-" });
+  const output = join(directory, "output");
+  const indexPath = join(output, "project.json");
+  const manifestPath = join(output, "publications.json");
+  await Deno.mkdir(output, { recursive: true });
+  await Deno.writeTextFile(indexPath, "old-project");
+  await Deno.writeTextFile(manifestPath, "old-publications");
+  const originalRename = Deno.rename;
+  let injected = false;
+  try {
+    const { data, preset } = await projectWithDiskAsset(directory, 2 * 1024 * 1024 + 9);
+    Deno.rename = async (from, to) => {
+      if (
+        !injected && to === manifestPath &&
+        String(from).replaceAll("\\", "/").includes("/files/publications.json")
+      ) {
+        injected = true;
+        throw new Error("injected late staged-file promotion failure");
+      }
+      await originalRename(from, to);
+    };
+    let failed = false;
+    try {
+      await exportProject(data, preset, {
+        project_root: directory,
+        output_dir: output,
+        replace_existing: true,
+      });
+    } catch {
+      failed = true;
+    }
+    assert(injected && failed, "the second staged promotion should fail after project.json has been installed");
+    assert(await Deno.readTextFile(indexPath) === "old-project", "rollback must restore the first target after the later failure");
+    assert(await Deno.readTextFile(manifestPath) === "old-publications", "rollback must restore the output whose promotion failed");
+    const leftovers = [];
+    for await (const entry of Deno.readDir(output)) {
+      if (entry.name.startsWith(".acw-export-")) leftovers.push(entry.name);
+    }
+    assert(leftovers.length === 0, "failed promotion must remove transaction-owned staging and backup files");
+  } finally {
+    Deno.rename = originalRename;
+    await Deno.remove(directory, { recursive: true });
+  }
 });
 
 Deno.test("preflight warns about media downgrade and failure leaves no partial artifact", async () => {

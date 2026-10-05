@@ -67,6 +67,7 @@ export const HIGH_LEVEL_COMMANDS = [
   "snapshot.create",
   "snapshot.restore",
   "export.run",
+  "export.release",
   "publication.record",
   "secret.set",
   "secret.delete",

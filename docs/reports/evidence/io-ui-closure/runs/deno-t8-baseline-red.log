@@ -1,0 +1,6 @@
+{"baseline":"dfcb23e","input_asset_bytes":20971537,"returned_media_bytes":20971537}
+error: Uncaught (in promise) Error: T8 regression: baseline returned 20971537 media bytes despite a 16MiB budget
+  if (returnedBytes > 16 * 1024 * 1024) throw new Error(`T8 regression: baseline returned ${returnedBytes} media bytes despite a 16MiB budget`);
+                                              ^
+    at file:///tmp/workbench-deno-t8.ElKrtq/t8_baseline_red.ts:40:47
+BASELINE_EXPECTED_RED_EXIT=1

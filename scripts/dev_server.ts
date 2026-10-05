@@ -29,6 +29,7 @@ const mediaTokens = new Map<string, {
 const scannedFolderRoots = new Map<string, { expiresAt: number; videoPaths: Set<string> }>();
 const MEDIA_TOKEN_TTL_MS = 10 * 60 * 1000;
 const MEDIA_TOKEN_LIMIT = 32;
+const EXPORT_DOWNLOAD_CHUNK_BYTES = 1024 * 1024;
 
 class MediaTokenCapacityError extends Error {}
 
@@ -205,6 +206,50 @@ async function bridgeAssetBytes(request: Request): Promise<Response> {
   } catch {
     return errorResponse("素材文件不可读。", 404);
   }
+}
+
+async function exportDownloadResponse(
+  exportId: string,
+  fileIndex: number,
+  requestSignal: AbortSignal,
+): Promise<Response> {
+  const handle = await desktop.openExportDownload(exportId, fileIndex, requestSignal);
+  const filename = handle.relative_path.split(/[\\/]/).at(-1) || "export";
+  const asciiFilename = filename.replace(/[^\x20-\x7E]/g, "_")
+    .replace(/["\\\r\n]/g, "_") || "export";
+  const utf8Filename = encodeURIComponent(filename).replace(/[!'()*]/g, (value) =>
+    `%${value.charCodeAt(0).toString(16).toUpperCase()}`
+  );
+  const body = new ReadableStream<Uint8Array>({
+    async pull(controller) {
+      const chunk = new Uint8Array(EXPORT_DOWNLOAD_CHUNK_BYTES);
+      try {
+        if (handle.signal.aborted) throw new DOMException("Export download cancelled", "AbortError");
+        const count = await handle.read(chunk);
+        if (count === null) {
+          await handle.finish(true);
+          controller.close();
+          return;
+        }
+        controller.enqueue(chunk.subarray(0, count));
+      } catch (caught) {
+        controller.error(caught);
+        await handle.finish(false);
+      }
+    },
+    async cancel() {
+      await handle.finish(false);
+    },
+  }, { highWaterMark: 0 });
+  return new Response(body, {
+    headers: {
+      "content-type": handle.mime_type || "application/octet-stream",
+      "content-length": String(handle.size),
+      "content-disposition": `attachment; filename="${asciiFilename}"; filename*=UTF-8''${utf8Filename}`,
+      "cache-control": "no-store",
+      "x-content-type-options": "nosniff",
+    },
+  });
 }
 
 async function resolveProjectVideoSource(assetId: string): Promise<{
@@ -384,6 +429,14 @@ const server = Deno.serve(
       if (url.pathname === "/api/asset" && request.method === "POST") {
         return await bridgeAssetBytes(request);
       }
+      const exportDownload = /^\/api\/export-file\/([a-f0-9]{32})\/(\d+)$/.exec(url.pathname);
+      if (exportDownload && request.method === "GET") {
+        return await exportDownloadResponse(
+          exportDownload[1]!,
+          Number(exportDownload[2]),
+          request.signal,
+        );
+      }
       if (url.pathname === "/api/media-source" && request.method === "POST") {
         return await createMediaSource(request);
       }
@@ -407,8 +460,24 @@ const server = Deno.serve(
   },
 );
 
+const shutdown = () => {
+  void server.shutdown();
+};
+const shutdownSignals: Array<"SIGINT" | "SIGTERM"> = [];
+for (const signal of ["SIGINT", "SIGTERM"] as const) {
+  try {
+    Deno.addSignalListener(signal, shutdown);
+    shutdownSignals.push(signal);
+  } catch {
+    // Some embedded hosts do not grant signal handling; server.finished still
+    // owns the normal service cleanup path.
+  }
+}
 try {
   await server.finished;
 } finally {
+  for (const signal of shutdownSignals) {
+    Deno.removeSignalListener(signal, shutdown);
+  }
   await desktop.close();
 }

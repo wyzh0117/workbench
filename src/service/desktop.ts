@@ -44,6 +44,7 @@ import {
   ProjectDirectoryStore,
 } from "./storage.ts";
 import {
+  acquireExportStreamBuffer,
   confirmImport,
   exportProject,
   type ImportPreview,
@@ -51,6 +52,7 @@ import {
   ManualPublishAdapter,
   preflightExport,
   previewImport,
+  recordExportDownloadRead,
 } from "./import_export.ts";
 import {
   inspectMarkdownImage,
@@ -101,6 +103,39 @@ function normalizeImportSources(value: unknown): ImportSource[] {
 
 const IMPORT_PREVIEW_LIMIT = 8;
 const IMPORT_PREVIEW_TTL_MS = 15 * 60 * 1000;
+const EXPORT_ARTIFACT_LIMIT = 8;
+const EXPORT_ARTIFACT_TTL_MS = 15 * 60 * 1000;
+
+interface ExportArtifactFile {
+  relative_path: string;
+  mime_type: string;
+  size: number;
+  sha256: string;
+  path: string;
+}
+
+interface ExportArtifactSlot {
+  created_at: number;
+  building: boolean;
+  release_requested: boolean;
+  root: string | null;
+  files: ExportArtifactFile[];
+  downloaded: Set<number>;
+  active_finishes: Set<() => Promise<void>>;
+  controller: AbortController;
+  build_completion: Promise<unknown> | null;
+  expiry_timer?: ReturnType<typeof setTimeout>;
+}
+
+export interface ExportDownloadHandle {
+  file: Deno.FsFile;
+  relative_path: string;
+  mime_type: string;
+  size: number;
+  signal: AbortSignal;
+  read(buffer: Uint8Array): Promise<number | null>;
+  finish(success: boolean): Promise<void>;
+}
 
 interface ImportPreviewSlot {
   created_at: number;
@@ -202,6 +237,7 @@ export class DesktopService {
   readonly commands: CommandBus;
   readonly queries: QueryBus;
   private readonly importPreviews = new Map<string, ImportPreviewSlot>();
+  private readonly exportArtifacts = new Map<string, ExportArtifactSlot>();
   /** In-flight `ai.complete` requests, shared across project directories. */
   private readonly aiRequests = new Map<string, AbortController>();
   private readonly aiOptions: AiTransportOptions;
@@ -1517,28 +1553,101 @@ export class DesktopService {
     });
     this.commands.register("export.run", async (input) => {
       if (!this.context.project) throw new Error("No project is open");
+      const project = structuredClone(this.context.project);
       const candidate = input && typeof input === "object"
         ? input as {
           preset?: ExportPreset;
           preset_id?: string;
+          export_id?: string;
           options?: Parameters<typeof exportProject>[2];
         }
         : {};
-      const preset = candidate.preset ??
-        this.context.project.export_presets.find((item) =>
+      const preset = candidate.preset
+        ? structuredClone(candidate.preset)
+        : project.export_presets.find((item) =>
           item.id === candidate.preset_id
         );
       if (!preset) throw new Error("export.run requires an export preset");
-      const result = await exportProject(
-        this.context.project,
-        preset,
-        {
-          ...(candidate.options ?? {}),
-          project_root: this.store.directory,
-        },
-      );
+      const options = structuredClone(candidate.options ?? {});
+      // The bridge exports canonical project files, not renderer-held bytes.
+      delete options.asset_bytes;
+      const [exportId, slot] = await this.reserveExportArtifact(candidate.export_id);
+      const build = (async () => {
+        const root = await Deno.makeTempDir({ prefix: "acw-export-download-" });
+        slot.root = root;
+        if (Deno.build.os !== "windows") await Deno.chmod(root, 0o700);
+        return await exportProject(
+          project,
+          preset,
+          {
+            ...options,
+            project_root: this.store.directory,
+            output_dir: root,
+            replace_existing: false,
+            signal: slot.controller.signal,
+          },
+        );
+      })();
+      slot.build_completion = build.then(() => undefined, () => undefined);
+      let result: Awaited<typeof build>;
+      try {
+        result = await build;
+      } catch (caught) {
+        slot.building = false;
+        await this.disposeExportArtifact(exportId, slot).catch(() => undefined);
+        throw caught;
+      }
+      slot.building = false;
+      slot.created_at = Date.now();
+      try {
+        slot.files = result.files.map((file) => {
+          const parts = file.relative_path.replaceAll("\\", "/").split("/");
+          if (
+            !slot.root || !file.relative_path || file.relative_path.startsWith("/") ||
+            parts.some((part) => !part || part === "." || part === "..") ||
+            !Number.isSafeInteger(file.size) || (file.size ?? -1) < 0 ||
+            typeof file.sha256 !== "string" || !/^[a-f0-9]{64}$/.test(file.sha256)
+          ) {
+            throw error(
+              "export_descriptor_invalid",
+              "导出文件清单校验失败，未提供下载文件。",
+              "export produced an unsafe file path or a file without a staged size and checksum",
+              { recoverable: false, recommended_action: null, details: { stage: "descriptor", commit_state: "not_committed", retryable: false } },
+            );
+          }
+          return {
+            relative_path: file.relative_path,
+            mime_type: file.mime_type,
+            size: file.size!,
+            sha256: file.sha256,
+            path: join(slot.root, ...parts),
+          };
+        });
+      } catch (caught) {
+        await this.disposeExportArtifact(exportId, slot).catch(() => undefined);
+        throw caught;
+      }
+      if (slot.files.length) this.scheduleExportArtifactExpiry(exportId, slot);
+      else await this.disposeExportArtifact(exportId, slot);
+      const files = result.files.map((file, index) => ({
+        relative_path: file.relative_path,
+        mime_type: file.mime_type,
+        size: file.size,
+        sha256: file.sha256,
+        ...(file.asset_id ? { asset_id: file.asset_id } : {}),
+        ...(file.bytes && !file.asset_id && file.bytes.byteLength <= 512 * 1024
+          ? { bytes: file.bytes }
+          : {}),
+        ...(slot.files.length
+          ? { download_url: `/api/export-file/${exportId}/${index}` }
+          : {}),
+      }));
       return {
-        value: result,
+        value: {
+          ...result,
+          ...(slot.files.length ? { export_id: exportId } : {}),
+          files,
+        },
         audit: {
           object_type: "export",
           object_id: preset.id,
@@ -1546,6 +1655,21 @@ export class DesktopService {
           metadata: { target: result.target, files: result.files.length },
         },
       };
+    });
+    this.commands.register("export.release", async (input) => {
+      const exportId = input && typeof input === "object" &&
+          typeof (input as { export_id?: unknown }).export_id === "string"
+        ? (input as { export_id: string }).export_id
+        : "";
+      if (!/^[a-f0-9]{32}$/.test(exportId)) {
+        throw error(
+          "export_id_invalid",
+          "导出文件引用无效或已过期。",
+          "export.release requires a valid export id",
+          { recoverable: true, recommended_action: null, details: { stage: "release", commit_state: "not_committed", retryable: false } },
+        );
+      }
+      return { value: { released: await this.releaseExportArtifact(exportId) } };
     });
     this.commands.register("publication.record", async (input) => {
       if (!this.context.project) throw new Error("No project is open");
@@ -2161,6 +2285,227 @@ export class DesktopService {
     });
   }
 
+  private scheduleExportArtifactExpiry(
+    id: string,
+    slot: ExportArtifactSlot,
+    delay = EXPORT_ARTIFACT_TTL_MS,
+  ): void {
+    if (slot.expiry_timer !== undefined) clearTimeout(slot.expiry_timer);
+    slot.expiry_timer = setTimeout(() => {
+      void this.expireExportArtifact(id, slot).catch(() => {
+        if (this.exportArtifacts.get(id) === slot) {
+          this.scheduleExportArtifactExpiry(id, slot, 60_000);
+        }
+      });
+    }, delay);
+  }
+
+  private async expireExportArtifact(
+    id: string,
+    slot: ExportArtifactSlot,
+  ): Promise<void> {
+    if (this.exportArtifacts.get(id) !== slot) return;
+    const remaining = EXPORT_ARTIFACT_TTL_MS - (Date.now() - slot.created_at);
+    if (remaining > 0) {
+      this.scheduleExportArtifactExpiry(id, slot, remaining);
+      return;
+    }
+    if (slot.building) {
+      slot.release_requested = true;
+      slot.controller.abort();
+      await slot.build_completion;
+    }
+    await Promise.all([...slot.active_finishes].map((finish) => finish()));
+    await this.disposeExportArtifact(id, slot);
+  }
+
+  private async pruneExportArtifacts(): Promise<void> {
+    const now = Date.now();
+    for (const [id, slot] of this.exportArtifacts) {
+      if (!slot.building && now - slot.created_at >= EXPORT_ARTIFACT_TTL_MS) {
+        await this.expireExportArtifact(id, slot);
+      }
+    }
+  }
+
+  private async reserveExportArtifact(
+    requestedId?: string,
+  ): Promise<[string, ExportArtifactSlot]> {
+    await this.pruneExportArtifacts();
+    if (this.exportArtifacts.size >= EXPORT_ARTIFACT_LIMIT) {
+      throw error(
+        "export_capacity",
+        "已有太多导出文件等待下载，请先完成或释放后再导出。",
+        `At most ${EXPORT_ARTIFACT_LIMIT} browser exports may be retained at once`,
+        { recoverable: true, recommended_action: null, details: { stage: "reserve", commit_state: "not_committed", retryable: true } },
+      );
+    }
+    const id = requestedId ?? crypto.randomUUID().replaceAll("-", "");
+    if (!/^[a-f0-9]{32}$/.test(id) || this.exportArtifacts.has(id)) {
+      throw error(
+        "export_id_invalid",
+        "导出请求编号无效或已被使用，请重新发起导出。",
+        "export id must be a fresh 128-bit lowercase hex token",
+        { recoverable: true, recommended_action: null, details: { stage: "reserve", commit_state: "not_committed", retryable: true } },
+      );
+    }
+    const slot: ExportArtifactSlot = {
+      created_at: Date.now(),
+      building: true,
+      release_requested: false,
+      root: null,
+      files: [],
+      downloaded: new Set(),
+      active_finishes: new Set(),
+      controller: new AbortController(),
+      build_completion: null,
+    };
+    this.exportArtifacts.set(id, slot);
+    this.scheduleExportArtifactExpiry(id, slot);
+    return [id, slot];
+  }
+
+  private async disposeExportArtifact(
+    id: string,
+    slot = this.exportArtifacts.get(id),
+  ): Promise<void> {
+    if (!slot || this.exportArtifacts.get(id) !== slot) return;
+    if (slot.expiry_timer !== undefined) clearTimeout(slot.expiry_timer);
+    if (slot.root) {
+      try {
+        await Deno.remove(slot.root, { recursive: true });
+      } catch (caught) {
+        if (!(caught instanceof Deno.errors.NotFound)) throw caught;
+      }
+    }
+    if (this.exportArtifacts.get(id) === slot) this.exportArtifacts.delete(id);
+    slot.root = null;
+    slot.files = [];
+  }
+
+  private async releaseExportArtifact(id: string): Promise<boolean> {
+    const slot = this.exportArtifacts.get(id);
+    if (!slot) return false;
+    slot.release_requested = true;
+    slot.controller.abort();
+    if (slot.building) {
+      await slot.build_completion;
+    }
+    await Promise.all([...slot.active_finishes].map((finish) => finish()));
+    await this.disposeExportArtifact(id, slot);
+    return true;
+  }
+
+  async openExportDownload(
+    exportId: string,
+    fileIndex: number,
+    requestSignal?: AbortSignal,
+  ): Promise<ExportDownloadHandle> {
+    await this.pruneExportArtifacts();
+    const slot = /^[a-f0-9]{32}$/.test(exportId)
+      ? this.exportArtifacts.get(exportId)
+      : undefined;
+    const unavailable = () => error(
+      "export_expired",
+      "导出文件引用无效或已过期，请重新导出。",
+      "export download capability is missing or expired",
+      { recoverable: true, recommended_action: null, details: { stage: "download", commit_state: "not_committed", retryable: false } },
+    );
+    if (!slot || slot.building || slot.release_requested) throw unavailable();
+    if (!Number.isSafeInteger(fileIndex) || fileIndex < 0 || fileIndex >= slot.files.length) {
+      throw unavailable();
+    }
+    const descriptor = slot.files[fileIndex];
+    if (!descriptor) throw unavailable();
+    let stat: Deno.FileInfo;
+    try {
+      stat = await Deno.lstat(descriptor.path);
+    } catch {
+      throw unavailable();
+    }
+    if (stat.isSymlink || !stat.isFile || stat.size !== descriptor.size) {
+      throw unavailable();
+    }
+    const controller = new AbortController();
+    const abort = () => controller.abort();
+    slot.controller.signal.addEventListener("abort", abort, { once: true });
+    requestSignal?.addEventListener("abort", abort, { once: true });
+    if (slot.controller.signal.aborted || requestSignal?.aborted) controller.abort();
+    let releaseBuffer: (() => void) | null = null;
+    let file: Deno.FsFile;
+    try {
+      releaseBuffer = await acquireExportStreamBuffer(
+        controller.signal,
+        1024 * 1024,
+        "download",
+      );
+      file = await Deno.open(descriptor.path, { read: true });
+      if (controller.signal.aborted) throw unavailable();
+    } catch (caught) {
+      slot.controller.signal.removeEventListener("abort", abort);
+      requestSignal?.removeEventListener("abort", abort);
+      releaseBuffer?.();
+      throw caught;
+    }
+    try {
+      const openedStat = await file.stat();
+      if (
+        !openedStat.isFile || openedStat.size !== descriptor.size ||
+        controller.signal.aborted || slot.release_requested
+      ) throw unavailable();
+    } catch {
+      try {
+        file.close();
+      } catch { /* close may race service shutdown */ }
+      slot.controller.signal.removeEventListener("abort", abort);
+      requestSignal?.removeEventListener("abort", abort);
+      releaseBuffer?.();
+      throw unavailable();
+    }
+    slot.created_at = Date.now();
+    this.scheduleExportArtifactExpiry(exportId, slot);
+    let completed = false;
+    let cancelFinish!: () => Promise<void>;
+    const finish = async (success: boolean): Promise<void> => {
+      if (completed) return;
+      completed = true;
+      try {
+        file.close();
+      } catch {
+        // A concurrent service shutdown may already have closed the handle.
+      }
+      slot.active_finishes.delete(cancelFinish);
+      slot.controller.signal.removeEventListener("abort", abort);
+      requestSignal?.removeEventListener("abort", abort);
+      releaseBuffer?.();
+      if (success) slot.downloaded.add(fileIndex);
+      if (
+        this.exportArtifacts.get(exportId) === slot &&
+        (slot.release_requested || slot.downloaded.size === slot.files.length)
+      ) {
+        await this.disposeExportArtifact(exportId, slot);
+      }
+    };
+    cancelFinish = () => finish(false);
+    slot.active_finishes.add(cancelFinish);
+    return {
+      file,
+      relative_path: descriptor.relative_path,
+      mime_type: descriptor.mime_type,
+      size: descriptor.size,
+      signal: controller.signal,
+      read: async (buffer) => {
+        if (controller.signal.aborted) {
+          throw new DOMException("Export download cancelled", "AbortError");
+        }
+        const count = await file.read(buffer);
+        if (count !== null) recordExportDownloadRead(count);
+        return count;
+      },
+      finish,
+    };
+  }
+
   private scheduleImportPreviewExpiry(
     id: string,
     slot: ImportPreviewSlot,
@@ -2369,6 +2714,16 @@ export class DesktopService {
     for (const [id, slot] of previews) {
       await this.disposeImportPreview(id, slot);
     }
+    const exports = [...this.exportArtifacts.entries()];
+    for (const [, slot] of exports) {
+      slot.release_requested = true;
+      slot.controller.abort();
+    }
+    await Promise.all(exports.map(([, slot]) => slot.build_completion));
+    await Promise.all(
+      exports.flatMap(([, slot]) => [...slot.active_finishes]).map((finish) => finish()),
+    );
+    await Promise.all(exports.map(([id, slot]) => this.disposeExportArtifact(id, slot)));
     await this.store.close();
   }
 }
