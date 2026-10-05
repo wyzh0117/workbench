@@ -26,6 +26,7 @@ mod paged_export;
 mod registry;
 
 static ID_COUNTER: AtomicU64 = AtomicU64::new(0);
+static LEASE_GENERATION_COUNTER: AtomicU64 = AtomicU64::new(0);
 const PROJECT_LOCK_RELATIVE_PATH: &str = ".workspace/project.lock";
 const PROJECT_LOCK_GUARD_RELATIVE_PATH: &str = ".workspace/project.lock.guard";
 const PROJECT_LOCK_STALE_MS: u128 = 30_000;
@@ -52,7 +53,16 @@ const WINDOW_CLOSE_REQUEST_EVENT: &str = "tauri://close-requested";
 #[derive(Clone)]
 struct LeaseHandle {
     app_instance_id: String,
+    generation: String,
     stop: Arc<AtomicBool>,
+    health: Arc<Mutex<LeaseHealth>>,
+}
+
+#[derive(Clone)]
+struct LeaseHealth {
+    state: &'static str,
+    retry_count: u64,
+    last_error: Option<String>,
 }
 
 #[derive(Clone, Debug)]
@@ -642,7 +652,9 @@ fn heartbeat_project_lock(project_dir: &Path, app_instance_id: &str) -> Result<b
     else {
         return Ok(false);
     };
-    if lock.app_instance_id != app_instance_id {
+    if lock.app_instance_id != app_instance_id
+        || project_lock_is_stale(&lock_path, Some(&lock), PROJECT_LOCK_STALE_MS)?
+    {
         return Ok(false);
     }
     lock.heartbeat = rfc3339_now();
@@ -658,36 +670,129 @@ fn heartbeat_project_lock(project_dir: &Path, app_instance_id: &str) -> Result<b
     Ok(true)
 }
 
-fn register_project_lock(project_dir: &Path, lock: &ProjectLockRecord) {
-    let stop = Arc::new(AtomicBool::new(false));
-    let handle = LeaseHandle {
-        app_instance_id: lock.app_instance_id.clone(),
-        stop: Arc::clone(&stop),
-    };
-    {
-        let mut active = active_project_locks().lock().unwrap();
-        if let Some(existing) = active.insert(project_dir.to_owned(), handle.clone()) {
-            existing.stop.store(true, Ordering::Relaxed);
+fn heartbeat_with_retries<F, S>(
+    mut attempt: F,
+    mut sleep: S,
+) -> (Result<bool, String>, u64, Option<String>)
+where
+    F: FnMut() -> Result<bool, String>,
+    S: FnMut(Duration),
+{
+    let mut result = attempt();
+    let mut retries = 0;
+    let mut first_error = None;
+    for delay_ms in [1_000, 2_000, 4_000] {
+        let Err(error) = &result else {
+            break;
+        };
+        first_error.get_or_insert_with(|| error.clone());
+        sleep(Duration::from_millis(delay_ms));
+        retries += 1;
+        result = attempt();
+    }
+    if let Err(error) = &result {
+        first_error.get_or_insert_with(|| error.clone());
+    }
+    (result, retries, first_error)
+}
+
+fn maintain_project_heartbeat<F, S>(
+    handle: &LeaseHandle,
+    project_dir: &Path,
+    heartbeat: F,
+    sleep: S,
+) -> bool
+where
+    F: FnMut() -> Result<bool, String>,
+    S: FnMut(Duration),
+{
+    let (result, retries, first_error) = heartbeat_with_retries(heartbeat, sleep);
+    match result {
+        Ok(true) => {
+            let mut health = handle.health.lock().unwrap();
+            health.retry_count = health.retry_count.saturating_add(retries);
+            health.state = "active";
+            if retries > 0 {
+                health.last_error = first_error;
+            }
+            true
+        }
+        Ok(false) => {
+            {
+                let mut health = handle.health.lock().unwrap();
+                health.state = "lost";
+                health.last_error = Some(project_lock_lost_error());
+            }
+            handle.stop.store(true, Ordering::Release);
+            unregister_project_lock(project_dir, Some(handle));
+            false
+        }
+        Err(error) => {
+            let mut health = handle.health.lock().unwrap();
+            health.retry_count = health.retry_count.saturating_add(retries);
+            health.state = "degraded";
+            health.last_error = Some(first_error.unwrap_or(error));
+            true
         }
     }
+}
+
+fn register_project_lock(
+    project_dir: &Path,
+    lock: &ProjectLockRecord,
+    reuse_live: bool,
+) -> LeaseHandle {
+    let handle = {
+        let mut active = active_project_locks().lock().unwrap();
+        if reuse_live {
+            if let Some(existing) = active.get(project_dir).filter(|existing| {
+                existing.app_instance_id == lock.app_instance_id
+                    && !existing.stop.load(Ordering::Acquire)
+            }) {
+                return existing.clone();
+            }
+        }
+        let stop = Arc::new(AtomicBool::new(false));
+        let handle = LeaseHandle {
+            app_instance_id: lock.app_instance_id.clone(),
+            generation: format!(
+                "{}:lease-{}",
+                lock.app_instance_id,
+                LEASE_GENERATION_COUNTER.fetch_add(1, Ordering::Relaxed) + 1
+            ),
+            stop: Arc::clone(&stop),
+            health: Arc::new(Mutex::new(LeaseHealth {
+                state: "active",
+                retry_count: 0,
+                last_error: None,
+            })),
+        };
+        if let Some(existing) = active.insert(project_dir.to_owned(), handle.clone()) {
+            existing.stop.store(true, Ordering::Release);
+        }
+        handle
+    };
+
+    let worker_handle = handle.clone();
     let project_dir = project_dir.to_owned();
     let app_instance_id = lock.app_instance_id.clone();
     thread::spawn(move || {
-        while !stop.load(Ordering::Relaxed) {
+        while !worker_handle.stop.load(Ordering::Acquire) {
             thread::sleep(Duration::from_millis(PROJECT_LOCK_HEARTBEAT_MS));
-            if stop.load(Ordering::Relaxed) {
+            if worker_handle.stop.load(Ordering::Acquire) {
                 break;
             }
-            match heartbeat_project_lock(&project_dir, &app_instance_id) {
-                Ok(true) => {}
-                Ok(false) | Err(_) => {
-                    stop.store(true, Ordering::Relaxed);
-                    unregister_project_lock(&project_dir, Some(&handle));
-                    break;
-                }
+            if !maintain_project_heartbeat(
+                &worker_handle,
+                &project_dir,
+                || heartbeat_project_lock(&project_dir, &app_instance_id),
+                thread::sleep,
+            ) {
+                break;
             }
         }
     });
+    handle
 }
 
 fn acquire_project_lock_for(
@@ -705,7 +810,7 @@ fn acquire_project_lock_for(
             if lock.app_instance_id == app_instance_id
                 && !project_lock_is_stale(&lock_path, Some(lock), stale_after_ms)?
             {
-                register_project_lock(&project_dir, lock);
+                register_project_lock(&project_dir, lock, true);
                 return Ok(lock.clone());
             }
             if lock.app_instance_id != app_instance_id
@@ -744,7 +849,7 @@ fn acquire_project_lock_for(
                     return Err(format!("无法写入项目锁: {error}"));
                 }
                 drop(file);
-                register_project_lock(&project_dir, &lock);
+                register_project_lock(&project_dir, &lock, false);
                 return Ok(lock);
             }
             Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
@@ -1073,6 +1178,40 @@ fn read_project_state(project_dir: &Path) -> Result<(Value, FileFingerprint), St
 
 fn read_project_value(project_dir: &Path) -> Result<Value, String> {
     read_project_state(project_dir).map(|(project, _)| project)
+}
+
+fn project_id_of(project: &Value) -> Result<String, String> {
+    project
+        .get("project")
+        .and_then(|value| value.get("id"))
+        .and_then(Value::as_str)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned)
+        .ok_or_else(|| "项目缺少 project.id".into())
+}
+
+fn active_lease_generation(project_dir: &Path) -> Result<String, String> {
+    let directory =
+        fs::canonicalize(project_dir).map_err(|error| format!("无法解析项目目录: {error}"))?;
+    let active = active_project_locks().lock().unwrap();
+    let handle = active
+        .get(&directory)
+        .filter(|handle| {
+            handle.app_instance_id == current_app_instance_id()
+                && !handle.stop.load(Ordering::Acquire)
+        })
+        .ok_or_else(project_lock_lost_error)?;
+    Ok(handle.generation.clone())
+}
+
+fn verify_lease_generation(project_dir: &Path, requested: Option<&str>) -> Result<String, String> {
+    let current = active_lease_generation(project_dir)?;
+    if requested.is_some_and(|requested| requested != current) {
+        return Err(
+            "project_lease_generation_mismatch: 当前编辑租约已变化，请重新打开项目。".into(),
+        );
+    }
+    Ok(current)
 }
 
 fn project_fingerprint(project_dir: &Path) -> Result<FileFingerprint, String> {
@@ -2109,14 +2248,25 @@ fn project_inspect(path: String) -> Result<Value, String> {
     Ok(inspect_project_directory(Path::new(raw)))
 }
 
-#[tauri::command]
-fn project_open(project_dir: String) -> Result<Option<Value>, String> {
+enum ProjectOpenOutcome {
+    Inspection(Value),
+    Opened {
+        project: Value,
+        fingerprint: FileFingerprint,
+        project_id: String,
+        lease_generation: String,
+    },
+}
+
+fn project_open_inner(project_dir: String) -> Result<Option<ProjectOpenOutcome>, String> {
     let requested = project_dir.trim().to_string();
     let project_dir = match explicit_project_dir(&project_dir, false) {
         Ok(dir) => dir,
         // A folder that is simply gone is a classification, not an opaque error.
         Err(error) if error == "项目目录不存在" => {
-            return Ok(Some(inspect_project_directory(Path::new(&requested))))
+            return Ok(Some(ProjectOpenOutcome::Inspection(
+                inspect_project_directory(Path::new(&requested)),
+            )))
         }
         Err(error) => return Err(error),
     };
@@ -2142,7 +2292,7 @@ fn project_open(project_dir: String) -> Result<Option<Value>, String> {
     };
     if blocking {
         release_if_new();
-        return Ok(Some(inspection));
+        return Ok(Some(ProjectOpenOutcome::Inspection(inspection)));
     }
     let path = match project_file(&project_dir, "project.json") {
         Ok(path) => path,
@@ -2153,22 +2303,40 @@ fn project_open(project_dir: String) -> Result<Option<Value>, String> {
     };
     if !path.exists() {
         release_if_new();
-        return Ok(Some(no_project_json_result()));
+        return Ok(Some(ProjectOpenOutcome::Inspection(
+            no_project_json_result(),
+        )));
     }
     match read_project_state(&project_dir) {
         Ok((project, fingerprint)) => {
             if let Err(error) =
-                store_project_baseline(&project_dir, fingerprint, Some(project.clone()))
+                store_project_baseline(&project_dir, fingerprint.clone(), Some(project.clone()))
             {
                 release_if_new();
                 return Err(error);
             }
-            Ok(Some(project))
+            let (project_id, lease_generation) =
+                match project_id_of(&project).and_then(|project_id| {
+                    active_lease_generation(&project_dir)
+                        .map(|lease_generation| (project_id, lease_generation))
+                }) {
+                    Ok(identity) => identity,
+                    Err(error) => {
+                        release_if_new();
+                        return Err(error);
+                    }
+                };
+            Ok(Some(ProjectOpenOutcome::Opened {
+                project,
+                fingerprint,
+                project_id,
+                lease_generation,
+            }))
         }
         Err(error) => {
             release_if_new();
             match project_open_legacy_failure(&error) {
-                Some(failure) => Ok(Some(failure)),
+                Some(failure) => Ok(Some(ProjectOpenOutcome::Inspection(failure))),
                 // Genuinely unexpected failures keep the 无法打开项目 fallback.
                 None => Err(error),
             }
@@ -2177,21 +2345,78 @@ fn project_open(project_dir: String) -> Result<Option<Value>, String> {
 }
 
 #[tauri::command]
+fn project_open(project_dir: String) -> Result<Option<Value>, String> {
+    Ok(
+        project_open_inner(project_dir)?.map(|outcome| match outcome {
+            ProjectOpenOutcome::Inspection(value) => value,
+            ProjectOpenOutcome::Opened { project, .. } => project,
+        }),
+    )
+}
+
+#[tauri::command]
 fn project_open_state(project_dir: String) -> Result<Option<Value>, String> {
-    let opened = project_open(project_dir.clone())?;
-    let Some(opened) = opened else {
-        return Ok(None);
-    };
-    if opened.get("status").is_some() {
-        return Ok(Some(opened));
-    }
+    Ok(
+        project_open_inner(project_dir)?.map(|outcome| match outcome {
+            ProjectOpenOutcome::Inspection(value) => value,
+            ProjectOpenOutcome::Opened {
+                project,
+                fingerprint,
+                project_id,
+                lease_generation,
+            } => json!({
+                "project": project,
+                "fingerprint": fingerprint,
+                "project_id": project_id,
+                "lease_generation": lease_generation,
+            }),
+        }),
+    )
+}
+
+#[tauri::command]
+fn project_read_state(project_dir: String) -> Result<Option<Value>, String> {
     let project_dir = explicit_project_dir(&project_dir, false)?;
-    let _lease_guard = require_active_project_lock(&project_dir)?;
+    let path = project_file(&project_dir, "project.json")?;
+    if !path.exists() {
+        return Ok(None);
+    }
     let (project, fingerprint) = read_project_state(&project_dir)?;
-    store_project_baseline(&project_dir, fingerprint.clone(), Some(project.clone()))?;
-    Ok(Some(
-        json!({ "project": project, "fingerprint": fingerprint }),
-    ))
+    let project_id = project_id_of(&project)?;
+    Ok(Some(json!({
+        "project": project,
+        "fingerprint": fingerprint,
+        "project_id": project_id,
+    })))
+}
+
+#[tauri::command]
+fn project_lease_status(project_dir: String) -> Result<Value, String> {
+    let project_dir = explicit_project_dir(&project_dir, false)?;
+    let directory =
+        fs::canonicalize(&project_dir).map_err(|error| format!("无法解析项目目录: {error}"))?;
+    let handle = active_project_locks()
+        .lock()
+        .unwrap()
+        .get(&directory)
+        .cloned();
+    let Some(handle) = handle.filter(|handle| {
+        handle.app_instance_id == current_app_instance_id() && !handle.stop.load(Ordering::Acquire)
+    }) else {
+        return Ok(json!({
+            "state": "lost",
+            "lease_generation": Value::Null,
+            "retry_count": 0,
+            "last_error": project_lock_lost_error(),
+        }));
+    };
+    let health = handle.health.lock().unwrap().clone();
+    Ok(json!({
+        "state": health.state,
+        "lease_generation": handle.generation,
+        "retry_count": health.retry_count,
+        "last_error": health.last_error,
+    }))
 }
 
 /// Compatibility name for the browser shell. It still requires an explicit
@@ -15754,9 +15979,229 @@ mod tests {
             .expect("replacement heartbeat should be registered");
         assert!(!Arc::ptr_eq(&old.stop, &current.stop));
         assert!(!current.stop.load(Ordering::Acquire));
+        acquire_project_lock_for(&directory, "same", PROJECT_LOCK_STALE_MS)
+            .expect("the restarted owner should keep its worker");
+        let still_current = active_project_locks()
+            .lock()
+            .unwrap()
+            .get(&directory)
+            .cloned()
+            .expect("reacquired heartbeat should stay registered");
+        assert!(Arc::ptr_eq(&current.stop, &still_current.stop));
         unregister_project_lock(&directory, Some(&old));
         assert!(project_lock_registered(&directory, "same"));
         assert!(heartbeat_project_lock(&directory, "same").expect("new heartbeat should work"));
+        release_project_lock_for(&directory, "same").expect("owner should release the lock");
+        let _ = fs::remove_dir_all(directory);
+    }
+
+    #[test]
+    fn same_owner_reacquire_reuses_live_heartbeat_handle() {
+        let directory = test_directory("reacquire-live");
+        let project_dir = directory.to_string_lossy().into_owned();
+        project_create(
+            project_dir.clone(),
+            json!({ "project": { "id": "p1", "title": "heartbeat" }, "items": [] }),
+        )
+        .expect("project should open a lease");
+        let directory = fs::canonicalize(&directory).expect("test directory should canonicalize");
+        let first = active_project_locks()
+            .lock()
+            .unwrap()
+            .get(&directory)
+            .cloned()
+            .expect("first heartbeat should be registered");
+        let generation = first.generation.clone();
+        let mut simulated_ms = 0;
+        let mut identity_reads = 0;
+        let mut next_heartbeat_ms = PROJECT_LOCK_HEARTBEAT_MS as u64;
+        let mut heartbeat_updates = 0;
+        while simulated_ms < 90_000 {
+            let state = project_open_state(project_dir.clone())
+                .expect("open state should be readable")
+                .expect("project should stay open");
+            identity_reads += 1;
+            assert_eq!(state["lease_generation"], json!(generation));
+            let current = active_project_locks()
+                .lock()
+                .unwrap()
+                .get(&directory)
+                .cloned()
+                .expect("heartbeat should remain registered");
+            assert!(Arc::ptr_eq(&first.stop, &current.stop));
+            assert!(!current.stop.load(Ordering::Acquire));
+            simulated_ms += 350;
+            if simulated_ms >= next_heartbeat_ms {
+                let before = read_project_lock(&project_lock_path(&directory).unwrap())
+                    .unwrap()
+                    .unwrap()
+                    .heartbeat;
+                thread::sleep(Duration::from_millis(2));
+                assert!(maintain_project_heartbeat(
+                    &first,
+                    &directory,
+                    || heartbeat_project_lock(&directory, &first.app_instance_id),
+                    |_| {},
+                ));
+                let after = read_project_lock(&project_lock_path(&directory).unwrap())
+                    .unwrap()
+                    .unwrap()
+                    .heartbeat;
+                assert_ne!(before, after, "each simulated tick advances the heartbeat");
+                heartbeat_updates += 1;
+                next_heartbeat_ms += PROJECT_LOCK_HEARTBEAT_MS as u64;
+            }
+        }
+        assert!(simulated_ms >= 90_000);
+        assert!(heartbeat_updates >= 18);
+        assert!(!first.stop.load(Ordering::Acquire));
+        eprintln!(
+            "simulated_ms={simulated_ms} identity_reads={identity_reads} heartbeat_updates={heartbeat_updates} active_handle_count=1"
+        );
+
+        release_project_lock_for(&directory, current_app_instance_id())
+            .expect("owner should release the lock");
+        let _ = fs::remove_dir_all(&directory);
+    }
+
+    #[test]
+    fn heartbeat_does_not_revive_an_expired_same_owner_lease() {
+        let directory = test_directory("heartbeat-expired");
+        let project_dir = directory.to_string_lossy().into_owned();
+        let project = json!({ "project": { "id": "p1", "title": "expired" }, "items": [] });
+        project_create(project_dir.clone(), project.clone()).expect("project should open");
+        let path = project_lock_path(&directory).expect("lock path should be valid");
+        let owner = current_app_instance_id().to_owned();
+        let expired = ProjectLockRecord {
+            app_instance_id: owner.clone(),
+            pid: std::process::id(),
+            host: "test".into(),
+            opened_at: "2000-01-01T00:00:00.000Z".into(),
+            heartbeat: "2000-01-01T00:00:00.000Z".into(),
+        };
+        fs::write(
+            &path,
+            serde_json::to_vec(&project_lock_value(&expired)).unwrap(),
+        )
+        .expect("expired lock should be writable");
+
+        assert!(!heartbeat_project_lock(&directory, &owner).unwrap());
+        assert_eq!(
+            read_project_lock(&path).unwrap().unwrap().heartbeat,
+            expired.heartbeat,
+            "an expired lease must not be extended by a delayed worker"
+        );
+        let before = fs::read(directory.join("project.json")).unwrap();
+        let save = project_save(
+            project_dir.clone(),
+            project_fingerprint(&directory).unwrap(),
+            None,
+            project,
+        );
+        assert!(save.is_err(), "an expired owner must not save");
+        assert_eq!(fs::read(directory.join("project.json")).unwrap(), before);
+        release_project_lock_for(&directory, current_app_instance_id())
+            .expect("owner should release the lock");
+        let _ = fs::remove_dir_all(directory);
+    }
+
+    #[test]
+    fn pure_project_read_does_not_create_a_lease_or_workspace() {
+        let directory = test_directory("pure-project-read");
+        let canonical = fs::canonicalize(&directory).unwrap();
+        let project = json!({ "project": { "id": "p-read", "title": "read" }, "items": [] });
+        fs::write(
+            directory.join("project.json"),
+            serde_json::to_vec_pretty(&project).unwrap(),
+        )
+        .unwrap();
+
+        for _ in 0..4 {
+            let state = project_read_state(directory.to_string_lossy().into_owned())
+                .unwrap()
+                .unwrap();
+            assert_eq!(state["project"], project);
+            assert_eq!(state["project_id"], json!("p-read"));
+        }
+
+        assert!(!directory.join(".workspace").exists());
+        assert!(!active_project_locks()
+            .lock()
+            .unwrap()
+            .contains_key(&canonical));
+        let _ = fs::remove_dir_all(directory);
+    }
+
+    #[test]
+    fn transient_heartbeat_error_retries_with_bounded_backoff() {
+        let directory = test_directory("heartbeat-transient");
+        acquire_project_lock_for(&directory, "same", PROJECT_LOCK_STALE_MS)
+            .expect("owner should acquire the lock");
+        let handle = active_project_locks()
+            .lock()
+            .unwrap()
+            .get(&fs::canonicalize(&directory).unwrap())
+            .cloned()
+            .expect("heartbeat should be registered");
+        let mut attempts = 0;
+        let mut waits = Vec::new();
+        assert!(maintain_project_heartbeat(
+            &handle,
+            &directory,
+            || {
+                attempts += 1;
+                if attempts == 1 {
+                    Err("simulated lock I/O error".into())
+                } else {
+                    Ok(true)
+                }
+            },
+            |duration| waits.push(duration),
+        ));
+        assert_eq!(attempts, 2);
+        assert_eq!(waits, [Duration::from_secs(1)]);
+        let health = handle.health.lock().unwrap().clone();
+        assert_eq!(health.state, "active");
+        assert_eq!(health.retry_count, 1);
+        assert_eq!(
+            health.last_error.as_deref(),
+            Some("simulated lock I/O error")
+        );
+        release_project_lock_for(&directory, "same").expect("owner should release the lock");
+        let _ = fs::remove_dir_all(directory);
+    }
+
+    #[test]
+    fn foreign_owner_stops_heartbeat_without_retry() {
+        let directory = test_directory("heartbeat-foreign");
+        acquire_project_lock_for(&directory, "same", PROJECT_LOCK_STALE_MS)
+            .expect("owner should acquire the lock");
+        let canonical = fs::canonicalize(&directory).unwrap();
+        let handle = active_project_locks()
+            .lock()
+            .unwrap()
+            .get(&canonical)
+            .cloned()
+            .expect("heartbeat should be registered");
+        let mut attempts = 0;
+        let mut waits = Vec::new();
+        assert!(!maintain_project_heartbeat(
+            &handle,
+            &canonical,
+            || {
+                attempts += 1;
+                Ok(false)
+            },
+            |duration| waits.push(duration),
+        ));
+        assert_eq!(attempts, 1);
+        assert!(waits.is_empty());
+        assert!(handle.stop.load(Ordering::Acquire));
+        assert_eq!(handle.health.lock().unwrap().state, "lost");
+        assert!(!active_project_locks()
+            .lock()
+            .unwrap()
+            .contains_key(&canonical));
         release_project_lock_for(&directory, "same").expect("owner should release the lock");
         let _ = fs::remove_dir_all(directory);
     }
@@ -22660,6 +23105,8 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             project_open,
             project_open_state,
+            project_read_state,
+            project_lease_status,
             project_inspect,
             project_create,
             project_save,
