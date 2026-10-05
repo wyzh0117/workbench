@@ -6251,15 +6251,54 @@ fn folder_adopt_with_documents(
     project_title: Option<String>,
     replace_invalid_project: Option<bool>,
     document_paths: Option<Vec<String>>,
+    editor_generation: Option<u64>,
+    operation_id: Option<String>,
+    revision: Option<u64>,
 ) -> Result<Value, String> {
-    folder_apply_import_with_documents(
+    let adoption_echo = adoption_operation_echo(editor_generation, operation_id, revision)?;
+    let mut result = folder_apply_import_with_documents(
         plan,
         duplicate_choice,
         project_title,
         None,
         replace_invalid_project.unwrap_or(false),
         document_paths.as_deref().unwrap_or_default(),
-    )
+    )?;
+    if let Some(echo) = adoption_echo {
+        result["mutation_ack"]["editor_generation"] = json!(echo.editor_generation);
+        result["mutation_ack"]["operation_id"] = json!(echo.operation_id);
+        result["mutation_ack"]["revision"] = json!(echo.revision);
+    }
+    Ok(result)
+}
+
+#[derive(Clone)]
+struct AdoptionOperationEcho {
+    editor_generation: u64,
+    operation_id: String,
+    revision: u64,
+}
+
+fn adoption_operation_echo(
+    editor_generation: Option<u64>,
+    operation_id: Option<String>,
+    revision: Option<u64>,
+) -> Result<Option<AdoptionOperationEcho>, String> {
+    match (editor_generation, operation_id, revision) {
+        (None, None, None) => Ok(None),
+        (Some(editor_generation), Some(operation_id), Some(revision))
+            if !operation_id.trim().is_empty() && valid_snapshot_id(&operation_id) =>
+        {
+            Ok(Some(AdoptionOperationEcho {
+                editor_generation,
+                operation_id,
+                revision,
+            }))
+        }
+        _ => Err(invalid_mutation_binding_error(
+            "folder.adopt 需要完整且有效的编辑操作回显字段。",
+        )),
+    }
 }
 
 #[tauri::command]
@@ -25984,8 +26023,36 @@ mod tests {
             "reading/02-followup.md".to_owned(),
             "reading/01-intro.md".to_owned(),
         ];
-        let result = folder_adopt_with_documents(plan, None, None, None, Some(paths))
-            .expect("checked children share one new Lesson");
+        let result = folder_adopt_with_documents(
+            plan,
+            None,
+            None,
+            None,
+            Some(paths),
+            Some(17),
+            Some("adopt-op-17".to_owned()),
+            Some(23),
+        )
+        .expect("checked children share one new Lesson");
+
+        let ack = &result["mutation_ack"];
+        assert_eq!(ack["editor_generation"], json!(17));
+        assert_eq!(ack["operation_id"], json!("adopt-op-17"));
+        assert_eq!(ack["revision"], json!(23));
+        assert_eq!(ack["project_id"], result["data"]["project"]["id"]);
+        assert_eq!(
+            ack["project_dir"],
+            json!(fs::canonicalize(&root).unwrap().to_string_lossy())
+        );
+        assert_eq!(
+            ack["fingerprint"]["hash"],
+            json!(project_fingerprint(&root).unwrap().hash)
+        );
+        assert_eq!(ack["commit_state"], json!("committed"));
+        assert!(
+            ack["lease_generation"].as_str().is_some(),
+            "native target lease is reported honestly"
+        );
 
         assert_eq!(result["content_item_ids"].as_array().unwrap().len(), 1);
         let lesson = &result["data"]["content_items"][0];
@@ -26053,6 +26120,24 @@ mod tests {
             .expect("managed image path");
         assert_eq!(fs::read(root.join(managed_path)).unwrap(), gif);
         let _ = project_close(root.to_string_lossy().into_owned());
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn folder_adopt_rejects_partial_mutation_echo_before_creating_project() {
+        let root = test_directory("folder-adopt-partial-echo");
+        let plan = json!({
+            "root": root.to_string_lossy(),
+            "confirmed": true,
+            "items": []
+        });
+
+        let error =
+            folder_adopt_with_documents(plan, None, None, None, None, Some(17), None, Some(23))
+                .expect_err("partial editor operation must be rejected");
+
+        assert!(error.contains("invalid_mutation_binding"), "{error}");
+        assert!(!root.join("project.json").exists());
         let _ = fs::remove_dir_all(root);
     }
 
@@ -26904,8 +26989,9 @@ mod tests {
             "S01-00/book.epub".to_owned(),
             "S01-00/plan.tex".to_owned(),
         ];
-        let result = folder_adopt_with_documents(plan, None, None, None, Some(paths))
-            .expect("all selected formats adopt");
+        let result =
+            folder_adopt_with_documents(plan, None, None, None, Some(paths), None, None, None)
+                .expect("all selected formats adopt");
         let lessons = result["data"]["content_items"].as_array().expect("lessons");
         assert_eq!(lessons.len(), 4, "one lesson per checked source document");
         let expected = [
