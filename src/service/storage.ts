@@ -40,6 +40,16 @@ export interface RecoveryJournal {
   project: ProjectData;
 }
 
+export interface ProjectSaveBinding {
+  expected_project_id: string;
+  lease_generation: string;
+  editor_generation: number;
+  operation_id: string;
+  revision: number;
+  expected_fingerprint: FileFingerprint;
+  recovery_metadata?: unknown;
+}
+
 export interface ProjectDiffEntry {
   path: string;
   before: unknown;
@@ -203,6 +213,7 @@ export const mergeProjects = mergeProjectData;
 
 export interface ProjectLock {
   app_instance_id: string;
+  generation?: string;
   pid: number;
   host: string;
   opened_at: string;
@@ -346,6 +357,19 @@ async function writeBytesSyncSafe(
     await file.sync();
   } finally {
     file.close();
+  }
+}
+
+async function syncDirectoryPath(path: string): Promise<boolean> {
+  let directory: Deno.FsFile | null = null;
+  try {
+    directory = await Deno.open(path, { read: true });
+    await directory.sync();
+    return true;
+  } catch {
+    return false;
+  } finally {
+    directory?.close();
   }
 }
 
@@ -637,6 +661,10 @@ export class ProjectDirectoryStore {
     return join(this.directory, JOURNAL_FILE);
   }
 
+  get leaseGeneration(): string | null {
+    return this.lock?.generation ?? null;
+  }
+
   private path(relativePath: string): string {
     assertRelative(relativePath);
     const target = join(this.directory, relativePath);
@@ -899,6 +927,7 @@ export class ProjectDirectoryStore {
       }
       const lock: ProjectLock = {
       app_instance_id: this.options.app_instance_id,
+      generation: crypto.randomUUID(),
       pid: Deno.pid,
       host: (() => {
         try {
@@ -1262,6 +1291,171 @@ export class ProjectDirectoryStore {
         recovery_warning: recoveryWarning,
       };
     });
+  }
+
+  async saveBound(
+    data: ProjectData,
+    binding: ProjectSaveBinding,
+  ): Promise<{
+    fingerprint: FileFingerprint;
+    recovery_warning: string | null;
+    durability_warning: string | null;
+    outcome: "written" | "unchanged";
+  }> {
+    const fail = (
+      caught: unknown,
+      stage: string,
+      commitState: "not_committed" | "outcome_uncertain" | "committed",
+      retryable: boolean,
+    ): never => {
+      const details = {
+        ...(caught instanceof ServiceError ? caught.error.details : {}),
+        stage,
+        commit_state: commitState,
+        retryable,
+        ...(caught instanceof ServiceError && caught.error.details.fingerprint
+          ? { fingerprint: caught.error.details.fingerprint }
+          : {}),
+      };
+      if (caught instanceof ServiceError) {
+        throw new ServiceError({ ...caught.error, details });
+      }
+      throw new ServiceError({
+        code: "project_save_failed",
+        user_message: "保存没有完成，请检查保存状态后重试。",
+        technical_message: caught instanceof Error ? caught.message : String(caught),
+        recoverable: retryable,
+        details,
+      });
+    };
+
+    let canonicalCommitted = false;
+    try {
+      return await this.withWritableLease(async () => {
+        if (!binding.lease_generation || binding.lease_generation !== this.leaseGeneration) {
+          throw error(
+            "project_lock_lost",
+            "项目编辑租约已变化，保存已暂停。",
+            "project.save lease generation does not match the active writer lease",
+            { recoverable: false, recommended_action: null, details: { stage: "lease_validate", commit_state: "not_committed", retryable: false } },
+          );
+        }
+        const canonical = migrateProject(JSON.parse(serializeProject(data)));
+        const activeProjectId = this.baselineProject?.project.id ?? null;
+        if (
+          !activeProjectId || binding.expected_project_id !== activeProjectId ||
+          canonical.project.id !== activeProjectId
+        ) {
+          throw error(
+            "project_id_mismatch",
+            "保存请求与当前课程身份不匹配。",
+            "project.save owner identity does not match the active canonical project",
+            { recoverable: false, recommended_action: null, details: { stage: "project_identity", commit_state: "not_committed", retryable: false } },
+          );
+        }
+        const expectedRecovery = binding.recovery_metadata;
+        if (
+          expectedRecovery && typeof expectedRecovery === "object" &&
+          "project_id" in expectedRecovery &&
+          (expectedRecovery as { project_id?: unknown }).project_id !== activeProjectId
+        ) {
+          throw error(
+            "project_id_mismatch",
+            "保存恢复元数据与当前课程身份不匹配。",
+            "project.save recovery metadata owner does not match the active project",
+            { recoverable: false, recommended_action: null, details: { stage: "recovery_validate", commit_state: "not_committed", retryable: false } },
+          );
+        }
+        const current = await fileFingerprint(this.projectPath);
+        if (fingerprintsDiffer(binding.expected_fingerprint, current)) {
+          throw error(
+            "external_modification_conflict",
+            "课程文件已由另一个写入更新，保存已暂停以免覆盖内容。请重新载入或合并修改。",
+            "Refusing project save from a stale loaded fingerprint",
+            { recoverable: true, recommended_action: null, details: { stage: "fingerprint_preflight", commit_state: "not_committed", retryable: false, fingerprint: current } },
+          );
+        }
+        if (
+          !this.baseline ||
+          fingerprintsDiffer(this.baseline, current)
+        ) {
+          throw error(
+            "external_modification_conflict",
+            "课程文件在其他地方发生了变化，保存已暂停以免覆盖内容。",
+            "Refusing project save from a stale service baseline",
+            { recoverable: true, recommended_action: null, details: { stage: "baseline_preflight", commit_state: "not_committed", retryable: false, fingerprint: current } },
+          );
+        }
+        if (
+          this.baselineProject &&
+          serializeProject(canonical) === serializeProject(this.baselineProject)
+        ) {
+          return {
+            fingerprint: structuredClone(current),
+            recovery_warning: null,
+            durability_warning: null,
+            outcome: "unchanged",
+          };
+        }
+        const contents = serializeProject(canonical);
+        const bytes = new TextEncoder().encode(contents);
+        const journal: RecoveryJournal = {
+          transaction_id: binding.operation_id,
+          project_id: canonical.project.id,
+          canonical_revision: canonical.project.updated_at,
+          saved_at: now(),
+          project: clone(canonical),
+        };
+        try {
+          await this.writeAtomicText(JOURNAL_FILE, JSON.stringify(journal), false);
+        } catch (caught) {
+          fail(caught, "recovery_write", "not_committed", true);
+        }
+        try {
+          await this.writeAtomicText(PROJECT_FILE, contents, true);
+          canonicalCommitted = true;
+        } catch (caught) {
+          fail(caught, "canonical_write", "outcome_uncertain", false);
+        }
+        const stat = await Deno.stat(this.projectPath).catch((caught): never => {
+          return fail(caught, "fingerprint_ack", "committed", false);
+        });
+        const fingerprint: FileFingerprint = {
+          exists: true,
+          mtime_ms: stat.mtime?.getTime() ?? null,
+          size: bytes.byteLength,
+          hash: await sha256Bytes(bytes),
+        };
+        this.baseline = structuredClone(fingerprint);
+        this.baselineProject = clone(canonical);
+        let durabilityWarning: string | null = null;
+        if (!await syncDirectoryPath(this.directory)) {
+          durabilityWarning = "项目文件已写入，但无法同步项目目录元数据。";
+        }
+        let recoveryWarning: string | null = null;
+        try {
+          await Deno.remove(this.journalPath);
+        } catch (caught) {
+          if (!isNotFound(caught)) {
+            recoveryWarning = "恢复日志清理失败，但课程内容已经保存。";
+          }
+        }
+        if (!recoveryWarning && !await syncDirectoryPath(this.workspacePath)) {
+          durabilityWarning = durabilityWarning
+            ? `${durabilityWarning}恢复目录元数据同步失败。`
+            : "课程已保存，但恢复目录元数据同步失败。";
+        }
+        return {
+          fingerprint,
+          recovery_warning: recoveryWarning,
+          durability_warning: durabilityWarning,
+          outcome: "written",
+        };
+      });
+    } catch (caught) {
+      if (caught instanceof ServiceError && caught.error.details.commit_state) throw caught;
+      return fail(caught, "save_preflight", canonicalCommitted ? "committed" : "not_committed", !canonicalCommitted);
+    }
   }
 
   async externalChange(): Promise<

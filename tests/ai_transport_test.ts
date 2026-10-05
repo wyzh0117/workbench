@@ -2106,10 +2106,25 @@ Deno.test("a failing execution append surfaces an AI-scoped error, not a save fa
     const project = await desktop.queries.execute("project.get");
     const state = await desktop.commands.execute("project.open_state", {});
     assert(!state.error, "the current project baseline should be readable");
-    const expectedFingerprint = (state.value as { fingerprint: unknown }).fingerprint;
+    const openState = state.value as {
+      fingerprint: unknown;
+      project_id: string;
+      project_dir: string;
+      lease_generation: string;
+    };
     const saved = await desktop.commands.execute("project.save", {
       project,
-      expected_fingerprint: expectedFingerprint,
+      project_dir: openState.project_dir,
+      expected_project_id: openState.project_id,
+      lease_generation: openState.lease_generation,
+      editor_generation: 1,
+      operation_id: crypto.randomUUID(),
+      revision: 1,
+      expected_fingerprint: openState.fingerprint,
+      recovery_metadata: {
+        project_id: openState.project_id,
+        saved_at: new Date().toISOString(),
+      },
     });
     assert(
       !saved.error,

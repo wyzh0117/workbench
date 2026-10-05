@@ -1,6 +1,6 @@
 import { createEmptyProjectData } from "../domain/store.ts";
 import { applyChangeDraft } from "../domain/ai.ts";
-import { join } from "node:path";
+import { join, normalize } from "node:path";
 import type { AssetType, JsonObject, ProjectData } from "../domain/types.ts";
 import { addAssetUsage } from "../domain/assets.ts";
 import {
@@ -257,6 +257,8 @@ export class DesktopService {
         value: {
           ...state,
           project_id: state.project?.project.id ?? null,
+          project_dir: this.store.directory,
+          lease_generation: null,
         },
       };
     });
@@ -264,7 +266,14 @@ export class DesktopService {
       const state = await this.store.readProjectState();
       this.context.project = state.project;
       if (state.project) await this.search.rebuild(state.project);
-      return { value: state };
+      return {
+        value: {
+          ...state,
+          project_id: state.project?.project.id ?? null,
+          project_dir: this.store.directory,
+          lease_generation: this.store.leaseGeneration,
+        },
+      };
     });
     this.commands.register("project.open", async () => {
       try {
@@ -390,41 +399,76 @@ export class DesktopService {
       if (!input || typeof input !== "object") {
         throw new Error("project.save requires project data");
       }
-      // The browser/native bridge sends { project: ProjectData }, while
-      // service callers historically passed ProjectData directly. Accept both
-      // at this boundary so the canonical writer never receives the envelope.
       const envelope = input as {
+        project_dir?: unknown;
+        expected_project_id?: unknown;
+        lease_generation?: unknown;
+        editor_generation?: unknown;
+        operation_id?: unknown;
+        revision?: unknown;
         project?: unknown;
         expected_fingerprint?: unknown;
+        recovery_metadata?: unknown;
       };
       const nested = envelope.project;
-      const candidate = nested && typeof nested === "object" &&
-          "project" in nested
-        ? nested as ProjectData
-        : input as ProjectData;
-      if (!isFileFingerprint(envelope.expected_fingerprint)) {
+      if (!nested || typeof nested !== "object" || !("project" in nested)) {
         throw error(
-          "save_baseline_required",
-          "保存基线已失效。请重新载入课程后再保存。",
-          "project.save requires the fingerprint of the project snapshot loaded by this client",
+          "save_binding_required",
+          "保存绑定信息缺失，请重新打开课程后再保存。",
+          "project.save requires a bound project envelope",
+          { recoverable: true, recommended_action: null, details: { stage: "binding_validate", commit_state: "not_committed", retryable: false } },
+        );
+      }
+      const candidate = nested as ProjectData;
+      if (
+        typeof envelope.project_dir !== "string" ||
+        normalize(envelope.project_dir) !== this.store.directory ||
+        typeof envelope.expected_project_id !== "string" ||
+        !envelope.expected_project_id.trim() ||
+        typeof envelope.lease_generation !== "string" ||
+        !envelope.lease_generation.trim() ||
+        typeof envelope.operation_id !== "string" ||
+        !envelope.operation_id.trim() ||
+        !Number.isSafeInteger(envelope.editor_generation) ||
+        Number(envelope.editor_generation) < 0 ||
+        !Number.isSafeInteger(envelope.revision) ||
+        Number(envelope.revision) < 0 ||
+        !isFileFingerprint(envelope.expected_fingerprint)
+      ) {
+        throw error(
+          "save_binding_invalid",
+          "保存绑定信息或课程目录无效，请重新打开课程后再保存。",
+          "project.save requires the active project path plus valid project, lease, editor, operation, revision, and fingerprint bindings",
           {
             recoverable: true,
-            recommended_action: "重新载入磁盘版本或合并修改后再保存。",
-            details: {},
+            recommended_action: "重新打开课程后再保存。",
+            details: { stage: "binding_validate", commit_state: "not_committed", retryable: false },
           },
         );
       }
-      const saved = await this.store.saveWithRecovery(
-        candidate,
-        envelope.expected_fingerprint,
-      );
+      const saved = await this.store.saveBound(candidate, {
+        expected_project_id: envelope.expected_project_id,
+        lease_generation: envelope.lease_generation,
+        editor_generation: Number(envelope.editor_generation),
+        operation_id: envelope.operation_id,
+        revision: Number(envelope.revision),
+        expected_fingerprint: envelope.expected_fingerprint,
+        recovery_metadata: envelope.recovery_metadata,
+      });
       this.context.project = candidate;
       await this.search.rebuild(candidate);
       return {
         value: {
-          project: candidate,
           fingerprint: saved.fingerprint,
+          project_id: envelope.expected_project_id,
+          project_dir: this.store.directory,
+          lease_generation: this.store.leaseGeneration,
+          editor_generation: Number(envelope.editor_generation),
+          operation_id: envelope.operation_id,
+          revision: Number(envelope.revision),
+          outcome: saved.outcome,
           recovery_warning: saved.recovery_warning,
+          durability_warning: saved.durability_warning,
         },
         audit: {
           object_type: "project",

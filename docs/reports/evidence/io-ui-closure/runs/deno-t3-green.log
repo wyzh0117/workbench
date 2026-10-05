@@ -1,0 +1,56 @@
+running 3 tests from ./tests/project_save_protocol_test.ts
+project.read_state stays pure and open_state returns the active lease ... ok (73ms)
+bound project saves return compact ack and unchanged saves perform zero writes ... ok (40ms)
+project.save rejects stale lease and wrong owner before changing canonical ... ok (21ms)
+
+ok | 3 passed | 0 failed (141ms)
+
+running 4 tests from ./tests/browser_session_test.ts
+browser page reload restores reader position, then saves canonical edits before the next reload ... ok (202ms)
+openWorkbench after reload restores the session authoring subview for the current lesson ... ok (94ms)
+browser session records reject stale, corrupt, credential-shaped, missing, and inaccessible inputs ... ok (6ms)
+missing browser projects still render a usable launcher ... ok (24ms)
+
+ok | 4 passed | 0 failed (342ms)
+
+running 36 tests from ./tests/ai_transport_test.ts
+ai connections round-trip without ever returning the credential ... ok (84ms)
+ai.secret.delete removes only the credential and stays idempotent ... ok (63ms)
+provider metadata stays under .workspace/ai while credentials stay in the injected secure store ... ok (19ms)
+historical plaintext credentials migrate once to the injected secure store ... ok (7ms)
+failed historical migration leaves plaintext sources untouched without echoing the key ... ok (2ms)
+a corrupt provider file fails readably without echoing its contents ... ok (15ms)
+ai.connection.save rejects credential-shaped provider fields ... ok (16ms)
+§9.4 a saved connection's Provider ID is immutable while its display name is not ... ok (50ms)
+§9.4 add-mode refuses a duplicate id and edit-mode refuses a phantom target ... ok (49ms)
+ai.complete posts once with the injected auth header and normalises bodies ... ok (47ms)
+stored credentials never cross origins through renderer URLs or stale metadata ... ok (149ms)
+ai.complete returns streams as raw text and unparsable JSON as text ... ok (81ms)
+ai.complete maps provider HTTP failures to design error codes ... ok (78ms)
+a provider echoing the credential cannot leak it into results, diagnostics or the project ... ok (79ms)
+AiTransport scrubs the credential from every thrown failure ... ok (25ms)
+encoded, escaped and fragmented credential echoes are redacted ... ok (68ms)
+a request URL carrying the key cannot leak through a url echo ... ok (41ms)
+a short credential drops the whole provider excerpt ... ok (39ms)
+ordinary identifiers survive the provider excerpt ... ok (39ms)
+a lowercase digit-free key cannot slip through reversed ... ok (38ms)
+a credential pasted into the instruction does not reach the executions file ... ok (53ms)
+diagnostics.log is created private like the AI store ... ok (43ms)
+ai.complete refuses unsafe urls and unconfigured or keyless providers ... ok (41ms)
+ai.complete times out and stays cancellable ... ok (94ms)
+ai.cancel aborts an in-flight request and never fails ... ok (40ms)
+ai.execution records are sanitised, truncated and bounded to 200 ... ok (1s)
+ai.execution.append replaces an existing record id in place ... ok (42ms)
+ai.execution.append mints an id for a record without one ... ok (32ms)
+ai.execution.append collapses pre-existing duplicate ids ... ok (25ms)
+ai.execution.append keeps the 200-record bound and order after a replace ... ok (32ms)
+sanitizeExecutionRecord strips credentials and caps instructions ... ok (401µs)
+a failing execution append surfaces an AI-scoped error, not a save failure ... ok (31ms)
+AI commands require an open project and never leak a credential ... ok (5ms)
+AiTransport honours an injected ai_home and tolerates an empty project ... ok (33ms)
+saved protocol adapters reach a local HTTP service with isolated auth and bodies ...Listening on http://127.0.0.1:58053/
+ ok (143ms)
+temporary model probes and explicit connection tests do not persist secrets or executions ...Listening on http://127.0.0.1:58061/
+ ok (37ms)
+
+ok | 36 passed | 0 failed (3s)
