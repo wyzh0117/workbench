@@ -68,50 +68,177 @@ export interface AtomicWriteRequest {
   contents: string;
 }
 
+export interface FileFingerprint {
+  exists: boolean;
+  mtime_ms: number | null;
+  size: number | null;
+  hash: string | null;
+}
+
+export interface ProjectReadState {
+  project: unknown | null;
+  project_id: string | null;
+  fingerprint: FileFingerprint;
+  /** Present only for a writer-opened native project; a pure read has no lease. */
+  lease_generation?: string | null;
+}
+
+export interface ProjectSaveRequest {
+  project_dir: string | null;
+  expected_project_id: string;
+  lease_generation: string | null;
+  editor_generation: number;
+  operation_id: string;
+  revision: number;
+  expected_fingerprint: FileFingerprint | null;
+  project: unknown;
+  recovery_metadata?: Record<string, unknown>;
+}
+
+export interface ProjectSaveResult {
+  project_id: string;
+  lease_generation: string | null;
+  editor_generation: number;
+  operation_id: string;
+  revision: number;
+  outcome: "written" | "unchanged";
+  commit_state: "committed";
+  fingerprint: FileFingerprint;
+  recovery_warning?: string | null;
+  durability_warning?: string | null;
+}
+
+export interface SnapshotWriteRequest {
+  snapshot_id: string;
+  name: string;
+  note: string;
+  project: unknown;
+  expected_project_id: string;
+  lease_generation: string | null;
+  editor_generation: number;
+  operation_id: string;
+  revision: number;
+}
+
+export interface SnapshotWriteResult {
+  id: string;
+  snapshot_id: string;
+  name: string;
+  note: string;
+  created_at: string;
+  content_hash: string;
+  project_id: string;
+  project_dir: string;
+  lease_generation: string | null;
+  editor_generation: number;
+  operation_id: string;
+  revision: number;
+  persisted: true;
+  outcome: "written" | "unchanged";
+  durability_warning?: string;
+}
+
+export interface SnapshotRestoreRequest {
+  expected_project_id: string;
+  lease_generation: string | null;
+  editor_generation: number;
+  operation_id: string;
+  revision: number;
+}
+
+export interface SnapshotRestoreResult {
+  restored: true;
+  snapshot_id: string;
+  project: unknown;
+  fingerprint: FileFingerprint;
+  project_id: string;
+  project_dir?: string;
+  lease_generation: string | null;
+  editor_generation: number;
+  operation_id: string;
+  revision: number;
+  backup_snapshot_id: string;
+  backup_persisted: true;
+  commit_state: "committed";
+  recovery_warning?: string | null;
+  durability_warning?: string | null;
+}
+
+export interface AssetPreviewBatchRequest {
+  project_id: string;
+  fingerprint: FileFingerprint;
+  request_generation: number;
+  asset_ids: string[];
+}
+
+export interface AssetPreviewBatchItem {
+  asset_id: string;
+  status: "ok" | "error" | "deferred";
+  bytes_base64?: string;
+  error?: { code: string; message: string };
+}
+
+export interface AssetPreviewBatchResult {
+  project_id: string;
+  fingerprint: FileFingerprint;
+  request_generation: number;
+  items: AssetPreviewBatchItem[];
+}
+
+export interface ExportFileResult {
+  relative_path: string;
+  mime_type: string;
+  size: number;
+  sha256: string;
+  asset_id?: string;
+  bytes?: Uint8Array;
+  download_url?: string;
+  path?: string;
+}
+
+export interface ExportResult {
+  export_id?: string;
+  files: ExportFileResult[];
+  output_path?: string;
+  warnings?: string[];
+}
+
 export interface DesktopBridge {
   readProject(): Promise<unknown | null>;
-  readProjectState?(): Promise<{
-    project: unknown | null;
-    fingerprint: {
-      exists: boolean;
-      mtime_ms: number | null;
-      size: number | null;
-      hash: string | null;
-    } | null;
-  }>;
-  writeProject(
-    project: unknown,
-    expectedFingerprint?: unknown,
-    recoveryJournal?: unknown,
-  ): Promise<unknown>;
+  openProjectState?(): Promise<ProjectReadState & { lease_generation: string }>;
+  readProjectState?(): Promise<ProjectReadState>;
+  writeProject(request: ProjectSaveRequest): Promise<ProjectSaveResult>;
   writeRecoveryJournal(journal: unknown): Promise<void>;
   readRecoveryJournal(): Promise<unknown | null>;
-  saveSession(session: PersistedWorkbenchSession): Promise<void>;
+  saveSession(
+    session: PersistedWorkbenchSession,
+    metadata?: { operation_id: string; session_generation: number; revision: number },
+  ): Promise<unknown>;
   loadSession(): Promise<PersistedWorkbenchSession | null>;
-  createSnapshot(input: {
-    snapshot_id?: string;
-    name: string;
-    note: string;
-    project: unknown;
-  }): Promise<void>;
+  createSnapshot(input: SnapshotWriteRequest): Promise<SnapshotWriteResult>;
   restoreSnapshot?(
     snapshotId: string,
-    projectId?: string,
-  ): Promise<unknown | null>;
+    request: SnapshotRestoreRequest,
+  ): Promise<SnapshotRestoreResult>;
+  readAssetBatch?(input: AssetPreviewBatchRequest): Promise<AssetPreviewBatchResult>;
 }
 
 /** Names exposed by the desktop bridge are intentionally high-level. */
 export type BridgeCommandName =
   | "project.open"
   | "project.open_state"
+  | "project.read_state"
   | "project.create"
   | "project.save"
   | "import.preview"
+  | "import.preview.release"
   | "import.confirm"
   | "asset.import"
+  | "asset.preview_batch"
   | "snapshot.create"
   | "snapshot.restore"
   | "export.run"
+  | "export.release"
   | "publication.record"
   | "secret.set"
   | "secret.delete"

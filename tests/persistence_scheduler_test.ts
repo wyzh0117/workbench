@@ -1,5 +1,6 @@
 import {
   createPersistenceScheduler,
+  createSessionScheduler,
   normalizeProjectDir,
 } from "../app/persistence.js";
 
@@ -71,6 +72,35 @@ function saved(value: ReturnType<typeof request>, hash: string) {
     fingerprint: { exists: true, hash },
   };
 }
+
+Deno.test("session scheduler debounces 600ms, keeps the latest state, and skips unchanged payloads", async () => {
+  const timers = fakeTimers();
+  const writes: unknown[] = [];
+  const writeCount = () => writes.length;
+  const scheduler = createSessionScheduler({
+    setTimeout: timers.setTimeout,
+    clearTimeout: timers.clearTimeout,
+    write: async (value: unknown, metadata: unknown) => {
+      writes.push({ value, metadata });
+    },
+  });
+  const first = scheduler.enqueue({ active_content_item_id: "lesson-a" });
+  timers.tick(300);
+  const latest = scheduler.enqueue({ active_content_item_id: "lesson-b" });
+  timers.tick(599);
+  assert(writeCount() === 0, "session changes should wait for the trailing debounce");
+  timers.tick(1);
+  await scheduler.flush();
+  await Promise.all([first, latest]);
+  assert(writeCount() === 1, "pending session states should coalesce to one write");
+  assert(
+    (writes[0] as { value: { active_content_item_id: string } }).value.active_content_item_id === "lesson-b",
+    "the latest session state should be persisted",
+  );
+  await scheduler.enqueue({ active_content_item_id: "lesson-b" });
+  assert(writeCount() === 1, "an unchanged normalized session payload should be a no-op");
+  scheduler.close();
+});
 
 Deno.test("save scheduler coalesces cumulative revisions and advances the bound fingerprint", async () => {
   const timers = fakeTimers();
@@ -383,14 +413,45 @@ Deno.test("explicit not-committed failures may advance to the latest cumulative 
   const latest = scheduler.enqueue(request(3));
   timers.tick(350);
   const drain = scheduler.flush();
-  const notCommitted = new Error("disk was not changed") as Error & { code: string; commit_state: string };
+  const notCommitted = new Error("disk was not changed") as Error & { code: string; commit_state: string; retryable: boolean };
   notCommitted.code = "save_io_failed";
   notCommitted.commit_state = "not_committed";
+  notCommitted.retryable = true;
   firstGate.reject(notCommitted);
   await first.catch(() => undefined);
   await drain;
   await latest;
   assert(writes.join(",") === "1,3", "known-not-committed failure may proceed with the latest cumulative snapshot");
+});
+
+Deno.test("unknown not-committed errors pause unless the bridge marks them retryable", async () => {
+  const timers = fakeTimers();
+  const firstGate = deferred<ReturnType<typeof saved>>();
+  const writes: number[] = [];
+  const scheduler = createPersistenceScheduler({
+    debounceMs: 350,
+    maxWaitMs: 2000,
+    setTimeout: timers.setTimeout,
+    clearTimeout: timers.clearTimeout,
+    write: async (value: ReturnType<typeof request>) => {
+      writes.push(value.revision);
+      if (value.revision === 1) return await firstGate.promise;
+      return saved(value, "after-reconcile");
+    },
+  });
+  const first = scheduler.enqueue(request(1));
+  timers.tick(350);
+  await Promise.resolve();
+  const pending = scheduler.enqueue(request(3));
+  timers.tick(350);
+  const unknown = new Error("unclassified failure") as Error & { code: string; commit_state: string };
+  unknown.code = "future_error_code";
+  unknown.commit_state = "not_committed";
+  firstGate.reject(unknown);
+  await first.catch(() => undefined);
+  assert(writes.join(",") === "1", "an unclassified failure must not be treated as safe to retry");
+  await scheduler.reconcileGeneration({ ...request(4), editor_generation: 5 });
+  await pending;
 });
 
 Deno.test("save requests are cloned, revision-bound, and directory identity is normalized", async () => {
@@ -413,5 +474,6 @@ Deno.test("save requests are cloned, revision-bound, and directory identity is n
   await scheduler.flush();
   assert(received[0]?.project.revision === 1, "the dispatched canonical project must be an immutable snapshot");
   assert(received[0]?.operation_id === "save-1" && received[0].revision === 1, "operation and revision must stay bound");
-  assert(normalizeProjectDir(" /tmp/course/// ") === "/tmp/course", "directory identity should ignore trailing separators");
+  assert(normalizeProjectDir("/tmp/course///") === "/tmp/course", "directory identity should ignore trailing separators");
+  assert(normalizeProjectDir("/tmp/course ") !== normalizeProjectDir("/tmp/course"), "a valid trailing-space path must not alias another directory");
 });

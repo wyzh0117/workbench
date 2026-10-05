@@ -56,6 +56,9 @@ interface SessionShape {
 /** The slice of the running store these tests need. */
 interface NativeStore {
   data: ProjectData;
+  saveRevision: number;
+  editorGeneration: number;
+  saveStatus: string;
   projectFingerprint: FileFingerprint | null;
   projectFingerprintGeneration: number;
   ui: {
@@ -86,6 +89,7 @@ interface NativeStore {
   addMapItem: (title?: string) => void;
   enterProject: () => void;
   flush: () => Promise<unknown>;
+  scheduleSave: () => void;
   selectExplorerEntry: (relativePath: string) => Promise<void>;
   clearExplorerPreview: () => void;
 }
@@ -193,6 +197,14 @@ async function bootNative(options: {
             return {
               project: structuredClone(state.project),
               fingerprint: structuredClone(state.fingerprint),
+              project_id: state.project.project.id,
+              lease_generation: "native-lease-1",
+            };
+          case "project_read_state":
+            return {
+              project: structuredClone(state.project),
+              fingerprint: structuredClone(state.fingerprint),
+              project_id: state.project.project.id,
             };
           case "read_recovery_journal":
             return null;
@@ -219,6 +231,13 @@ async function bootNative(options: {
             state.fingerprint = fingerprintFor(state.project);
             return {
               fingerprint: structuredClone(state.fingerprint),
+              project_id: args.expectedProjectId,
+              lease_generation: args.leaseGeneration,
+              editor_generation: args.editorGeneration,
+              operation_id: args.operationId,
+              revision: args.revision,
+              outcome: "written",
+              commit_state: "committed",
               recovery_warning: null,
             };
           }
@@ -392,6 +411,22 @@ Deno.test("native launch opens the --project-dir project and persists it", async
   }
 });
 
+Deno.test("URL project_dir preserves a legitimate trailing space", async () => {
+  const projectDir = "/tmp/native-course ";
+  const { store, restore } = await bootNative({
+    project: seededProject(),
+    launchProjectDir: null,
+    persistedSession: null,
+    locationHref: `tauri://localhost/index.html?project_dir=${encodeURIComponent(projectDir)}`,
+  });
+  try {
+    await until(() => store.hasNativeLease(), "URL project lease");
+    assertEquals(store.bridge.projectDir, projectDir, "URL decoding must not trim a valid directory suffix");
+  } finally {
+    restore();
+  }
+});
+
 Deno.test("a late save acknowledgement cannot replace a newer accepted project baseline", async () => {
   const { store, state, restore } = await bootNative({
     project: seededProject(),
@@ -443,6 +478,90 @@ Deno.test("a late save acknowledgement cannot replace a newer accepted project b
     assertEquals(store.data.project.title, "已采用的新版本", "late ack must not replace accepted data");
     assertEquals(store.projectFingerprint, newerFingerprint, "late ack must not roll back the accepted fingerprint");
     assertEquals(store.projectFingerprintGeneration, acceptedGeneration, "late ack must not advance the newer generation");
+  } finally {
+    restore();
+  }
+});
+
+Deno.test("native Bridge saves use monotonic numeric revisions and stale acknowledgements stay dirty", async () => {
+  const { store, state, restore } = await bootNative({
+    project: seededProject(),
+    launchProjectDir: "/tmp/native-save-revision-project",
+    persistedSession: null,
+  });
+  try {
+    await until(() => store.hasNativeLease(), "revision test project lease");
+    const canonicalRevision = store.data.project.updated_at;
+    const saves: Array<{
+      args: Record<string, unknown>;
+      finish: (result: unknown) => void;
+    }> = [];
+    state.invokeOverrides.set("project_save", (args) => new Promise((resolve) => {
+      saves.push({ args, finish: resolve });
+    }));
+
+    store.data.project.title = "相同时间戳的编辑一";
+    store.scheduleSave();
+    await until(() => saves.length === 1, "first bound project_save invoke");
+    const first = saves[0];
+    assert(first, "first native save must reach Tauri invoke");
+    assert(Number.isSafeInteger(first.args.revision), "native revision must be a numeric u64-compatible value");
+    assertEquals(first.args.revision, 1, "the first editor revision starts at one");
+    assertEquals(first.args.projectDir, "/tmp/native-save-revision-project", "Bridge maps projectDir for Tauri");
+    assertEquals(first.args.expectedProjectId, store.data.project.id, "Bridge binds the active project id");
+    assertEquals(first.args.leaseGeneration, "native-lease-1", "Bridge binds the acquired native lease");
+    assertEquals(first.args.editorGeneration, store.editorGeneration, "Bridge binds the editor generation");
+    assertEquals(first.args.project && (first.args.project as ProjectData).project.updated_at, canonicalRevision, "canonical updated_at remains unchanged in the write");
+    assertEquals(
+      (first.args.recoveryMetadata as Record<string, unknown>)?.canonical_revision,
+      canonicalRevision,
+      "the ISO canonical revision is recovery metadata only",
+    );
+
+    store.data.project.title = "相同时间戳的编辑二";
+    store.scheduleSave();
+    assertEquals(store.data.project.updated_at, canonicalRevision, "both writes deliberately retain the same canonical timestamp");
+    assertEquals(store.saveRevision, 2, "a second edit advances the numeric revision despite identical updated_at");
+
+    const fingerprint = (hashDigit: string): FileFingerprint => ({
+      exists: true,
+      mtime_ms: 1_780_000_000_000 + Number(hashDigit),
+      size: new TextEncoder().encode(JSON.stringify(store.data)).byteLength,
+      hash: hashDigit.repeat(64),
+    });
+    const firstFingerprint = fingerprint("a");
+    first.finish({
+      fingerprint: firstFingerprint,
+      project_id: first.args.expectedProjectId,
+      lease_generation: first.args.leaseGeneration,
+      editor_generation: first.args.editorGeneration,
+      operation_id: first.args.operationId,
+      revision: first.args.revision,
+      outcome: "written",
+      commit_state: "committed",
+    });
+    await until(() => saves.length === 2, "second coalesced native project_save invoke");
+    assertEquals(store.saveStatus, "正在保存…", "the first acknowledgement must not mark newer edits saved");
+
+    const second = saves[1];
+    assert(second, "second native save must reach Tauri invoke");
+    assert(Number.isSafeInteger(second.args.revision), "second revision remains numeric");
+    assertEquals(second.args.revision, 2, "Bridge passes the increasing editor revision to Rust");
+    assertEquals(second.args.expectedFingerprint, firstFingerprint, "the next cumulative write uses the committed fingerprint");
+    assertEquals((second.args.project as ProjectData).project.title, "相同时间戳的编辑二", "the latest full project is sent through Bridge");
+
+    second.finish({
+      fingerprint: fingerprint("b"),
+      project_id: second.args.expectedProjectId,
+      lease_generation: second.args.leaseGeneration,
+      editor_generation: second.args.editorGeneration,
+      operation_id: second.args.operationId,
+      revision: second.args.revision,
+      outcome: "written",
+      commit_state: "committed",
+    });
+    await until(() => store.saveStatus === "已保存", "latest native save acknowledgement");
+    assertEquals(store.saveRevision, second.args.revision, "only the latest numeric revision is acknowledged as clean");
   } finally {
     restore();
   }

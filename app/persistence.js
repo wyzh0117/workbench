@@ -9,8 +9,8 @@ function freeze(value) {
 }
 
 export function normalizeProjectDir(value) {
-  const path = String(value ?? "").trim().replaceAll("\\", "/");
-  if (!path) return "";
+  const path = String(value ?? "").replaceAll("\\", "/");
+  if (!path.trim()) return "";
   const normalized = path.replace(/\/+$/, "");
   if (!normalized && path.startsWith("/")) return "/";
   if (/^[A-Za-z]:$/.test(normalized)) return `${normalized}/`;
@@ -67,7 +67,8 @@ function codedError(code, message) {
 function requiresReconciliation(error) {
   const code = String(error?.code ?? "");
   const commitState = error?.commit_state ?? error?.details?.commit_state;
-  return commitState !== "not_committed" || /external_modification_conflict|project_(?:not_open|lock_lost|lock_not_owned|locked)|save_response_binding_mismatch/.test(code);
+  const terminalCode = /external_modification_conflict|project_(?:not_open|lock_lost|lock_not_owned|locked)|save_response_binding_mismatch/.test(code);
+  return commitState !== "not_committed" || error?.retryable !== true || terminalCode;
 }
 
 function immutableRequest(value) {
@@ -367,4 +368,138 @@ export function createPersistenceScheduler({
   }
 
   return { enqueue, flush, changeGeneration, reconcileGeneration, close };
+}
+
+/** Reader/session sidecar: same-value no-op, one write in flight, latest wins. */
+/** @param {{write: (value: any, metadata: any) => Promise<any> | any, onError?: ((error: Error, value: any) => void) | null, debounceMs?: number, maxWaitMs?: number, setTimeout?: (callback: () => void, delay: number) => number, clearTimeout?: (id: number) => void}} options */
+export function createSessionScheduler({
+  write,
+  onError = null,
+  debounceMs = 600,
+  maxWaitMs = 2000,
+  setTimeout: schedule = defaultSchedule,
+  clearTimeout: cancel = defaultCancel,
+} = {}) {
+  if (typeof write !== "function") throw new TypeError("session scheduler requires write");
+  let generation = 0;
+  let pending = null;
+  let inflight = null;
+  let lastSavedKey = null;
+  let lastFailure = null;
+  let trailingTimer = 0;
+  let maxTimer = 0;
+  let closed = false;
+  const drains = new Set();
+
+  function clearTimers() {
+    if (trailingTimer) cancel(trailingTimer);
+    if (maxTimer) cancel(maxTimer);
+    trailingTimer = 0;
+    maxTimer = 0;
+  }
+
+  function settle(waiters, value, error = null) {
+    for (const waiter of waiters) {
+      if (error) waiter.reject(error);
+      else waiter.resolve(value);
+    }
+  }
+
+  function finishDrains() {
+    if (pending || inflight) return;
+    for (const drain of drains) {
+      drains.delete(drain);
+      if (lastFailure) drain.reject(lastFailure);
+      else drain.resolve();
+    }
+  }
+
+  function pump() {
+    if (closed || inflight || !pending?.ready) return;
+    const item = pending;
+    pending = null;
+    clearTimers();
+    inflight = item;
+    Promise.resolve().then(() => write(clone(item.value), item.metadata)).then((result) => {
+      lastSavedKey = item.key;
+      lastFailure = null;
+      settle(item.waiters, result);
+    }).catch((error) => {
+      lastFailure = error;
+      try { onError?.(error, clone(item.value)); } catch { /* Reporting cannot change the storage result. */ }
+      settle(item.waiters, null, error);
+    }).finally(() => {
+      if (inflight === item) inflight = null;
+      pump();
+      finishDrains();
+    });
+  }
+
+  function schedulePending() {
+    if (!pending || closed) return;
+    if (trailingTimer) cancel(trailingTimer);
+    trailingTimer = schedule(() => {
+      trailingTimer = 0;
+      if (!pending) return;
+      pending.ready = true;
+      pump();
+    }, debounceMs);
+    if (!maxTimer) {
+      maxTimer = schedule(() => {
+        maxTimer = 0;
+        if (!pending) return;
+        pending.ready = true;
+        pump();
+      }, maxWaitMs);
+    }
+  }
+
+  function enqueue(value) {
+    if (closed) return Promise.reject(codedError("session_scheduler_closed", "session scheduler is closed"));
+    const snapshot = clone(value && typeof value === "object" ? value : {});
+    const key = stableJson(snapshot);
+    if (!pending && !inflight && key === lastSavedKey) return Promise.resolve({ outcome: "unchanged" });
+    return new Promise((resolve, reject) => {
+      const waiter = { resolve, reject };
+      const active = inflight?.key === key ? inflight : pending?.key === key ? pending : null;
+      if (active) {
+        active.waiters.push(waiter);
+        return;
+      }
+      const waiters = [...(pending?.waiters ?? []), waiter];
+      pending = {
+        value: snapshot,
+        key,
+        waiters,
+        ready: false,
+        metadata: {
+          operation_id: globalThis.crypto?.randomUUID?.() ?? `session-${generation + 1}`,
+          session_generation: ++generation,
+          revision: generation,
+        },
+      };
+      lastFailure = null;
+      schedulePending();
+    });
+  }
+
+  function flush() {
+    if (closed) return Promise.reject(codedError("session_scheduler_closed", "session scheduler is closed"));
+    if (pending) {
+      clearTimers();
+      pending.ready = true;
+      pump();
+    }
+    if (!pending && !inflight) return lastFailure ? Promise.reject(lastFailure) : Promise.resolve();
+    return new Promise((resolve, reject) => drains.add({ resolve, reject }));
+  }
+
+  function close() {
+    if (pending || inflight) throw codedError("session_drain_required", "flush pending session writes before closing");
+    if (lastFailure) throw codedError("session_drain_required", "resolve the failed session write before closing");
+    closed = true;
+    clearTimers();
+  }
+
+  return { enqueue, flush, close };
 }

@@ -25,6 +25,7 @@ import {
 } from "./markdown.js";
 import { parseMarkdown } from "./markdown.js";
 import { createSerialQueue, recoveryWarning } from "./recovery.js";
+import { createPersistenceScheduler, createSessionScheduler, normalizeProjectDir } from "./persistence.js";
 import {
   MEDIA_BLOCK_TYPES,
   REQUIREMENT_TYPES,
@@ -143,6 +144,8 @@ function normalizeExplorerPathList(value, limit = 64) {
 const NATIVE_PROJECT_COMMANDS = new Set([
   "project.open",
   "project.open_state",
+  "project.read_state",
+  "project.lease_status",
   "project.create",
   "project.save",
   "project.external.inspect",
@@ -157,9 +160,11 @@ const NATIVE_PROJECT_COMMANDS = new Set([
   "asset.import",
   "asset.rename",
   "asset.read",
+  "asset.preview_batch",
   "asset.preview_source",
   "snapshot.create",
   "snapshot.restore",
+  "import.preview.release",
   "export.preflight",
   "export.run",
   "publication.record",
@@ -519,8 +524,9 @@ class DesktopBridge {
     this.projectDir = null;
     this.projectDirFromUrl = false;
     try {
-      this.projectDir = new URL(globalThis.location?.href || "http://localhost/")
-        .searchParams.get("project_dir")?.trim() || null;
+      const candidate = new URL(globalThis.location?.href || "http://localhost/")
+        .searchParams.get("project_dir");
+      this.projectDir = candidate && candidate.trim() ? candidate : null;
       this.projectDirFromUrl = Boolean(this.projectDir);
     } catch {
       this.projectDir = null;
@@ -528,8 +534,8 @@ class DesktopBridge {
   }
   isNative() { return Boolean(globalThis.__TAURI__?.core?.invoke); }
   setProjectDir(value) {
-    const projectDir = String(value ?? "").trim();
-    if (!projectDir) throw new Error("请先选择项目文件夹");
+    const projectDir = String(value ?? "");
+    if (!projectDir.trim()) throw new Error("请先选择项目文件夹");
     this.projectDir = projectDir;
     this.projectDirFromUrl = false;
     return projectDir;
@@ -581,10 +587,41 @@ class DesktopBridge {
         projectDir,
         project: input.project,
         expectedFingerprint: input.expected_fingerprint,
-        recoveryJournal: input.recovery_journal,
+        ...(Object.hasOwn(input, "recovery_metadata") ? { recoveryMetadata: input.recovery_metadata } : {}),
+        ...(Object.hasOwn(input, "recovery_journal") ? { recoveryJournal: input.recovery_journal } : {}),
+        ...(Object.hasOwn(input, "expected_project_id") ? { expectedProjectId: input.expected_project_id } : {}),
+        ...(Object.hasOwn(input, "lease_generation") ? { leaseGeneration: input.lease_generation } : {}),
+        ...(Object.hasOwn(input, "editor_generation") ? { editorGeneration: input.editor_generation } : {}),
+        ...(Object.hasOwn(input, "operation_id") ? { operationId: input.operation_id } : {}),
+        ...(Object.hasOwn(input, "revision") ? { revision: input.revision } : {}),
       };
     }
-    if (["project.open", "project.open_state", "project.create", "project.external.inspect", "project.reload", "project.merge", "snapshot.create", "snapshot.restore"].includes(command)) {
+    if (command === "snapshot.create") {
+      return {
+        projectDir,
+        name: input.name,
+        note: input.note,
+        project: input.project,
+        ...(Object.hasOwn(input, "snapshot_id") ? { snapshotId: input.snapshot_id } : {}),
+        ...(Object.hasOwn(input, "expected_project_id") ? { expectedProjectId: input.expected_project_id } : {}),
+        ...(Object.hasOwn(input, "lease_generation") ? { leaseGeneration: input.lease_generation } : {}),
+        ...(Object.hasOwn(input, "editor_generation") ? { editorGeneration: input.editor_generation } : {}),
+        ...(Object.hasOwn(input, "operation_id") ? { operationId: input.operation_id } : {}),
+        ...(Object.hasOwn(input, "revision") ? { revision: input.revision } : {}),
+      };
+    }
+    if (command === "snapshot.restore") {
+      return {
+        projectDir,
+        snapshotId: input.snapshot_id,
+        ...(Object.hasOwn(input, "expected_project_id") ? { expectedProjectId: input.expected_project_id } : {}),
+        ...(Object.hasOwn(input, "lease_generation") ? { leaseGeneration: input.lease_generation } : {}),
+        ...(Object.hasOwn(input, "editor_generation") ? { editorGeneration: input.editor_generation } : {}),
+        ...(Object.hasOwn(input, "operation_id") ? { operationId: input.operation_id } : {}),
+        ...(Object.hasOwn(input, "revision") ? { revision: input.revision } : {}),
+      };
+    }
+    if (["project.open", "project.open_state", "project.read_state", "project.lease_status", "project.create", "project.external.inspect", "project.reload", "project.merge"].includes(command)) {
       return { ...input, projectDir };
     }
     if (command === "export.run" || command === "export.preflight") {
@@ -609,6 +646,7 @@ class DesktopBridge {
       [
         "asset.import",
         "asset.read",
+        "asset.preview_batch",
         "asset.rename",
         "asset.preview_source",
         "publication.record",
@@ -617,6 +655,9 @@ class DesktopBridge {
       ].includes(command)
     ) {
       return { input: { ...input, project_dir: projectDir } };
+    }
+    if (command === "import.preview.release") {
+      return { input: { preview_id: input.preview_id, project_dir: projectDir } };
     }
     return { ...input, project_dir: projectDir };
   }
@@ -647,6 +688,10 @@ class DesktopBridge {
     const failure = new Error(detail?.user_message || detail?.message || fallback);
     failure.code = detail?.code || "bridge_request_failed";
     failure.details = detail?.details || {};
+    failure.commit_state = detail?.commit_state ?? detail?.details?.commit_state ?? null;
+    failure.stage = detail?.stage ?? detail?.details?.stage ?? null;
+    failure.retryable = detail?.retryable === true;
+    if (Object.hasOwn(detail || {}, "fingerprint")) failure.fingerprint = detail.fingerprint;
     failure.recoverable = detail?.recoverable !== false;
     // Both shells send a `recommended_action` (`src/ui/contracts.ts`
     // `BridgeErrorObject`, Rust `structured_ai_error`).  Dropping it here would
@@ -700,6 +745,8 @@ class DesktopBridge {
     return {
       "project.open": "project_open",
       "project.open_state": "project_open_state",
+      "project.read_state": "project_read_state",
+      "project.lease_status": "project_lease_status",
       "project.inspect": "project_inspect",
       // §4 app-level registry: no `projectDir` injection, `input: Value` struct.
       "registry.list": "registry_list",
@@ -727,6 +774,7 @@ class DesktopBridge {
       "asset.import": "asset_import",
       "asset.rename": "asset_rename",
       "asset.read": "asset_read",
+      "asset.preview_batch": "asset_preview_batch",
       "asset.preview_source": "asset_preview_source",
       "snapshot.create": "create_snapshot",
       "snapshot.restore": "restore_snapshot",
@@ -784,7 +832,8 @@ class DesktopBridge {
   }
   /** `project.open` for the directory currently selected on this bridge. */
   async openProject() {
-    return await this.invoke("project.open", {});
+    const state = await this.openProjectState();
+    return state && Object.hasOwn(state, "project") ? state.project : state;
   }
   async selectExportPath(filename, format) {
     const invoke = globalThis.__TAURI__?.core?.invoke;
@@ -890,12 +939,47 @@ class DesktopBridge {
     return state?.project ?? null;
   }
   async readProjectState() {
-    const value = await this.invoke("project.open_state", {});
+    const value = await this.invoke("project.read_state", {});
     if (
       value && typeof value === "object" &&
       Object.hasOwn(value, "project") && Object.hasOwn(value, "fingerprint")
-    ) return value;
-    return { project: value ?? null, fingerprint: null };
+    ) return this.bindActiveLease(value);
+    return {
+      project: value ?? null,
+      fingerprint: value == null ? { exists: false, mtime_ms: null, size: null, hash: null } : null,
+      project_id: value?.project?.id ?? null,
+      lease_generation: null,
+    };
+  }
+  async openProjectState() {
+    const value = await this.invoke("project.open_state", {});
+    if (
+      value && typeof value === "object" && value.project &&
+      typeof value.project_id === "string" && value.project_id &&
+      (typeof value.lease_generation === "string" || Number.isSafeInteger(value.lease_generation))
+    ) {
+      this.lastOpenedProjectState = { ...value, project_dir: normalizeProjectDir(this.projectDir) };
+      return value;
+    }
+    this.lastOpenedProjectState = null;
+    return value;
+  }
+  bindActiveLease(state) {
+    const opened = this.lastOpenedProjectState;
+    if (
+      opened && opened.project_id === (state.project_id ?? state.project?.project?.id) &&
+      opened.project_dir === normalizeProjectDir(this.projectDir)
+    ) return { ...state, lease_generation: opened.lease_generation };
+    return { ...state, lease_generation: null };
+  }
+  async releaseImportPreview(previewId) {
+    if (!previewId || this.isNative()) return { released: false };
+    return await this.invoke("import.preview.release", { preview_id: previewId });
+  }
+  async readAssetBatch(request) {
+    const result = await this.invoke("asset.preview_batch", request);
+    if (!result || !Array.isArray(result.items)) throw new Error("素材批量预览返回格式无效");
+    return result;
   }
   /**
    * Read one referenced asset's bytes for an in-workbench preview.
@@ -994,12 +1078,11 @@ class DesktopBridge {
     if (!this.isNative()) throw new Error("浏览器下载的文件请在下载目录查看。");
     return await this.invoke("export.reveal", { path });
   }
-  async writeProject(project, expectedFingerprint, recoveryJournal = null) {
-    return await this.invoke("project.save", {
-      project,
-      expected_fingerprint: expectedFingerprint,
-      recovery_journal: recoveryJournal,
-    });
+  async writeProject(request, expectedFingerprint, recoveryJournal = null) {
+    const input = request && Object.hasOwn(request, "expected_fingerprint")
+      ? request
+      : { project: request, expected_fingerprint: expectedFingerprint, recovery_journal: recoveryJournal };
+    return await this.invoke("project.save", input);
   }
   /**
    * The canonical id of the project currently on disk, or null when it cannot
@@ -1052,7 +1135,7 @@ class DesktopBridge {
       ? await this.nativeInvoke("read_recovery_journal", { projectDir: this.requireProjectDir() })
       : null;
   }
-  async saveSession(session) {
+  async saveSession(session, metadata = {}) {
     const invoke = globalThis.__TAURI__?.core?.invoke;
     if (invoke) {
       const requested = session && typeof session === "object" ? session : {};
@@ -1070,8 +1153,12 @@ class DesktopBridge {
       if (!payload.project_dir && payload.project_id) {
         throw new Error("项目会话缺少项目目录");
       }
-      await this.nativeInvoke("save_session", { session: payload });
-      return;
+      return await this.nativeInvoke("save_session", {
+        session: payload,
+        ...(metadata.operation_id ? { operationId: metadata.operation_id } : {}),
+        ...(metadata.session_generation !== undefined ? { sessionGeneration: metadata.session_generation } : {}),
+        ...(metadata.revision !== undefined ? { revision: metadata.revision } : {}),
+      });
     }
     if (typeof globalThis.fetch !== "function") {
       this.memory[SESSION_KEY] = clone(session);
@@ -1080,7 +1167,10 @@ class DesktopBridge {
     const response = await globalThis.fetch(`${this.apiBase}/session`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ session: session && typeof session === "object" ? session : {} }),
+      body: JSON.stringify({
+        session: session && typeof session === "object" ? session : {},
+        ...metadata,
+      }),
     });
     const payload = await response.json().catch(() => ({}));
     if (!response.ok || payload.error) throw this.bridgeError(payload, "无法记录上次阅读位置");
@@ -1130,18 +1220,10 @@ class DesktopBridge {
     }
   }
   async createSnapshot(input) {
-    const invoke = globalThis.__TAURI__?.core?.invoke;
-    if (invoke) return await this.invoke("snapshot.create", { snapshotId: input.snapshot_id, name: input.name, note: input.note, project: input.project });
     return await this.invoke("snapshot.create", input);
   }
-  async restoreSnapshot(snapshotId, projectId = "default") {
-    const invoke = globalThis.__TAURI__?.core?.invoke;
-    if (invoke) {
-      await this.invoke("snapshot.restore", { snapshotId, projectId });
-      return await this.readProjectState();
-    }
-    await this.invoke("snapshot.restore", { snapshot_id: snapshotId, project_id: projectId });
-    return await this.readProjectState();
+  async restoreSnapshot(snapshotId, request = {}) {
+    return await this.invoke("snapshot.restore", { ...request, snapshot_id: snapshotId });
   }
 }
 
@@ -1588,8 +1670,27 @@ class WorkbenchStore {
     this.documentImportGeneration = 0;
     this.mappingScanSequence = 0;
     this.expectedProjectId = null;
+    this.editorGeneration = 0;
+    this.projectIdentityKey = "";
+    this.saveRevision = 0;
+    this.lastSaveProjectKey = null;
+    this.sessionGeneration = 0;
+    this.sessionFailureReported = false;
     /** Preview cache: bounded, read-only, never a source of truth. */
     this.assetPreview = new AssetPreviewCache(bridge);
+    this.saveScheduler = createPersistenceScheduler({
+      write: (request) => this.persistProjectSnapshot(request),
+      onResult: (result, request) => this.applySaveAcknowledgement(result, request),
+      onError: (error, request) => this.reportSaveFailure(error, request),
+    });
+    this.sessionScheduler = createSessionScheduler({
+      write: async (session, metadata) => {
+        const result = await this.persistSessionDirect(session, metadata);
+        this.sessionFailureReported = false;
+        return result;
+      },
+      onError: (error) => this.reportSessionFailure(error),
+    });
   }
   subscribe(listener) { this.listeners.add(listener); return () => this.listeners.delete(listener); }
   notify() {
@@ -1853,6 +1954,10 @@ class WorkbenchStore {
     return payload;
   }
   async persistSession(session) {
+    await this.sessionScheduler.flush().catch((error) => this.reportSessionFailure(error));
+    return await this.persistSessionDirect(session, { operation_id: uid() });
+  }
+  async persistSessionDirect(session, metadata = {}) {
     const value = session && typeof session === "object" ? session : {};
     const projectDir = typeof value.project_dir === "string" && value.project_dir.trim()
       ? value.project_dir.trim()
@@ -1868,8 +1973,20 @@ class WorkbenchStore {
         throw new Error("项目会话目录与当前项目不一致");
       }
     }
-    await this.bridge.saveSession(value);
+    const sessionGeneration = ++this.sessionGeneration;
+    await this.bridge.saveSession(value, {
+      ...metadata,
+      operation_id: metadata.operation_id || uid(),
+      session_generation: sessionGeneration,
+      revision: sessionGeneration,
+    });
     this.rememberSession(value);
+  }
+  reportSessionFailure() {
+    if (this.sessionFailureReported) return;
+    this.sessionFailureReported = true;
+    this.ui.toast = "课程内容已经保存，但阅读位置没有记住。你可以继续使用，稍后再试。";
+    this.notifyChrome();
   }
   targetSession(project, projectDir, route = "overview") {
     const projectId = project?.project?.id || null;
@@ -2085,9 +2202,7 @@ class WorkbenchStore {
    */
   markPendingEdit() {
     this.data.project.updated_at = nextRevision(this.data.project.updated_at);
-    this.saveStatus = "正在保存…";
-    clearTimeout(this.saveTimer);
-    this.saveTimer = setTimeout(() => { void this.flush(); }, 350);
+    this.scheduleSave();
     clearTimeout(this.editTimer);
     this.editTimer = setTimeout(() => { this.editTimer = 0; this.notifyChrome(); }, 600);
   }
@@ -2097,13 +2212,124 @@ class WorkbenchStore {
    */
   /** Record the project identity this shell is allowed to write. */
   trackProjectIdentity(data = this.data) {
-    this.expectedProjectId = data?.project?.id ?? null;
+    const projectId = data?.project?.id ?? null;
+    const projectDir = normalizeProjectDir(this.bridge.projectDir);
+    const opened = this.bridge.lastOpenedProjectState;
+    const leaseGeneration = this.bridge.isNative() &&
+        opened?.project_id === projectId && opened?.project_dir === projectDir
+      ? opened.lease_generation
+      : null;
+    const key = JSON.stringify({ project_dir: projectDir, project_id: projectId, lease_generation: leaseGeneration });
+    if (key !== this.projectIdentityKey) {
+      const editorGeneration = this.editorGeneration + 1;
+      this.saveScheduler.changeGeneration({
+        project_dir: projectDir,
+        expected_project_id: projectId,
+        lease_generation: leaseGeneration,
+        editor_generation: editorGeneration,
+      });
+      this.editorGeneration = editorGeneration;
+      this.projectIdentityKey = key;
+      this.saveRevision = 0;
+      this.lastSaveProjectKey = null;
+    }
+    this.expectedProjectId = projectId;
     const dropped = Number(data?.__status_repair_dropped || 0);
     if (dropped > 0) {
       delete data.__status_repair_dropped;
       this.ui.toast = `有 ${dropped} 条状态记录指向已不存在的状态表，已移除；请重新设置这些课程的状态`;
     }
     return this.expectedProjectId;
+  }
+  saveIdentity() {
+    const projectDir = normalizeProjectDir(this.bridge.projectDir);
+    const opened = this.bridge.lastOpenedProjectState;
+    const leaseGeneration = this.bridge.isNative()
+      ? opened?.project_id === this.expectedProjectId && opened?.project_dir === projectDir
+        ? opened.lease_generation
+        : null
+      : null;
+    return {
+      project_dir: projectDir,
+      expected_project_id: this.expectedProjectId,
+      lease_generation: leaseGeneration,
+      editor_generation: this.editorGeneration,
+    };
+  }
+  reconcileEditorSaveState() {
+    const identity = this.saveIdentity();
+    identity.editor_generation = this.editorGeneration + 1;
+    this.saveScheduler.reconcileGeneration(identity);
+    this.editorGeneration = identity.editor_generation;
+    this.saveRevision = 0;
+    this.lastSaveProjectKey = null;
+  }
+  saveRequest(project = this.data) {
+    const identity = this.saveIdentity();
+    if (!identity.expected_project_id || identity.expected_project_id !== project?.project?.id) {
+      throw new Error("当前编辑器的项目身份已变化，请重新打开项目后保存。");
+    }
+    if (this.bridge.isNative() && (!identity.project_dir || !identity.lease_generation)) {
+      throw new Error("当前窗口没有有效的项目锁，无法安全保存。");
+    }
+    const canonicalRevision = project.project.updated_at;
+    const projectKey = JSON.stringify(project);
+    if (projectKey !== this.lastSaveProjectKey) {
+      this.saveRevision += 1;
+      this.lastSaveProjectKey = projectKey;
+    }
+    if (!Number.isSafeInteger(this.saveRevision) || this.saveRevision < 1) {
+      throw new Error("保存版本号无效，请重新打开项目后重试。");
+    }
+    return {
+      ...identity,
+      operation_id: uid(),
+      revision: this.saveRevision,
+      expected_fingerprint: this.projectFingerprint ? clone(this.projectFingerprint) : null,
+      project: clone(project),
+      recovery_metadata: {
+        project_id: project.project.id,
+        canonical_revision: canonicalRevision,
+        saved_at: now(),
+      },
+    };
+  }
+  applySaveAcknowledgement(result, request) {
+    const identity = this.saveIdentity();
+    if (
+      request.expected_project_id !== identity.expected_project_id ||
+      request.project_dir !== identity.project_dir ||
+      request.lease_generation !== identity.lease_generation ||
+      request.editor_generation !== identity.editor_generation
+    ) return;
+    this.projectFingerprint = clone(result.fingerprint);
+    this.projectFingerprintGeneration += 1;
+    this.noteRecoveryWarning(result);
+    if (this.saveRevision === request.revision) {
+      this.saveStatus = "已保存";
+      if (result.durability_warning) this.ui.toast = result.durability_warning;
+    }
+    this.notifyChrome();
+  }
+  reportSaveFailure(error, request) {
+    const identity = this.saveIdentity();
+    if (
+      request.expected_project_id !== identity.expected_project_id ||
+      request.project_dir !== identity.project_dir ||
+      request.lease_generation !== identity.lease_generation ||
+      request.editor_generation !== identity.editor_generation
+    ) return;
+    const code = String(error?.code || "");
+    const uncertain = error?.commit_state === "outcome_uncertain";
+    this.saveStatus = uncertain ? "保存结果待核验" : code === "external_modification_conflict" ? "外部修改冲突" : "保存失败";
+    if (code === "external_modification_conflict") {
+      void this.captureExternalConflict(error);
+    } else if (uncertain) {
+      this.ui.toast = "保存结果暂时无法确认。请重新读取磁盘版本后再继续写入。";
+    } else {
+      this.ui.toast = userFacingError(error, "保存没有完成。课程内容没有改变，请稍后再试。");
+    }
+    this.notifyChrome();
   }
   retainUiSelection() {
     const item = this.currentItem();
@@ -3545,21 +3771,23 @@ class WorkbenchStore {
   scheduleSave() {
     this.saveStatus = "正在保存…";
     clearTimeout(this.saveTimer);
+    this.saveTimer = 0;
     if (this.ui.route === "publish") {
-      this.saveTimer = 0;
       this.preflightDeferredSave = true;
       this.notifyChrome();
       return;
     }
-    this.saveTimer = setTimeout(() => { void this.flush(); }, 350);
+    try {
+      void this.saveScheduler.enqueue(this.saveRequest()).catch(() => {});
+    } catch (error) {
+      this.saveStatus = "保存失败";
+      this.ui.toast = userFacingError(error, "保存没有开始。请重新打开项目后重试。");
+    }
     this.notifyChrome();
   }
   scheduleSessionSave() {
-    clearTimeout(this.sessionTimer);
-    this.sessionTimer = setTimeout(() => {
-      if (this.nativeSwitching) return;
-      this.persistSession(this.session()).catch(() => {});
-    }, 0);
+    if (this.nativeSwitching) return;
+    void this.sessionScheduler.enqueue(this.session()).catch(() => {});
   }
   flush() {
     if (this.nativeSwitching) {
@@ -3592,7 +3820,6 @@ class WorkbenchStore {
     return this.queueFlush(() => this.flushNow());
   }
   async flushNow() {
-    let saved = false;
     this.recoveryWarning = "";
     const issues = assertAuthoringInvariants(this.data);
     if (issues.length > 0) {
@@ -3616,49 +3843,16 @@ class WorkbenchStore {
       return false;
     }
     try {
-      while (true) {
-        const revision = nextRevision(this.data.project.updated_at);
-        this.data.project.updated_at = revision;
-        const snapshot = clone(this.data);
-        const recoveryJournal = {
-          project_id: snapshot.project.id,
-          canonical_revision: revision,
-          saved_at: revision,
-          project: snapshot,
-        };
-        if (this.data.project.updated_at !== revision) continue;
-        await this.persistProjectSnapshot(snapshot, recoveryJournal);
-        if (this.data.project.updated_at !== revision) continue;
-        // Re-check the identity the bridge reports: a project silently replaced
-        // on disk (another tab, a swapped folder) must not keep being
-        // overwritten under the wrong project.  Bridges without the query keep
-        // working unchanged.
-        const expected = this.expectedProjectId ?? snapshot.project.id;
-        let diskId = null;
-        if (typeof this.bridge.projectIdentity === "function") {
-          diskId = await this.bridge.projectIdentity().catch(() => null);
-        }
-        if (diskId && diskId !== expected) {
-          this.saveStatus = "保存失败";
-          this.ui.toast = "磁盘上的项目已经被替换，已停止写入；课程内容没有改变，请重新打开项目。";
-          this.notifyChrome();
-          return false;
-        }
-        if (this.data.project.updated_at !== revision) continue;
-        try {
-          await this.persistSession(this.session());
-        } catch (error) {
-          // The canonical project is already on disk; losing the reader
-          // position must not be reported as a failed save of the project.
-          this.ui.toast = "课程已经保存，但上次阅读位置没有记住。课程内容不受影响，你可以继续使用。";
-        }
-        if (this.data.project.updated_at !== revision) continue;
-        this.saveStatus = "已保存";
-        saved = true;
-        break;
-      }
+      const completion = this.saveScheduler.enqueue(this.saveRequest());
+      completion.catch(() => {});
+      await this.saveScheduler.flush();
+      await completion;
+      const sessionWrite = this.sessionScheduler.enqueue(this.session());
+      sessionWrite.catch(() => {});
+      await this.sessionScheduler.flush().catch((error) => this.reportSessionFailure(error));
+      return this.saveStatus === "已保存";
     } catch (error) {
-      if (this.bridge.isNative() && typeof error?.message === "string" && /project_(?:not_open|lock_lost|lock_not_owned)/.test(error.message)) {
+      if (this.bridge.isNative() && /project_(?:not_open|lock_lost|lock_not_owned)/.test(String(error?.code || error?.message || ""))) {
         this.clearNativeLease();
         this.saveStatus = "保存失败";
         this.ui.toast = userFacingError(error, "保存没有完成。课程内容没有改变，请稍后再试。");
@@ -3674,8 +3868,6 @@ class WorkbenchStore {
       this.notifyChrome();
       return false;
     }
-    this.notifyChrome();
-    return saved;
   }
   async captureExternalConflict(error) {
     this.saveStatus = "外部修改冲突";
@@ -3695,6 +3887,7 @@ class WorkbenchStore {
         await this.queueFlush(async () => {
           const reloaded = await this.bridge.reloadExternalProject();
           if (!this.adoptProjectSnapshot(reloaded)) throw new Error("磁盘版本不是可识别的课程项目");
+          this.reconcileEditorSaveState();
           this.history = [];
           this.future = [];
           this.resetAiState();
@@ -3754,6 +3947,7 @@ class WorkbenchStore {
     if (!this.adoptProjectSnapshot(resolved)) {
       throw new Error("项目冲突处理没有返回可用的已保存版本");
     }
+    this.reconcileEditorSaveState();
     this.resetAiState();
     this.externalConflict = null;
     this.retainUiSelection();
@@ -3853,6 +4047,14 @@ class WorkbenchStore {
   readProjectSnapshot() {
     if (typeof this.bridge.readProjectState === "function") {
       return Promise.resolve(this.bridge.readProjectState()).then((state) => {
+        if (state == null) {
+          return {
+            project: null,
+            project_id: null,
+            lease_generation: null,
+            fingerprint: { exists: false, mtime_ms: null, size: null, hash: null },
+          };
+        }
         if (
           !state || typeof state !== "object" ||
           !Object.hasOwn(state, "project") ||
@@ -3861,7 +4063,11 @@ class WorkbenchStore {
         ) {
           throw new Error("课程项目读取没有返回有效的磁盘版本标识；请重新打开项目后重试。");
         }
-        return state;
+        const projectId = state.project?.project?.id ?? null;
+        if (state.project && state.project_id !== projectId) {
+          throw new Error("项目读取返回的项目标识与正文不一致；请重新打开项目后重试。");
+        }
+        return { ...state, project_id: projectId, lease_generation: state.lease_generation ?? null };
       });
     }
     return this.bridge.readProject().then((project) => {
@@ -3874,6 +4080,7 @@ class WorkbenchStore {
   }
   adoptProjectSnapshot(state) {
     if (!state || typeof state !== "object" || !Object.hasOwn(state, "project") || !this.isProjectData(state.project)) return false;
+    if (state.project_id !== undefined && state.project_id !== state.project.project.id) return false;
     const hasFingerprint = Object.hasOwn(state, "fingerprint");
     if (
       (hasFingerprint && !this.isFileFingerprint(state.fingerprint)) ||
@@ -3892,25 +4099,26 @@ class WorkbenchStore {
     return true;
   }
 
-  async persistProjectSnapshot(project, recoveryJournal = null) {
-    const baselineGeneration = this.projectFingerprintGeneration;
-    const expectedFingerprint = this.projectFingerprint
-      ? clone(this.projectFingerprint)
-      : this.projectFingerprint;
-    const result = await this.bridge.writeProject(
-      project,
-      expectedFingerprint,
-      recoveryJournal,
-    );
-    const writtenFingerprint = result?.fingerprint ?? result;
-    if (!this.isFileFingerprint(writtenFingerprint) || !writtenFingerprint.exists) {
-      throw new Error("课程项目保存没有返回有效的磁盘版本标识；请重新载入后重试。");
+  async persistProjectSnapshot(request, expectedFingerprint = this.projectFingerprint, recoveryJournal = null) {
+    if (request && Object.hasOwn(request, "expected_fingerprint")) {
+      return await this.bridge.writeProject(request);
     }
-    if (baselineGeneration === this.projectFingerprintGeneration) {
+    // Compatibility for the narrow direct-write call sites while they migrate
+    // to the scheduler barrier; normal autosave always passes a bound request.
+    const baselineGeneration = this.projectFingerprintGeneration;
+    const result = await this.bridge.writeProject({
+      project: request,
+      expected_fingerprint: expectedFingerprint,
+      recovery_journal: recoveryJournal,
+    });
+    const writtenFingerprint = result?.fingerprint;
+    if (
+      this.isFileFingerprint(writtenFingerprint) && writtenFingerprint.exists &&
+      baselineGeneration === this.projectFingerprintGeneration
+    ) {
       this.projectFingerprint = clone(writtenFingerprint);
       this.projectFingerprintGeneration += 1;
     }
-    this.noteRecoveryWarning(result);
     return result;
   }
   async initialize() {
@@ -3927,7 +4135,23 @@ class WorkbenchStore {
       session = await this.bridge.loadSession();
       this.rememberSession(session);
       if (!this.bridge.isNative() || this.bridge.projectDir) {
-        persistedState = await this.readProjectSnapshot();
+        if (this.bridge.isNative()) {
+          const openedState = await this.bridge.openProjectState();
+          if (openedState && Object.hasOwn(openedState, "project") && Object.hasOwn(openedState, "fingerprint")) {
+            persistedState = openedState;
+          } else if (openedState == null) {
+            persistedState = {
+              project: null,
+              project_id: null,
+              lease_generation: null,
+              fingerprint: { exists: false, mtime_ms: null, size: null, hash: null },
+            };
+          } else {
+            throw new Error(describeProjectOpenFailure(openedState));
+          }
+        } else {
+          persistedState = await this.readProjectSnapshot();
+        }
         persisted = persistedState?.project ?? null;
         if (
           persisted == null && persistedState?.fingerprint &&
@@ -3937,8 +4161,8 @@ class WorkbenchStore {
           this.projectFingerprint = clone(persistedState.fingerprint);
           this.projectFingerprintGeneration += 1;
         }
-        if (this.bridge.isNative() && persisted != null) {
-          this.markNativeLease(this.bridge.projectDir);
+      if (this.bridge.isNative() && persisted != null) {
+        this.markNativeLease(this.bridge.projectDir);
           if (!this.isProjectData(persisted)) {
             await this.closeNativeProject(this.bridge.projectDir).catch(() => {});
             throw new Error(describeProjectOpenFailure(null, { notObject: true }));
@@ -4045,7 +4269,11 @@ class WorkbenchStore {
         // A non-null create result means the shell may already own the target
         // lease, even if the returned payload is unusable.
         this.markNativeLease(projectDir);
-        const createdState = await this.readProjectSnapshot();
+        const createdState = await this.bridge.openProjectState();
+        if (!createdState || !Object.hasOwn(createdState, "project") || !Object.hasOwn(createdState, "fingerprint")) {
+          throw new Error(describeProjectOpenFailure(createdState));
+        }
+        this.markNativeLease(projectDir);
         const created = createdState?.project || createdResult;
         if (!this.isProjectData(created)) throw new Error("新课程没有创建成功。当前项目没有改变，请重试。");
         const targetData = migrateUiProject(created);
@@ -4669,6 +4897,7 @@ class WorkbenchStore {
         if (!this.adoptProjectSnapshot(adoptedState || { project: adopted })) {
           throw new Error("追加结果没有返回有效的课程版本标识；请重新载入课程后核对导入内容。");
         }
+        this.reconcileEditorSaveState();
         this.recordExternalCommit("追加文件夹资料", appendBefore, appendSelection);
         appendHistoryRecorded = Boolean(appendBefore);
         await this.persistSession(this.session());
