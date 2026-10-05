@@ -44,11 +44,25 @@ static PROJECT_IO_METRICS: OnceLock<Mutex<HashMap<PathBuf, ProjectIoMetrics>>> =
 static EXIT_READY: AtomicBool = AtomicBool::new(false);
 
 #[cfg(test)]
-#[derive(Clone, Copy, Debug, Default)]
+#[derive(Clone, Debug, Default)]
 struct ProjectIoMetrics {
     full_reads: usize,
     full_read_bytes: u64,
     hash_bytes: u64,
+    write_ops: usize,
+    write_bytes: u64,
+    copy_ops: usize,
+    copy_bytes: u64,
+    sync_ops: usize,
+    rename_ops: usize,
+    files: HashMap<String, ProjectFileIoMetrics>,
+}
+
+#[cfg(test)]
+#[derive(Clone, Copy, Debug, Default)]
+struct ProjectFileIoMetrics {
+    read_ops: usize,
+    read_bytes: u64,
     write_ops: usize,
     write_bytes: u64,
     copy_ops: usize,
@@ -361,7 +375,21 @@ fn ensure_directory(path: &Path, label: &str) -> Result<PathBuf, String> {
             if parent != path {
                 ensure_directory(parent, "父目录")?;
             }
-            fs::create_dir(path).map_err(|error| format!("无法创建{label}: {error}"))?;
+            if let Err(error) = fs::create_dir(path) {
+                if error.kind() != std::io::ErrorKind::AlreadyExists {
+                    return Err(format!("无法创建{label}: {error}"));
+                }
+                // Another process may have created the directory after our
+                // metadata check. Revalidate the winner, including symlinks.
+                let metadata = fs::symlink_metadata(path)
+                    .map_err(|error| format!("无法检查{label}: {error}"))?;
+                if metadata.file_type().is_symlink() {
+                    return Err(format!("{label}不能是符号链接"));
+                }
+                if !metadata.is_dir() {
+                    return Err(format!("{label}不是目录"));
+                }
+            }
         }
         Err(error) => return Err(format!("无法检查{label}: {error}")),
     }
@@ -1082,7 +1110,7 @@ fn atomic_write_path(target: &Path, contents: &str, keep_backup: bool) -> Result
         match fs::copy(target, &backup) {
             Ok(bytes) => {
                 #[cfg(test)]
-                record_project_io(target, "copy", bytes);
+                record_project_io(&backup, "copy", bytes);
             }
             Err(error) => {
                 let _ = fs::remove_file(&temporary);
@@ -1264,6 +1292,11 @@ fn record_project_io(path: &Path, event: &str, bytes: u64) {
     let Some(root) = project_io_root(path) else {
         return;
     };
+    let relative = path
+        .strip_prefix(&root)
+        .ok()
+        .map(|path| path.to_string_lossy().into_owned())
+        .unwrap_or_else(|| path.to_string_lossy().into_owned());
     let mut counters = PROJECT_IO_METRICS
         .get_or_init(|| Mutex::new(HashMap::new()))
         .lock()
@@ -1271,22 +1304,35 @@ fn record_project_io(path: &Path, event: &str, bytes: u64) {
     let Some(metrics) = counters.get_mut(&root) else {
         return;
     };
+    let file = metrics.files.entry(relative).or_default();
     match event {
         "read" => {
             metrics.full_reads += 1;
             metrics.full_read_bytes += bytes;
             metrics.hash_bytes += bytes;
+            file.read_ops += 1;
+            file.read_bytes += bytes;
         }
         "write" => {
             metrics.write_ops += 1;
             metrics.write_bytes += bytes;
+            file.write_ops += 1;
+            file.write_bytes += bytes;
         }
         "copy" => {
             metrics.copy_ops += 1;
             metrics.copy_bytes += bytes;
+            file.copy_ops += 1;
+            file.copy_bytes += bytes;
         }
-        "sync" => metrics.sync_ops += 1,
-        "rename" => metrics.rename_ops += 1,
+        "sync" => {
+            metrics.sync_ops += 1;
+            file.sync_ops += 1;
+        }
+        "rename" => {
+            metrics.rename_ops += 1;
+            file.rename_ops += 1;
+        }
         _ => {}
     }
 }
@@ -10547,21 +10593,338 @@ fn publication_record(input: Value) -> Result<Value, String> {
 }
 
 #[tauri::command]
-fn save_session(app: AppHandle, session: Value) -> Result<(), String> {
+fn session_target_guard(target: &Path) -> Result<File, String> {
+    let parent = target.parent().ok_or("会话文件没有父目录")?;
+    ensure_directory(parent, "工作台本地目录")?;
+    let file_name = target
+        .file_name()
+        .ok_or("会话文件名无效")?
+        .to_string_lossy();
+    let guard_path = parent.join(format!(".{file_name}.guard"));
+    reject_symlink(&guard_path, "会话协调器")?;
+    let guard = OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .open(guard_path)
+        .map_err(|error| format!("无法打开会话协调器: {error}"))?;
+    guard
+        .lock()
+        .map_err(|error| format!("无法锁定会话协调器: {error}"))?;
+    Ok(guard)
+}
+
+const SESSION_SAVE_SIZE_LIMIT: usize = 64 * 1024;
+
+fn validate_session_record(
+    value: &Value,
+    expected_id: Option<&str>,
+    allow_slots: bool,
+) -> Result<(), String> {
+    let object = require_object(value, "save_session")?;
+    for (key, child) in object {
+        match key.as_str() {
+            "project_id" => {
+                if !child.is_null() && !child.as_str().is_some_and(|id| !id.trim().is_empty()) {
+                    return Err("项目会话标识无效".into());
+                }
+            }
+            "project_dir" => {
+                if !child.is_null()
+                    && !child
+                        .as_str()
+                        .is_some_and(|directory| !directory.trim().is_empty())
+                {
+                    return Err("项目会话目录无效".into());
+                }
+            }
+            "project_sessions" if allow_slots => {
+                let slots = child.as_object().ok_or("项目会话记录格式无效")?;
+                if slots.len() > 512 {
+                    return Err("项目会话记录数量超出限制".into());
+                }
+                for (id, record) in slots {
+                    if id.trim().is_empty() {
+                        return Err("项目会话标识无效".into());
+                    }
+                    validate_session_record(record, Some(id), false)?;
+                }
+            }
+            "project_sessions" => return Err("项目会话记录不能嵌套".into()),
+            "active_content_item_id" | "selected_block_id" | "layout_page_id" => {
+                if !child.is_null() && !child.is_string() {
+                    return Err(format!("会话字段 {key} 格式无效"));
+                }
+            }
+            "left_collapsed" | "right_collapsed" => {
+                if !child.is_boolean() {
+                    return Err(format!("会话字段 {key} 格式无效"));
+                }
+            }
+            "layout_zoom" => {
+                if !matches!(child.as_str(), Some("fit" | "actual")) {
+                    return Err("会话字段 layout_zoom 格式无效".into());
+                }
+            }
+            "explorer_filter" => {
+                if !child.as_str().is_some_and(|value| value.len() <= 256) {
+                    return Err("会话字段 explorer_filter 格式无效".into());
+                }
+            }
+            "collapsed_stage_ids" | "explorer_expanded" | "explorer_recent" => {
+                let items = child
+                    .as_array()
+                    .ok_or_else(|| format!("会话字段 {key} 格式无效"))?;
+                let limit = match key.as_str() {
+                    "collapsed_stage_ids" => 1024,
+                    "explorer_recent" => 8,
+                    _ => 64,
+                };
+                if items.len() > limit
+                    || items.iter().any(|item| {
+                        !item
+                            .as_str()
+                            .is_some_and(|value| !value.trim().is_empty() && value.len() <= 1024)
+                    })
+                {
+                    return Err(format!("会话字段 {key} 超出限制"));
+                }
+            }
+            "tabs" => {
+                let tabs = child.as_array().ok_or("会话字段 tabs 格式无效")?;
+                if tabs.len() > 100 {
+                    return Err("会话标签数量超出限制".into());
+                }
+                for tab in tabs {
+                    let tab = require_object(tab, "session.tab")?;
+                    if tab.keys().any(|key| {
+                        !matches!(
+                            key.as_str(),
+                            "content_item_id" | "mode" | "pinned" | "scroll_top"
+                        )
+                    }) || !tab.get("content_item_id").is_some_and(Value::is_string)
+                        || !tab.get("mode").is_some_and(Value::is_string)
+                        || !tab.get("pinned").is_some_and(Value::is_boolean)
+                        || !tab
+                            .get("scroll_top")
+                            .and_then(Value::as_f64)
+                            .is_some_and(f64::is_finite)
+                    {
+                        return Err("会话标签记录格式无效".into());
+                    }
+                }
+            }
+            "mode" | "right_panel" | "route" | "ai_scope" | "ai_provider_id" | "ai_model" => {
+                if !child.is_string() {
+                    return Err(format!("会话字段 {key} 格式无效"));
+                }
+            }
+            _ => return Err(format!("会话包含不允许的字段: {key}")),
+        }
+    }
+
+    let project_id = object
+        .get("project_id")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|id| !id.is_empty());
+    let project_dir = object
+        .get("project_dir")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|directory| !directory.is_empty());
+    if project_id.is_some() != project_dir.is_some()
+        || expected_id.is_some_and(|expected| project_id != Some(expected) || project_dir.is_none())
+    {
+        return Err("项目会话的目录与标识不一致".into());
+    }
+    Ok(())
+}
+
+fn valid_session_record(id: &str, value: &Value) -> bool {
+    validate_session_record(value, Some(id), false).is_ok()
+}
+
+fn merge_native_session(existing: Option<Value>, session: Value) -> Result<Value, String> {
+    validate_session_record(&session, None, true)?;
+    let incoming = require_object(&session, "save_session")?;
+    let mut slots = Map::new();
+    let mut existing_top_level = None;
+    if let Some(previous) = existing.as_ref().filter(|value| value.is_object()) {
+        if let Some(previous_slots) = previous.get("project_sessions").and_then(Value::as_object) {
+            for (id, record) in previous_slots {
+                if valid_session_record(id, record) {
+                    slots.insert(id.clone(), record.clone());
+                }
+            }
+        }
+        if let Some(id) = previous.get("project_id").and_then(Value::as_str) {
+            let mut previous_record = previous.clone();
+            previous_record
+                .as_object_mut()
+                .unwrap()
+                .remove("project_sessions");
+            if valid_session_record(id, &previous_record) {
+                existing_top_level = Some((id.to_owned(), previous_record));
+            }
+        }
+    }
+    if let Some((id, record)) = existing_top_level {
+        slots.entry(id).or_insert(record);
+    }
+    if let Some(incoming_slots) = incoming.get("project_sessions").and_then(Value::as_object) {
+        for (id, record) in incoming_slots {
+            if valid_session_record(id, record) {
+                // The file is the shared source of truth. A process may have
+                // an older in-memory copy of another project's reader slot.
+                slots.entry(id.clone()).or_insert_with(|| record.clone());
+            }
+        }
+    }
+
+    let active_id = incoming
+        .get("project_id")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|id| !id.is_empty());
+    let active_dir = incoming
+        .get("project_dir")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|directory| !directory.is_empty());
+    if active_id.is_some() != active_dir.is_some() {
+        return Err("项目会话的目录与标识不一致".into());
+    }
+    if let Some(id) = active_id {
+        let mut active_record = session.clone();
+        active_record
+            .as_object_mut()
+            .ok_or("save_session: 参数必须是 JSON 对象")?
+            .remove("project_sessions");
+        if valid_session_record(id, &active_record) {
+            slots.insert(id.to_owned(), active_record);
+        } else {
+            return Err("项目会话记录与项目标识不一致".into());
+        }
+    }
+
+    let mut merged = session;
+    let object = merged
+        .as_object_mut()
+        .ok_or("save_session: 参数必须是 JSON 对象")?;
+    object.remove("project_sessions");
+    if !slots.is_empty() {
+        object.insert("project_sessions".into(), Value::Object(slots));
+    }
+    Ok(merged)
+}
+
+fn save_session_target(
+    target: &Path,
+    session: Value,
+    operation_id: Option<&str>,
+    session_generation: Option<u64>,
+    revision: Option<u64>,
+) -> Result<Value, String> {
+    reject_sensitive(&session)?;
+    validate_session_record(&session, None, true)?;
+    let has_metadata = operation_id.is_some() || session_generation.is_some() || revision.is_some();
+    if has_metadata
+        && (operation_id
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .is_none()
+            || session_generation.is_none()
+            || revision.is_none())
+    {
+        return Err("会话操作元数据不完整".into());
+    }
+    let _target_guard = session_target_guard(target)?;
+    let existing = if target.exists() {
+        Some(read_json_file(target)?)
+    } else {
+        None
+    };
+    #[cfg(test)]
+    if let Ok(delay) = std::env::var("WORKBENCH_SESSION_LOCK_TEST_DELAY_MS") {
+        if let Ok(delay) = delay.parse::<u64>() {
+            thread::sleep(Duration::from_millis(delay));
+        }
+    }
+    let merged = merge_native_session(existing.clone(), session)?;
+    if serde_json::to_vec(&merged)
+        .map_err(|error| error.to_string())?
+        .len()
+        > SESSION_SAVE_SIZE_LIMIT
+    {
+        return Err("会话数据超出 64 KiB 限制".into());
+    }
+    let unchanged = existing.as_ref() == Some(&merged);
+    if !unchanged {
+        let contents = serde_json::to_string(&merged).map_err(|error| error.to_string())?;
+        atomic_write_path(target, &contents, true)?;
+    }
+    let project_id = merged
+        .get("project_id")
+        .and_then(Value::as_str)
+        .map(ToOwned::to_owned);
+    let mut result = json!({
+        "outcome": if unchanged { "unchanged" } else { "written" },
+        "project_id": project_id,
+    });
+    if let Some(operation_id) = operation_id {
+        result["operation_id"] = json!(operation_id);
+    }
+    if let Some(session_generation) = session_generation {
+        result["session_generation"] = json!(session_generation);
+    }
+    if let Some(revision) = revision {
+        result["revision"] = json!(revision);
+    }
+    Ok(result)
+}
+
+#[tauri::command]
+fn save_session(
+    app: AppHandle,
+    session: Value,
+    operation_id: Option<String>,
+    session_generation: Option<u64>,
+    revision: Option<u64>,
+) -> Result<Value, String> {
     reject_sensitive(&session)?;
     let object = require_object(&session, "save_session")?;
-    let contents = serde_json::to_string(&session).map_err(|error| error.to_string())?;
-    let path = app_local_path(&app, ".workspace/session.json")?;
     let project_dir = field(object, &["project_dir", "projectDir"])
         .and_then(Value::as_str)
         .map(str::trim)
-        .filter(|value| !value.is_empty());
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned);
+    let path = app_local_path(&app, ".workspace/session.json")?;
     if let Some(project_dir) = project_dir {
-        let project_dir = explicit_project_dir(project_dir, false)?;
+        let project_dir = explicit_project_dir(&project_dir, false)?;
+        // Lock order: project lease guard, then the shared session target.
         let _lease_guard = require_active_project_lock(&project_dir)?;
-        return atomic_write_path(&path, &contents, true);
+        let mut session = session;
+        let object = session
+            .as_object_mut()
+            .ok_or("save_session: 参数必须是 JSON 对象")?;
+        object.remove("projectDir");
+        object.insert("project_dir".into(), json!(project_dir.to_string_lossy()));
+        return save_session_target(
+            &path,
+            session,
+            operation_id.as_deref(),
+            session_generation,
+            revision,
+        );
     }
-    atomic_write_path(&path, &contents, true)
+    save_session_target(
+        &path,
+        session,
+        operation_id.as_deref(),
+        session_generation,
+        revision,
+    )
 }
 
 #[tauri::command]
@@ -10576,6 +10939,7 @@ fn load_session(app: AppHandle) -> Result<Option<Value>, String> {
         }
     }
     let path = app_local_path(&app, ".workspace/session.json")?;
+    let _target_guard = session_target_guard(&path)?;
     if !path.exists() {
         return Ok(None);
     }
@@ -16440,6 +16804,172 @@ mod tests {
         directory
     }
 
+    #[test]
+    fn session_target_subprocess_writer() {
+        let Ok(target) = std::env::var("WORKBENCH_SESSION_LOCK_TEST_TARGET") else {
+            return;
+        };
+        let session: Value = serde_json::from_str(
+            &std::env::var("WORKBENCH_SESSION_LOCK_TEST_PAYLOAD").expect("session payload"),
+        )
+        .expect("session payload should be valid JSON");
+        let result = save_session_target(
+            Path::new(&target),
+            session,
+            Some("subprocess-session-op"),
+            Some(1),
+            Some(1),
+        )
+        .expect("subprocess session write should succeed");
+        assert_eq!(result["outcome"], json!("written"));
+    }
+
+    #[test]
+    fn native_session_saves_merge_project_slots_and_restore_a_b_a_positions() {
+        let directory = test_directory("session-project-slots");
+        let target = directory.join(".workspace/session.json");
+        let project_a = json!({
+            "project_dir": directory.join("project-a").to_string_lossy(),
+            "project_id": "project-a",
+            "active_content_item_id": "lesson-a1",
+            "mode": "writing"
+        });
+        let project_b = json!({
+            "project_dir": directory.join("project-b").to_string_lossy(),
+            "project_id": "project-b",
+            "active_content_item_id": "lesson-b1",
+            "mode": "review"
+        });
+
+        save_session_target(&target, project_a.clone(), Some("a1"), Some(1), Some(1))
+            .expect("first project position should persist");
+        save_session_target(&target, project_b.clone(), Some("b1"), Some(1), Some(1))
+            .expect("second project position should merge");
+        let mut returned_to_a = project_a.clone();
+        returned_to_a["active_content_item_id"] = json!("lesson-a2");
+        let ack = save_session_target(&target, returned_to_a.clone(), Some("a2"), Some(2), Some(2))
+            .expect("return to the first project should persist");
+
+        assert_eq!(ack["project_id"], json!("project-a"));
+        let saved = read_json_file(&target).expect("merged session should read");
+        assert_eq!(saved["project_id"], json!("project-a"));
+        assert_eq!(saved["active_content_item_id"], json!("lesson-a2"));
+        assert_eq!(
+            saved["project_sessions"]["project-a"]["active_content_item_id"],
+            json!("lesson-a2")
+        );
+        assert_eq!(
+            saved["project_sessions"]["project-b"]["active_content_item_id"],
+            json!("lesson-b1")
+        );
+
+        reset_project_validation_reads(&directory);
+        let unchanged =
+            save_session_target(&target, returned_to_a, Some("a2-retry"), Some(3), Some(3))
+                .expect("same session payload should be a no-op");
+        let io = take_project_validation_reads(&directory);
+        assert_eq!(unchanged["outcome"], json!("unchanged"));
+        for path in [".workspace/session.json", ".workspace/session.json.bak"] {
+            let file = io.files.get(path).copied().unwrap_or_default();
+            assert_eq!(file.write_ops, 0, "unchanged session wrote {path}");
+            assert_eq!(file.copy_ops, 0, "unchanged session copied {path}");
+            assert_eq!(file.sync_ops, 0, "unchanged session synced {path}");
+            assert_eq!(file.rename_ops, 0, "unchanged session renamed {path}");
+        }
+        assert!(
+            save_session_target(
+                &target,
+                json!({
+                    "project_dir": "/tmp/project-a",
+                    "project_id": "project-a",
+                    "project": { "title": "must not be persisted" },
+                }),
+                None,
+                None,
+                None,
+            )
+            .is_err(),
+            "session allowlist must reject course payloads"
+        );
+        assert!(
+            save_session_target(
+                &target,
+                json!({
+                    "project_dir": "/tmp/project-a",
+                    "project_id": "project-a",
+                    "api_key": "sk-fake-session-test",
+                }),
+                None,
+                None,
+                None,
+            )
+            .is_err(),
+            "session payloads must reject credentials"
+        );
+        let _ = fs::remove_dir_all(directory);
+    }
+
+    #[test]
+    fn native_session_target_lock_serializes_writers_across_processes() {
+        let directory = test_directory("session-process-lock");
+        let target = directory.join(".workspace/session.json");
+        let executable = std::env::current_exe().expect("test executable path");
+        let launch = |project_id: &str| {
+            let session = json!({
+                "project_dir": directory.join(project_id).to_string_lossy(),
+                "project_id": project_id,
+                "active_content_item_id": format!("{project_id}-lesson"),
+            });
+            ProcessCommand::new(&executable)
+                .args([
+                    "--exact",
+                    "tests::session_target_subprocess_writer",
+                    "--nocapture",
+                ])
+                .env("WORKBENCH_SESSION_LOCK_TEST_TARGET", &target)
+                .env(
+                    "WORKBENCH_SESSION_LOCK_TEST_PAYLOAD",
+                    serde_json::to_string(&session).expect("session serialization"),
+                )
+                .env("WORKBENCH_SESSION_LOCK_TEST_DELAY_MS", "100")
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped())
+                .spawn()
+                .expect("session writer subprocess should start")
+        };
+        let first = launch("project-a");
+        let second = launch("project-b");
+        let first_output = first
+            .wait_with_output()
+            .expect("first writer should finish");
+        let second_output = second
+            .wait_with_output()
+            .expect("second writer should finish");
+        assert!(
+            first_output.status.success(),
+            "first writer failed: {}{}",
+            String::from_utf8_lossy(&first_output.stdout),
+            String::from_utf8_lossy(&first_output.stderr)
+        );
+        assert!(
+            second_output.status.success(),
+            "second writer failed: {}{}",
+            String::from_utf8_lossy(&second_output.stdout),
+            String::from_utf8_lossy(&second_output.stderr)
+        );
+
+        let saved = read_json_file(&target).expect("shared session should read");
+        assert_eq!(
+            saved["project_sessions"]["project-a"]["active_content_item_id"],
+            json!("project-a-lesson")
+        );
+        assert_eq!(
+            saved["project_sessions"]["project-b"]["active_content_item_id"],
+            json!("project-b-lesson")
+        );
+        let _ = fs::remove_dir_all(directory);
+    }
+
     fn reset_project_validation_reads(directory: &Path) {
         let directory = fs::canonicalize(directory).expect("project directory should canonicalize");
         PROJECT_IO_METRICS
@@ -16493,9 +17023,11 @@ mod tests {
         fs::write(&project_backup_path, b"project backup sentinel").unwrap();
         let project_bytes = fs::read(directory.join("project.json")).unwrap();
         let lease_generation = active_lease_generation(&directory).unwrap();
+        let expected_fingerprint = project_fingerprint(&directory).unwrap();
+        reset_project_validation_reads(&directory);
         let result = project_save(
             project_dir.clone(),
-            project_fingerprint(&directory).unwrap(),
+            expected_fingerprint,
             None,
             project.clone(),
             Some("p1".into()),
@@ -16510,6 +17042,24 @@ mod tests {
         )
         .expect("unchanged save should succeed");
 
+        let io = take_project_validation_reads(&directory);
+        assert_eq!(
+            io.full_reads, 1,
+            "unchanged save still verifies canonical bytes"
+        );
+        assert!(io.hash_bytes >= project_bytes.len() as u64);
+        for path in [
+            "project.json",
+            ".workspace/recovery.json",
+            "project.json.bak",
+            ".workspace/recovery.json.bak",
+        ] {
+            let file = io.files.get(path).copied().unwrap_or_default();
+            assert_eq!(file.write_ops, 0, "unchanged save wrote {path}");
+            assert_eq!(file.copy_ops, 0, "unchanged save copied {path}");
+            assert_eq!(file.sync_ops, 0, "unchanged save synced {path}");
+            assert_eq!(file.rename_ops, 0, "unchanged save renamed {path}");
+        }
         assert_eq!(result["outcome"], json!("unchanged"));
         assert_eq!(result["project_id"], json!("p1"));
         assert_eq!(result["lease_generation"], json!(lease_generation));
