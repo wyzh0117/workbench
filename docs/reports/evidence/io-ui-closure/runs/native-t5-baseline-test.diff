@@ -1,0 +1,49 @@
+--- commit 677d8e2 tests/src-tauri/src/lib.rs
++++ commit 677d8e2 plus only the T5 readonly-directory behavior test
++    #[cfg(unix)]
++    #[test]
++    fn project_save_reports_permission_temp_create_failure_without_retry() {
++        use std::os::unix::fs::PermissionsExt;
++
++        let directory = test_directory("save-temp-create-failure");
++        let project_dir = directory.to_string_lossy().into_owned();
++        let original = json!({ "project": { "id": "p1", "title": "before" }, "items": [] });
++        project_create(project_dir.clone(), original.clone()).unwrap();
++        let canonical_path = directory.join("project.json");
++        let backup_path = directory.join("project.json.bak");
++        fs::write(&backup_path, b"older verified backup").unwrap();
++        let original_bytes = fs::read(&canonical_path).unwrap();
++        let expected = project_fingerprint(&directory).unwrap();
++        let lease_generation = active_lease_generation(&directory).unwrap();
++        let mut changed = original;
++        changed["project"]["title"] = json!("after");
++        fs::set_permissions(&directory, fs::Permissions::from_mode(0o555)).unwrap();
++
++        let failed = project_save(
++            project_dir.clone(),
++            expected,
++            None,
++            changed,
++            Some("p1".into()),
++            Some(lease_generation),
++            Some(4),
++            Some("temp-create-op".into()),
++            Some(2),
++            None,
++        )
++        .expect_err("read-only project folder must fail before commit");
++        fs::set_permissions(&directory, fs::Permissions::from_mode(0o755)).unwrap();
++
++        let error: Value = serde_json::from_str(&failed).unwrap();
++        assert_eq!(error["error"]["commit_state"], json!("not_committed"));
++        assert_eq!(error["error"]["stage"], json!("temp_create"));
++        assert_eq!(error["error"]["retryable"], json!(false));
++        assert_eq!(error["error"]["operation_id"], json!("temp-create-op"));
++        assert_eq!(error["error"]["revision"], json!(2));
++        assert_eq!(fs::read(canonical_path).unwrap(), original_bytes);
++        assert_eq!(fs::read(backup_path).unwrap(), b"older verified backup");
++        project_close(project_dir).unwrap();
++        let _ = fs::remove_dir_all(directory);
++    }
++
++

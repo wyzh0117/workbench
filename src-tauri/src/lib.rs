@@ -41,7 +41,16 @@ static SCANNED_FOLDER_VIDEOS: OnceLock<Mutex<HashSet<(PathBuf, String)>>> = Once
 static SNAPSHOT_FAIL_ID: OnceLock<Mutex<Option<String>>> = OnceLock::new();
 #[cfg(test)]
 static PROJECT_IO_METRICS: OnceLock<Mutex<HashMap<PathBuf, ProjectIoMetrics>>> = OnceLock::new();
+#[cfg(test)]
+static ATOMIC_WRITE_FAIL_STAGE: OnceLock<Mutex<HashSet<(PathBuf, String)>>> = OnceLock::new();
 static EXIT_READY: AtomicBool = AtomicBool::new(false);
+
+struct AtomicWriteFailure {
+    message: String,
+    stage: &'static str,
+    commit_state: &'static str,
+    retryable: bool,
+}
 
 #[cfg(test)]
 #[derive(Clone, Debug, Default)]
@@ -1071,61 +1080,347 @@ fn app_local_path(app: &AppHandle, relative: &str) -> Result<PathBuf, String> {
     Ok(target)
 }
 
-fn atomic_write_path(target: &Path, contents: &str, keep_backup: bool) -> Result<(), String> {
-    let parent = target.parent().ok_or("写入目标没有父目录")?;
-    ensure_directory(parent, "写入目标目录")?;
-    reject_symlink(target, "写入目标")?;
+#[cfg(test)]
+fn atomic_write_failure_requested(target: &Path, stage: &str) -> bool {
+    let normalized_target = target
+        .parent()
+        .and_then(|parent| fs::canonicalize(parent).ok())
+        .and_then(|parent| target.file_name().map(|name| parent.join(name)))
+        .unwrap_or_else(|| target.to_path_buf());
+    let mut requested = ATOMIC_WRITE_FAIL_STAGE
+        .get_or_init(|| Mutex::new(HashSet::new()))
+        .lock()
+        .unwrap();
+    requested.remove(&(normalized_target, stage.to_owned()))
+}
+
+#[cfg(not(test))]
+fn atomic_write_failure_requested(_target: &Path, _stage: &str) -> bool {
+    false
+}
+
+fn atomic_failure(
+    message: impl Into<String>,
+    stage: &'static str,
+    commit_state: &'static str,
+    retryable: bool,
+) -> AtomicWriteFailure {
+    AtomicWriteFailure {
+        message: message.into(),
+        stage,
+        commit_state,
+        retryable,
+    }
+}
+
+fn retryable_transient_io_error(error: &std::io::Error) -> bool {
+    matches!(
+        error.kind(),
+        std::io::ErrorKind::Interrupted
+            | std::io::ErrorKind::WouldBlock
+            | std::io::ErrorKind::TimedOut
+    )
+}
+
+fn atomic_write_path_report(
+    target: &Path,
+    contents: &str,
+    keep_backup: bool,
+) -> Result<Option<String>, AtomicWriteFailure> {
+    let parent = target.parent().ok_or_else(|| {
+        atomic_failure(
+            "写入目标没有父目录",
+            "target_prepare",
+            "not_committed",
+            false,
+        )
+    })?;
+    ensure_directory(parent, "写入目标目录")
+        .map_err(|error| atomic_failure(error, "target_prepare", "not_committed", false))?;
+    reject_symlink(target, "写入目标")
+        .map_err(|error| atomic_failure(error, "target_prepare", "not_committed", false))?;
     let file_name = target
         .file_name()
-        .ok_or("写入目标文件名无效")?
+        .ok_or_else(|| {
+            atomic_failure(
+                "写入目标文件名无效",
+                "target_prepare",
+                "not_committed",
+                false,
+            )
+        })?
         .to_string_lossy();
     let temporary = parent.join(format!(
         ".{file_name}.tmp-{}-{}",
         std::process::id(),
         native_id("write")
     ));
-    reject_symlink(&temporary, "临时文件")?;
+    reject_symlink(&temporary, "临时文件")
+        .map_err(|error| atomic_failure(error, "temp_prepare", "not_committed", false))?;
+    if atomic_write_failure_requested(target, "temp_create") {
+        return Err(atomic_failure(
+            "测试注入：无法创建临时文件",
+            "temp_create",
+            "not_committed",
+            true,
+        ));
+    }
+    if atomic_write_failure_requested(target, "temp_create_interrupted") {
+        let error = std::io::Error::new(
+            std::io::ErrorKind::Interrupted,
+            "测试注入：临时文件创建被中断",
+        );
+        return Err(atomic_failure(
+            format!("无法创建临时文件: {error}"),
+            "temp_create",
+            "not_committed",
+            retryable_transient_io_error(&error),
+        ));
+    }
     let mut file = OpenOptions::new()
         .write(true)
         .create_new(true)
         .open(&temporary)
-        .map_err(|error| format!("无法创建临时文件: {error}"))?;
-    if let Err(error) = file
-        .write_all(contents.as_bytes())
-        .and_then(|_| file.sync_all())
-    {
+        .map_err(|error| {
+            atomic_failure(
+                format!("无法创建临时文件: {error}"),
+                "temp_create",
+                "not_committed",
+                retryable_transient_io_error(&error),
+            )
+        })?;
+    if atomic_write_failure_requested(target, "temp_write") {
+        drop(file);
         let _ = fs::remove_file(&temporary);
-        return Err(format!("无法完成原子写入: {error}"));
+        return Err(atomic_failure(
+            "测试注入：临时文件写入失败",
+            "temp_write",
+            "not_committed",
+            true,
+        ));
     }
     #[cfg(test)]
-    {
-        record_project_io(target, "write", contents.len() as u64);
-        record_project_io(target, "sync", 0);
+    record_project_io(target, "write", contents.len() as u64);
+    if let Err(error) = file.write_all(contents.as_bytes()) {
+        drop(file);
+        let _ = fs::remove_file(&temporary);
+        return Err(atomic_failure(
+            format!("无法写入临时文件: {error}"),
+            "temp_write",
+            "not_committed",
+            retryable_transient_io_error(&error),
+        ));
+    }
+    if atomic_write_failure_requested(target, "temp_sync") {
+        drop(file);
+        let _ = fs::remove_file(&temporary);
+        return Err(atomic_failure(
+            "测试注入：临时文件同步失败",
+            "temp_sync",
+            "not_committed",
+            true,
+        ));
+    }
+    #[cfg(test)]
+    record_project_io(target, "sync", 0);
+    if let Err(error) = file.sync_all() {
+        drop(file);
+        let _ = fs::remove_file(&temporary);
+        return Err(atomic_failure(
+            format!("无法同步临时文件: {error}"),
+            "temp_sync",
+            "not_committed",
+            retryable_transient_io_error(&error),
+        ));
     }
     drop(file);
 
-    if keep_backup && target.exists() {
+    let backup_to_promote = if keep_backup && target.exists() {
         let backup = target.with_extension("bak");
-        reject_symlink(&backup, "备份文件")?;
-        match fs::copy(target, &backup) {
-            Ok(bytes) => {
-                #[cfg(test)]
-                record_project_io(&backup, "copy", bytes);
-            }
-            Err(error) => {
+        reject_symlink(&backup, "备份文件").map_err(|error| {
+            let _ = fs::remove_file(&temporary);
+            atomic_failure(error, "backup_prepare", "not_committed", false)
+        })?;
+        let backup_name = backup
+            .file_name()
+            .ok_or_else(|| {
+                atomic_failure("备份文件名无效", "backup_prepare", "not_committed", false)
+            })?
+            .to_string_lossy();
+        let backup_temporary = parent.join(format!(
+            ".{backup_name}.tmp-{}-{}",
+            std::process::id(),
+            native_id("backup")
+        ));
+        reject_symlink(&backup_temporary, "备份临时文件").map_err(|error| {
+            let _ = fs::remove_file(&temporary);
+            atomic_failure(error, "backup_prepare", "not_committed", false)
+        })?;
+        if atomic_write_failure_requested(target, "backup_copy") {
+            let _ = fs::remove_file(&temporary);
+            return Err(atomic_failure(
+                "测试注入：备份复制失败",
+                "backup_copy",
+                "not_committed",
+                true,
+            ));
+        }
+        #[cfg(test)]
+        record_project_io(
+            &backup,
+            "copy",
+            target
+                .metadata()
+                .map(|metadata| metadata.len())
+                .unwrap_or(0),
+        );
+        if let Err(error) = fs::copy(target, &backup_temporary) {
+            let _ = fs::remove_file(&temporary);
+            let _ = fs::remove_file(&backup_temporary);
+            return Err(atomic_failure(
+                format!("无法创建备份: {error}"),
+                "backup_copy",
+                "not_committed",
+                retryable_transient_io_error(&error),
+            ));
+        }
+        if atomic_write_failure_requested(target, "backup_sync") {
+            let _ = fs::remove_file(&temporary);
+            let _ = fs::remove_file(&backup_temporary);
+            return Err(atomic_failure(
+                "测试注入：备份同步失败",
+                "backup_sync",
+                "not_committed",
+                true,
+            ));
+        }
+        let backup_file = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(&backup_temporary)
+            .map_err(|error| {
                 let _ = fs::remove_file(&temporary);
-                return Err(format!("无法创建备份: {error}"));
+                let _ = fs::remove_file(&backup_temporary);
+                atomic_failure(
+                    format!("无法打开备份文件: {error}"),
+                    "backup_sync",
+                    "not_committed",
+                    retryable_transient_io_error(&error),
+                )
+            })?;
+        #[cfg(test)]
+        record_project_io(&backup, "sync", 0);
+        if let Err(error) = backup_file.sync_all() {
+            let _ = fs::remove_file(&temporary);
+            let _ = fs::remove_file(&backup_temporary);
+            return Err(atomic_failure(
+                format!("无法同步备份文件: {error}"),
+                "backup_sync",
+                "not_committed",
+                retryable_transient_io_error(&error),
+            ));
+        }
+        drop(backup_file);
+        Some((backup, backup_temporary))
+    } else {
+        None
+    };
+
+    if atomic_write_failure_requested(target, "canonical_rename") {
+        let _ = fs::remove_file(&temporary);
+        if let Some((_, backup_temporary)) = &backup_to_promote {
+            let _ = fs::remove_file(backup_temporary);
+        }
+        return Err(atomic_failure(
+            "测试注入：目标文件替换失败",
+            "canonical_rename",
+            "not_committed",
+            true,
+        ));
+    }
+    #[cfg(test)]
+    record_project_io(target, "rename", 0);
+    let mut post_commit_warnings = Vec::new();
+    let rename_result = fs::rename(&temporary, target);
+    let rename_result = if rename_result.is_ok()
+        && atomic_write_failure_requested(target, "canonical_rename_after")
+    {
+        Err(std::io::Error::new(
+            std::io::ErrorKind::Other,
+            "测试注入：rename 已完成但调用返回错误",
+        ))
+    } else {
+        rename_result
+    };
+    if let Err(error) = rename_result {
+        let _ = fs::remove_file(&temporary);
+        let current = fs::read(target).ok();
+        if current.as_deref() == Some(contents.as_bytes()) {
+            post_commit_warnings.push(format!(
+                "目标文件已替换，但rename返回错误，已按正文确认提交：{error}"
+            ));
+        } else if target.exists() {
+            if let Some((_, backup_temporary)) = &backup_to_promote {
+                let _ = fs::remove_file(backup_temporary);
+            }
+            return Err(atomic_failure(
+                format!("无法替换目标文件: {error}"),
+                "canonical_rename",
+                "not_committed",
+                retryable_transient_io_error(&error),
+            ));
+        } else {
+            if let Some((_, backup_temporary)) = &backup_to_promote {
+                let _ = fs::remove_file(backup_temporary);
+            }
+            return Err(atomic_failure(
+                format!("无法确认目标文件替换结果: {error}"),
+                "canonical_rename",
+                "outcome_uncertain",
+                false,
+            ));
+        }
+    }
+
+    if let Some((backup, backup_temporary)) = backup_to_promote {
+        if atomic_write_failure_requested(target, "backup_rename") {
+            let _ = fs::remove_file(&backup_temporary);
+            post_commit_warnings
+                .push("项目已提交，但新备份替换失败，原有备份仍保留（测试注入）".into());
+        } else {
+            #[cfg(test)]
+            record_project_io(&backup, "rename", 0);
+            if let Err(error) = fs::rename(&backup_temporary, &backup) {
+                let _ = fs::remove_file(&backup_temporary);
+                post_commit_warnings.push(format!(
+                    "项目已提交，但新备份替换失败，原有备份仍保留：{error}"
+                ));
+            } else if atomic_write_failure_requested(target, "backup_directory_sync") {
+                post_commit_warnings
+                    .push("项目和备份已提交，但备份目录同步失败（测试注入）".into());
             }
         }
     }
-    let result = fs::rename(&temporary, target);
-    if result.is_err() {
-        let _ = fs::remove_file(&temporary);
+
+    if atomic_write_failure_requested(target, "directory_sync") {
+        post_commit_warnings.push("项目内容已提交，但目录同步失败（测试注入）".into());
+        return Ok((!post_commit_warnings.is_empty()).then(|| post_commit_warnings.join("；")));
     }
-    result.map_err(|error| format!("无法替换目标文件: {error}"))?;
     #[cfg(test)]
-    record_project_io(target, "rename", 0);
-    Ok(())
+    record_project_io(target, "sync", 0);
+    match File::open(parent).and_then(|directory| directory.sync_all()) {
+        Ok(()) => Ok((!post_commit_warnings.is_empty()).then(|| post_commit_warnings.join("；"))),
+        Err(error) => {
+            post_commit_warnings.push(format!("项目内容已提交，但目录同步失败：{error}"));
+            Ok(Some(post_commit_warnings.join("；")))
+        }
+    }
+}
+
+fn atomic_write_path(target: &Path, contents: &str, keep_backup: bool) -> Result<(), String> {
+    atomic_write_path_report(target, contents, keep_backup)
+        .map(|_| ())
+        .map_err(|failure| failure.message)
 }
 
 fn atomic_write_bytes_path(target: &Path, contents: &[u8]) -> Result<(), String> {
@@ -1580,13 +1875,20 @@ fn write_project_value_with_warning_unlocked(
     write_project_contents_unlocked(project_dir, project, &contents).map(|(_, warning)| warning)
 }
 
-fn write_project_contents_unlocked(
+struct ProjectWriteReport {
+    fingerprint: FileFingerprint,
+    durability_warning: Option<String>,
+    recovery_warning: Option<String>,
+}
+
+fn write_project_contents_report_unlocked(
     project_dir: &Path,
     project: &Value,
     contents: &str,
-) -> Result<(FileFingerprint, Option<String>), String> {
-    let path = project_file(project_dir, "project.json")?;
-    atomic_write_path(&path, &contents, true)?;
+) -> Result<ProjectWriteReport, AtomicWriteFailure> {
+    let path = project_file(project_dir, "project.json")
+        .map_err(|error| atomic_failure(error, "target_prepare", "not_committed", false))?;
+    let durability_warning = atomic_write_path_report(&path, contents, true)?;
     let mtime_ms = fs::metadata(&path)
         .ok()
         .and_then(|metadata| metadata.modified().ok())
@@ -1601,13 +1903,51 @@ fn write_project_contents_unlocked(
     // Keep the identity of the exact bytes written. If an external process
     // races immediately after rename, the next write still compares against
     // our content hash instead of accidentally adopting the raced version.
-    store_project_baseline(project_dir, fingerprint.clone(), Some(project.clone()))?;
+    let mut recovery_warnings = Vec::new();
+    if let Err(error) =
+        store_project_baseline(project_dir, fingerprint.clone(), Some(project.clone()))
+    {
+        recovery_warnings.push(format!("保存已提交，但项目基线更新失败：{error}"));
+    }
     // A successful canonical write makes the recovery copy stale.  Cleanup
     // failure is a warning because the canonical write already succeeded.
-    let warning = clear_recovery_journal_path(project_dir)
-        .err()
-        .map(|error| format!("恢复日志清理失败，但项目已保存：{error}"));
-    Ok((fingerprint, warning))
+    let recovery_cleanup = if atomic_write_failure_requested(&path, "recovery_cleanup") {
+        Err("测试注入：恢复日志清理失败".to_owned())
+    } else {
+        clear_recovery_journal_path(project_dir)
+    };
+    if let Err(error) = recovery_cleanup {
+        recovery_warnings.push(format!("恢复日志清理失败，但项目已保存：{error}"));
+    }
+    Ok(ProjectWriteReport {
+        fingerprint,
+        durability_warning,
+        recovery_warning: if recovery_warnings.is_empty() {
+            None
+        } else {
+            Some(recovery_warnings.join("；"))
+        },
+    })
+}
+
+fn write_project_contents_unlocked(
+    project_dir: &Path,
+    project: &Value,
+    contents: &str,
+) -> Result<(FileFingerprint, Option<String>), String> {
+    let report = write_project_contents_report_unlocked(project_dir, project, contents)
+        .map_err(|failure| failure.message)?;
+    let mut warnings = Vec::new();
+    if let Some(warning) = report.durability_warning {
+        warnings.push(warning);
+    }
+    if let Some(warning) = report.recovery_warning {
+        warnings.push(warning);
+    }
+    Ok((
+        report.fingerprint,
+        (!warnings.is_empty()).then(|| warnings.join("；")),
+    ))
 }
 
 fn write_project_value_with_warning(
@@ -2567,6 +2907,16 @@ fn project_save_error_contract(
     retryable: bool,
     fingerprint: Option<&FileFingerprint>,
 ) -> String {
+    project_save_error_contract_with_state(message, stage, retryable, "not_committed", fingerprint)
+}
+
+fn project_save_error_contract_with_state(
+    message: &str,
+    stage: &str,
+    retryable: bool,
+    commit_state: &str,
+    fingerprint: Option<&FileFingerprint>,
+) -> String {
     let mut root = serde_json::from_str::<Value>(message).unwrap_or(Value::Null);
     let mut error = root
         .get("error")
@@ -2588,7 +2938,7 @@ fn project_save_error_contract(
         .unwrap_or_else(|| message.to_owned());
     error["code"] = json!(code);
     error["message"] = json!(text);
-    error["commit_state"] = json!("not_committed");
+    error["commit_state"] = json!(commit_state);
     error["stage"] = json!(stage);
     error["retryable"] = json!(retryable);
     if let Some(fingerprint) = fingerprint {
@@ -2599,6 +2949,56 @@ fn project_save_error_contract(
     }
     root["error"] = error;
     root.to_string()
+}
+
+fn project_save_atomic_error_contract(
+    failure: &AtomicWriteFailure,
+    operation_id: Option<&str>,
+    revision: Option<u64>,
+    current_fingerprint: Option<&FileFingerprint>,
+    expected_committed_fingerprint: Option<&FileFingerprint>,
+) -> String {
+    let mut root = serde_json::from_str::<Value>(&project_save_error_contract_with_state(
+        &failure.message,
+        failure.stage,
+        failure.retryable,
+        failure.commit_state,
+        current_fingerprint,
+    ))
+    .unwrap_or_else(|_| json!({}));
+    if !root.is_object() {
+        root = json!({});
+    }
+    if !root.get("error").is_some_and(Value::is_object) {
+        root["error"] = json!({});
+    }
+    let error = &mut root["error"];
+    if let Some(operation_id) = operation_id {
+        error["operation_id"] = json!(operation_id);
+    }
+    if let Some(revision) = revision {
+        error["revision"] = json!(revision);
+    }
+    if failure.commit_state == "outcome_uncertain" {
+        if let Some(fingerprint) = expected_committed_fingerprint {
+            error["expected_committed_fingerprint"] = json!(fingerprint);
+        }
+    }
+    root.to_string()
+}
+
+#[cfg(test)]
+fn fail_atomic_write_for_test(target: &Path, stage: &str) {
+    let normalized_target = target
+        .parent()
+        .and_then(|parent| fs::canonicalize(parent).ok())
+        .and_then(|parent| target.file_name().map(|name| parent.join(name)))
+        .unwrap_or_else(|| target.to_path_buf());
+    ATOMIC_WRITE_FAIL_STAGE
+        .get_or_init(|| Mutex::new(HashSet::new()))
+        .lock()
+        .unwrap()
+        .insert((normalized_target, stage.to_owned()));
 }
 
 #[tauri::command]
@@ -2774,6 +3174,7 @@ fn project_save(
             "outcome": "unchanged",
             "commit_state": "committed",
             "recovery_warning": Value::Null,
+            "durability_warning": Value::Null,
         }));
     }
 
@@ -2828,12 +3229,40 @@ fn project_save(
             Some(&final_fingerprint),
         ));
     }
-    let (fingerprint, recovery_warning) =
-        write_project_contents_unlocked(&project_dir, &project, &contents).map_err(|error| {
-            project_save_error_contract(&error, "canonical_write", false, Some(&final_fingerprint))
+    let expected_committed_fingerprint = FileFingerprint {
+        exists: true,
+        mtime_ms: None,
+        size: Some(contents.len() as u64),
+        hash: Some(sha256_hex(contents.as_bytes())),
+    };
+    let report = write_project_contents_report_unlocked(&project_dir, &project, &contents)
+        .map_err(|failure| {
+            project_save_atomic_error_contract(
+                &failure,
+                operation_id.as_deref(),
+                revision,
+                Some(&final_fingerprint),
+                Some(&expected_committed_fingerprint),
+            )
         })?;
+    let canonical_path = project_dir.join("project.json");
+    if atomic_write_failure_requested(&canonical_path, "save_ack_after_commit") {
+        let failure = atomic_failure(
+            "测试注入：canonical 已提交但成功响应丢失",
+            "acknowledgement",
+            "outcome_uncertain",
+            false,
+        );
+        return Err(project_save_atomic_error_contract(
+            &failure,
+            operation_id.as_deref(),
+            revision,
+            Some(&report.fingerprint),
+            Some(&report.fingerprint),
+        ));
+    }
     Ok(json!({
-        "fingerprint": fingerprint,
+        "fingerprint": report.fingerprint,
         "project_id": current_project_id,
         "project_dir": project_dir_text,
         "lease_generation": active_generation,
@@ -2842,7 +3271,8 @@ fn project_save(
         "revision": revision,
         "outcome": "written",
         "commit_state": "committed",
-        "recovery_warning": recovery_warning,
+        "recovery_warning": report.recovery_warning,
+        "durability_warning": report.durability_warning,
     }))
 }
 
@@ -10860,10 +11290,12 @@ fn save_session_target(
         return Err("会话数据超出 64 KiB 限制".into());
     }
     let unchanged = existing.as_ref() == Some(&merged);
-    if !unchanged {
+    let durability_warning = if !unchanged {
         let contents = serde_json::to_string(&merged).map_err(|error| error.to_string())?;
-        atomic_write_path(target, &contents, true)?;
-    }
+        atomic_write_path_report(target, &contents, true).map_err(|failure| failure.message)?
+    } else {
+        None
+    };
     let project_id = merged
         .get("project_id")
         .and_then(Value::as_str)
@@ -10880,6 +11312,9 @@ fn save_session_target(
     }
     if let Some(revision) = revision {
         result["revision"] = json!(revision);
+    }
+    if let Some(warning) = durability_warning {
+        result["durability_warning"] = json!(warning);
     }
     Ok(result)
 }
@@ -10957,7 +11392,10 @@ fn write_recovery_journal_unlocked(project_dir: &Path, contents: &str) -> Result
     let value: Value = serde_json::from_str(&contents).map_err(|error| error.to_string())?;
     reject_sensitive(&value)?;
     let path = project_file(project_dir, ".workspace/recovery.json")?;
-    atomic_write_path(&path, contents, true)
+    match atomic_write_path_report(&path, contents, true).map_err(|failure| failure.message)? {
+        Some(warning) => Err(format!("恢复日志已写入，但目录同步失败：{warning}")),
+        None => Ok(()),
+    }
 }
 
 #[tauri::command]
@@ -17155,6 +17593,239 @@ mod tests {
             "save read project.json {} times",
             metrics.full_reads
         );
+        project_close(project_dir).unwrap();
+        let _ = fs::remove_dir_all(directory);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn project_save_reports_permission_temp_create_failure_without_retry() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let directory = test_directory("save-temp-create-failure");
+        let project_dir = directory.to_string_lossy().into_owned();
+        let original = json!({ "project": { "id": "p1", "title": "before" }, "items": [] });
+        project_create(project_dir.clone(), original.clone()).unwrap();
+        let canonical_path = directory.join("project.json");
+        let backup_path = directory.join("project.json.bak");
+        fs::write(&backup_path, b"older verified backup").unwrap();
+        let original_bytes = fs::read(&canonical_path).unwrap();
+        let expected = project_fingerprint(&directory).unwrap();
+        let lease_generation = active_lease_generation(&directory).unwrap();
+        let mut changed = original;
+        changed["project"]["title"] = json!("after");
+        fs::set_permissions(&directory, fs::Permissions::from_mode(0o555)).unwrap();
+
+        let failed = project_save(
+            project_dir.clone(),
+            expected,
+            None,
+            changed,
+            Some("p1".into()),
+            Some(lease_generation),
+            Some(4),
+            Some("temp-create-op".into()),
+            Some(2),
+            None,
+        )
+        .expect_err("read-only project folder must fail before commit");
+        fs::set_permissions(&directory, fs::Permissions::from_mode(0o755)).unwrap();
+
+        let error: Value = serde_json::from_str(&failed).unwrap();
+        assert_eq!(error["error"]["commit_state"], json!("not_committed"));
+        assert_eq!(error["error"]["stage"], json!("temp_create"));
+        assert_eq!(error["error"]["retryable"], json!(false));
+        assert_eq!(error["error"]["operation_id"], json!("temp-create-op"));
+        assert_eq!(error["error"]["revision"], json!(2));
+        assert_eq!(fs::read(canonical_path).unwrap(), original_bytes);
+        assert_eq!(fs::read(backup_path).unwrap(), b"older verified backup");
+        project_close(project_dir).unwrap();
+        let _ = fs::remove_dir_all(directory);
+    }
+
+    #[test]
+    fn project_save_precommit_failures_keep_the_older_backup() {
+        for (stage, expected_stage) in [
+            ("temp_create_interrupted", "temp_create"),
+            ("backup_copy", "backup_copy"),
+            ("canonical_rename", "canonical_rename"),
+        ] {
+            let directory = test_directory(&format!("save-precommit-{stage}"));
+            let project_dir = directory.to_string_lossy().into_owned();
+            let original = json!({ "project": { "id": "p1", "title": "before" }, "items": [] });
+            project_create(project_dir.clone(), original.clone()).unwrap();
+            let canonical_path = directory.join("project.json");
+            let backup_path = directory.join("project.json.bak");
+            fs::write(&backup_path, b"older verified backup").unwrap();
+            let original_bytes = fs::read(&canonical_path).unwrap();
+            let expected = project_fingerprint(&directory).unwrap();
+            let lease_generation = active_lease_generation(&directory).unwrap();
+            let mut changed = original;
+            changed["project"]["title"] = json!("after");
+            fail_atomic_write_for_test(&canonical_path, stage);
+
+            let failed = project_save(
+                project_dir.clone(),
+                expected,
+                None,
+                changed,
+                Some("p1".into()),
+                Some(lease_generation),
+                Some(4),
+                Some(format!("precommit-{stage}")),
+                Some(2),
+                None,
+            )
+            .expect_err("injected precommit fault must be reported");
+            let error: Value = serde_json::from_str(&failed).unwrap();
+            assert_eq!(error["error"]["commit_state"], json!("not_committed"));
+            assert_eq!(error["error"]["stage"], json!(expected_stage));
+            assert_eq!(error["error"]["retryable"], json!(true));
+            assert_eq!(
+                error["error"]["operation_id"],
+                json!(format!("precommit-{stage}"))
+            );
+            assert_eq!(error["error"]["revision"], json!(2));
+            assert_eq!(fs::read(canonical_path).unwrap(), original_bytes);
+            assert_eq!(fs::read(backup_path).unwrap(), b"older verified backup");
+            project_close(project_dir).unwrap();
+            let _ = fs::remove_dir_all(directory);
+        }
+    }
+
+    #[test]
+    fn project_save_returns_committed_warnings_after_rename() {
+        for stage in [
+            "canonical_rename_after",
+            "directory_sync",
+            "recovery_cleanup",
+            "backup_rename",
+            "backup_directory_sync",
+        ] {
+            let directory = test_directory(&format!("save-postcommit-{stage}"));
+            let project_dir = directory.to_string_lossy().into_owned();
+            let original = json!({
+                "project": { "id": "p1", "title": "before", "updated_at": "r1" },
+                "items": []
+            });
+            project_create(project_dir.clone(), original).unwrap();
+            let canonical_path = directory.join("project.json");
+            let backup_path = directory.join("project.json.bak");
+            fs::write(&backup_path, b"older verified backup").unwrap();
+            let expected = project_fingerprint(&directory).unwrap();
+            let lease_generation = active_lease_generation(&directory).unwrap();
+            let mut changed = read_project_value(&directory).unwrap();
+            changed["project"]["title"] = json!("after");
+            changed["project"]["updated_at"] = json!("r2");
+            fail_atomic_write_for_test(&canonical_path, stage);
+
+            let result = project_save(
+                project_dir.clone(),
+                expected,
+                None,
+                changed,
+                Some("p1".into()),
+                Some(lease_generation),
+                Some(4),
+                Some(format!("postcommit-{stage}")),
+                Some(2),
+                Some(json!({
+                    "project_id": "p1",
+                    "canonical_revision": "r2",
+                    "saved_at": rfc3339_now(),
+                })),
+            )
+            .expect("canonical commit succeeds despite postcommit durability warnings");
+            assert_eq!(result["commit_state"], json!("committed"));
+            assert_eq!(result["outcome"], json!("written"));
+            let warning_field = if stage == "recovery_cleanup" {
+                "recovery_warning"
+            } else {
+                "durability_warning"
+            };
+            assert!(
+                result[warning_field]
+                    .as_str()
+                    .is_some_and(|warning| !warning.is_empty()),
+                "{stage} must be returned as {warning_field}: {result}"
+            );
+            assert_eq!(
+                read_project_value(&directory).unwrap()["project"]["title"],
+                json!("after")
+            );
+            if stage == "backup_rename" {
+                assert_eq!(fs::read(&backup_path).unwrap(), b"older verified backup");
+            }
+            if stage == "recovery_cleanup" {
+                assert!(directory.join(".workspace/recovery.json").exists());
+            }
+            project_close(project_dir).unwrap();
+            let _ = fs::remove_dir_all(directory);
+        }
+    }
+
+    #[test]
+    fn project_save_ack_loss_is_uncertain_and_reconciles_by_operation_and_fingerprint() {
+        let directory = test_directory("save-ack-loss");
+        let project_dir = directory.to_string_lossy().into_owned();
+        let original = json!({
+            "project": { "id": "p1", "title": "before", "updated_at": "r1" },
+            "items": []
+        });
+        project_create(project_dir.clone(), original).unwrap();
+        let canonical_path = directory.join("project.json");
+        let expected = project_fingerprint(&directory).unwrap();
+        let lease_generation = active_lease_generation(&directory).unwrap();
+        let mut changed = read_project_value(&directory).unwrap();
+        changed["project"]["title"] = json!("after");
+        changed["project"]["updated_at"] = json!("r2");
+        let committed_bytes = serde_json::to_string_pretty(&changed).unwrap() + "\n";
+        fail_atomic_write_for_test(&canonical_path, "save_ack_after_commit");
+
+        let failed = project_save(
+            project_dir.clone(),
+            expected,
+            None,
+            changed,
+            Some("p1".into()),
+            Some(lease_generation),
+            Some(4),
+            Some("ack-loss-op".into()),
+            Some(2),
+            Some(json!({
+                "project_id": "p1",
+                "canonical_revision": "r2",
+                "saved_at": rfc3339_now(),
+            })),
+        )
+        .expect_err("lost postcommit response must request reconciliation");
+        let error: Value = serde_json::from_str(&failed).unwrap();
+        let payload = &error["error"];
+        assert_eq!(payload["commit_state"], json!("outcome_uncertain"));
+        assert_eq!(payload["stage"], json!("acknowledgement"));
+        assert_eq!(payload["retryable"], json!(false));
+        assert_eq!(payload["operation_id"], json!("ack-loss-op"));
+        assert_eq!(payload["revision"], json!(2));
+        assert_eq!(
+            payload["expected_committed_fingerprint"]["exists"],
+            json!(true)
+        );
+        assert_eq!(
+            payload["expected_committed_fingerprint"]["size"],
+            json!(committed_bytes.len() as u64)
+        );
+        assert_eq!(
+            payload["expected_committed_fingerprint"]["hash"],
+            json!(sha256_hex(committed_bytes.as_bytes()))
+        );
+        let state = project_read_state(project_dir.clone())
+            .unwrap()
+            .expect("pure read should reconcile the committed operation");
+        assert_eq!(
+            state["fingerprint"]["hash"],
+            payload["expected_committed_fingerprint"]["hash"]
+        );
+        assert_eq!(state["project"]["project"]["updated_at"], json!("r2"));
         project_close(project_dir).unwrap();
         let _ = fs::remove_dir_all(directory);
     }
