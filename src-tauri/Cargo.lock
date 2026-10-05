@@ -30,7 +30,7 @@ dependencies = [
 
 [[package]]
 name = "ai-course-workbench"
-version = "0.2.6"
+version = "0.2.7"
 dependencies = [
  "base64 0.22.1",
  "encoding_rs",
