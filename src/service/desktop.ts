@@ -2432,7 +2432,7 @@ export class DesktopService {
     requestSignal?.addEventListener("abort", abort, { once: true });
     if (slot.controller.signal.aborted || requestSignal?.aborted) controller.abort();
     let releaseBuffer: (() => void) | null = null;
-    let file: Deno.FsFile;
+    let file: Deno.FsFile | null = null;
     try {
       releaseBuffer = await acquireExportStreamBuffer(
         controller.signal,
@@ -2442,20 +2442,25 @@ export class DesktopService {
       file = await Deno.open(descriptor.path, { read: true });
       if (controller.signal.aborted) throw unavailable();
     } catch (caught) {
+      try {
+        file?.close();
+      } catch { /* close may race service shutdown */ }
       slot.controller.signal.removeEventListener("abort", abort);
       requestSignal?.removeEventListener("abort", abort);
       releaseBuffer?.();
       throw caught;
     }
+    if (!file) throw unavailable();
+    const openedFile = file;
     try {
-      const openedStat = await file.stat();
+      const openedStat = await openedFile.stat();
       if (
         !openedStat.isFile || openedStat.size !== descriptor.size ||
         controller.signal.aborted || slot.release_requested
       ) throw unavailable();
     } catch {
       try {
-        file.close();
+        openedFile.close();
       } catch { /* close may race service shutdown */ }
       slot.controller.signal.removeEventListener("abort", abort);
       requestSignal?.removeEventListener("abort", abort);
@@ -2470,7 +2475,7 @@ export class DesktopService {
       if (completed) return;
       completed = true;
       try {
-        file.close();
+        openedFile.close();
       } catch {
         // A concurrent service shutdown may already have closed the handle.
       }
@@ -2489,7 +2494,7 @@ export class DesktopService {
     cancelFinish = () => finish(false);
     slot.active_finishes.add(cancelFinish);
     return {
-      file,
+      file: openedFile,
       relative_path: descriptor.relative_path,
       mime_type: descriptor.mime_type,
       size: descriptor.size,
@@ -2498,7 +2503,7 @@ export class DesktopService {
         if (controller.signal.aborted) {
           throw new DOMException("Export download cancelled", "AbortError");
         }
-        const count = await file.read(buffer);
+        const count = await openedFile.read(buffer);
         if (count !== null) recordExportDownloadRead(count);
         return count;
       },

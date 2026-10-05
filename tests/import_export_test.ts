@@ -1122,6 +1122,70 @@ Deno.test("staged download holds one measured server chunk and release frees it"
   }
 });
 
+Deno.test("release during a successful open closes the unregistered download handle", async () => {
+  const directory = await Deno.makeTempDir({ prefix: "acw-export-open-race-" });
+  const fixture = await persistedDiskAssetProject(directory, 1024 * 1024 + 31);
+  const desktop = new DesktopService(directory, {
+    app_instance_id: `export-open-race-${crypto.randomUUID()}`,
+  });
+  await desktop.open();
+  const originalOpen = Deno.open;
+  let openedFile: Deno.FsFile | null = null;
+  let notifyOpened!: () => void;
+  let unblockOpen!: () => void;
+  const opened = new Promise<void>((resolve) => notifyOpened = resolve);
+  const openGate = new Promise<void>((resolve) => unblockOpen = resolve);
+  try {
+    const exportId = crypto.randomUUID().replaceAll("-", "");
+    const execution = await desktop.commands.execute("export.run", {
+      export_id: exportId,
+      preset: fixture.preset,
+    });
+    assert(!execution.error, "service export should prepare files before the race");
+    const result = execution.value as { files: Array<{ asset_id?: string }> };
+    const fileIndex = result.files.findIndex((file) => file.asset_id === fixture.asset.id);
+    assert(fileIndex >= 0, "the race should target a staged asset file");
+
+    let intercepted = false;
+    Deno.open = async (path, options) => {
+      const file = await originalOpen(path, options);
+      if (!intercepted && options?.read) {
+        intercepted = true;
+        openedFile = file;
+        notifyOpened();
+        await openGate;
+      }
+      return file;
+    };
+    const opening = desktop.openExportDownload(exportId, fileIndex);
+    await opened;
+    const release = await desktop.commands.execute("export.release", { export_id: exportId });
+    assert(!release.error, "release should succeed while Deno.open is paused after returning a handle");
+    unblockOpen();
+    let rejected = false;
+    try {
+      await opening;
+    } catch { rejected = true; }
+    assert(rejected, "an open completed after release must not escape as a live download handle");
+    let handleClosed = false;
+    try {
+      await openedFile!.stat();
+    } catch { handleClosed = true; }
+    assert(handleClosed, "the successful-but-unregistered file handle must be closed on abort");
+    const metrics = getExportStreamMetrics();
+    assert(
+      metrics.download_active_streams === 0 && metrics.download_buffered_bytes === 0 &&
+        metrics.export_active_streams === 0 && metrics.export_buffered_bytes === 0,
+      "open race cancellation must release every counted stream slot and buffer",
+    );
+  } finally {
+    unblockOpen();
+    Deno.open = originalOpen;
+    await desktop.close();
+    await Deno.remove(directory, { recursive: true });
+  }
+});
+
 Deno.test("browser export downloads staged bytes over HTTP and release or shutdown closes them", async () => {
   const directory = await Deno.makeTempDir({ prefix: "acw-export-http-project-" });
   const size = 3 * 1024 * 1024 + 79;
