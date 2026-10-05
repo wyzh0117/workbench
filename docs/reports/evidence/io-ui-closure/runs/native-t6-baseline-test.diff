@@ -1,0 +1,62 @@
+--- /tmp/io-ui-closure-t6-baseline-lib-original.rs	2026-10-06 03:53:20
++++ /tmp/io-ui-closure-t6-baseline/src-tauri/src/lib.rs	2026-10-06 03:53:05
+@@ -19288,6 +19288,59 @@
+     }
+
+     #[test]
++    fn native_t6_legacy_preview_manifest_read_baseline_red() {
++        let directory = test_directory("t6-legacy-preview-baseline");
++        let project_dir = directory.to_string_lossy().into_owned();
++        project_create(
++            project_dir.clone(),
++            json!({ "project": { "id": "t6-baseline", "title": "baseline" }, "assets": [], "items": [] }),
++        )
++        .expect("project should be created");
++        fs::create_dir_all(directory.join("assets")).expect("assets directory");
++        let rows: Vec<Value> = (0..8)
++            .map(|index| {
++                let id = format!("asset-{index}");
++                let filename = format!("{id}.bin");
++                fs::write(directory.join("assets").join(&filename), [index as u8])
++                    .expect("asset bytes");
++                json!({
++                    "id": id,
++                    "filename": filename,
++                    "storage_path": format!("assets/{filename}"),
++                    "mime_type": "application/octet-stream",
++                    "type": "file",
++                })
++            })
++            .collect();
++        let mut project = read_project_value(&directory).expect("project should read");
++        project["assets"] = json!(rows);
++        fs::write(
++            directory.join("project.json"),
++            serde_json::to_vec_pretty(&project).expect("manifest JSON"),
++        )
++        .expect("updated manifest");
++        reset_project_validation_reads(&directory);
++
++        for index in 0..8 {
++            asset_read(json!({
++                "project_dir": project_dir,
++                "asset_id": format!("asset-{index}"),
++            }))
++            .expect("legacy single-asset preview should succeed");
++        }
++        let io = take_project_validation_reads(&directory);
++        let manifest_reads = io.files.get("project.json").copied().unwrap_or_default().read_ops;
++        eprintln!("T6 baseline: visible assets=8, project.json reads={manifest_reads}, parses={manifest_reads}");
++        assert_eq!(
++            manifest_reads, 1,
++            "baseline repeated asset_read did {manifest_reads} manifest reads for 8 assets"
++        );
++
++        let _ = project_close(project_dir);
++        let _ = fs::remove_dir_all(directory);
++    }
++
++    #[test]
+     fn session_payloads_carry_reader_position_but_never_credentials() {
+         // The shell persists the reader's position (lesson, mode, panel, tabs)
+         // next to the selected project directory.  It must stay free of any

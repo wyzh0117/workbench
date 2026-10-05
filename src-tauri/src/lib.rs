@@ -2827,19 +2827,32 @@ fn project_open(project_dir: String) -> Result<Option<Value>, String> {
 #[tauri::command]
 fn project_open_state(project_dir: String) -> Result<Option<Value>, String> {
     Ok(
-        project_open_inner(project_dir)?.map(|outcome| match outcome {
+        project_open_inner(project_dir.clone())?.map(|outcome| match outcome {
             ProjectOpenOutcome::Inspection(value) => value,
             ProjectOpenOutcome::Opened {
                 project,
                 fingerprint,
                 project_id,
                 lease_generation,
-            } => json!({
-                "project": project,
-                "fingerprint": fingerprint,
-                "project_id": project_id,
-                "lease_generation": lease_generation,
-            }),
+            } => {
+                let mut state = json!({
+                    "project": project,
+                    "fingerprint": fingerprint,
+                    "project_id": project_id,
+                    "lease_generation": lease_generation,
+                });
+                // Reuse the just-parsed canonical project so native startup
+                // can filter a post-commit journal without reopening project.json.
+                if let Ok(project_dir) = explicit_project_dir(&project_dir, false) {
+                    if let Ok(recovery_journal) = read_recovery_journal_with_canonical_context(
+                        &project_dir,
+                        state.get("project"),
+                    ) {
+                        state["recovery_journal"] = json!(recovery_journal);
+                    }
+                }
+                state
+            }
         }),
     )
 }
@@ -4447,6 +4460,20 @@ fn preview_source(source: &Value) -> Result<Value, String> {
 #[tauri::command]
 fn import_preview(source: Value) -> Result<Value, String> {
     preview_source(&source)
+}
+
+#[tauri::command]
+fn import_preview_release(input: Value) -> Result<Value, String> {
+    let outer = require_object(&input, "import_preview_release")?;
+    let payload = outer
+        .get("input")
+        .filter(|value| value.is_object())
+        .cloned()
+        .unwrap_or(input);
+    let _ = require_object(&payload, "import_preview_release")?;
+    // Native previews own no cached resources; the command is present so the
+    // bridge can use one lifecycle contract across native and browser modes.
+    Ok(json!({ "released": false }))
 }
 
 fn scan_mime_for(name: &str) -> Option<&'static str> {
@@ -11401,11 +11428,49 @@ fn write_recovery_journal_unlocked(project_dir: &Path, contents: &str) -> Result
 #[tauri::command]
 fn read_recovery_journal(project_dir: String) -> Result<Option<Value>, String> {
     let project_dir = explicit_project_dir(&project_dir, false)?;
+    read_recovery_journal_with_canonical_context(&project_dir, None)
+}
+
+fn read_recovery_journal_with_canonical_context(
+    project_dir: &Path,
+    canonical_context: Option<&Value>,
+) -> Result<Option<Value>, String> {
     let path = project_file(&project_dir, ".workspace/recovery.json")?;
     if !path.exists() {
         return Ok(None);
     }
-    Ok(Some(read_json_file(&path)?))
+    let journal = read_json_file(&path)?;
+    // A crash or cleanup error can leave a recovery journal whose exact
+    // snapshot is already canonical. Hide only that confirmed committed copy
+    // from recovery UI; keep the file intact for normal later cleanup.
+    let canonical_from_disk;
+    let canonical = if let Some(canonical) = canonical_context {
+        Some(canonical)
+    } else {
+        canonical_from_disk = read_project_state(project_dir)
+            .ok()
+            .map(|(project, _)| project);
+        canonical_from_disk.as_ref()
+    };
+    if let Some(canonical) = canonical {
+        let same_project_id = journal
+            .get("project_id")
+            .and_then(Value::as_str)
+            .is_some_and(|journal_id| {
+                project_id_of(&canonical).ok().as_deref() == Some(journal_id)
+            });
+        let canonical_revision = canonical
+            .get("project")
+            .and_then(|value| value.get("updated_at"))
+            .and_then(Value::as_str);
+        let same_revision = canonical_revision.is_some_and(|revision| {
+            journal.get("canonical_revision").and_then(Value::as_str) == Some(revision)
+        });
+        if same_project_id && same_revision && journal.get("project") == Some(canonical) {
+            return Ok(None);
+        }
+    }
+    Ok(Some(journal))
 }
 
 /// Read-only asset access for previews.
@@ -11415,6 +11480,126 @@ fn read_recovery_journal(project_dir: String) -> Result<Option<Value>, String> {
 /// out-of-project storage paths, and returns at most `ASSET_READ_SIZE_LIMIT`
 /// bytes.  It does not take an edit lease because it writes nothing.
 const ASSET_READ_SIZE_LIMIT: u64 = 8 * 1024 * 1024;
+const ASSET_PREVIEW_BATCH_ITEM_LIMIT: usize = 8;
+const ASSET_PREVIEW_BATCH_RAW_LIMIT: u64 = 16 * 1024 * 1024;
+
+struct AssetPreviewProblem {
+    code: &'static str,
+    message: String,
+}
+
+struct AssetPreviewFile {
+    path: PathBuf,
+    filename: String,
+    mime_type: String,
+    size: u64,
+}
+
+fn asset_preview_problem(code: &'static str, message: impl Into<String>) -> AssetPreviewProblem {
+    AssetPreviewProblem {
+        code,
+        message: message.into(),
+    }
+}
+
+fn resolve_asset_preview_file(
+    project_dir: &Path,
+    project: &Value,
+    asset_id: &str,
+) -> Result<AssetPreviewFile, AssetPreviewProblem> {
+    let project_object = project
+        .as_object()
+        .ok_or_else(|| asset_preview_problem("project_invalid", "项目数据必须是 JSON 对象"))?;
+    let asset = project_object
+        .get("assets")
+        .and_then(Value::as_array)
+        .and_then(|assets| {
+            assets
+                .iter()
+                .find(|asset| asset.get("id").and_then(Value::as_str) == Some(asset_id))
+        })
+        .ok_or_else(|| asset_preview_problem("asset_not_found", "找不到素材"))?;
+    if asset
+        .get("archived")
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
+    {
+        return Err(asset_preview_problem(
+            "asset_archived",
+            "素材已归档，无法读取",
+        ));
+    }
+    let storage_path = asset
+        .get("storage_path")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| asset_preview_problem("unsafe_asset_path", "素材缺少存储路径"))?;
+    let relative = Path::new(storage_path);
+    let inside_assets = relative
+        .components()
+        .next()
+        .map(|component| matches!(component, Component::Normal(name) if name == "assets"))
+        .unwrap_or(false);
+    if !inside_assets {
+        return Err(asset_preview_problem(
+            "unsafe_asset_path",
+            "素材路径必须位于 assets/ 目录内",
+        ));
+    }
+    let target = project_file(project_dir, storage_path)
+        .map_err(|error| asset_preview_problem("unsafe_asset_path", error))?;
+    reject_symlink(&target, "素材文件")
+        .map_err(|error| asset_preview_problem("unsafe_asset_path", error))?;
+    let real_root = fs::canonicalize(project_dir).map_err(|error| {
+        asset_preview_problem("project_read_failed", format!("无法解析项目目录: {error}"))
+    })?;
+    let real_target = fs::canonicalize(&target).map_err(|error| {
+        asset_preview_problem("asset_read_failed", format!("无法读取素材: {error}"))
+    })?;
+    if !real_target.starts_with(&real_root) {
+        return Err(asset_preview_problem(
+            "unsafe_asset_path",
+            "素材路径超出项目目录",
+        ));
+    }
+    let metadata = fs::metadata(&real_target).map_err(|error| {
+        asset_preview_problem("asset_read_failed", format!("无法读取素材: {error}"))
+    })?;
+    if !metadata.is_file() {
+        return Err(asset_preview_problem(
+            "unsafe_asset_path",
+            "素材路径不是文件",
+        ));
+    }
+    Ok(AssetPreviewFile {
+        path: real_target,
+        filename: asset
+            .get("filename")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .to_owned(),
+        mime_type: asset
+            .get("mime_type")
+            .and_then(Value::as_str)
+            .unwrap_or("application/octet-stream")
+            .to_owned(),
+        size: metadata.len(),
+    })
+}
+
+fn read_asset_preview_file(path: &Path, limit: u64) -> Result<Vec<u8>, String> {
+    let file = File::open(path).map_err(|error| format!("无法读取素材字节: {error}"))?;
+    let mut bytes = Vec::new();
+    file.take(limit.saturating_add(1))
+        .read_to_end(&mut bytes)
+        .map_err(|error| format!("无法读取素材字节: {error}"))?;
+    Ok(bytes)
+}
+
+fn preview_batch_error(code: &str, message: &str) -> String {
+    json!({ "error": { "code": code, "message": message } }).to_string()
+}
 
 #[tauri::command]
 fn asset_read(input: Value) -> Result<Value, String> {
@@ -11432,72 +11617,198 @@ fn asset_read(input: Value) -> Result<Value, String> {
     // project and writes nothing, so it deliberately takes no edit lease and
     // does not participate in the save-conflict protocol.
     let project = read_project_value(&project_dir)?;
-    let project_object = project.as_object().ok_or("项目数据必须是 JSON 对象")?;
-    let asset = project_object
-        .get("assets")
-        .and_then(Value::as_array)
-        .and_then(|assets| {
-            assets
-                .iter()
-                .find(|asset| asset.get("id").and_then(Value::as_str) == Some(asset_id.as_str()))
-        })
-        .ok_or("找不到素材")?;
-    if asset
-        .get("archived")
-        .and_then(Value::as_bool)
-        .unwrap_or(false)
-    {
-        return Err("素材已归档，无法读取".into());
-    }
-    let storage_path = asset
-        .get("storage_path")
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .ok_or("素材缺少存储路径")?;
-    // A preview read is only ever for material, never for canonical data or
-    // arbitrary project files, so the path must stay under `assets/`.
-    let relative = Path::new(storage_path);
-    let inside_assets = relative
-        .components()
-        .next()
-        .map(|component| matches!(component, Component::Normal(name) if name == "assets"))
-        .unwrap_or(false);
-    if !inside_assets {
-        return Err("素材路径必须位于 assets/ 目录内".into());
-    }
-    let target = project_file(&project_dir, storage_path)?;
-    // Reject a symlinked target or a chain whose real path escapes the project.
-    reject_symlink(&target, "素材文件")?;
-    let real_root =
-        fs::canonicalize(&project_dir).map_err(|error| format!("无法解析项目目录: {error}"))?;
-    let real_target =
-        fs::canonicalize(&target).map_err(|error| format!("无法读取素材: {error}"))?;
-    if !real_target.starts_with(&real_root) {
-        return Err("素材路径超出项目目录".into());
-    }
-    let metadata = fs::metadata(&real_target).map_err(|error| format!("无法读取素材: {error}"))?;
-    if !metadata.is_file() {
-        return Err("素材路径不是文件".into());
-    }
-    if metadata.len() > ASSET_READ_SIZE_LIMIT {
+    let file = resolve_asset_preview_file(&project_dir, &project, &asset_id)
+        .map_err(|problem| problem.message)?;
+    if file.size > ASSET_READ_SIZE_LIMIT {
         return Err(format!(
             "素材过大，无法在工作台内预览（单文件上限 {} MiB）",
             ASSET_READ_SIZE_LIMIT / (1024 * 1024)
         ));
     }
-    let bytes = fs::read(&real_target).map_err(|error| format!("无法读取素材字节: {error}"))?;
-    let mime_type = asset
-        .get("mime_type")
-        .and_then(Value::as_str)
-        .unwrap_or("application/octet-stream");
+    let bytes = read_asset_preview_file(&file.path, ASSET_READ_SIZE_LIMIT)?;
+    if bytes.len() as u64 > ASSET_READ_SIZE_LIMIT {
+        return Err(format!(
+            "素材过大，无法在工作台内预览（单文件上限 {} MiB）",
+            ASSET_READ_SIZE_LIMIT / (1024 * 1024)
+        ));
+    }
     Ok(json!({
         "asset_id": asset_id,
-        "filename": asset.get("filename").and_then(Value::as_str).unwrap_or(""),
-        "mime_type": mime_type,
+        "filename": file.filename,
+        "mime_type": file.mime_type,
         "file_size": bytes.len(),
         "bytes_base64": BASE64.encode(&bytes),
     }))
+}
+
+#[tauri::command]
+fn asset_preview_batch(input: Value) -> Result<Value, String> {
+    let diagnostics_enabled = std::env::var("WORKBENCH_IO_DIAGNOSTICS")
+        .map(|value| value == "1")
+        .unwrap_or(false);
+    asset_preview_batch_with_diagnostics(input, diagnostics_enabled)
+}
+
+fn asset_preview_batch_with_diagnostics(
+    input: Value,
+    diagnostics_enabled: bool,
+) -> Result<Value, String> {
+    let outer = require_object(&input, "asset_preview_batch")?;
+    let payload = outer
+        .get("input")
+        .filter(|value| value.is_object())
+        .cloned()
+        .unwrap_or(input);
+    let object = require_object(&payload, "asset_preview_batch")?;
+    let project_dir = required_string(object, &["project_dir", "projectDir"], "项目目录")?;
+    let expected_project_id = required_string(object, &["project_id", "projectId"], "项目 ID")?;
+    let generation = field(object, &["request_generation", "requestGeneration"])
+        .and_then(Value::as_u64)
+        .ok_or_else(|| {
+            preview_batch_error(
+                "invalid_preview_request",
+                "request_generation 必须是非负整数",
+            )
+        })?;
+    let requested_fingerprint: FileFingerprint = serde_json::from_value(
+        field(object, &["fingerprint"])
+            .cloned()
+            .ok_or_else(|| preview_batch_error("invalid_preview_request", "缺少 fingerprint"))?,
+    )
+    .map_err(|error| {
+        preview_batch_error(
+            "invalid_preview_request",
+            &format!("fingerprint 无效: {error}"),
+        )
+    })?;
+    let requested_ids = field(object, &["asset_ids", "assetIds"])
+        .and_then(Value::as_array)
+        .ok_or_else(|| preview_batch_error("invalid_preview_request", "asset_ids 必须是数组"))?;
+    if requested_ids.len() > ASSET_PREVIEW_BATCH_ITEM_LIMIT {
+        return Err(preview_batch_error(
+            "preview_batch_limit",
+            "单批最多预览 8 个素材",
+        ));
+    }
+    let mut asset_ids = Vec::with_capacity(requested_ids.len());
+    for value in requested_ids {
+        let asset_id = value
+            .as_str()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .ok_or_else(|| {
+                preview_batch_error("invalid_preview_request", "asset_ids 包含无效素材 ID")
+            })?;
+        asset_ids.push(asset_id.to_owned());
+    }
+
+    let project_dir = explicit_project_dir(&project_dir, false)?;
+    let (project, fingerprint) = read_project_state(&project_dir)?;
+    let project_id =
+        project_id_of(&project).map_err(|error| preview_batch_error("project_identity", &error))?;
+    if project_id != expected_project_id {
+        return Err(preview_batch_error(
+            "project_id_mismatch",
+            "素材预览请求所属项目已改变",
+        ));
+    }
+    if fingerprints_differ(&fingerprint, &requested_fingerprint) {
+        return Err(preview_batch_error(
+            "fingerprint_mismatch",
+            "项目文件已变化，请重新请求素材预览",
+        ));
+    }
+
+    let mut raw_bytes_returned = 0_u64;
+    let mut asset_file_bytes_read = 0_u64;
+    let mut base64_bytes_emitted = 0_u64;
+    let mut asset_file_opens = 0_u64;
+    let mut items = Vec::with_capacity(asset_ids.len());
+    for asset_id in asset_ids {
+        let file = match resolve_asset_preview_file(&project_dir, &project, &asset_id) {
+            Ok(file) => file,
+            Err(problem) => {
+                items.push(json!({
+                    "asset_id": asset_id,
+                    "status": "error",
+                    "error": { "code": problem.code, "message": problem.message }
+                }));
+                continue;
+            }
+        };
+        if file.size > ASSET_READ_SIZE_LIMIT {
+            items.push(json!({
+                "asset_id": asset_id,
+                "status": "error",
+                "error": {
+                    "code": "asset_too_large",
+                    "message": format!("素材超过 {} MiB 单文件预览上限", ASSET_READ_SIZE_LIMIT / (1024 * 1024))
+                }
+            }));
+            continue;
+        }
+        let remaining = ASSET_PREVIEW_BATCH_RAW_LIMIT.saturating_sub(raw_bytes_returned);
+        if file.size > remaining {
+            items.push(json!({ "asset_id": asset_id, "status": "deferred" }));
+            continue;
+        }
+        let read_limit = ASSET_READ_SIZE_LIMIT.min(remaining);
+        asset_file_opens = asset_file_opens.saturating_add(1);
+        let bytes = match read_asset_preview_file(&file.path, read_limit) {
+            Ok(bytes) => bytes,
+            Err(message) => {
+                items.push(json!({
+                    "asset_id": asset_id,
+                    "status": "error",
+                    "error": { "code": "asset_read_failed", "message": message }
+                }));
+                continue;
+            }
+        };
+        asset_file_bytes_read = asset_file_bytes_read.saturating_add(bytes.len() as u64);
+        if bytes.len() as u64 > ASSET_READ_SIZE_LIMIT {
+            items.push(json!({
+                "asset_id": asset_id,
+                "status": "error",
+                "error": {
+                    "code": "asset_too_large",
+                    "message": format!("素材超过 {} MiB 单文件预览上限", ASSET_READ_SIZE_LIMIT / (1024 * 1024))
+                }
+            }));
+            continue;
+        }
+        if bytes.len() as u64 > remaining {
+            items.push(json!({ "asset_id": asset_id, "status": "deferred" }));
+            continue;
+        }
+        raw_bytes_returned = raw_bytes_returned.saturating_add(bytes.len() as u64);
+        let encoded = BASE64.encode(&bytes);
+        base64_bytes_emitted = base64_bytes_emitted.saturating_add(encoded.len() as u64);
+        items.push(json!({
+            "asset_id": asset_id,
+            "status": "ok",
+            "bytes_base64": encoded
+        }));
+    }
+
+    let mut result = json!({
+        "project_id": project_id,
+        "fingerprint": fingerprint,
+        "request_generation": generation,
+        "items": items,
+    });
+    if diagnostics_enabled {
+        result["diagnostics"] = json!({
+            "manifest_reads": 1,
+            "manifest_hash_bytes": fingerprint.size.unwrap_or_default(),
+            "asset_file_opens": asset_file_opens,
+            "asset_file_bytes_read": asset_file_bytes_read,
+            "raw_bytes_returned": raw_bytes_returned,
+            "base64_bytes_emitted": base64_bytes_emitted,
+            "max_open_asset_handles": u8::from(asset_file_opens > 0),
+        });
+    }
+    Ok(result)
 }
 
 /// Grant the asset protocol access to one validated video file for ranged
@@ -17072,8 +17383,77 @@ fn apply_asset_rename(
 #[tauri::command]
 fn asset_rename(input: Value) -> Result<Value, String> {
     let object = require_object(&input, "asset_rename")?;
+    let binding_string = |names: &[&str], label: &str| -> Result<Option<String>, String> {
+        match field(object, names) {
+            None => Ok(None),
+            Some(value) => value
+                .as_str()
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(|value| Some(value.to_owned()))
+                .ok_or_else(|| format!("{label}不能为空")),
+        }
+    };
+    let binding_u64 = |names: &[&str], label: &str| -> Result<Option<u64>, String> {
+        match field(object, names) {
+            None => Ok(None),
+            Some(value) => value
+                .as_u64()
+                .map(Some)
+                .ok_or_else(|| format!("{label}必须是非负整数")),
+        }
+    };
     let project_dir = required_string(object, &["project_dir", "projectDir"], "项目目录")?;
     let asset_id = required_string(object, &["asset_id", "assetId"], "素材 ID")?;
+    let expected_project_id = binding_string(
+        &["expected_project_id", "expectedProjectId"],
+        "expected_project_id",
+    )?;
+    let requested_lease_generation =
+        binding_string(&["lease_generation", "leaseGeneration"], "lease_generation")?;
+    let editor_generation = binding_u64(
+        &["editor_generation", "editorGeneration"],
+        "editor_generation",
+    )?;
+    let operation_id = binding_string(&["operation_id", "operationId"], "operation_id")?;
+    let revision = binding_u64(&["revision"], "revision")?;
+    let expected_fingerprint = field(object, &["expected_fingerprint", "expectedFingerprint"])
+        .cloned()
+        .map(|value| {
+            serde_json::from_value::<FileFingerprint>(value)
+                .map_err(|error| format!("expected_fingerprint 无效: {error}"))
+        })
+        .transpose()?;
+    let has_binding = expected_project_id.is_some()
+        || requested_lease_generation.is_some()
+        || editor_generation.is_some()
+        || operation_id.is_some()
+        || revision.is_some()
+        || expected_fingerprint.is_some();
+    if has_binding
+        && (expected_project_id.is_none()
+            || requested_lease_generation.is_none()
+            || editor_generation.is_none()
+            || operation_id.is_none()
+            || revision.is_none()
+            || expected_fingerprint.is_none())
+    {
+        return Err(json!({ "error": {
+            "code": "invalid_mutation_binding",
+            "message": "素材重命名需要完整的项目、租约和编辑代次绑定。"
+        }})
+        .to_string());
+    }
+    if operation_id
+        .as_deref()
+        .is_some_and(|value| !valid_snapshot_id(value))
+    {
+        return Err(json!({ "error": {
+            "code": "invalid_operation_id",
+            "message": "素材重命名操作编号无效。"
+        }})
+        .to_string());
+    }
     let requested = object
         .get("new_name")
         .or_else(|| object.get("newName"))
@@ -17082,7 +17462,37 @@ fn asset_rename(input: Value) -> Result<Value, String> {
         .to_string();
     let project_dir = explicit_project_dir(&project_dir, false)?;
     let _lease_guard = require_active_project_lock(&project_dir)?;
-    let mut project = read_project_value(&project_dir)?;
+    let active_generation =
+        verify_lease_generation(&project_dir, requested_lease_generation.as_deref())?;
+    let (mut project, current_fingerprint) = read_project_state(&project_dir)?;
+    let project_id = project_id_of(&project)?;
+    if expected_project_id
+        .as_deref()
+        .is_some_and(|expected| expected != project_id)
+    {
+        return Err(project_save_error_contract(
+            &json!({ "error": {
+                "code": "project_id_mismatch",
+                "message": "素材重命名请求与当前项目身份不匹配。"
+            }})
+            .to_string(),
+            "project_identity",
+            false,
+            Some(&current_fingerprint),
+        ));
+    }
+    if expected_fingerprint
+        .as_ref()
+        .is_some_and(|expected| fingerprints_differ(expected, &current_fingerprint))
+    {
+        return Err(project_save_error_contract(
+            &external_conflict_error(expected_fingerprint.as_ref(), &current_fingerprint),
+            "external_compare",
+            false,
+            Some(&current_fingerprint),
+        ));
+    }
+    let project_dir_text = project_dir.to_string_lossy().into_owned();
 
     let (old_storage, old_filename, archived) = {
         let assets = project
@@ -17131,6 +17541,16 @@ fn asset_rename(input: Value) -> Result<Value, String> {
             "old_filename": old_filename,
             "new_filename": new_filename,
             "project": project,
+            "fingerprint": current_fingerprint,
+            "project_id": project_id,
+            "project_dir": project_dir_text,
+            "lease_generation": active_generation,
+            "editor_generation": editor_generation,
+            "operation_id": operation_id,
+            "revision": revision,
+            "commit_state": "committed",
+            "durability_warning": Value::Null,
+            "recovery_warning": Value::Null,
         }));
     }
 
@@ -17179,7 +17599,8 @@ fn asset_rename(input: Value) -> Result<Value, String> {
     fs::rename(&old_abs, &new_abs).map_err(|error| format!("重命名文件失败：{error}"))?;
 
     // Canonical rewrite + save, with rollback of the physical move on failure.
-    let write_result = (|| -> Result<(), String> {
+    let mut expected_committed_fingerprint = None;
+    let write_result = (|| -> Result<ProjectWriteReport, AtomicWriteFailure> {
         apply_asset_rename(
             &mut project,
             &asset_id,
@@ -17188,20 +17609,69 @@ fn asset_rename(input: Value) -> Result<Value, String> {
             &old_filename,
             &new_filename,
             &display_title,
-        )?;
-        touch_project_updated_at(&mut project)?;
-        write_project_value_unlocked(&project_dir, &project)
+        )
+        .map_err(|error| atomic_failure(error, "mutation_validate", "not_committed", false))?;
+        touch_project_updated_at(&mut project)
+            .map_err(|error| atomic_failure(error, "mutation_validate", "not_committed", false))?;
+        validate_project(&project)
+            .map_err(|error| atomic_failure(error, "validate", "not_committed", false))?;
+        ensure_no_external_modification(&project_dir)
+            .map_err(|error| atomic_failure(error, "external_compare", "not_committed", false))?;
+        let contents = serde_json::to_string_pretty(&project).map_err(|error| {
+            atomic_failure(error.to_string(), "serialize", "not_committed", false)
+        })? + "\n";
+        ensure_no_external_modification(&project_dir)
+            .map_err(|error| atomic_failure(error, "external_compare", "not_committed", false))?;
+        expected_committed_fingerprint = Some(FileFingerprint {
+            exists: true,
+            mtime_ms: None,
+            size: Some(contents.len() as u64),
+            hash: Some(sha256_hex(contents.as_bytes())),
+        });
+        write_project_contents_report_unlocked(&project_dir, &project, &contents)
     })();
-    if let Err(save_error) = write_result {
-        if let Err(rollback_error) = fs::rename(&new_abs, &old_abs) {
-            return Err(format!(
-                "rename_rollback_failed: 重命名未能保存，且文件回滚也失败。文件当前位于新名称「{new_filename}」，原名称「{old_filename}」仍在磁盘上。原路径：{}；新路径：{}。保存错误：{save_error}；回滚错误：{rollback_error}",
-                old_abs.to_string_lossy(),
-                new_abs.to_string_lossy()
-            ));
+    let report = match write_result {
+        Ok(report) => report,
+        Err(failure) => {
+            let expected = expected_committed_fingerprint
+                .as_ref()
+                .unwrap_or(&current_fingerprint);
+            let save_error = project_save_atomic_error_contract(
+                &failure,
+                operation_id.as_deref(),
+                revision,
+                Some(&current_fingerprint),
+                Some(expected),
+            );
+            if failure.commit_state == "not_committed" {
+                if let Err(rollback_error) = fs::rename(&new_abs, &old_abs) {
+                    let rollback_failure = atomic_failure(
+                        json!({ "error": {
+                            "code": "asset_rename_rollback_failed",
+                            "user_message": "素材重命名没有完成，且文件回滚失败。请检查素材文件位置后恢复。",
+                            "message": format!("rename_rollback_failed: {rollback_error}"),
+                            "details": {
+                                "old_path": old_abs.to_string_lossy(),
+                                "new_path": new_abs.to_string_lossy(),
+                                "save_error": save_error,
+                            }
+                        }}).to_string(),
+                        "asset_rename_rollback",
+                        "outcome_uncertain",
+                        false,
+                    );
+                    return Err(project_save_atomic_error_contract(
+                        &rollback_failure,
+                        operation_id.as_deref(),
+                        revision,
+                        Some(&current_fingerprint),
+                        Some(&current_fingerprint),
+                    ));
+                }
+            }
+            return Err(save_error);
         }
-        return Err(save_error);
-    }
+    };
 
     let renamed = project
         .get("assets")
@@ -17224,6 +17694,16 @@ fn asset_rename(input: Value) -> Result<Value, String> {
         "old_filename": old_filename,
         "new_filename": new_filename,
         "project": project,
+        "fingerprint": report.fingerprint,
+        "project_id": project_id,
+        "project_dir": project_dir_text,
+        "lease_generation": active_generation,
+        "editor_generation": editor_generation,
+        "operation_id": operation_id,
+        "revision": revision,
+        "commit_state": "committed",
+        "durability_warning": report.durability_warning,
+        "recovery_warning": report.recovery_warning,
     }))
 }
 
@@ -17758,6 +18238,48 @@ mod tests {
             }
             if stage == "recovery_cleanup" {
                 assert!(directory.join(".workspace/recovery.json").exists());
+                let journal = read_json_file(&directory.join(".workspace/recovery.json"))
+                    .expect("stale recovery journal should remain on disk");
+                assert_eq!(
+                    journal["transaction_id"],
+                    json!("postcommit-recovery_cleanup")
+                );
+                assert_eq!(journal["canonical_revision"], json!("r2"));
+                assert_eq!(
+                    read_recovery_journal(project_dir.clone()).unwrap(),
+                    None,
+                    "an already committed journal must not be offered as recoverable"
+                );
+                project_close(project_dir.clone()).unwrap();
+                let reopened = project_open_state(project_dir.clone())
+                    .unwrap()
+                    .expect("reopened project state");
+                assert_eq!(reopened["project"]["project"]["updated_at"], json!("r2"));
+                assert_eq!(reopened["project"], journal["project"]);
+                assert_eq!(
+                    reopened["recovery_journal"],
+                    Value::Null,
+                    "startup state must not offer an already committed journal"
+                );
+                assert_eq!(
+                    reopened["fingerprint"]["hash"],
+                    project_read_state(project_dir.clone()).unwrap().unwrap()["fingerprint"]
+                        ["hash"]
+                );
+                assert_eq!(read_recovery_journal(project_dir.clone()).unwrap(), None);
+                let mut divergent_journal = journal.clone();
+                divergent_journal["project"]["project"]["title"] = json!("pending recovery");
+                fs::write(
+                    directory.join(".workspace/recovery.json"),
+                    serde_json::to_vec(&divergent_journal).unwrap(),
+                )
+                .unwrap();
+                assert_eq!(
+                    read_recovery_journal(project_dir.clone()).unwrap().unwrap()["project"]
+                        ["project"]["title"],
+                    json!("pending recovery"),
+                    "a divergent journal must remain recoverable"
+                );
             }
             project_close(project_dir).unwrap();
             let _ = fs::remove_dir_all(directory);
@@ -18960,6 +19482,134 @@ mod tests {
     /// §14.1 — renaming a library asset moves the managed file itself and rewrites
     /// the paths that point at it, while id, checksum and AssetUsage rows stay put.
     #[test]
+    fn asset_rename_returns_bound_committed_project_ack_without_reread() {
+        let directory = test_directory("asset-rename-ack");
+        let project_dir = directory.to_string_lossy().into_owned();
+        project_create(
+            project_dir.clone(),
+            json!({
+                "project": { "id": "p-rename-ack", "title": "改名" },
+                "assets": [{
+                    "id": "asset-1",
+                    "project_id": "p-rename-ack",
+                    "type": "image",
+                    "filename": "封面.png",
+                    "storage_path": "assets/asset-1-封面.png",
+                    "mime_type": "image/png",
+                    "file_size": 3,
+                    "checksum": "hash-1",
+                    "title": "封面.png",
+                    "archived": false,
+                }],
+                "blocks": [{ "id": "block-1", "content": "封面.png", "settings": { "asset_id": "asset-1" } }],
+            }),
+        )
+        .expect("project");
+        fs::create_dir_all(directory.join("assets")).expect("assets dir");
+        fs::write(directory.join("assets/asset-1-封面.png"), [1_u8, 2, 3]).expect("asset");
+        let expected_fingerprint = project_fingerprint(&directory).expect("open fingerprint");
+        let lease_generation = active_lease_generation(&directory).expect("active lease");
+
+        let renamed = asset_rename(json!({
+            "project_dir": project_dir,
+            "asset_id": "asset-1",
+            "new_name": "课程封面",
+            "expected_project_id": "p-rename-ack",
+            "expected_fingerprint": expected_fingerprint,
+            "lease_generation": lease_generation,
+            "editor_generation": 7,
+            "operation_id": "rename-op-7",
+            "revision": 3,
+        }))
+        .expect("bound rename should commit");
+
+        assert_eq!(renamed["status"], json!("renamed"));
+        assert_eq!(renamed["commit_state"], json!("committed"));
+        assert_eq!(renamed["project_id"], json!("p-rename-ack"));
+        assert_eq!(renamed["lease_generation"], json!(lease_generation));
+        assert_eq!(renamed["editor_generation"], json!(7));
+        assert_eq!(renamed["operation_id"], json!("rename-op-7"));
+        assert_eq!(renamed["revision"], json!(3));
+        assert_eq!(
+            renamed["project"]["assets"][0]["filename"],
+            json!("课程封面.png")
+        );
+        let committed_bytes = fs::read(directory.join("project.json")).expect("canonical bytes");
+        assert_eq!(
+            renamed["fingerprint"]["hash"],
+            json!(sha256_hex(&committed_bytes))
+        );
+        assert_eq!(renamed["fingerprint"]["size"], json!(committed_bytes.len()));
+
+        project_close(project_dir).unwrap();
+        let _ = fs::remove_dir_all(directory);
+    }
+
+    #[test]
+    fn asset_rename_rejects_stale_binding_before_moving_the_file() {
+        let directory = test_directory("asset-rename-stale-binding");
+        let project_dir = directory.to_string_lossy().into_owned();
+        project_create(
+            project_dir.clone(),
+            json!({
+                "project": { "id": "p-stale-rename", "title": "before" },
+                "assets": [{
+                    "id": "asset-1",
+                    "project_id": "p-stale-rename",
+                    "type": "image",
+                    "filename": "cover.png",
+                    "storage_path": "assets/asset-1-cover.png",
+                    "mime_type": "image/png",
+                    "archived": false,
+                }],
+            }),
+        )
+        .expect("project");
+        fs::create_dir_all(directory.join("assets")).expect("assets dir");
+        let old_file = directory.join("assets/asset-1-cover.png");
+        let new_file = directory.join("assets/asset-1-new-cover.png");
+        fs::write(&old_file, [1_u8, 2, 3]).expect("asset");
+        let expected_fingerprint = project_fingerprint(&directory).expect("open fingerprint");
+        let lease_generation = active_lease_generation(&directory).expect("active lease");
+        let mut external = read_project_value(&directory).expect("external edit base");
+        external["project"]["title"] = json!("external");
+        fs::write(
+            directory.join("project.json"),
+            serde_json::to_vec_pretty(&external).expect("external manifest"),
+        )
+        .expect("external canonical edit");
+
+        let error = asset_rename(json!({
+            "project_dir": project_dir,
+            "asset_id": "asset-1",
+            "new_name": "new-cover.png",
+            "expected_project_id": "p-stale-rename",
+            "expected_fingerprint": expected_fingerprint,
+            "lease_generation": lease_generation,
+            "editor_generation": 8,
+            "operation_id": "rename-stale-8",
+            "revision": 4,
+        }))
+        .expect_err("stale project fingerprint must stop a rename");
+        let error: Value = serde_json::from_str(&error).expect("structured conflict");
+        assert_eq!(
+            error["error"]["code"],
+            json!("external_modification_conflict")
+        );
+        assert_eq!(error["error"]["commit_state"], json!("not_committed"));
+        assert_eq!(error["error"]["retryable"], json!(false));
+        assert!(old_file.is_file(), "stale binding must preserve old file");
+        assert!(!new_file.exists(), "stale binding must not move the file");
+        assert_eq!(
+            read_project_value(&directory).unwrap()["project"]["title"],
+            json!("external")
+        );
+
+        project_close(project_dir).unwrap();
+        let _ = fs::remove_dir_all(directory);
+    }
+
+    #[test]
     fn asset_rename_moves_the_managed_file_and_rewrites_its_paths() {
         let directory = test_directory("asset-rename-managed");
         let project_dir = directory.to_string_lossy().into_owned();
@@ -19285,6 +19935,194 @@ mod tests {
 
         project_close(directory.to_string_lossy().into_owned()).unwrap();
         let _ = fs::remove_dir_all(directory);
+    }
+
+    #[test]
+    fn asset_preview_batch_echoes_bindings_and_isolates_item_failures() {
+        let directory = test_directory("asset-preview-batch");
+        let project_dir = directory.to_string_lossy().into_owned();
+        project_create(
+            project_dir.clone(),
+            json!({ "project": { "id": "batch-p1", "title": "batch" }, "assets": [], "items": [] }),
+        )
+        .expect("project should be created");
+        fs::create_dir_all(directory.join("assets")).expect("assets directory");
+        fs::write(directory.join("assets/one.png"), b"one").expect("first asset");
+        fs::write(directory.join("assets/two.png"), b"two").expect("second asset");
+        let mut project = read_project_value(&directory).expect("project should read");
+        project["assets"] = json!([
+            { "id": "one", "filename": "one.png", "storage_path": "assets/one.png", "mime_type": "image/png", "type": "image", "archived": false },
+            { "id": "two", "filename": "two.png", "storage_path": "assets/two.png", "mime_type": "image/png", "type": "image", "archived": false }
+        ]);
+        fs::write(
+            directory.join("project.json"),
+            serde_json::to_vec_pretty(&project).expect("manifest JSON"),
+        )
+        .expect("updated manifest");
+        let (project, fingerprint) = read_project_state(&directory).expect("manifest state");
+        reset_project_validation_reads(&directory);
+
+        let result = asset_preview_batch_with_diagnostics(
+            json!({
+                "input": {
+                    "project_dir": project_dir,
+                    "project_id": "batch-p1",
+                    "fingerprint": fingerprint,
+                    "request_generation": 12,
+                    "asset_ids": ["one", "missing", "two"]
+                }
+            }),
+            true,
+        )
+        .expect("valid batch should return per-item results");
+
+        assert_eq!(result["project_id"], json!("batch-p1"));
+        assert_eq!(result["request_generation"], json!(12));
+        assert_eq!(result["items"].as_array().unwrap().len(), 3);
+        assert_eq!(result["items"][0]["status"], json!("ok"));
+        assert_eq!(
+            result["items"][0]["bytes_base64"],
+            json!(BASE64.encode(b"one"))
+        );
+        assert_eq!(result["items"][1]["status"], json!("error"));
+        assert_eq!(
+            result["items"][1]["error"]["code"],
+            json!("asset_not_found")
+        );
+        assert_eq!(result["items"][2]["status"], json!("ok"));
+        assert_eq!(result["diagnostics"]["manifest_reads"], json!(1));
+        assert_eq!(result["diagnostics"]["asset_file_opens"], json!(2));
+        assert_eq!(result["diagnostics"]["asset_file_bytes_read"], json!(6));
+        assert_eq!(result["diagnostics"]["raw_bytes_returned"], json!(6));
+        assert_eq!(result["diagnostics"]["base64_bytes_emitted"], json!(8));
+        assert_eq!(result["diagnostics"]["max_open_asset_handles"], json!(1));
+        let io = take_project_validation_reads(&directory);
+        assert_eq!(io.full_reads, 1, "batch must read/hash the manifest once");
+        assert_eq!(
+            io.files
+                .get("project.json")
+                .copied()
+                .unwrap_or_default()
+                .read_ops,
+            1
+        );
+        assert_eq!(project_id_of(&project).unwrap(), "batch-p1");
+
+        let too_many = asset_preview_batch(json!({
+            "project_dir": project_dir,
+            "project_id": "batch-p1",
+            "fingerprint": result["fingerprint"],
+            "request_generation": 13,
+            "asset_ids": ["one", "one", "one", "one", "one", "one", "one", "one", "one"]
+        }))
+        .expect_err("more than eight ids must be rejected");
+        let too_many: Value = serde_json::from_str(&too_many).expect("structured limit error");
+        assert_eq!(too_many["error"]["code"], json!("preview_batch_limit"));
+
+        let _ = project_close(project_dir);
+        let _ = fs::remove_dir_all(directory);
+    }
+
+    #[test]
+    fn asset_preview_batch_caps_items_and_defers_beyond_raw_budget() {
+        let directory = test_directory("asset-preview-budget");
+        let project_dir = directory.to_string_lossy().into_owned();
+        project_create(
+            project_dir.clone(),
+            json!({ "project": { "id": "budget-p1", "title": "budget" }, "assets": [], "items": [] }),
+        )
+        .expect("project should be created");
+        fs::create_dir_all(directory.join("assets")).expect("assets directory");
+        for name in ["max.bin", "second.bin"] {
+            File::create(directory.join("assets").join(name))
+                .and_then(|file| file.set_len(ASSET_READ_SIZE_LIMIT))
+                .expect("8 MiB asset");
+        }
+        fs::write(directory.join("assets/one.bin"), [7_u8]).expect("deferred asset");
+        File::create(directory.join("assets/oversized.bin"))
+            .and_then(|file| file.set_len(ASSET_READ_SIZE_LIMIT + 1))
+            .expect("oversized asset");
+        let mut project = read_project_value(&directory).expect("project should read");
+        project["assets"] = json!([
+            { "id": "max", "filename": "max.bin", "storage_path": "assets/max.bin", "mime_type": "application/octet-stream", "type": "file" },
+            { "id": "second", "filename": "second.bin", "storage_path": "assets/second.bin", "mime_type": "application/octet-stream", "type": "file" },
+            { "id": "one", "filename": "one.bin", "storage_path": "assets/one.bin", "mime_type": "application/octet-stream", "type": "file" },
+            { "id": "oversized", "filename": "oversized.bin", "storage_path": "assets/oversized.bin", "mime_type": "application/octet-stream", "type": "file" }
+        ]);
+        fs::write(
+            directory.join("project.json"),
+            serde_json::to_vec_pretty(&project).expect("manifest JSON"),
+        )
+        .expect("updated manifest");
+        let (_, fingerprint) = read_project_state(&directory).expect("manifest state");
+
+        let result = asset_preview_batch_with_diagnostics(
+            json!({
+                "project_dir": project_dir,
+                "project_id": "budget-p1",
+                "fingerprint": fingerprint,
+                "request_generation": 21,
+                "asset_ids": ["max", "second", "one", "oversized"]
+            }),
+            true,
+        )
+        .expect("bounded preview batch");
+
+        assert_eq!(result["items"][0]["status"], json!("ok"));
+        assert_eq!(result["items"][1]["status"], json!("ok"));
+        assert_eq!(result["items"][2]["status"], json!("deferred"));
+        assert_eq!(result["items"][3]["status"], json!("error"));
+        assert_eq!(
+            result["items"][3]["error"]["code"],
+            json!("asset_too_large")
+        );
+        assert_eq!(result["diagnostics"]["manifest_reads"], json!(1));
+        assert_eq!(
+            result["diagnostics"]["raw_bytes_returned"],
+            json!(ASSET_PREVIEW_BATCH_RAW_LIMIT)
+        );
+        assert_eq!(
+            result["diagnostics"]["asset_file_bytes_read"],
+            json!(ASSET_PREVIEW_BATCH_RAW_LIMIT)
+        );
+        let encoded_bytes = result["items"][0]["bytes_base64"].as_str().unwrap().len()
+            + result["items"][1]["bytes_base64"].as_str().unwrap().len();
+        assert_eq!(
+            result["diagnostics"]["base64_bytes_emitted"],
+            json!(encoded_bytes)
+        );
+        assert!(
+            result["diagnostics"]["raw_bytes_returned"]
+                .as_u64()
+                .unwrap()
+                <= ASSET_PREVIEW_BATCH_RAW_LIMIT
+        );
+        assert_eq!(result["diagnostics"]["max_open_asset_handles"], json!(1));
+
+        let too_many = asset_preview_batch(json!({
+            "project_dir": project_dir,
+            "project_id": "budget-p1",
+            "fingerprint": result["fingerprint"],
+            "request_generation": 22,
+            "asset_ids": ["max", "max", "max", "max", "max", "max", "max", "max", "max"]
+        }))
+        .expect_err("more than eight ids must be rejected");
+        let too_many: Value = serde_json::from_str(&too_many).expect("structured limit error");
+        assert_eq!(too_many["error"]["code"], json!("preview_batch_limit"));
+
+        let _ = project_close(project_dir);
+        let _ = fs::remove_dir_all(directory);
+    }
+
+    #[test]
+    fn native_import_preview_release_has_no_cached_resource_to_release() {
+        assert_eq!(
+            import_preview_release(json!({
+                "input": { "preview_id": "preview-1", "project_dir": "/tmp" }
+            }))
+            .expect("release command should be compatible"),
+            json!({ "released": false })
+        );
     }
 
     #[test]
@@ -25510,6 +26348,7 @@ pub fn run() {
             read_snapshot,
             restore_snapshot,
             import_preview,
+            import_preview_release,
             import_confirm,
             folder_scan,
             folder_scan_media,
@@ -25527,6 +26366,7 @@ pub fn run() {
             asset_import,
             asset_rename,
             asset_read,
+            asset_preview_batch,
             asset_preview_source,
             select_file,
             select_files,

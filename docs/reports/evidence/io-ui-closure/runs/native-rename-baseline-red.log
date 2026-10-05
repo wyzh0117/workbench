@@ -1,0 +1,44 @@
+   Compiling ai-course-workbench v0.2.6 (/private/tmp/io-ui-closure-rename-baseline/src-tauri)
+warning: unused import: `super::*`
+ --> src/documents/docx/tests.rs:5:5
+  |
+5 | use super::*;
+  |     ^^^^^^^^
+  |
+  = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: function `xml_text` is never used
+  --> src/documents/fixtures.rs:54:15
+   |
+54 | pub(crate) fn xml_text(value: &str) -> String {
+   |               ^^^^^^^^
+   |
+   = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: function `pdf_literal` is never used
+  --> src/documents/fixtures.rs:62:15
+   |
+62 | pub(crate) fn pdf_literal(value: &str) -> String {
+   |               ^^^^^^^^^^^
+
+warning: `ai-course-workbench` (lib test) generated 3 warnings (run `cargo fix --lib -p ai-course-workbench --tests` to apply 1 suggestion)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 15.24s
+     Running unittests src/lib.rs (/tmp/io-ui-closure-rust-baseline.Bugvel/debug/deps/ai_course_workbench_lib-cc28423643d1bb57)
+
+running 1 test
+
+thread 'tests::native_asset_rename_ack_baseline_red' (1042052) panicked at src/lib.rs:18992:9:
+assertion `left == right` failed: previous response lacks exact bound commit ack: {"asset":{"archived":false,"checksum":"hash-1","file_size":3,"filename":"new-cover.png","id":"asset-1","mime_type":"image/png","storage_path":"assets/asset-1-new-cover.png","title":"new-cover"},"asset_id":"asset-1","new_filename":"new-cover.png","new_storage_path":"assets/asset-1-new-cover.png","old_filename":"cover.png","old_storage_path":"assets/asset-1-cover.png","project":{"assets":[{"archived":false,"checksum":"hash-1","file_size":3,"filename":"new-cover.png","id":"asset-1","mime_type":"image/png","storage_path":"assets/asset-1-new-cover.png","title":"new-cover"}],"project":{"id":"p-rename-baseline","title":"before","updated_at":"2026-10-05T20:09:45.102Z"}},"rewritten":1,"status":"renamed"}
+  left: Null
+ right: String("committed")
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+test tests::native_asset_rename_ack_baseline_red ... FAILED
+
+failures:
+
+failures:
+    tests::native_asset_rename_ack_baseline_red
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 240 filtered out; finished in 0.04s
+
+error: test failed, to rerun pass `--lib`
