@@ -42,6 +42,8 @@ static SNAPSHOT_FAIL_ID: OnceLock<Mutex<Option<String>>> = OnceLock::new();
 #[cfg(test)]
 static PROJECT_IO_METRICS: OnceLock<Mutex<HashMap<PathBuf, ProjectIoMetrics>>> = OnceLock::new();
 #[cfg(test)]
+static PROJECT_LOCK_WORKERS_STARTED: AtomicU64 = AtomicU64::new(0);
+#[cfg(test)]
 static ATOMIC_WRITE_FAIL_STAGE: OnceLock<Mutex<HashSet<(PathBuf, String)>>> = OnceLock::new();
 static EXIT_READY: AtomicBool = AtomicBool::new(false);
 
@@ -50,6 +52,7 @@ struct AtomicWriteFailure {
     stage: &'static str,
     commit_state: &'static str,
     retryable: bool,
+    expected_committed_fingerprint: Option<FileFingerprint>,
 }
 
 #[cfg(test)]
@@ -72,6 +75,7 @@ struct ProjectIoMetrics {
 struct ProjectFileIoMetrics {
     read_ops: usize,
     read_bytes: u64,
+    hash_bytes: u64,
     write_ops: usize,
     write_bytes: u64,
     copy_ops: usize,
@@ -831,6 +835,8 @@ fn register_project_lock(
     let worker_handle = handle.clone();
     let project_dir = project_dir.to_owned();
     let app_instance_id = lock.app_instance_id.clone();
+    #[cfg(test)]
+    PROJECT_LOCK_WORKERS_STARTED.fetch_add(1, Ordering::Relaxed);
     thread::spawn(move || {
         while !worker_handle.stop.load(Ordering::Acquire) {
             thread::sleep(Duration::from_millis(PROJECT_LOCK_HEARTBEAT_MS));
@@ -1110,6 +1116,7 @@ fn atomic_failure(
         stage,
         commit_state,
         retryable,
+        expected_committed_fingerprint: None,
     }
 }
 
@@ -1607,6 +1614,7 @@ fn record_project_io(path: &Path, event: &str, bytes: u64) {
             metrics.hash_bytes += bytes;
             file.read_ops += 1;
             file.read_bytes += bytes;
+            file.hash_bytes += bytes;
         }
         "write" => {
             metrics.write_ops += 1;
@@ -1710,18 +1718,28 @@ fn ensure_no_external_modification(project_dir: &Path) -> Result<FileFingerprint
     let directory =
         fs::canonicalize(project_dir).map_err(|error| format!("无法解析项目目录: {error}"))?;
     let current = project_fingerprint(&directory)?;
+    ensure_project_matches_baseline(&directory, &current)?;
+    Ok(current)
+}
+
+fn ensure_project_matches_baseline(
+    project_dir: &Path,
+    current: &FileFingerprint,
+) -> Result<(), String> {
+    let directory =
+        fs::canonicalize(project_dir).map_err(|error| format!("无法解析项目目录: {error}"))?;
     let baseline = project_baselines().lock().unwrap().get(&directory).cloned();
     let changed = baseline
         .as_ref()
-        .map(|value| fingerprints_differ(&value.fingerprint, &current))
+        .map(|value| fingerprints_differ(&value.fingerprint, current))
         .unwrap_or(current.exists);
     if changed {
         return Err(external_conflict_error(
             baseline.as_ref().map(|value| &value.fingerprint),
-            &current,
+            current,
         ));
     }
-    Ok(current)
+    Ok(())
 }
 
 fn diff_json_values(before: &Value, after: &Value, path: &str, entries: &mut Vec<Value>) {
@@ -1867,18 +1885,298 @@ fn write_project_value_with_warning_unlocked(
     project_dir: &Path,
     project: &Value,
 ) -> Result<Option<String>, String> {
-    validate_project(project)?;
-    ensure_no_external_modification(project_dir)?;
-    let contents = serde_json::to_string_pretty(project).map_err(|error| error.to_string())? + "\n";
-    // Compare again after serialization and immediately before replacement.
-    ensure_no_external_modification(project_dir)?;
-    write_project_contents_unlocked(project_dir, project, &contents).map(|(_, warning)| warning)
+    let report = write_project_value_report_unlocked(project_dir, project, None)
+        .map_err(|failure| failure.message)?;
+    let mut warnings = Vec::new();
+    if let Some(warning) = report.durability_warning {
+        warnings.push(warning);
+    }
+    if let Some(warning) = report.recovery_warning {
+        warnings.push(warning);
+    }
+    Ok((!warnings.is_empty()).then(|| warnings.join("；")))
 }
 
 struct ProjectWriteReport {
     fingerprint: FileFingerprint,
     durability_warning: Option<String>,
     recovery_warning: Option<String>,
+}
+
+#[derive(Clone)]
+struct CanonicalMutationBinding {
+    expected_project_id: String,
+    expected_fingerprint: FileFingerprint,
+    lease_generation: String,
+    editor_generation: u64,
+    operation_id: String,
+    revision: u64,
+}
+
+struct CanonicalAppendContext {
+    directory: PathBuf,
+    project: Value,
+    fingerprint: FileFingerprint,
+    mutation_binding: Option<CanonicalMutationBinding>,
+    lease_generation: String,
+}
+
+fn canonical_append_context(
+    project_dir: &Path,
+    expected_project_id: Option<String>,
+    expected_fingerprint: Option<FileFingerprint>,
+    lease_generation: Option<String>,
+    editor_generation: Option<u64>,
+    operation_id: Option<String>,
+    revision: Option<u64>,
+) -> Result<CanonicalAppendContext, String> {
+    let mutation_binding = canonical_mutation_binding_from_parts(
+        expected_project_id,
+        expected_fingerprint,
+        lease_generation,
+        editor_generation,
+        operation_id,
+        revision,
+    )?;
+    let active_generation = verify_lease_generation(
+        project_dir,
+        mutation_binding
+            .as_ref()
+            .map(|binding| binding.lease_generation.as_str()),
+    )?;
+    let (project, fingerprint) = read_project_state(project_dir)?;
+    validate_canonical_mutation_binding(
+        mutation_binding.as_ref(),
+        &project,
+        &fingerprint,
+        &active_generation,
+    )?;
+    Ok(CanonicalAppendContext {
+        directory: project_dir.to_owned(),
+        project,
+        fingerprint,
+        mutation_binding,
+        lease_generation: active_generation,
+    })
+}
+
+fn canonical_mutation_binding_from_parts(
+    expected_project_id: Option<String>,
+    expected_fingerprint: Option<FileFingerprint>,
+    lease_generation: Option<String>,
+    editor_generation: Option<u64>,
+    operation_id: Option<String>,
+    revision: Option<u64>,
+) -> Result<Option<CanonicalMutationBinding>, String> {
+    let any = expected_project_id.is_some()
+        || expected_fingerprint.is_some()
+        || lease_generation.is_some()
+        || editor_generation.is_some()
+        || operation_id.is_some()
+        || revision.is_some();
+    if !any {
+        return Ok(None);
+    }
+    let (
+        Some(expected_project_id),
+        Some(expected_fingerprint),
+        Some(lease_generation),
+        Some(editor_generation),
+        Some(operation_id),
+        Some(revision),
+    ) = (
+        expected_project_id,
+        expected_fingerprint,
+        lease_generation,
+        editor_generation,
+        operation_id,
+        revision,
+    )
+    else {
+        return Err(invalid_mutation_binding_error(
+            "变更请求需要完整的项目、租约和编辑代次绑定。",
+        ));
+    };
+    if expected_project_id.trim().is_empty()
+        || lease_generation.trim().is_empty()
+        || operation_id.trim().is_empty()
+        || !valid_snapshot_id(&operation_id)
+    {
+        return Err(invalid_mutation_binding_error("变更请求绑定字段无效。"));
+    }
+    Ok(Some(CanonicalMutationBinding {
+        expected_project_id,
+        expected_fingerprint,
+        lease_generation,
+        editor_generation,
+        operation_id,
+        revision,
+    }))
+}
+
+fn invalid_mutation_binding_error(message: &str) -> String {
+    json!({
+        "error": {
+            "code": "invalid_mutation_binding",
+            "user_message": message,
+            "message": message,
+            "commit_state": "not_committed",
+            "stage": "mutation_binding",
+            "retryable": false,
+        }
+    })
+    .to_string()
+}
+
+fn parse_canonical_mutation_binding(
+    object: &Map<String, Value>,
+) -> Result<Option<CanonicalMutationBinding>, String> {
+    let names = [
+        "expected_project_id",
+        "expectedProjectId",
+        "expected_fingerprint",
+        "expectedFingerprint",
+        "lease_generation",
+        "leaseGeneration",
+        "editor_generation",
+        "editorGeneration",
+        "operation_id",
+        "operationId",
+        "revision",
+    ];
+    if !names
+        .iter()
+        .any(|name| object.get(*name).is_some_and(|value| !value.is_null()))
+    {
+        return Ok(None);
+    }
+    let string_field = |names: &[&str], label: &str| {
+        field(object, names)
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(ToOwned::to_owned)
+            .ok_or_else(|| invalid_mutation_binding_error(&format!("{label}不能为空")))
+    };
+    let integer_field = |names: &[&str], label: &str| {
+        field(object, names)
+            .and_then(Value::as_u64)
+            .ok_or_else(|| invalid_mutation_binding_error(&format!("{label}必须是非负整数")))
+    };
+    let expected_fingerprint = field(object, &["expected_fingerprint", "expectedFingerprint"])
+        .cloned()
+        .ok_or_else(|| invalid_mutation_binding_error("expected_fingerprint不能为空"))
+        .and_then(|value| {
+            serde_json::from_value::<FileFingerprint>(value).map_err(|error| {
+                invalid_mutation_binding_error(&format!("expected_fingerprint无效: {error}"))
+            })
+        })?;
+    let binding = CanonicalMutationBinding {
+        expected_project_id: string_field(
+            &["expected_project_id", "expectedProjectId"],
+            "expected_project_id",
+        )?,
+        expected_fingerprint,
+        lease_generation: string_field(
+            &["lease_generation", "leaseGeneration"],
+            "lease_generation",
+        )?,
+        editor_generation: integer_field(
+            &["editor_generation", "editorGeneration"],
+            "editor_generation",
+        )?,
+        operation_id: string_field(&["operation_id", "operationId"], "operation_id")?,
+        revision: integer_field(&["revision"], "revision")?,
+    };
+    if !valid_snapshot_id(&binding.operation_id) {
+        return Err(invalid_mutation_binding_error("operation_id无效"));
+    }
+    Ok(Some(binding))
+}
+
+fn validate_canonical_mutation_binding(
+    binding: Option<&CanonicalMutationBinding>,
+    project: &Value,
+    current_fingerprint: &FileFingerprint,
+    active_generation: &str,
+) -> Result<(), String> {
+    let Some(binding) = binding else {
+        return Ok(());
+    };
+    if binding.expected_project_id != project_id_of(project)? {
+        return Err(project_save_error_contract(
+            &invalid_mutation_binding_error("变更请求与当前项目身份不匹配。"),
+            "project_identity",
+            false,
+            Some(current_fingerprint),
+        ));
+    }
+    if binding.lease_generation != active_generation {
+        return Err(project_save_error_contract(
+            &project_lock_lost_error(),
+            "lease_validate",
+            false,
+            Some(current_fingerprint),
+        ));
+    }
+    if fingerprints_differ(&binding.expected_fingerprint, current_fingerprint) {
+        return Err(project_save_error_contract(
+            &external_conflict_error(Some(&binding.expected_fingerprint), current_fingerprint),
+            "fingerprint_preflight",
+            false,
+            Some(current_fingerprint),
+        ));
+    }
+    Ok(())
+}
+
+fn canonical_mutation_ack(
+    binding: Option<&CanonicalMutationBinding>,
+    project: &Value,
+    fingerprint: &FileFingerprint,
+    project_dir: &Path,
+    lease_generation: &str,
+    outcome: &str,
+    durability_warning: Option<&str>,
+    recovery_warning: Option<&str>,
+) -> Value {
+    json!({
+        "project": project,
+        "fingerprint": fingerprint,
+        "project_id": project_id_of(project).ok(),
+        "project_dir": project_dir.to_string_lossy(),
+        "lease_generation": lease_generation,
+        "editor_generation": binding.map(|value| value.editor_generation),
+        "operation_id": binding.map(|value| value.operation_id.as_str()),
+        "revision": binding.map(|value| value.revision),
+        "commit_state": "committed",
+        "outcome": outcome,
+        "durability_warning": durability_warning,
+        "recovery_warning": recovery_warning,
+    })
+}
+
+fn attach_canonical_mutation_ack(
+    result: &mut Value,
+    binding: Option<&CanonicalMutationBinding>,
+    project: &Value,
+    fingerprint: &FileFingerprint,
+    project_dir: &Path,
+    lease_generation: &str,
+    outcome: &str,
+    durability_warning: Option<&str>,
+    recovery_warning: Option<&str>,
+) {
+    result["mutation_ack"] = canonical_mutation_ack(
+        binding,
+        project,
+        fingerprint,
+        project_dir,
+        lease_generation,
+        outcome,
+        durability_warning,
+        recovery_warning,
+    );
 }
 
 fn write_project_contents_report_unlocked(
@@ -1888,7 +2186,19 @@ fn write_project_contents_report_unlocked(
 ) -> Result<ProjectWriteReport, AtomicWriteFailure> {
     let path = project_file(project_dir, "project.json")
         .map_err(|error| atomic_failure(error, "target_prepare", "not_committed", false))?;
-    let durability_warning = atomic_write_path_report(&path, contents, true)?;
+    let expected_committed_fingerprint = FileFingerprint {
+        exists: true,
+        mtime_ms: None,
+        size: Some(contents.len() as u64),
+        hash: Some(sha256_hex(contents.as_bytes())),
+    };
+    let durability_warning = match atomic_write_path_report(&path, contents, true) {
+        Ok(warning) => warning,
+        Err(mut failure) => {
+            failure.expected_committed_fingerprint = Some(expected_committed_fingerprint);
+            return Err(failure);
+        }
+    };
     let mtime_ms = fs::metadata(&path)
         .ok()
         .and_then(|metadata| metadata.modified().ok())
@@ -1930,24 +2240,61 @@ fn write_project_contents_report_unlocked(
     })
 }
 
-fn write_project_contents_unlocked(
+fn write_project_value_report_unlocked(
     project_dir: &Path,
     project: &Value,
-    contents: &str,
-) -> Result<(FileFingerprint, Option<String>), String> {
-    let report = write_project_contents_report_unlocked(project_dir, project, contents)
-        .map_err(|failure| failure.message)?;
-    let mut warnings = Vec::new();
-    if let Some(warning) = report.durability_warning {
-        warnings.push(warning);
+    initial_fingerprint: Option<&FileFingerprint>,
+) -> Result<ProjectWriteReport, AtomicWriteFailure> {
+    validate_project(project)
+        .map_err(|error| atomic_failure(error, "payload_validate", "not_committed", false))?;
+    let initial_fingerprint = match initial_fingerprint {
+        Some(fingerprint) => fingerprint.clone(),
+        None => {
+            let fingerprint = project_fingerprint(project_dir)
+                .map_err(|error| atomic_failure(error, "project_read", "not_committed", false))?;
+            ensure_project_matches_baseline(project_dir, &fingerprint).map_err(|error| {
+                atomic_failure(error, "baseline_preflight", "not_committed", false)
+            })?;
+            fingerprint
+        }
+    };
+    ensure_project_matches_baseline(project_dir, &initial_fingerprint)
+        .map_err(|error| atomic_failure(error, "baseline_preflight", "not_committed", false))?;
+    let contents = serde_json::to_string_pretty(project)
+        .map_err(|error| atomic_failure(error.to_string(), "serialize", "not_committed", false))?
+        + "\n";
+    let final_fingerprint = project_fingerprint(project_dir)
+        .map_err(|error| atomic_failure(error, "final_validate", "not_committed", false))?;
+    if fingerprints_differ(&initial_fingerprint, &final_fingerprint) {
+        return Err(atomic_failure(
+            external_conflict_error(Some(&initial_fingerprint), &final_fingerprint),
+            "final_validate",
+            "not_committed",
+            false,
+        ));
     }
-    if let Some(warning) = report.recovery_warning {
-        warnings.push(warning);
-    }
-    Ok((
-        report.fingerprint,
-        (!warnings.is_empty()).then(|| warnings.join("；")),
-    ))
+    ensure_project_matches_baseline(project_dir, &final_fingerprint)
+        .map_err(|error| atomic_failure(error, "baseline_preflight", "not_committed", false))?;
+    write_project_contents_report_unlocked(project_dir, project, &contents)
+}
+
+fn write_canonical_mutation_report_unlocked(
+    project_dir: &Path,
+    project: &Value,
+    initial_fingerprint: &FileFingerprint,
+    binding: Option<&CanonicalMutationBinding>,
+) -> Result<ProjectWriteReport, String> {
+    write_project_value_report_unlocked(project_dir, project, Some(initial_fingerprint)).map_err(
+        |failure| {
+            project_save_atomic_error_contract(
+                &failure,
+                binding.map(|value| value.operation_id.as_str()),
+                binding.map(|value| value.revision),
+                Some(initial_fingerprint),
+                None,
+            )
+        },
+    )
 }
 
 fn write_project_value_with_warning(
@@ -2993,7 +3340,9 @@ fn project_save_atomic_error_contract(
         error["revision"] = json!(revision);
     }
     if failure.commit_state == "outcome_uncertain" {
-        if let Some(fingerprint) = expected_committed_fingerprint {
+        if let Some(fingerprint) =
+            expected_committed_fingerprint.or(failure.expected_committed_fingerprint.as_ref())
+        {
             error["expected_committed_fingerprint"] = json!(fingerprint);
         }
     }
@@ -3291,6 +3640,13 @@ fn project_save(
 
 #[tauri::command]
 fn project_create(project_dir: String, project: Value) -> Result<(), String> {
+    project_create_report(project_dir, &project).map(|_| ())
+}
+
+fn project_create_report(
+    project_dir: String,
+    project: &Value,
+) -> Result<ProjectWriteReport, String> {
     let project_dir = explicit_project_dir(&project_dir, true)?;
     let already_open = project_lock_registered(&project_dir, current_app_instance_id());
     acquire_project_lock(&project_dir)?;
@@ -3302,13 +3658,15 @@ fn project_create(project_dir: String, project: Value) -> Result<(), String> {
         }
         set_project_baseline(&project_dir, None)?;
     }
-    match write_project_value(&project_dir, &project) {
-        Ok(()) => Ok(()),
-        Err(error) => {
+    match write_project_value_report_unlocked(&project_dir, project, None) {
+        Ok(report) => Ok(report),
+        Err(failure) => {
             if !already_open {
                 let _ = release_project_lock(&project_dir);
             }
-            Err(error)
+            Err(project_save_atomic_error_contract(
+                &failure, None, None, None, None,
+            ))
         }
     }
 }
@@ -3359,11 +3717,37 @@ fn project_resolve(
     project_dir: String,
     project: Value,
     expected_current: Value,
+    expected_project_id: Option<String>,
+    expected_fingerprint: Option<FileFingerprint>,
+    lease_generation: Option<String>,
+    editor_generation: Option<u64>,
+    operation_id: Option<String>,
+    revision: Option<u64>,
 ) -> Result<Value, String> {
     let project_dir = explicit_project_dir(&project_dir, false)?;
     let _lease_guard = require_active_project_lock(&project_dir)?;
     validate_project(&project)?;
-    let current = project_fingerprint(&project_dir)?;
+    let (external, current) = read_project_state(&project_dir)?;
+    let mutation_binding = canonical_mutation_binding_from_parts(
+        expected_project_id,
+        expected_fingerprint,
+        lease_generation,
+        editor_generation,
+        operation_id,
+        revision,
+    )?;
+    let active_generation = verify_lease_generation(
+        &project_dir,
+        mutation_binding
+            .as_ref()
+            .map(|binding| binding.lease_generation.as_str()),
+    )?;
+    validate_canonical_mutation_binding(
+        mutation_binding.as_ref(),
+        &external,
+        &current,
+        &active_generation,
+    )?;
     let expected_exists = expected_current
         .get("exists")
         .and_then(Value::as_bool)
@@ -3372,20 +3756,30 @@ fn project_resolve(
     if current.exists != expected_exists || current.hash.as_deref() != expected_hash {
         return Err(external_conflict_error(None, &current));
     }
-    let external = if current.exists {
-        Some(read_project_value(&project_dir)?)
-    } else {
-        None
-    };
     project_baselines().lock().unwrap().insert(
         fs::canonicalize(&project_dir).map_err(|error| format!("无法解析项目目录: {error}"))?,
         ProjectBaseline {
-            fingerprint: current,
-            project: external,
+            fingerprint: current.clone(),
+            project: Some(external),
         },
     );
-    write_project_value_unlocked(&project_dir, &project)?;
-    Ok(project)
+    let report = write_canonical_mutation_report_unlocked(
+        &project_dir,
+        &project,
+        &current,
+        mutation_binding.as_ref(),
+    )?;
+    let ack = canonical_mutation_ack(
+        mutation_binding.as_ref(),
+        &project,
+        &report.fingerprint,
+        &project_dir,
+        &active_generation,
+        "written",
+        report.durability_warning.as_deref(),
+        report.recovery_warning.as_deref(),
+    );
+    Ok(json!({ "value": project, "mutation_ack": ack }))
 }
 
 #[tauri::command]
@@ -4274,19 +4668,74 @@ fn restore_snapshot(
     editor_generation: Option<u64>,
     operation_id: Option<String>,
     revision: Option<u64>,
+    expected_fingerprint: Option<FileFingerprint>,
 ) -> Result<Value, String> {
     let project_dir = explicit_project_dir(&project_dir, false)?;
     let _lease_guard = require_active_project_lock(&project_dir)?;
-    ensure_no_external_modification(&project_dir)?;
-    let current = read_project_value(&project_dir)?;
-    let binding = snapshot_binding(
-        &project_dir,
-        &current,
-        expected_project_id.as_deref(),
-        lease_generation.as_deref(),
+    let (current, current_fingerprint) = read_project_state(&project_dir)?;
+    ensure_project_matches_baseline(&project_dir, &current_fingerprint)?;
+    let current_project_id = project_id_of(&current)?;
+    if expected_project_id
+        .as_deref()
+        .is_some_and(|expected| expected != current_project_id)
+    {
+        return Err(snapshot_error(
+            "project_id_mismatch",
+            "快照项目身份已变化，请重新打开项目后重试。",
+            "snapshot_preflight",
+            "not_committed",
+            false,
+        ));
+    }
+    let active_generation = verify_lease_generation(&project_dir, lease_generation.as_deref())?;
+    if expected_fingerprint
+        .as_ref()
+        .is_some_and(|expected| fingerprints_differ(expected, &current_fingerprint))
+    {
+        return Err(project_save_error_contract(
+            &external_conflict_error(expected_fingerprint.as_ref(), &current_fingerprint),
+            "fingerprint_preflight",
+            false,
+            Some(&current_fingerprint),
+        ));
+    }
+    if operation_id
+        .as_deref()
+        .is_some_and(|value| !valid_snapshot_id(value))
+    {
+        return Err(snapshot_error(
+            "invalid_operation_id",
+            "快照操作编号无效。",
+            "snapshot_preflight",
+            "not_committed",
+            false,
+        ));
+    }
+    let binding = SnapshotBinding {
+        project_id: current_project_id,
+        project_dir: project_dir.to_string_lossy().into_owned(),
+        lease_generation: active_generation.clone(),
         editor_generation,
         operation_id,
         revision,
+    };
+    let mutation_binding = if expected_fingerprint.is_some() {
+        let mut input = Map::new();
+        input.insert("expected_project_id".into(), json!(binding.project_id));
+        input.insert("expected_fingerprint".into(), json!(expected_fingerprint));
+        input.insert("lease_generation".into(), json!(binding.lease_generation));
+        input.insert("editor_generation".into(), json!(binding.editor_generation));
+        input.insert("operation_id".into(), json!(binding.operation_id));
+        input.insert("revision".into(), json!(binding.revision));
+        parse_canonical_mutation_binding(&input)?
+    } else {
+        None
+    };
+    validate_canonical_mutation_binding(
+        mutation_binding.as_ref(),
+        &current,
+        &current_fingerprint,
+        &active_generation,
     )?;
     let envelope =
         read_snapshot_envelope(&project_dir, &snapshot_id)?.ok_or("找不到这个历史版本")?;
@@ -4343,19 +4792,28 @@ fn restore_snapshot(
             "content_hash": backup.get("content_hash").cloned().unwrap_or(Value::Null),
         }),
     );
-    let recovery_warning = write_project_value_with_warning_unlocked(&project_dir, &restored)?;
-    let fingerprint = project_baselines()
-        .lock()
-        .unwrap()
-        .get(&project_dir)
-        .map(|baseline| baseline.fingerprint.clone())
-        .ok_or("恢复已写入，但无法读取提交指纹")?;
+    let report = write_canonical_mutation_report_unlocked(
+        &project_dir,
+        &restored,
+        &current_fingerprint,
+        mutation_binding.as_ref(),
+    )?;
+    let mutation_ack = canonical_mutation_ack(
+        mutation_binding.as_ref(),
+        &restored,
+        &report.fingerprint,
+        &project_dir,
+        &binding.lease_generation,
+        "written",
+        report.durability_warning.as_deref(),
+        report.recovery_warning.as_deref(),
+    );
     Ok(json!({
         "restored": true,
         "snapshot_id": snapshot_id,
         "backup_snapshot_id": backup_id,
         "project": restored,
-        "fingerprint": fingerprint,
+        "fingerprint": report.fingerprint,
         "project_id": binding.project_id,
         "project_dir": binding.project_dir,
         "lease_generation": binding.lease_generation,
@@ -4363,9 +4821,12 @@ fn restore_snapshot(
         "operation_id": binding.operation_id,
         "revision": binding.revision,
         "commit_state": "committed",
+        "outcome": "written",
+        "mutation_ack": mutation_ack,
         "backup_persisted": backup["persisted"] == true,
-        "recovery_warning": recovery_warning,
-        "durability_warning": backup.get("durability_warning").cloned(),
+        "recovery_warning": report.recovery_warning,
+        "durability_warning": report.durability_warning,
+        "backup_durability_warning": backup.get("durability_warning").cloned(),
     }))
 }
 
@@ -5775,15 +6236,10 @@ fn folder_append(
 ) -> Result<Value, String> {
     let project_dir = explicit_project_dir(&project_dir, false)?;
     let _lease_guard = require_active_project_lock(&project_dir)?;
-    let current = read_project_value(&project_dir)?;
-    validate_project(&current)?;
-    folder_apply_import(
-        plan,
-        duplicate_choice,
-        None,
-        Some((project_dir, current)),
-        false,
-    )
+    let append_context =
+        canonical_append_context(&project_dir, None, None, None, None, None, None)?;
+    validate_project(&append_context.project)?;
+    folder_apply_import(plan, duplicate_choice, None, Some(append_context), false)
 }
 
 /// Native command paired with the direct-child document chooser. The checked
@@ -5812,16 +6268,30 @@ fn folder_append_with_documents(
     project_dir: String,
     duplicate_choice: Option<String>,
     document_paths: Option<Vec<String>>,
+    expected_project_id: Option<String>,
+    expected_fingerprint: Option<FileFingerprint>,
+    lease_generation: Option<String>,
+    editor_generation: Option<u64>,
+    operation_id: Option<String>,
+    revision: Option<u64>,
 ) -> Result<Value, String> {
     let project_dir = explicit_project_dir(&project_dir, false)?;
     let _lease_guard = require_active_project_lock(&project_dir)?;
-    let current = read_project_value(&project_dir)?;
-    validate_project(&current)?;
+    let append_context = canonical_append_context(
+        &project_dir,
+        expected_project_id,
+        expected_fingerprint,
+        lease_generation,
+        editor_generation,
+        operation_id,
+        revision,
+    )?;
+    validate_project(&append_context.project)?;
     folder_apply_import_with_documents(
         plan,
         duplicate_choice,
         None,
-        Some((project_dir, current)),
+        Some(append_context),
         false,
         document_paths.as_deref().unwrap_or_default(),
     )
@@ -7485,7 +7955,7 @@ fn folder_apply_import(
     plan: Value,
     duplicate_choice: Option<String>,
     project_title: Option<String>,
-    append_target: Option<(PathBuf, Value)>,
+    append_target: Option<CanonicalAppendContext>,
     allow_invalid_replacement: bool,
 ) -> Result<Value, String> {
     folder_apply_import_with_documents(
@@ -7638,7 +8108,7 @@ fn folder_apply_import_with_documents(
     plan: Value,
     duplicate_choice: Option<String>,
     project_title: Option<String>,
-    append_target: Option<(PathBuf, Value)>,
+    append_target: Option<CanonicalAppendContext>,
     allow_invalid_replacement: bool,
     document_paths: &[String],
 ) -> Result<Value, String> {
@@ -7675,7 +8145,7 @@ fn folder_apply_import_with_documents(
     reject_symlink(&resolved_source_root, "导入文件夹")?;
     let resolved_root = append_target
         .as_ref()
-        .map(|(directory, _)| directory.clone())
+        .map(|context| context.directory.clone())
         .unwrap_or_else(|| resolved_source_root.clone());
 
     // Refuse to clobber an existing Canonical project silently on first adoption.
@@ -7737,8 +8207,8 @@ fn folder_apply_import_with_documents(
                 .to_string()
         });
 
-    let mut project = if let Some((_, current)) = append_target.as_ref() {
-        current.clone()
+    let mut project = if let Some(context) = append_target.as_ref() {
+        context.project.clone()
     } else {
         blank_adopt_project(&title)?
     };
@@ -8449,23 +8919,64 @@ fn folder_apply_import_with_documents(
         || !acc.staged_pairs.is_empty()
         || quarantine_manifest;
     let root_str = resolved_root.to_string_lossy().into_owned();
+    let mut commit_report = None;
     if append_target.is_none() || imported_anything {
-        adopt_commit_transaction(
+        commit_report = Some(adopt_commit_transaction(
             &mut project,
             &mut acc,
             &resolved_root,
             &root_str,
-            append_target.is_some(),
+            append_target.as_ref(),
             quarantine_manifest,
             &existing_manifest,
-        )?;
+        )?);
+    }
+    if let Some(report) = commit_report.as_ref() {
+        if let Some(warning) = report.durability_warning.as_ref() {
+            acc.warnings.push(warning.clone());
+        }
+        if let Some(warning) = report.recovery_warning.as_ref() {
+            acc.warnings.push(warning.clone());
+        }
     }
     let staging_parent = resolved_root.join(".workspace/adopt-staging");
     drop(staging_cleanup);
     let _ = fs::remove_dir(staging_parent);
 
-    Ok(json!({
-        "data": project,
+    let (fingerprint, lease_generation, mutation_binding, outcome) =
+        if let Some(context) = append_target.as_ref() {
+            (
+                commit_report
+                    .as_ref()
+                    .map(|report| report.fingerprint.clone())
+                    .unwrap_or_else(|| context.fingerprint.clone()),
+                context.lease_generation.clone(),
+                context.mutation_binding.as_ref(),
+                if commit_report.is_some() {
+                    "written"
+                } else {
+                    "unchanged"
+                },
+            )
+        } else {
+            (
+                commit_report
+                    .as_ref()
+                    .map(|report| report.fingerprint.clone())
+                    .ok_or("folder adoption did not produce a Canonical write report")?,
+                active_lease_generation(&resolved_root)?,
+                None,
+                "written",
+            )
+        };
+    let durability_warning = commit_report
+        .as_ref()
+        .and_then(|report| report.durability_warning.as_deref());
+    let recovery_warning = commit_report
+        .as_ref()
+        .and_then(|report| report.recovery_warning.as_deref());
+    let mut result = json!({
+        "data": project.clone(),
         "root": root_str,
         "source_root": resolved_source_root.to_string_lossy(),
         "stage_ids": acc.stage_ids,
@@ -8477,7 +8988,19 @@ fn folder_apply_import_with_documents(
         "copied_files": acc.copied_files,
         "copied_original_paths": [],
         "document_import": tally.to_value(),
-    }))
+    });
+    attach_canonical_mutation_ack(
+        &mut result,
+        mutation_binding,
+        &project,
+        &fingerprint,
+        &resolved_root,
+        &lease_generation,
+        outcome,
+        durability_warning,
+        recovery_warning,
+    );
+    Ok(result)
 }
 
 /// Promotes this transaction's UUID-owned media first, then atomically writes the
@@ -8489,10 +9012,10 @@ fn adopt_commit_transaction(
     acc: &mut AdoptAccumulator,
     resolved_root: &Path,
     root_str: &str,
-    is_append: bool,
+    append_context: Option<&CanonicalAppendContext>,
     quarantine_manifest: bool,
     existing_manifest: &Path,
-) -> Result<(), String> {
+) -> Result<ProjectWriteReport, String> {
     let mut promoted = Vec::new();
     let promotion = (|| -> Result<(), String> {
         if !acc.staged_pairs.is_empty() {
@@ -8570,23 +9093,37 @@ fn adopt_commit_transaction(
         }
         quarantined = Some(backup);
     }
-    let commit = if is_append {
-        write_project_value_unlocked(resolved_root, project)
+    let commit = if let Some(context) = append_context {
+        write_canonical_mutation_report_unlocked(
+            resolved_root,
+            project,
+            &context.fingerprint,
+            context.mutation_binding.as_ref(),
+        )
     } else {
-        project_create(root_str.to_owned(), project.clone()).map(|_| ())
+        project_create_report(root_str.to_owned(), project)
     };
-    if let Err(error) = commit {
-        for path in &promoted {
-            let _ = fs::remove_file(path);
+    let report = match commit {
+        Ok(report) => report,
+        Err(error) => {
+            let outcome_uncertain = serde_json::from_str::<Value>(&error)
+                .ok()
+                .and_then(|value| value["error"]["commit_state"].as_str().map(str::to_owned))
+                .is_some_and(|state| state == "outcome_uncertain");
+            if !outcome_uncertain {
+                for path in &promoted {
+                    let _ = fs::remove_file(path);
+                }
+                for (staging, _) in &acc.staged_pairs {
+                    let _ = fs::remove_file(resolved_root.join(staging));
+                }
+                if let Some(backup) = &quarantined {
+                    let _ = fs::rename(backup, existing_manifest);
+                }
+            }
+            return Err(error);
         }
-        for (staging, _) in &acc.staged_pairs {
-            let _ = fs::remove_file(resolved_root.join(staging));
-        }
-        if let Some(backup) = &quarantined {
-            let _ = fs::rename(backup, existing_manifest);
-        }
-        return Err(error);
-    }
+    };
     if let Some(backup) = &quarantined {
         acc.warnings.push(format!(
             "原有的 project.json 已完整保留为「{}」，没有删除任何文件。",
@@ -8596,7 +9133,7 @@ fn adopt_commit_transaction(
                 .unwrap_or("备份文件")
         ));
     }
-    Ok(())
+    Ok(report)
 }
 
 fn adopt_item_included(item: &Value) -> bool {
@@ -9118,11 +9655,24 @@ fn course_seed_create(input: Value) -> Result<Value, String> {
     let project_dir = required_string(object, &["project_dir", "projectDir"], "项目目录")?;
     let project_dir = explicit_project_dir(&project_dir, false)?;
     let _lease_guard = require_active_project_lock(&project_dir)?;
+    let mutation_binding = parse_canonical_mutation_binding(object)?;
+    let active_generation = verify_lease_generation(
+        &project_dir,
+        mutation_binding
+            .as_ref()
+            .map(|binding| binding.lease_generation.as_str()),
+    )?;
     let source_type = required_string(object, &["source_type", "sourceType"], "课程输入类型")?;
     let raw_text = field(object, &["raw_text", "rawText"])
         .and_then(Value::as_str)
         .map(str::to_string);
-    let mut project = read_project_value(&project_dir)?;
+    let (mut project, current_fingerprint) = read_project_state(&project_dir)?;
+    validate_canonical_mutation_binding(
+        mutation_binding.as_ref(),
+        &project,
+        &current_fingerprint,
+        &active_generation,
+    )?;
     let seed = json!({
         "id": uuid_v4()?,
         // The Domain keeps the pointer empty until the map is confirmed.
@@ -9142,8 +9692,25 @@ fn course_seed_create(input: Value) -> Result<Value, String> {
             .push(seed.clone());
     }
     touch_project_updated_at(&mut project)?;
-    write_project_value_unlocked(&project_dir, &project)?;
-    Ok(seed)
+    let report = write_canonical_mutation_report_unlocked(
+        &project_dir,
+        &project,
+        &current_fingerprint,
+        mutation_binding.as_ref(),
+    )?;
+    let mut result = seed;
+    attach_canonical_mutation_ack(
+        &mut result,
+        mutation_binding.as_ref(),
+        &project,
+        &report.fingerprint,
+        &project_dir,
+        &active_generation,
+        "written",
+        report.durability_warning.as_deref(),
+        report.recovery_warning.as_deref(),
+    );
+    Ok(result)
 }
 
 #[tauri::command]
@@ -9152,8 +9719,21 @@ fn blueprint_build(input: Value) -> Result<Value, String> {
     let project_dir = required_string(object, &["project_dir", "projectDir"], "项目目录")?;
     let project_dir = explicit_project_dir(&project_dir, false)?;
     let _lease_guard = require_active_project_lock(&project_dir)?;
+    let mutation_binding = parse_canonical_mutation_binding(object)?;
+    let active_generation = verify_lease_generation(
+        &project_dir,
+        mutation_binding
+            .as_ref()
+            .map(|binding| binding.lease_generation.as_str()),
+    )?;
     let course_seed_id = required_string(object, &["course_seed_id", "courseSeedId"], "课程输入")?;
-    let mut project = read_project_value(&project_dir)?;
+    let (mut project, current_fingerprint) = read_project_state(&project_dir)?;
+    validate_canonical_mutation_binding(
+        mutation_binding.as_ref(),
+        &project,
+        &current_fingerprint,
+        &active_generation,
+    )?;
     let seed = project
         .get("course_seeds")
         .and_then(Value::as_array)
@@ -9234,8 +9814,25 @@ fn blueprint_build(input: Value) -> Result<Value, String> {
             .extend(nodes.iter().cloned());
     }
     touch_project_updated_at(&mut project)?;
-    write_project_value_unlocked(&project_dir, &project)?;
-    Ok(json!({ "draft": draft, "nodes": nodes }))
+    let report = write_canonical_mutation_report_unlocked(
+        &project_dir,
+        &project,
+        &current_fingerprint,
+        mutation_binding.as_ref(),
+    )?;
+    let mut result = json!({ "draft": draft, "nodes": nodes });
+    attach_canonical_mutation_ack(
+        &mut result,
+        mutation_binding.as_ref(),
+        &project,
+        &report.fingerprint,
+        &project_dir,
+        &active_generation,
+        "written",
+        report.durability_warning.as_deref(),
+        report.recovery_warning.as_deref(),
+    );
+    Ok(result)
 }
 
 #[tauri::command]
@@ -11010,7 +11607,20 @@ fn publication_record(input: Value) -> Result<Value, String> {
     let project_dir = required_string(object, &["project_dir", "projectDir"], "项目目录")?;
     let project_dir = explicit_project_dir(&project_dir, false)?;
     let _lease_guard = require_active_project_lock(&project_dir)?;
-    let mut project = read_project_value(&project_dir)?;
+    let mutation_binding = parse_canonical_mutation_binding(object)?;
+    let active_generation = verify_lease_generation(
+        &project_dir,
+        mutation_binding
+            .as_ref()
+            .map(|binding| binding.lease_generation.as_str()),
+    )?;
+    let (mut project, current_fingerprint) = read_project_state(&project_dir)?;
+    validate_canonical_mutation_binding(
+        mutation_binding.as_ref(),
+        &project,
+        &current_fingerprint,
+        &active_generation,
+    )?;
     let publication = object.get("publication").cloned().unwrap_or_else(|| {
         let mut copy = object.clone();
         copy.remove("project_dir");
@@ -11045,8 +11655,25 @@ fn publication_record(input: Value) -> Result<Value, String> {
     list.as_array_mut()
         .ok_or("项目的发布记录格式无效")?
         .push(record.clone());
-    write_project_value_unlocked(&project_dir, &project)?;
-    Ok(json!({ "status": "recorded", "publication": record }))
+    let report = write_canonical_mutation_report_unlocked(
+        &project_dir,
+        &project,
+        &current_fingerprint,
+        mutation_binding.as_ref(),
+    )?;
+    let mut result = json!({ "status": "recorded", "publication": record });
+    attach_canonical_mutation_ack(
+        &mut result,
+        mutation_binding.as_ref(),
+        &project,
+        &report.fingerprint,
+        &project_dir,
+        &active_generation,
+        "written",
+        report.durability_warning.as_deref(),
+        report.recovery_warning.as_deref(),
+    );
+    Ok(result)
 }
 
 #[tauri::command]
@@ -12183,7 +12810,20 @@ fn asset_import(input: Value) -> Result<Value, String> {
     let project_dir = required_string(object, &["project_dir", "projectDir"], "项目目录")?;
     let project_dir = explicit_project_dir(&project_dir, false)?;
     let _lease_guard = require_active_project_lock(&project_dir)?;
-    let mut project = read_project_value(&project_dir)?;
+    let mutation_binding = parse_canonical_mutation_binding(object)?;
+    let active_generation = verify_lease_generation(
+        &project_dir,
+        mutation_binding
+            .as_ref()
+            .map(|binding| binding.lease_generation.as_str()),
+    )?;
+    let (mut project, current_fingerprint) = read_project_state(&project_dir)?;
+    validate_canonical_mutation_binding(
+        mutation_binding.as_ref(),
+        &project,
+        &current_fingerprint,
+        &active_generation,
+    )?;
     let project_id = project
         .get("project")
         .and_then(|value| value.get("id"))
@@ -12291,19 +12931,69 @@ fn asset_import(input: Value) -> Result<Value, String> {
                 .and_then(Value::as_str)
                 .ok_or("素材缺少 id")?,
         )?;
-        let mut warning = None;
-        if usage.is_some() {
+        let report = if usage.is_some() {
             touch_project_updated_at(&mut project)?;
-            warning = write_project_value_with_warning_unlocked(&project_dir, &project)?;
-        }
-        return Ok(json!({
+            Some(
+                write_project_value_report_unlocked(
+                    &project_dir,
+                    &project,
+                    Some(&current_fingerprint),
+                )
+                .map_err(|failure| {
+                    project_save_atomic_error_contract(
+                        &failure,
+                        mutation_binding
+                            .as_ref()
+                            .map(|binding| binding.operation_id.as_str()),
+                        mutation_binding.as_ref().map(|binding| binding.revision),
+                        Some(&current_fingerprint),
+                        None,
+                    )
+                })?,
+            )
+        } else {
+            None
+        };
+        let committed_fingerprint = report
+            .as_ref()
+            .map(|report| report.fingerprint.clone())
+            .unwrap_or_else(|| current_fingerprint.clone());
+        let outcome = if report.is_some() {
+            "written"
+        } else {
+            "unchanged"
+        };
+        let durability_warning = report
+            .as_ref()
+            .and_then(|report| report.durability_warning.as_deref());
+        let recovery_warning = report
+            .as_ref()
+            .and_then(|report| report.recovery_warning.as_deref());
+        let warning = match (durability_warning, recovery_warning) {
+            (Some(left), Some(right)) => Some(format!("{left}；{right}")),
+            (Some(value), None) | (None, Some(value)) => Some(value.to_owned()),
+            (None, None) => None,
+        };
+        let mut result = json!({
             "status": "existing",
             "duplicate": true,
             "asset": asset,
             "usage": usage,
             "checksum": checksum,
             "warning": warning,
-        }));
+        });
+        attach_canonical_mutation_ack(
+            &mut result,
+            mutation_binding.as_ref(),
+            &project,
+            &committed_fingerprint,
+            &project_dir,
+            &active_generation,
+            outcome,
+            durability_warning,
+            recovery_warning,
+        );
+        return Ok(result);
     }
 
     let asset_id = native_id("asset");
@@ -12352,21 +13042,52 @@ fn asset_import(input: Value) -> Result<Value, String> {
         let _ = fs::remove_file(&destination);
         return Err(error);
     }
-    let warning = match write_project_value_with_warning_unlocked(&project_dir, &project) {
-        Ok(warning) => warning,
-        Err(error) => {
-            let _ = fs::remove_file(&destination);
+    let report = match write_project_value_report_unlocked(
+        &project_dir,
+        &project,
+        Some(&current_fingerprint),
+    ) {
+        Ok(report) => report,
+        Err(failure) => {
+            let error = project_save_atomic_error_contract(
+                &failure,
+                mutation_binding
+                    .as_ref()
+                    .map(|binding| binding.operation_id.as_str()),
+                mutation_binding.as_ref().map(|binding| binding.revision),
+                Some(&current_fingerprint),
+                None,
+            );
+            if failure.commit_state == "not_committed" {
+                let _ = fs::remove_file(&destination);
+            }
             return Err(error);
         }
     };
-    Ok(json!({
+    let mut result = json!({
         "status": "imported",
         "duplicate": false,
         "asset": asset,
         "usage": usage,
         "checksum": checksum,
-        "warning": warning,
-    }))
+        "warning": match (report.durability_warning.as_deref(), report.recovery_warning.as_deref()) {
+            (Some(left), Some(right)) => Some(format!("{left}；{right}")),
+            (Some(value), None) | (None, Some(value)) => Some(value.to_owned()),
+            (None, None) => None,
+        },
+    });
+    attach_canonical_mutation_ack(
+        &mut result,
+        mutation_binding.as_ref(),
+        &project,
+        &report.fingerprint,
+        &project_dir,
+        &active_generation,
+        "written",
+        report.durability_warning.as_deref(),
+        report.recovery_warning.as_deref(),
+    );
+    Ok(result)
 }
 
 #[tauri::command]
@@ -17403,77 +18124,19 @@ fn apply_asset_rename(
 #[tauri::command]
 fn asset_rename(input: Value) -> Result<Value, String> {
     let object = require_object(&input, "asset_rename")?;
-    let binding_string = |names: &[&str], label: &str| -> Result<Option<String>, String> {
-        match field(object, names) {
-            None => Ok(None),
-            Some(value) => value
-                .as_str()
-                .map(str::trim)
-                .filter(|value| !value.is_empty())
-                .map(|value| Some(value.to_owned()))
-                .ok_or_else(|| format!("{label}不能为空")),
-        }
-    };
-    let binding_u64 = |names: &[&str], label: &str| -> Result<Option<u64>, String> {
-        match field(object, names) {
-            None => Ok(None),
-            Some(value) => value
-                .as_u64()
-                .map(Some)
-                .ok_or_else(|| format!("{label}必须是非负整数")),
-        }
-    };
+    let mutation_binding = parse_canonical_mutation_binding(object)?;
     let project_dir = required_string(object, &["project_dir", "projectDir"], "项目目录")?;
     let asset_id = required_string(object, &["asset_id", "assetId"], "素材 ID")?;
-    let expected_project_id = binding_string(
-        &["expected_project_id", "expectedProjectId"],
-        "expected_project_id",
-    )?;
-    let requested_lease_generation =
-        binding_string(&["lease_generation", "leaseGeneration"], "lease_generation")?;
-    let editor_generation = binding_u64(
-        &["editor_generation", "editorGeneration"],
-        "editor_generation",
-    )?;
-    let operation_id = binding_string(&["operation_id", "operationId"], "operation_id")?;
-    let revision = binding_u64(&["revision"], "revision")?;
-    let expected_fingerprint = field(object, &["expected_fingerprint", "expectedFingerprint"])
-        .cloned()
-        .map(|value| {
-            serde_json::from_value::<FileFingerprint>(value)
-                .map_err(|error| format!("expected_fingerprint 无效: {error}"))
-        })
-        .transpose()?;
-    let has_binding = expected_project_id.is_some()
-        || requested_lease_generation.is_some()
-        || editor_generation.is_some()
-        || operation_id.is_some()
-        || revision.is_some()
-        || expected_fingerprint.is_some();
-    if has_binding
-        && (expected_project_id.is_none()
-            || requested_lease_generation.is_none()
-            || editor_generation.is_none()
-            || operation_id.is_none()
-            || revision.is_none()
-            || expected_fingerprint.is_none())
-    {
-        return Err(json!({ "error": {
-            "code": "invalid_mutation_binding",
-            "message": "素材重命名需要完整的项目、租约和编辑代次绑定。"
-        }})
-        .to_string());
-    }
-    if operation_id
-        .as_deref()
-        .is_some_and(|value| !valid_snapshot_id(value))
-    {
-        return Err(json!({ "error": {
-            "code": "invalid_operation_id",
-            "message": "素材重命名操作编号无效。"
-        }})
-        .to_string());
-    }
+    let requested_lease_generation = mutation_binding
+        .as_ref()
+        .map(|binding| binding.lease_generation.clone());
+    let editor_generation = mutation_binding
+        .as_ref()
+        .map(|binding| binding.editor_generation);
+    let operation_id = mutation_binding
+        .as_ref()
+        .map(|binding| binding.operation_id.clone());
+    let revision = mutation_binding.as_ref().map(|binding| binding.revision);
     let requested = object
         .get("new_name")
         .or_else(|| object.get("newName"))
@@ -17486,32 +18149,12 @@ fn asset_rename(input: Value) -> Result<Value, String> {
         verify_lease_generation(&project_dir, requested_lease_generation.as_deref())?;
     let (mut project, current_fingerprint) = read_project_state(&project_dir)?;
     let project_id = project_id_of(&project)?;
-    if expected_project_id
-        .as_deref()
-        .is_some_and(|expected| expected != project_id)
-    {
-        return Err(project_save_error_contract(
-            &json!({ "error": {
-                "code": "project_id_mismatch",
-                "message": "素材重命名请求与当前项目身份不匹配。"
-            }})
-            .to_string(),
-            "project_identity",
-            false,
-            Some(&current_fingerprint),
-        ));
-    }
-    if expected_fingerprint
-        .as_ref()
-        .is_some_and(|expected| fingerprints_differ(expected, &current_fingerprint))
-    {
-        return Err(project_save_error_contract(
-            &external_conflict_error(expected_fingerprint.as_ref(), &current_fingerprint),
-            "external_compare",
-            false,
-            Some(&current_fingerprint),
-        ));
-    }
+    validate_canonical_mutation_binding(
+        mutation_binding.as_ref(),
+        &project,
+        &current_fingerprint,
+        &active_generation,
+    )?;
     let project_dir_text = project_dir.to_string_lossy().into_owned();
 
     let (old_storage, old_filename, archived) = {
@@ -17552,7 +18195,7 @@ fn asset_rename(input: Value) -> Result<Value, String> {
     let (_basename, new_filename, new_storage, display_title) =
         plan_asset_rename_name(&asset_id, &requested, &old_filename, &old_storage)?;
     if new_storage == old_storage && new_filename == old_filename {
-        return Ok(json!({
+        let mut result = json!({
             "status": "noop",
             "asset_id": asset_id,
             "rewritten": 0,
@@ -17569,9 +18212,22 @@ fn asset_rename(input: Value) -> Result<Value, String> {
             "operation_id": operation_id,
             "revision": revision,
             "commit_state": "committed",
+            "outcome": "unchanged",
             "durability_warning": Value::Null,
             "recovery_warning": Value::Null,
-        }));
+        });
+        attach_canonical_mutation_ack(
+            &mut result,
+            mutation_binding.as_ref(),
+            &project,
+            &current_fingerprint,
+            &project_dir,
+            &active_generation,
+            "unchanged",
+            None,
+            None,
+        );
+        return Ok(result);
     }
 
     // Canonical collision: another live asset already owns the target path.
@@ -17635,13 +18291,21 @@ fn asset_rename(input: Value) -> Result<Value, String> {
             .map_err(|error| atomic_failure(error, "mutation_validate", "not_committed", false))?;
         validate_project(&project)
             .map_err(|error| atomic_failure(error, "validate", "not_committed", false))?;
-        ensure_no_external_modification(&project_dir)
-            .map_err(|error| atomic_failure(error, "external_compare", "not_committed", false))?;
         let contents = serde_json::to_string_pretty(&project).map_err(|error| {
             atomic_failure(error.to_string(), "serialize", "not_committed", false)
         })? + "\n";
-        ensure_no_external_modification(&project_dir)
-            .map_err(|error| atomic_failure(error, "external_compare", "not_committed", false))?;
+        let final_fingerprint = project_fingerprint(&project_dir)
+            .map_err(|error| atomic_failure(error, "final_validate", "not_committed", false))?;
+        if fingerprints_differ(&current_fingerprint, &final_fingerprint) {
+            return Err(atomic_failure(
+                external_conflict_error(Some(&current_fingerprint), &final_fingerprint),
+                "final_validate",
+                "not_committed",
+                false,
+            ));
+        }
+        ensure_project_matches_baseline(&project_dir, &final_fingerprint)
+            .map_err(|error| atomic_failure(error, "baseline_preflight", "not_committed", false))?;
         expected_committed_fingerprint = Some(FileFingerprint {
             exists: true,
             mtime_ms: None,
@@ -17704,7 +18368,7 @@ fn asset_rename(input: Value) -> Result<Value, String> {
                 })
                 .cloned()
         });
-    Ok(json!({
+    let mut result = json!({
         "status": "renamed",
         "asset_id": asset_id,
         "asset": renamed,
@@ -17722,9 +18386,22 @@ fn asset_rename(input: Value) -> Result<Value, String> {
         "operation_id": operation_id,
         "revision": revision,
         "commit_state": "committed",
+        "outcome": "written",
         "durability_warning": report.durability_warning,
         "recovery_warning": report.recovery_warning,
-    }))
+    });
+    attach_canonical_mutation_ack(
+        &mut result,
+        mutation_binding.as_ref(),
+        &project,
+        &report.fingerprint,
+        &project_dir,
+        &active_generation,
+        "written",
+        report.durability_warning.as_deref(),
+        report.recovery_warning.as_deref(),
+    );
+    Ok(result)
 }
 
 #[cfg(test)]
@@ -17927,6 +18604,46 @@ mod tests {
             .unwrap_or_default()
     }
 
+    fn project_io_metrics_value(metrics: &ProjectIoMetrics) -> Value {
+        let files = [
+            "project.json",
+            ".workspace/recovery.json",
+            "project.json.bak",
+            ".workspace/recovery.json.bak",
+        ]
+        .into_iter()
+        .map(|path| {
+            let file = metrics.files.get(path).copied().unwrap_or_default();
+            (
+                path.to_owned(),
+                json!({
+                    "read_ops": file.read_ops,
+                    "read_bytes": file.read_bytes,
+                    "hash_bytes": file.hash_bytes,
+                    "write_ops": file.write_ops,
+                    "write_bytes": file.write_bytes,
+                    "copy_ops": file.copy_ops,
+                    "copy_bytes": file.copy_bytes,
+                    "sync_ops": file.sync_ops,
+                    "rename_ops": file.rename_ops,
+                }),
+            )
+        })
+        .collect::<Map<String, Value>>();
+        json!({
+            "full_reads": metrics.full_reads,
+            "full_read_bytes": metrics.full_read_bytes,
+            "hash_bytes": metrics.hash_bytes,
+            "write_ops": metrics.write_ops,
+            "write_bytes": metrics.write_bytes,
+            "copy_ops": metrics.copy_ops,
+            "copy_bytes": metrics.copy_bytes,
+            "sync_ops": metrics.sync_ops,
+            "rename_ops": metrics.rename_ops,
+            "files": files,
+        })
+    }
+
     fn project_save_legacy(
         project_dir: String,
         expected_fingerprint: FileFingerprint,
@@ -18019,6 +18736,174 @@ mod tests {
             b"project backup sentinel"
         );
         project_close(project_dir).unwrap();
+        let _ = fs::remove_dir_all(directory);
+    }
+
+    #[test]
+    #[ignore = "manual warm benchmark; set WORKBENCH_NATIVE_IO_FIXTURE to a valid large project.json"]
+    fn manual_native_project_save_warm_metrics() {
+        let fixture_path = std::env::var("WORKBENCH_NATIVE_IO_FIXTURE")
+            .expect("WORKBENCH_NATIVE_IO_FIXTURE must name the shared F-large fixture");
+        let fixture_bytes = fs::read(fixture_path).expect("F-large fixture should be readable");
+        let fixture_hash = sha256_hex(&fixture_bytes);
+        let mut project: Value =
+            serde_json::from_slice(&fixture_bytes).expect("F-large fixture should be valid JSON");
+        assert_eq!(project["blocks"].as_array().map(Vec::len), Some(5_000));
+        assert_eq!(project["assets"].as_array().map(Vec::len), Some(1_000));
+        let project_id = project_id_of(&project).expect("fixture project identity");
+        let directory = test_directory("native-save-warm-metrics");
+        let project_dir = directory.to_string_lossy().into_owned();
+        project_create(project_dir.clone(), project.clone()).expect("fixture project should open");
+        let initial_canonical =
+            fs::read(directory.join("project.json")).expect("created canonical should be readable");
+        let initial_canonical_size = initial_canonical.len();
+        let initial_canonical_hash = sha256_hex(&initial_canonical);
+        let lease_generation = active_lease_generation(&directory).expect("active lease");
+        let mut expected_fingerprint =
+            project_fingerprint(&directory).expect("initial fingerprint");
+        let mut revision = 1_u64;
+
+        let save = |project: &Value,
+                    expected_fingerprint: FileFingerprint,
+                    revision: u64,
+                    operation_id: String|
+         -> Value {
+            project_save(
+                project_dir.clone(),
+                expected_fingerprint,
+                None,
+                project.clone(),
+                Some(project_id.clone()),
+                Some(lease_generation.clone()),
+                Some(revision),
+                Some(operation_id),
+                Some(revision),
+                Some(json!({
+                    "project_id": project_id,
+                    "canonical_revision": project["project"]["updated_at"],
+                    "saved_at": "2026-10-06T00:00:00.000Z",
+                })),
+            )
+            .expect("bound save should succeed")
+        };
+
+        // Exclude one changed/no-op pair so measurements are warm and both paths
+        // have run before samples are collected.
+        project["project"]["title"] = json!("native-metrics-warm-000");
+        let warm = save(
+            &project,
+            expected_fingerprint.clone(),
+            revision,
+            "native-metrics-warmup-change".into(),
+        );
+        expected_fingerprint =
+            serde_json::from_value(warm["fingerprint"].clone()).expect("warm save fingerprint");
+        revision += 1;
+        let warm_noop = save(
+            &project,
+            expected_fingerprint.clone(),
+            revision,
+            "native-metrics-warmup-noop".into(),
+        );
+        expected_fingerprint = serde_json::from_value(warm_noop["fingerprint"].clone())
+            .expect("warm no-op fingerprint");
+        revision += 1;
+
+        let canonical_dir = fs::canonicalize(&directory).expect("canonical fixture directory");
+        let generation_before =
+            active_lease_generation(&directory).expect("active lease before samples");
+        let workers_before = PROJECT_LOCK_WORKERS_STARTED.load(Ordering::Relaxed);
+        let active_handles_before = active_project_locks()
+            .lock()
+            .unwrap()
+            .contains_key(&canonical_dir);
+        let mut samples = Vec::with_capacity(20);
+        for index in 0..10_u64 {
+            project["project"]["title"] = json!(format!("native-metrics-change-{index:03}"));
+            reset_project_validation_reads(&directory);
+            let started = std::time::Instant::now();
+            let changed = save(
+                &project,
+                expected_fingerprint.clone(),
+                revision,
+                format!("native-metrics-change-{index:03}"),
+            );
+            let elapsed_us = started.elapsed().as_micros() as u64;
+            let io = take_project_validation_reads(&directory);
+            assert_eq!(changed["outcome"], json!("written"));
+            expected_fingerprint = serde_json::from_value(changed["fingerprint"].clone())
+                .expect("changed save fingerprint");
+            samples.push(json!({
+                "kind": "changed",
+                "sample": index + 1,
+                "elapsed_us": elapsed_us,
+                "committed_size": expected_fingerprint.size,
+                "committed_sha256": expected_fingerprint.hash,
+                "io": project_io_metrics_value(&io),
+            }));
+            revision += 1;
+
+            reset_project_validation_reads(&directory);
+            let started = std::time::Instant::now();
+            let unchanged = save(
+                &project,
+                expected_fingerprint.clone(),
+                revision,
+                format!("native-metrics-noop-{index:03}"),
+            );
+            let elapsed_us = started.elapsed().as_micros() as u64;
+            let io = take_project_validation_reads(&directory);
+            assert_eq!(unchanged["outcome"], json!("unchanged"));
+            expected_fingerprint = serde_json::from_value(unchanged["fingerprint"].clone())
+                .expect("unchanged save fingerprint");
+            samples.push(json!({
+                "kind": "unchanged",
+                "sample": index + 1,
+                "elapsed_us": elapsed_us,
+                "committed_size": expected_fingerprint.size,
+                "committed_sha256": expected_fingerprint.hash,
+                "io": project_io_metrics_value(&io),
+            }));
+            revision += 1;
+        }
+        let generation_after =
+            active_lease_generation(&directory).expect("active lease after samples");
+        let workers_after = PROJECT_LOCK_WORKERS_STARTED.load(Ordering::Relaxed);
+        let active_handles_after = active_project_locks()
+            .lock()
+            .unwrap()
+            .contains_key(&canonical_dir);
+        assert_eq!(
+            generation_before, generation_after,
+            "save paths must reuse the lease handle"
+        );
+        assert!(active_handles_before && active_handles_after);
+        assert_eq!(
+            workers_after - workers_before,
+            0,
+            "save paths must not spawn heartbeat workers"
+        );
+
+        println!(
+            "NATIVE_IO_WARM_METRICS={}",
+            json!({
+                "fixture_bytes": fixture_bytes.len(),
+                "fixture_sha256": fixture_hash,
+                "initial_canonical_bytes": initial_canonical_size,
+                "initial_canonical_sha256": initial_canonical_hash,
+                "canonical_size_delta_from_fixture": initial_canonical_size as i64 - fixture_bytes.len() as i64,
+                "blocks": project["blocks"].as_array().map(Vec::len),
+                "assets": project["assets"].as_array().map(Vec::len),
+                "warmup_pairs_excluded": 1,
+                "sample_count_per_kind": 10,
+                "lease_generation_reused": generation_before == generation_after,
+                "active_lease_handle_before": active_handles_before,
+                "active_lease_handle_after": active_handles_after,
+                "worker_registrations_during_samples": workers_after - workers_before,
+                "samples": samples,
+            })
+        );
+        project_close(project_dir).expect("fixture lease should close");
         let _ = fs::remove_dir_all(directory);
     }
 
@@ -18471,6 +19356,252 @@ mod tests {
         project
     }
 
+    fn test_mutation_binding(
+        project_id: &str,
+        fingerprint: &FileFingerprint,
+        lease_generation: &str,
+        operation_id: &str,
+        revision: u64,
+    ) -> Value {
+        json!({
+            "expected_project_id": project_id,
+            "expected_fingerprint": fingerprint,
+            "lease_generation": lease_generation,
+            "editor_generation": 7,
+            "operation_id": operation_id,
+            "revision": revision,
+        })
+    }
+
+    fn merge_test_binding(mut payload: Value, binding: Value) -> Value {
+        let payload_object = payload.as_object_mut().expect("payload object");
+        for (key, value) in binding.as_object().expect("binding object") {
+            payload_object.insert(key.clone(), value.clone());
+        }
+        payload
+    }
+
+    fn assert_test_mutation_ack(
+        ack: &Value,
+        directory: &Path,
+        operation_id: &str,
+        revision: u64,
+        outcome: &str,
+    ) {
+        let project = read_project_value(directory).expect("committed Canonical project");
+        let fingerprint = project_fingerprint(directory).expect("committed fingerprint");
+        assert_eq!(ack["project"], project);
+        assert_eq!(ack["fingerprint"]["hash"], json!(fingerprint.hash));
+        assert_eq!(ack["fingerprint"]["size"], json!(fingerprint.size));
+        assert_eq!(ack["project_id"], project["project"]["id"]);
+        assert_eq!(
+            ack["project_dir"],
+            json!(fs::canonicalize(directory).unwrap().to_string_lossy())
+        );
+        assert_eq!(ack["editor_generation"], json!(7));
+        assert_eq!(ack["operation_id"], json!(operation_id));
+        assert_eq!(ack["revision"], json!(revision));
+        assert_eq!(ack["commit_state"], json!("committed"));
+        assert_eq!(ack["outcome"], json!(outcome));
+    }
+
+    #[test]
+    fn direct_ui_canonical_mutations_return_bound_committed_acknowledgements() {
+        let directory = test_directory("ui-mutation-ack");
+        write_test_project(&directory);
+        let project_dir = directory.to_string_lossy().into_owned();
+        project_open(project_dir.clone()).expect("the project should open");
+        let project_id = "project-native-seed";
+        let lease_generation = active_lease_generation(&directory).expect("active lease");
+        let mut fingerprint = project_fingerprint(&directory).expect("open fingerprint");
+        let mut revision = 1_u64;
+
+        let seed = course_seed_create(merge_test_binding(
+            json!({
+                "project_dir": project_dir,
+                "source_type": "outline",
+                "raw_text": "第一阶段\n第一课",
+            }),
+            test_mutation_binding(
+                project_id,
+                &fingerprint,
+                &lease_generation,
+                "native-course-seed-op",
+                revision,
+            ),
+        ))
+        .expect("bound course seed should commit");
+        assert_test_mutation_ack(
+            &seed["mutation_ack"],
+            &directory,
+            "native-course-seed-op",
+            revision,
+            "written",
+        );
+        fingerprint = serde_json::from_value(seed["mutation_ack"]["fingerprint"].clone())
+            .expect("seed acknowledgement fingerprint");
+        revision += 1;
+
+        let blueprint = blueprint_build(merge_test_binding(
+            json!({ "project_dir": project_dir, "course_seed_id": seed["id"] }),
+            test_mutation_binding(
+                project_id,
+                &fingerprint,
+                &lease_generation,
+                "native-blueprint-op",
+                revision,
+            ),
+        ))
+        .expect("bound blueprint should commit");
+        assert_test_mutation_ack(
+            &blueprint["mutation_ack"],
+            &directory,
+            "native-blueprint-op",
+            revision,
+            "written",
+        );
+        fingerprint = serde_json::from_value(blueprint["mutation_ack"]["fingerprint"].clone())
+            .expect("blueprint acknowledgement fingerprint");
+        revision += 1;
+
+        let publication = publication_record(merge_test_binding(
+            json!({
+                "project_dir": project_dir,
+                "publication": { "content_item_id": "lesson-1", "format": "html" },
+            }),
+            test_mutation_binding(
+                project_id,
+                &fingerprint,
+                &lease_generation,
+                "native-publication-op",
+                revision,
+            ),
+        ))
+        .expect("bound publication record should commit");
+        assert_test_mutation_ack(
+            &publication["mutation_ack"],
+            &directory,
+            "native-publication-op",
+            revision,
+            "written",
+        );
+        fingerprint = serde_json::from_value(publication["mutation_ack"]["fingerprint"].clone())
+            .expect("publication acknowledgement fingerprint");
+        revision += 1;
+
+        let asset_import_payload = merge_test_binding(
+            json!({
+                "project_dir": project_dir,
+                "filename": "native-cover.png",
+                "mime_type": "image/png",
+                "type": "image",
+                "bytes_base64": BASE64.encode(b"native-cover"),
+            }),
+            test_mutation_binding(
+                project_id,
+                &fingerprint,
+                &lease_generation,
+                "native-asset-import-op",
+                revision,
+            ),
+        );
+        let imported = asset_import(json!({ "input": asset_import_payload }))
+            .expect("bound asset import should commit");
+        assert_test_mutation_ack(
+            &imported["mutation_ack"],
+            &directory,
+            "native-asset-import-op",
+            revision,
+            "written",
+        );
+        let asset_id = imported["asset"]["id"]
+            .as_str()
+            .expect("asset id")
+            .to_owned();
+        fingerprint = serde_json::from_value(imported["mutation_ack"]["fingerprint"].clone())
+            .expect("asset import acknowledgement fingerprint");
+        revision += 1;
+
+        let renamed = asset_rename(merge_test_binding(
+            json!({
+                "project_dir": project_dir,
+                "asset_id": asset_id,
+                "new_name": "native-renamed.png",
+            }),
+            test_mutation_binding(
+                project_id,
+                &fingerprint,
+                &lease_generation,
+                "native-asset-rename-op",
+                revision,
+            ),
+        ))
+        .expect("bound asset rename should commit");
+        assert_test_mutation_ack(
+            &renamed["mutation_ack"],
+            &directory,
+            "native-asset-rename-op",
+            revision,
+            "written",
+        );
+        fingerprint = serde_json::from_value(renamed["mutation_ack"]["fingerprint"].clone())
+            .expect("asset rename acknowledgement fingerprint");
+        revision += 1;
+
+        let current_project = read_project_value(&directory).expect("current project");
+        let expected_current = project_fingerprint(&directory).expect("resolution fingerprint");
+        let mut resolved_project = current_project;
+        resolved_project["project"]["description"] = json!("explicitly resolved");
+        let resolved = project_resolve(
+            project_dir.clone(),
+            resolved_project,
+            json!(expected_current),
+            Some(project_id.to_owned()),
+            Some(fingerprint),
+            Some(lease_generation.clone()),
+            Some(7),
+            Some("native-project-resolve-op".to_owned()),
+            Some(revision),
+        )
+        .expect("bound project resolution should commit");
+        assert_test_mutation_ack(
+            &resolved["mutation_ack"],
+            &directory,
+            "native-project-resolve-op",
+            revision,
+            "written",
+        );
+        fingerprint = serde_json::from_value(resolved["mutation_ack"]["fingerprint"].clone())
+            .expect("resolution acknowledgement fingerprint");
+        revision += 1;
+
+        let source = test_directory("ui-append-source");
+        let appended = folder_append_with_documents(
+            json!({ "confirmed": true, "root": source, "items": [] }),
+            project_dir.clone(),
+            None,
+            None,
+            Some(project_id.to_owned()),
+            Some(fingerprint),
+            Some(lease_generation.clone()),
+            Some(7),
+            Some("native-folder-append-op".to_owned()),
+            Some(revision),
+        )
+        .expect("bound empty folder append should return an unchanged acknowledgement");
+        assert_test_mutation_ack(
+            &appended["mutation_ack"],
+            &directory,
+            "native-folder-append-op",
+            revision,
+            "unchanged",
+        );
+        let _ = fs::remove_dir_all(source);
+
+        project_close(project_dir).unwrap();
+        let _ = fs::remove_dir_all(directory);
+    }
+
     #[test]
     fn seed_outline_lines_become_stages_and_contents() {
         let nodes = seed_lines_to_nodes(
@@ -18808,6 +19939,7 @@ mod tests {
         )
         .unwrap();
         let current_bytes = fs::read(directory.join("project.json")).unwrap();
+        let current_fingerprint = project_fingerprint(&directory).unwrap();
         let operation_id = "restore-op-9";
         let backup_id = format!(
             "restore-before-{}",
@@ -18822,6 +19954,7 @@ mod tests {
             Some(9),
             Some(operation_id.into()),
             Some(9),
+            Some(current_fingerprint.clone()),
         )
         .expect_err("restore must stop when its backup cannot persist");
         let failed_value: Value = serde_json::from_str(&failed).unwrap();
@@ -18846,6 +19979,7 @@ mod tests {
             Some(9),
             Some(operation_id.into()),
             Some(9),
+            Some(current_fingerprint.clone()),
         )
         .expect("persisted backup should allow restore");
         let committed_bytes = fs::read(directory.join("project.json")).unwrap();
@@ -19485,6 +20619,12 @@ mod tests {
             directory.to_string_lossy().into_owned(),
             merged.clone(),
             report.get("current").cloned().unwrap(),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
         )
         .expect("explicit resolution should write the merged branch");
         assert_eq!(read_project_value(&directory).unwrap(), merged);
@@ -23891,8 +25031,28 @@ mod tests {
                 "parsed_markdown": test_markdown_payload(&source.join("lesson.md"), parsed_blocks.clone(), refs.clone())
             }]
         });
-        let appended = folder_append(plan, target.to_string_lossy().into_owned(), None)
-            .expect("append markdown with explicit image dependency");
+        let append_fingerprint = project_fingerprint(&target).expect("append baseline");
+        let append_lease_generation = active_lease_generation(&target).expect("append lease");
+        let appended = folder_append_with_documents(
+            plan,
+            target.to_string_lossy().into_owned(),
+            None,
+            None,
+            Some(project_id.clone()),
+            Some(append_fingerprint),
+            Some(append_lease_generation),
+            Some(7),
+            Some("native-folder-append-write".into()),
+            Some(1),
+        )
+        .expect("append markdown with explicit image dependency");
+        assert_test_mutation_ack(
+            &appended["mutation_ack"],
+            &target,
+            "native-folder-append-write",
+            1,
+            "written",
+        );
         let data = &appended["data"];
         assert_eq!(data["project"]["id"], json!(project_id));
         assert_eq!(data["project"]["title"], project["project"]["title"]);
@@ -25280,6 +26440,12 @@ mod tests {
             ]
         });
         let result = folder_adopt(plan, None, None, None).expect("adopt");
+        assert_eq!(result["mutation_ack"]["project"], result["data"]);
+        assert_eq!(
+            result["mutation_ack"]["fingerprint"]["hash"],
+            json!(project_fingerprint(&root).unwrap().hash)
+        );
+        assert_eq!(result["mutation_ack"]["commit_state"], json!("committed"));
         assert_eq!(
             result["content_item_ids"]
                 .as_array()
