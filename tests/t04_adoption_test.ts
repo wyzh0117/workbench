@@ -5,6 +5,7 @@
  * Non-destructive: originals are never moved/renamed/deleted.
  */
 import { join } from "node:path";
+import { createHash } from "node:crypto";
 import {
   addPlacement,
   appendBlock,
@@ -33,6 +34,7 @@ import {
 import { scanFolder } from "../src/service/folder_scan.ts";
 import {
   confirmFolderAdoption,
+  getFolderAdoptionStreamMetrics,
   type FolderAdoptionResult,
 } from "../src/service/folder_adoption.ts";
 import { addLayoutPage, createPagedLayout } from "../app/layout_pages.js";
@@ -712,19 +714,35 @@ async function bootStore(projectRoot = "") {
     readProject: async () => structuredClone(state.project),
     readProjectState: async () => ({
       project: structuredClone(state.project),
+      project_id: state.project.project.id,
+      lease_generation: null,
       fingerprint: currentFingerprint(),
     }),
     readRecoveryJournal: async () => null,
     listenNativeDrops: async () => () => {},
     writeRecoveryJournal: async () => {},
-    writeProject: async (project: ProjectData, expectedFingerprint: unknown) => {
-      if (JSON.stringify(expectedFingerprint) !== JSON.stringify(currentFingerprint())) {
+    writeProject: async (request: ProjectData | Record<string, unknown>, expectedFingerprint?: unknown) => {
+      const bound = request && typeof request === "object" &&
+          Object.hasOwn(request, "expected_fingerprint")
+        ? request as Record<string, unknown>
+        : { project: request, expected_fingerprint: expectedFingerprint };
+      if (JSON.stringify(bound.expected_fingerprint) !== JSON.stringify(currentFingerprint())) {
         throw new Error("external_modification_conflict");
       }
       state.writes += 1;
-      state.project = structuredClone(project);
+      state.project = structuredClone(bound.project as ProjectData);
       revision += 1;
-      return { fingerprint: currentFingerprint(), recovery_warning: null };
+      return {
+        fingerprint: currentFingerprint(),
+        project_id: bound.expected_project_id ?? state.project.project.id,
+        lease_generation: bound.lease_generation ?? null,
+        editor_generation: bound.editor_generation,
+        operation_id: bound.operation_id,
+        revision: bound.revision,
+        outcome: "written",
+        commit_state: "committed",
+        recovery_warning: null,
+      };
     },
     clearRecoveryJournal: async () => {},
     saveSession: async () => {},
@@ -1259,6 +1277,74 @@ Deno.test("append targets a lesson, preserves its edits/pages, and skips Markdow
     const thirdWarning = thirdVersion.warnings.find((warning) => warning.includes("来源路径已有较旧导入")) || "";
     assert(thirdWarning.includes(secondSourceHash.slice(0, 12)), "changed-source warning names the latest explicitly imported SHA");
     assert(!thirdWarning.includes(firstSourceHash.slice(0, 12)), "changed-source warning does not report the stale v1 SHA");
+  } finally {
+    await Deno.remove(targetRoot, { recursive: true }).catch(() => {});
+    await Deno.remove(sourceRoot, { recursive: true }).catch(() => {});
+  }
+});
+
+Deno.test("256 MiB adoption streams and stores the actual target SHA-256", async () => {
+  const sourceRoot = await Deno.makeTempDir({ prefix: "acw-adopt-large-source-" });
+  const targetRoot = await Deno.makeTempDir({ prefix: "acw-adopt-large-target-" });
+  const sourcePath = join(sourceRoot, "large.bin");
+  const file = await Deno.open(sourcePath, { write: true, createNew: true });
+  await file.truncate(256 * 1024 * 1024);
+  file.close();
+  const beforeMetrics = getFolderAdoptionStreamMetrics();
+
+  try {
+    const plan = await confirmedPlanFor(sourceRoot, (initial) => {
+      let next = initial;
+      for (const item of next.items) {
+        next = setImportMappingSelected(
+          next,
+          item.relative_path,
+          item.relative_path === "large.bin",
+        );
+        if (item.relative_path === "large.bin") {
+          next = setImportMappingRole(next, item.relative_path, "asset");
+        }
+      }
+      return next;
+    });
+    const adopted = await confirmFolderAdoption(plan, {
+      project_root: targetRoot,
+      skip_project_write: true,
+    });
+    const asset = adopted.data.assets.find((candidate) =>
+      candidate.id === adopted.asset_ids[0]
+    );
+    assert(asset, "large asset metadata is created");
+    assert(asset.file_size === 256 * 1024 * 1024, "asset size records source bytes");
+    assert(await Deno.stat(sourcePath).then((stat) => stat.size) === asset.file_size, "source remains in place");
+
+    const targetPath = join(targetRoot, asset.storage_path);
+    const targetFile = await Deno.open(targetPath, { read: true });
+    const targetHash = createHash("sha256");
+    const chunk = new Uint8Array(1024 * 1024);
+    let targetSize = 0;
+    try {
+      while (true) {
+        const read = await targetFile.read(chunk);
+        if (read === null) break;
+        if (!read) continue;
+        targetHash.update(chunk.subarray(0, read));
+        targetSize += read;
+      }
+    } finally {
+      targetFile.close();
+    }
+    const actualTargetHash = targetHash.digest("hex");
+    assert(targetSize === asset.file_size, "target size matches Canonical metadata");
+    assert(actualTargetHash === asset.checksum, "checksum hashes the promoted target bytes");
+
+    const metrics = getFolderAdoptionStreamMetrics();
+    assert(metrics.bytes_read - beforeMetrics.bytes_read >= asset.file_size, "source reads are counted separately while hashing into staging");
+    assert(metrics.bytes_written - beforeMetrics.bytes_written >= asset.file_size, "staging writes are counted separately from source reads");
+    assert(metrics.fallback_copy_bytes_read === beforeMetrics.fallback_copy_bytes_read, "same-filesystem promotion does not reread staging");
+    assert(metrics.fallback_copy_bytes_written === beforeMetrics.fallback_copy_bytes_written, "same-filesystem promotion does not copy staging again");
+    assert(metrics.peak_buffered_bytes <= 1024 * 1024, "adoption holds at most one 1 MiB copy chunk");
+    assert(metrics.rename_promotions > beforeMetrics.rename_promotions, "same-filesystem adoption promotes the staged file atomically");
   } finally {
     await Deno.remove(targetRoot, { recursive: true }).catch(() => {});
     await Deno.remove(sourceRoot, { recursive: true }).catch(() => {});

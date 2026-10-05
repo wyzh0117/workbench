@@ -6,6 +6,7 @@
  * Requires ImportMappingPlan.confirmed === true.
  */
 import { basename, dirname, extname, isAbsolute, join, normalize, relative } from "node:path";
+import { createHash } from "node:crypto";
 import { addAsset, addAssetUsage } from "../domain/assets.ts";
 import { addStage } from "../domain/course.ts";
 import { appendBlock, createDocument } from "../domain/document.ts";
@@ -40,6 +41,30 @@ import {
 } from "./folder_mapping.ts";
 import { ProjectDirectoryStore, inspectProjectDirectory } from "./storage.ts";
 import { parseMarkdown } from "../../app/markdown.js";
+
+const ADOPTION_IO_CHUNK_BYTES = 1024 * 1024;
+
+interface StagedAdoptionAsset {
+  staging: string;
+  final: string;
+  checksum: string;
+  size: number;
+}
+
+const adoptionStreamMetrics = {
+  chunks: 0,
+  bytes_read: 0,
+  bytes_written: 0,
+  fallback_copy_bytes_read: 0,
+  fallback_copy_bytes_written: 0,
+  peak_buffered_bytes: 0,
+  rename_promotions: 0,
+  copy_fallback_promotions: 0,
+};
+
+export function getFolderAdoptionStreamMetrics(): typeof adoptionStreamMetrics {
+  return { ...adoptionStreamMetrics };
+}
 
 export interface FolderAdoptionOptions {
   /** Existing project to extend; default creates empty project in plan.root. */
@@ -432,26 +457,83 @@ async function ensureManagedDirectory(path: string): Promise<void> {
   }
 }
 
-async function copyManagedAsset(
-  root: string,
-  sourceAbs: string,
-  relativePath: string,
+async function writeAll(
+  file: Deno.FsFile,
   bytes: Uint8Array,
+  fallbackCopy: boolean,
 ): Promise<void> {
-  const target = join(root, ...relativePath.split("/"));
-  await Deno.mkdir(dirname(target), { recursive: true });
-  // Prefer copyFile so we never truncate the original; fall back to write of
-  // already-read bytes when source and destination differ.
-  try {
-    await Deno.copyFile(sourceAbs, target);
-  } catch {
-    await Deno.writeFile(target, bytes);
+  let offset = 0;
+  while (offset < bytes.byteLength) {
+    const written = await file.write(bytes.subarray(offset));
+    if (!written) throw new Error("导入文件写入没有前进");
+    offset += written;
+    adoptionStreamMetrics.bytes_written += written;
+    if (fallbackCopy) {
+      adoptionStreamMetrics.fallback_copy_bytes_written += written;
+    }
   }
+}
+
+async function streamCopyAndHash(
+  source: string,
+  target: string,
+  fallbackCopy = false,
+): Promise<{ checksum: string; size: number }> {
+  const sourceStat = await Deno.lstat(source);
+  if (sourceStat.isSymlink || !sourceStat.isFile) {
+    throw new Error(`导入素材源必须是普通文件：${source}`);
+  }
+  const input = await Deno.open(source, { read: true });
+  let output: Deno.FsFile;
+  try {
+    output = await Deno.open(target, { write: true, createNew: true });
+  } catch (caught) {
+    input.close();
+    throw caught;
+  }
+  const buffer = new Uint8Array(ADOPTION_IO_CHUNK_BYTES);
+  const hash = createHash("sha256");
+  let size = 0;
+  try {
+    const openedStat = await input.stat();
+    if (!openedStat.isFile) throw new Error(`导入素材源不是普通文件：${source}`);
+    while (true) {
+      const read = await input.read(buffer);
+      if (read === null) break;
+      if (read === 0) continue;
+      const chunk = buffer.subarray(0, read);
+      await writeAll(output, chunk, fallbackCopy);
+      hash.update(chunk);
+      size += read;
+      adoptionStreamMetrics.bytes_read += read;
+      if (fallbackCopy) {
+        adoptionStreamMetrics.fallback_copy_bytes_read += read;
+      }
+      adoptionStreamMetrics.chunks += 1;
+      adoptionStreamMetrics.peak_buffered_bytes = Math.max(
+        adoptionStreamMetrics.peak_buffered_bytes,
+        buffer.byteLength,
+      );
+    }
+    const outputStat = await output.stat();
+    if (!outputStat.isFile || outputStat.size !== size) {
+      throw new Error(`导入素材暂存文件校验失败：${target}`);
+    }
+    await output.sync();
+  } catch (caught) {
+    output.close();
+    input.close();
+    await Deno.remove(target).catch(() => {});
+    throw caught;
+  }
+  output.close();
+  input.close();
+  return { checksum: hash.digest("hex"), size };
 }
 
 async function cleanupStaging(
   root: string,
-  staged: Array<{ staging: string; final: string }>,
+  staged: StagedAdoptionAsset[],
   stagingRoot: string,
 ): Promise<void> {
   for (const pair of staged) {
@@ -470,7 +552,7 @@ async function cleanupStaging(
 
 async function promoteStaging(
   root: string,
-  staged: Array<{ staging: string; final: string }>,
+  staged: StagedAdoptionAsset[],
 ): Promise<string[]> {
   if (!staged.length) return [];
   await ensureManagedDirectory(join(root, "assets"));
@@ -480,16 +562,31 @@ async function promoteStaging(
       const from = join(root, ...pair.staging.split("/"));
       const to = join(root, ...pair.final.split("/"));
       await ensureManagedDirectory(dirname(to));
-      const bytes = await Deno.readFile(from);
-      const output = await Deno.open(to, { write: true, createNew: true });
       promoted.push(pair.final);
       try {
-        let offset = 0;
-        while (offset < bytes.length) offset += await output.write(bytes.subarray(offset));
-      } finally {
-        output.close();
+        // Staging lives below the same project root, so the normal promotion
+        // is an atomic rename and preserves the bytes already hashed on write.
+        await Deno.rename(from, to);
+        const targetStat = await Deno.lstat(to);
+        if (targetStat.isSymlink || !targetStat.isFile || targetStat.size !== pair.size) {
+          throw new Error(`接管素材目标校验失败：${pair.final}`);
+        }
+        adoptionStreamMetrics.rename_promotions += 1;
+      } catch (caught) {
+        const code = caught && typeof caught === "object" && "code" in caught
+          ? String((caught as { code?: unknown }).code)
+          : "";
+        if (
+          !(caught instanceof Error) ||
+          (caught.name !== "CrossDeviceLink" && code !== "EXDEV")
+        ) throw caught;
+        const written = await streamCopyAndHash(from, to, true);
+        if (written.size !== pair.size || written.checksum !== pair.checksum) {
+          throw new Error(`接管素材目标校验失败：${pair.final}`);
+        }
+        adoptionStreamMetrics.copy_fallback_promotions += 1;
+        await Deno.remove(from);
       }
-      await Deno.remove(from);
     }
     return promoted;
   } catch (caught) {
@@ -811,7 +908,7 @@ export async function confirmFolderAdoption(
     copied_files: [],
     copied_original_paths: [],
   };
-  const staged: Array<{ staging: string; final: string }> = [];
+  const staged: StagedAdoptionAsset[] = [];
   const stagingRoot = `.workspace/adopt-staging/${crypto.randomUUID()}`;
 
   /**
@@ -880,6 +977,49 @@ export async function confirmFolderAdoption(
     const sourceAbs = await sourceFilePath(sourceRoot, rel);
     const filename = cleanName(basename(rel));
     const fileTitle = entryTitle(rel);
+
+    if (
+      role === "asset" || role === "reference" ||
+      (role === "source" && !TEXT_EXT.has(extension(filename)))
+    ) {
+      try {
+        const assetId = await importPathAsAsset(data, root, {
+          filename,
+          sourceAbs,
+          mime: item.mime || mimeFor(filename),
+          duplicateChoice,
+          result,
+          staged,
+          stagingRoot,
+          forceType: role === "reference" ? "document" : undefined,
+        });
+        if (assetId && (role === "source" || role === "reference")) {
+          const sourceId = recordSource(
+            data,
+            role,
+            fileTitle,
+            `${role === "source" ? "源资料" : "参考资料"}：${rel}`,
+            assetId,
+          );
+          result.source_ids.push(sourceId);
+        }
+      } catch (caught) {
+        result.warnings.push(
+          `${rel}: 无法读取（${caught instanceof Error ? caught.message : String(caught)}）`,
+        );
+        recordDocument(
+          item,
+          "failed",
+          `无法读取源文件（${caught instanceof Error ? caught.message : String(caught)}）；原文件保持原地。`,
+        );
+      }
+      continue;
+    }
+
+    if (role !== "lesson" && role !== "source") {
+      result.warnings.push(`${rel}: 映射「${role}」在文件上已跳过`);
+      continue;
+    }
 
     let bytes: Uint8Array;
     try {
@@ -985,9 +1125,14 @@ export async function confirmFolderAdoption(
           }
           throw caught;
         }
-        let dependencyBytes: Uint8Array;
         try {
-          dependencyBytes = await Deno.readFile(dependencyPath);
+          const stat = await Deno.lstat(dependencyPath);
+          if (stat.isSymlink || !stat.isFile) {
+            result.warnings.push(
+              `${rel}: 图片依赖「${ref.href}」不是普通文件；已保留正文原文，未创建素材。`,
+            );
+            continue;
+          }
         } catch (caught) {
           if (caught instanceof Deno.errors.NotFound) {
             result.warnings.push(
@@ -998,10 +1143,8 @@ export async function confirmFolderAdoption(
           throw caught;
         }
         const dependencyName = cleanName(basename(dependencyPath));
-        const dependencyId = await importBytesAsAsset(data, root, {
+        const dependencyId = await importPathAsAsset(data, root, {
           filename: dependencyName,
-          bytes: dependencyBytes,
-          checksum: await sha256Bytes(dependencyBytes),
           mime: mimeFor(dependencyName),
           sourceAbs: dependencyPath,
           duplicateChoice,
@@ -1117,85 +1260,17 @@ export async function confirmFolderAdoption(
     }
 
     if (role === "source") {
-      const ext = extension(filename);
-      if (TEXT_EXT.has(ext)) {
-        const text = new TextDecoder().decode(bytes);
-        const sourceId = recordSource(
-          data,
-          "source",
-          fileTitle,
-          `源资料：${rel}\n\n${text}`,
-        );
-        result.source_ids.push(sourceId);
-      } else {
-        const assetId = await importBytesAsAsset(data, root, {
-          filename,
-          bytes,
-          checksum,
-          mime: item.mime || mimeFor(filename),
-          sourceAbs,
-          duplicateChoice,
-          result,
-          staged,
-          stagingRoot,
-        });
-        if (assetId) {
-          const sourceId = recordSource(
-            data,
-            "source",
-            fileTitle,
-            `源资料：${rel}`,
-            assetId,
-          );
-          result.source_ids.push(sourceId);
-        }
-      }
+      const text = new TextDecoder().decode(bytes);
+      const sourceId = recordSource(
+        data,
+        "source",
+        fileTitle,
+        `源资料：${rel}\n\n${text}`,
+      );
+      result.source_ids.push(sourceId);
       continue;
     }
 
-    if (role === "reference") {
-      const assetId = await importBytesAsAsset(data, root, {
-        filename,
-        bytes,
-        checksum,
-        mime: item.mime || mimeFor(filename),
-        sourceAbs,
-        duplicateChoice,
-        result,
-        forceType: "document",
-        staged,
-        stagingRoot,
-      });
-      if (assetId) {
-        const sourceId = recordSource(
-          data,
-          "reference",
-          fileTitle,
-          `参考资料：${rel}`,
-          assetId,
-        );
-        result.source_ids.push(sourceId);
-      }
-      continue;
-    }
-
-    if (role === "asset") {
-      await importBytesAsAsset(data, root, {
-        filename,
-        bytes,
-        checksum,
-        mime: item.mime || mimeFor(filename),
-        sourceAbs,
-        duplicateChoice,
-        result,
-        staged,
-        stagingRoot,
-      });
-      continue;
-    }
-
-    // stage-as-file or unknown → skip with warning
-    result.warnings.push(`${rel}: 映射「${role}」在文件上已跳过`);
   }
 
   if (options.persist_project) {
@@ -1266,25 +1341,29 @@ export async function confirmFolderAdoption(
   }
 }
 
-async function importBytesAsAsset(
+async function importPathAsAsset(
   data: ProjectData,
   root: string,
   input: {
     filename: string;
-    bytes: Uint8Array;
-    checksum: string;
     mime: string;
     sourceAbs: string;
     duplicateChoice: "existing" | "copy" | "cancel";
     result: FolderAdoptionResult;
     forceType?: AssetType;
-    staged: Array<{ staging: string; final: string }>;
+    staged: StagedAdoptionAsset[];
     stagingRoot: string;
   },
 ): Promise<string | null> {
+  const assetId = id();
+  const storagePath = `assets/${assetId}-${input.filename}`;
+  const stagingPath = `${input.stagingRoot}/${assetId}-${input.filename}`;
+  const stagingAbs = join(root, ...stagingPath.split("/"));
+  await ensureManagedDirectory(dirname(stagingAbs));
+  const verified = await streamCopyAndHash(input.sourceAbs, stagingAbs);
   const existing = data.assets.find((asset) =>
     asset.project_id === data.project.id &&
-    asset.checksum === input.checksum &&
+    asset.checksum === verified.checksum &&
     !asset.archived
   );
   if (existing) {
@@ -1292,6 +1371,7 @@ async function importBytesAsAsset(
       throw new Error("已取消重复素材导入");
     }
     if (input.duplicateChoice === "existing") {
+      await Deno.remove(stagingAbs);
       input.result.reused_asset_ids.push(existing.id);
       input.result.asset_ids.push(existing.id);
       input.result.warnings.push(
@@ -1302,11 +1382,7 @@ async function importBytesAsAsset(
     // "copy" → keep duplicate record below
   }
 
-  const assetId = id();
-  const storagePath = `assets/${assetId}-${input.filename}`;
-  const stagingPath = `${input.stagingRoot}/${assetId}-${input.filename}`;
-  await copyManagedAsset(root, input.sourceAbs, stagingPath, input.bytes);
-  input.staged.push({ staging: stagingPath, final: storagePath });
+  input.staged.push({ staging: stagingPath, final: storagePath, ...verified });
   input.result.copied_files.push(storagePath);
 
   const added = addAsset(data, data.project.id, {
@@ -1314,8 +1390,8 @@ async function importBytesAsAsset(
     filename: input.filename,
     storage_path: storagePath,
     mime_type: input.mime,
-    checksum: input.checksum,
-    file_size: input.bytes.byteLength,
+    checksum: verified.checksum,
+    file_size: verified.size,
     source_type: "imported",
     title: input.filename,
   }, Boolean(existing && input.duplicateChoice === "copy"));
