@@ -40,6 +40,8 @@ static SCANNED_FOLDER_VIDEOS: OnceLock<Mutex<HashSet<(PathBuf, String)>>> = Once
 #[cfg(test)]
 static SNAPSHOT_FAIL_ID: OnceLock<Mutex<Option<String>>> = OnceLock::new();
 #[cfg(test)]
+static SNAPSHOT_DIRSYNC_FAIL_ID: OnceLock<Mutex<Option<String>>> = OnceLock::new();
+#[cfg(test)]
 static PROJECT_IO_METRICS: OnceLock<Mutex<HashMap<PathBuf, ProjectIoMetrics>>> = OnceLock::new();
 #[cfg(test)]
 static PROJECT_LOCK_WORKERS_STARTED: AtomicU64 = AtomicU64::new(0);
@@ -4333,7 +4335,25 @@ fn snapshot_ack(envelope: Value, outcome: &str) -> Value {
     })
 }
 
-fn atomic_create_snapshot(path: &Path, contents: &[u8]) -> Result<Option<String>, String> {
+fn snapshot_directory_sync_warning(parent: &Path, snapshot_id: &str) -> Option<String> {
+    let result = if snapshot_directory_sync_failure_requested(snapshot_id) {
+        Err(std::io::Error::new(
+            std::io::ErrorKind::Other,
+            "测试注入：快照目录同步失败",
+        ))
+    } else {
+        File::open(parent).and_then(|directory| directory.sync_all())
+    };
+    result
+        .err()
+        .map(|error| format!("历史版本已保存，但历史版本目录同步失败: {error}"))
+}
+
+fn atomic_create_snapshot(
+    path: &Path,
+    snapshot_id: &str,
+    contents: &[u8],
+) -> Result<Option<String>, String> {
     let parent = path.parent().ok_or("历史版本文件没有父目录")?;
     ensure_directory(parent, "历史版本目录")?;
     reject_symlink(path, "历史版本文件")?;
@@ -4357,9 +4377,16 @@ fn atomic_create_snapshot(path: &Path, contents: &[u8]) -> Result<Option<String>
     }
     drop(file);
     match fs::hard_link(&temporary, path) {
-        Ok(()) => Ok(fs::remove_file(&temporary)
-            .err()
-            .map(|error| format!("历史版本已保存，但临时文件清理失败: {error}"))),
+        Ok(()) => {
+            let mut warnings = Vec::new();
+            if let Err(error) = fs::remove_file(&temporary) {
+                warnings.push(format!("历史版本已保存，但临时文件清理失败: {error}"));
+            }
+            if let Some(warning) = snapshot_directory_sync_warning(parent, snapshot_id) {
+                warnings.push(warning);
+            }
+            Ok((!warnings.is_empty()).then(|| warnings.join("；")))
+        }
         Err(error) => {
             let _ = fs::remove_file(&temporary);
             if error.kind() == std::io::ErrorKind::AlreadyExists {
@@ -4383,6 +4410,30 @@ fn fail_snapshot_write_for_test(snapshot_id: &str) {
         .get_or_init(|| Mutex::new(None))
         .lock()
         .unwrap() = Some(snapshot_id.to_owned());
+}
+
+#[cfg(test)]
+fn fail_snapshot_directory_sync_for_test(snapshot_id: &str) {
+    *SNAPSHOT_DIRSYNC_FAIL_ID
+        .get_or_init(|| Mutex::new(None))
+        .lock()
+        .unwrap() = Some(snapshot_id.to_owned());
+}
+
+fn snapshot_directory_sync_failure_requested(snapshot_id: &str) -> bool {
+    #[cfg(test)]
+    {
+        let mut fail_id = SNAPSHOT_DIRSYNC_FAIL_ID
+            .get_or_init(|| Mutex::new(None))
+            .lock()
+            .unwrap();
+        if fail_id.as_deref() == Some(snapshot_id) {
+            *fail_id = None;
+            return true;
+        }
+    }
+    let _ = snapshot_id;
+    false
 }
 
 fn snapshot_write_failure_requested(snapshot_id: &str) -> bool {
@@ -4440,7 +4491,11 @@ fn write_snapshot_unlocked(
                 .unwrap_or(snapshot_content_hash(existing_project)?);
             let requested_hash = envelope["content_hash"].as_str().unwrap_or_default();
             if existing_hash == requested_hash && snapshot_binding_matches(&existing, binding) {
-                return Ok(snapshot_ack(existing, "unchanged"));
+                let mut acknowledgement = snapshot_ack(existing, "unchanged");
+                if let Some(warning) = snapshot_directory_sync_warning(&directory, id) {
+                    acknowledgement["durability_warning"] = json!(warning);
+                }
+                return Ok(acknowledgement);
             }
             return Err(snapshot_error(
                 "snapshot_id_conflict",
@@ -4473,7 +4528,7 @@ fn write_snapshot_unlocked(
     }
     let mut contents = serde_json::to_vec_pretty(&envelope).map_err(|error| error.to_string())?;
     contents.push(b'\n');
-    let durability_warning = atomic_create_snapshot(&path, &contents)?;
+    let durability_warning = atomic_create_snapshot(&path, id, &contents)?;
     let mut acknowledgement = snapshot_ack(envelope, "written");
     if let Some(warning) = durability_warning {
         acknowledgement["durability_warning"] = json!(warning);
@@ -4798,6 +4853,15 @@ fn restore_snapshot(
         &current_fingerprint,
         mutation_binding.as_ref(),
     )?;
+    let durability_warning = [
+        report.durability_warning.as_deref(),
+        backup.get("durability_warning").and_then(Value::as_str),
+    ]
+    .into_iter()
+    .flatten()
+    .collect::<Vec<_>>();
+    let durability_warning =
+        (!durability_warning.is_empty()).then(|| durability_warning.join("；"));
     let mutation_ack = canonical_mutation_ack(
         mutation_binding.as_ref(),
         &restored,
@@ -4805,7 +4869,7 @@ fn restore_snapshot(
         &project_dir,
         &binding.lease_generation,
         "written",
-        report.durability_warning.as_deref(),
+        durability_warning.as_deref(),
         report.recovery_warning.as_deref(),
     );
     Ok(json!({
@@ -4825,7 +4889,7 @@ fn restore_snapshot(
         "mutation_ack": mutation_ack,
         "backup_persisted": backup["persisted"] == true,
         "recovery_warning": report.recovery_warning,
-        "durability_warning": report.durability_warning,
+        "durability_warning": durability_warning,
         "backup_durability_warning": backup.get("durability_warning").cloned(),
     }))
 }
@@ -12351,6 +12415,12 @@ fn asset_preview_batch_with_diagnostics(
     let requested_ids = field(object, &["asset_ids", "assetIds"])
         .and_then(Value::as_array)
         .ok_or_else(|| preview_batch_error("invalid_preview_request", "asset_ids 必须是数组"))?;
+    if requested_ids.is_empty() {
+        return Err(preview_batch_error(
+            "invalid_preview_request",
+            "asset_ids 必须至少包含一个素材 ID",
+        ));
+    }
     if requested_ids.len() > ASSET_PREVIEW_BATCH_ITEM_LIMIT {
         return Err(preview_batch_error(
             "preview_batch_limit",
@@ -12358,6 +12428,7 @@ fn asset_preview_batch_with_diagnostics(
         ));
     }
     let mut asset_ids = Vec::with_capacity(requested_ids.len());
+    let mut unique_asset_ids = HashSet::with_capacity(requested_ids.len());
     for value in requested_ids {
         let asset_id = value
             .as_str()
@@ -12366,7 +12437,14 @@ fn asset_preview_batch_with_diagnostics(
             .ok_or_else(|| {
                 preview_batch_error("invalid_preview_request", "asset_ids 包含无效素材 ID")
             })?;
-        asset_ids.push(asset_id.to_owned());
+        let asset_id = asset_id.to_owned();
+        if !unique_asset_ids.insert(asset_id.clone()) {
+            return Err(preview_batch_error(
+                "invalid_preview_request",
+                "asset_ids 不能包含重复素材 ID",
+            ));
+        }
+        asset_ids.push(asset_id);
     }
 
     let project_dir = explicit_project_dir(&project_dir, false)?;
@@ -19969,6 +20047,70 @@ mod tests {
     }
 
     #[test]
+    fn snapshot_directory_sync_failure_reports_committed_snapshot_and_keeps_it() {
+        let directory = test_directory("snapshot-directory-sync-warning");
+        let project_dir = directory.to_string_lossy().into_owned();
+        let project = json!({ "project": { "id": "p1", "title": "original" }, "items": [] });
+        project_create(project_dir.clone(), project.clone()).unwrap();
+        let lease_generation = active_lease_generation(&directory).unwrap();
+        let snapshot_id = "snapshot-sync-warning";
+        let create = || {
+            create_snapshot(
+                project_dir.clone(),
+                Some(snapshot_id.into()),
+                "Version sync".into(),
+                "source revision 9".into(),
+                project.clone(),
+                Some("p1".into()),
+                Some(lease_generation.clone()),
+                Some(4),
+                Some("snapshot-op-sync-9".into()),
+                Some(9),
+            )
+        };
+        fail_snapshot_directory_sync_for_test(snapshot_id);
+
+        let acknowledgement =
+            create().expect("directory sync failure cannot undo hard-linked snapshot");
+        let path = directory
+            .join(".workspace/snapshots")
+            .join(format!("{snapshot_id}.json"));
+        let persisted_bytes = fs::read(&path).expect("final immutable snapshot should remain");
+        let persisted: Value = serde_json::from_slice(&persisted_bytes).expect("snapshot envelope");
+        let expected_hash = snapshot_content_hash(&project).unwrap();
+        assert_eq!(acknowledgement["persisted"], json!(true));
+        assert_eq!(acknowledgement["outcome"], json!("written"));
+        assert_eq!(acknowledgement["content_hash"], json!(expected_hash));
+        assert_eq!(persisted["content_hash"], json!(expected_hash));
+        assert_eq!(
+            snapshot_content_hash(&persisted["project"]).unwrap(),
+            expected_hash
+        );
+        assert!(
+            acknowledgement["durability_warning"]
+                .as_str()
+                .is_some_and(|warning| warning.contains("目录同步失败")),
+            "committed snapshot must report the injected parent-directory sync failure: {acknowledgement}"
+        );
+
+        let retried = create().expect("same snapshot retry should be idempotent");
+        assert_eq!(retried["outcome"], json!("unchanged"));
+        fail_snapshot_directory_sync_for_test(snapshot_id);
+        let retried_with_sync_warning =
+            create().expect("existing snapshot should remain idempotent");
+        assert_eq!(retried_with_sync_warning["outcome"], json!("unchanged"));
+        assert!(
+            retried_with_sync_warning["durability_warning"]
+                .as_str()
+                .is_some_and(|warning| warning.contains("目录同步失败")),
+            "idempotent acknowledgement must report the snapshot directory sync failure: {retried_with_sync_warning}"
+        );
+        assert_eq!(fs::read(path).unwrap(), persisted_bytes);
+        project_close(project_dir).unwrap();
+        let _ = fs::remove_dir_all(directory);
+    }
+
+    #[test]
     fn snapshot_listing_is_read_only_and_isolates_corrupt_files() {
         let empty = test_directory("snapshot-list-read-only");
         let listing = list_snapshots(empty.to_string_lossy().into_owned()).unwrap();
@@ -20075,6 +20217,7 @@ mod tests {
             .unwrap()
             .is_none());
 
+        fail_snapshot_directory_sync_for_test(&backup_id);
         let restored = restore_snapshot(
             project_dir.clone(),
             "restore-target".into(),
@@ -20092,6 +20235,24 @@ mod tests {
         assert_eq!(restored["commit_state"], json!("committed"));
         assert_eq!(restored["backup_persisted"], json!(true));
         assert_eq!(restored["backup_snapshot_id"], json!(backup_id));
+        assert!(
+            restored["backup_durability_warning"]
+                .as_str()
+                .is_some_and(|warning| warning.contains("目录同步失败")),
+            "backup receipt must retain its snapshot directory sync warning: {restored}"
+        );
+        assert!(
+            restored["durability_warning"]
+                .as_str()
+                .is_some_and(|warning| warning.contains("目录同步失败")),
+            "restore receipt must surface the pre-restore backup durability warning: {restored}"
+        );
+        assert!(
+            restored["mutation_ack"]["durability_warning"]
+                .as_str()
+                .is_some_and(|warning| warning.contains("目录同步失败")),
+            "mutation acknowledgement must surface the pre-restore backup durability warning: {restored}"
+        );
         assert_eq!(restored["project"], committed_project);
         assert_eq!(restored["project_id"], json!("p1"));
         assert_eq!(restored["lease_generation"], json!(lease_generation));
@@ -21271,6 +21432,42 @@ mod tests {
             1
         );
         assert_eq!(project_id_of(&project).unwrap(), "batch-p1");
+
+        let mut accepted_invalid_batches = Vec::new();
+        for (asset_ids, request_generation) in [(json!([]), 14), (json!(["one", "one"]), 15)] {
+            reset_project_validation_reads(&directory);
+            let result = asset_preview_batch_with_diagnostics(
+                json!({
+                    "project_dir": project_dir.clone(),
+                    "project_id": "batch-p1",
+                    "fingerprint": result["fingerprint"],
+                    "request_generation": request_generation,
+                    "asset_ids": asset_ids
+                }),
+                true,
+            );
+            let io = take_project_validation_reads(&directory);
+            let expected_error = result
+                .as_ref()
+                .err()
+                .and_then(|error| serde_json::from_str::<Value>(error).ok());
+            if expected_error
+                .as_ref()
+                .is_none_or(|error| error["error"]["code"] != "invalid_preview_request")
+                || io.full_reads != 0
+            {
+                accepted_invalid_batches.push(json!({
+                    "asset_ids": asset_ids,
+                    "response": result.ok(),
+                    "error": expected_error,
+                    "manifest_reads": io.full_reads
+                }));
+            }
+        }
+        assert!(
+            accepted_invalid_batches.is_empty(),
+            "empty or duplicate IDs reached batch processing: {accepted_invalid_batches:?}"
+        );
 
         let too_many = asset_preview_batch(json!({
             "project_dir": project_dir,

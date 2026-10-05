@@ -1,0 +1,404 @@
+--- baseline/dfcb23e88b08b246e03b1576eb9471627e510548/src-tauri/src/lib.rs
++++ instrumented-baseline/src-tauri/src/lib.rs
+@@ -26,6 +26,10 @@
+ mod registry;
+ 
+ static ID_COUNTER: AtomicU64 = AtomicU64::new(0);
++#[cfg(test)]
++static PROJECT_IO_METRICS: OnceLock<Mutex<HashMap<PathBuf, ProjectIoMetrics>>> = OnceLock::new();
++#[cfg(test)]
++static PROJECT_LOCK_WORKERS_STARTED: AtomicU64 = AtomicU64::new(0);
+ const PROJECT_LOCK_RELATIVE_PATH: &str = ".workspace/project.lock";
+ const PROJECT_LOCK_GUARD_RELATIVE_PATH: &str = ".workspace/project.lock.guard";
+ const PROJECT_LOCK_STALE_MS: u128 = 30_000;
+@@ -38,6 +42,35 @@
+ static SCANNED_FOLDER_VIDEOS: OnceLock<Mutex<HashSet<(PathBuf, String)>>> = OnceLock::new();
+ static EXIT_READY: AtomicBool = AtomicBool::new(false);
+ 
++#[cfg(test)]
++#[derive(Clone, Debug, Default)]
++struct ProjectIoMetrics {
++    full_reads: usize,
++    full_read_bytes: u64,
++    hash_bytes: u64,
++    write_ops: usize,
++    write_bytes: u64,
++    copy_ops: usize,
++    copy_bytes: u64,
++    sync_ops: usize,
++    rename_ops: usize,
++    files: HashMap<String, ProjectFileIoMetrics>,
++}
++
++#[cfg(test)]
++#[derive(Clone, Copy, Debug, Default)]
++struct ProjectFileIoMetrics {
++    read_ops: usize,
++    read_bytes: u64,
++    hash_bytes: u64,
++    write_ops: usize,
++    write_bytes: u64,
++    copy_ops: usize,
++    copy_bytes: u64,
++    sync_ops: usize,
++    rename_ops: usize,
++}
++
+ /// Project directory requested on the command line (`--project-dir <path>`).
+ ///
+ /// This is the standard "open a project from the shell" entry point: it skips
+@@ -672,6 +705,8 @@
+     }
+     let project_dir = project_dir.to_owned();
+     let app_instance_id = lock.app_instance_id.clone();
++    #[cfg(test)]
++    PROJECT_LOCK_WORKERS_STARTED.fetch_add(1, Ordering::Relaxed);
+     thread::spawn(move || {
+         while !stop.load(Ordering::Relaxed) {
+             thread::sleep(Duration::from_millis(PROJECT_LOCK_HEARTBEAT_MS));
+@@ -939,6 +974,10 @@
+         .create_new(true)
+         .open(&temporary)
+         .map_err(|error| format!("无法创建临时文件: {error}"))?;
++    #[cfg(test)]
++    record_project_io(target, "write", contents.len() as u64);
++    #[cfg(test)]
++    record_project_io(target, "sync", 0);
+     if let Err(error) = file
+         .write_all(contents.as_bytes())
+         .and_then(|_| file.sync_all())
+@@ -951,11 +990,22 @@
+     if keep_backup && target.exists() {
+         let backup = target.with_extension("bak");
+         reject_symlink(&backup, "备份文件")?;
++        #[cfg(test)]
++        record_project_io(
++            &backup,
++            "copy",
++            target
++                .metadata()
++                .map(|metadata| metadata.len())
++                .unwrap_or(0),
++        );
+         if let Err(error) = fs::copy(target, &backup) {
+             let _ = fs::remove_file(&temporary);
+             return Err(format!("无法创建备份: {error}"));
+         }
+     }
++    #[cfg(test)]
++    record_project_io(target, "rename", 0);
+     let result = fs::rename(&temporary, target);
+     if result.is_err() {
+         let _ = fs::remove_file(&temporary);
+@@ -1054,6 +1104,8 @@
+     }
+     reject_symlink(&path, "项目文件")?;
+     let contents = fs::read(&path).map_err(|error| format!("无法读取项目文件: {error}"))?;
++    #[cfg(test)]
++    record_project_io(&path, "read", contents.len() as u64);
+     let value: Value =
+         serde_json::from_slice(&contents).map_err(|error| format!("项目 JSON 无效: {error}"))?;
+     validate_project(&value)?;
+@@ -1073,6 +1125,63 @@
+ 
+ fn read_project_value(project_dir: &Path) -> Result<Value, String> {
+     read_project_state(project_dir).map(|(project, _)| project)
++}
++
++#[cfg(test)]
++fn record_project_io(path: &Path, event: &str, bytes: u64) {
++    let Some(parent) = path.parent() else { return };
++    let root = if parent.file_name().and_then(|name| name.to_str()) == Some(".workspace") {
++        parent.parent()
++    } else {
++        Some(parent)
++    };
++    let Some(root) = root.and_then(|root| fs::canonicalize(root).ok()) else {
++        return;
++    };
++    let relative = path
++        .strip_prefix(&root)
++        .ok()
++        .map(|path| path.to_string_lossy().into_owned())
++        .unwrap_or_default();
++    let mut counters = PROJECT_IO_METRICS
++        .get_or_init(|| Mutex::new(HashMap::new()))
++        .lock()
++        .unwrap();
++    let Some(metrics) = counters.get_mut(&root) else {
++        return;
++    };
++    let file = metrics.files.entry(relative).or_default();
++    match event {
++        "read" => {
++            metrics.full_reads += 1;
++            metrics.full_read_bytes += bytes;
++            metrics.hash_bytes += bytes;
++            file.read_ops += 1;
++            file.read_bytes += bytes;
++            file.hash_bytes += bytes;
++        }
++        "write" => {
++            metrics.write_ops += 1;
++            metrics.write_bytes += bytes;
++            file.write_ops += 1;
++            file.write_bytes += bytes;
++        }
++        "copy" => {
++            metrics.copy_ops += 1;
++            metrics.copy_bytes += bytes;
++            file.copy_ops += 1;
++            file.copy_bytes += bytes;
++        }
++        "sync" => {
++            metrics.sync_ops += 1;
++            file.sync_ops += 1;
++        }
++        "rename" => {
++            metrics.rename_ops += 1;
++            file.rename_ops += 1;
++        }
++        _ => {}
++    }
+ }
+ 
+ fn project_fingerprint(project_dir: &Path) -> Result<FileFingerprint, String> {
+@@ -1090,6 +1199,8 @@
+         Err(error) => return Err(format!("无法检查 project.json: {error}")),
+     };
+     let contents = fs::read(&path).map_err(|error| format!("无法读取 project.json: {error}"))?;
++    #[cfg(test)]
++    record_project_io(&path, "read", contents.len() as u64);
+     let mtime_ms = metadata
+         .modified()
+         .ok()
+@@ -15443,7 +15554,229 @@
+         fs::create_dir_all(&directory).expect("test directory should be created");
+         directory
+     }
++
++    #[test]
++    #[ignore = "manual warm benchmark; set WORKBENCH_NATIVE_IO_FIXTURE to a valid large project.json"]
++    fn manual_native_project_save_warm_metrics() {
++        let fixture_path = std::env::var("WORKBENCH_NATIVE_IO_FIXTURE")
++            .expect("WORKBENCH_NATIVE_IO_FIXTURE must name the shared F-large fixture");
++        let fixture_bytes = fs::read(fixture_path).expect("F-large fixture should be readable");
++        let fixture_hash = sha256_hex(&fixture_bytes);
++        let mut project: Value =
++            serde_json::from_slice(&fixture_bytes).expect("F-large fixture should be valid JSON");
++        assert_eq!(project["blocks"].as_array().map(Vec::len), Some(5_000));
++        assert_eq!(project["assets"].as_array().map(Vec::len), Some(1_000));
++        let project_id = project["project"]["id"]
++            .as_str()
++            .expect("fixture project identity")
++            .to_owned();
++        let directory = test_directory("native-save-warm-metrics");
++        let project_dir = directory.to_string_lossy().into_owned();
++        project_create(project_dir.clone(), project.clone()).expect("fixture project should open");
++        let initial_canonical =
++            fs::read(directory.join("project.json")).expect("created canonical should be readable");
++        let initial_canonical_size = initial_canonical.len();
++        let initial_canonical_hash = sha256_hex(&initial_canonical);
++        let mut expected_fingerprint =
++            project_fingerprint(&directory).expect("initial fingerprint");
++        let mut revision = 1_u64;
+ 
++        let save = |project: &Value,
++                    expected_fingerprint: FileFingerprint,
++                    revision: u64,
++                    operation_id: String|
++         -> Value {
++            let _ = revision;
++            project_save(
++                project_dir.clone(),
++                expected_fingerprint,
++                Some(json!({
++                    "transaction_id": operation_id,
++                    "project_id": project_id,
++                    "canonical_revision": project["project"]["updated_at"],
++                    "saved_at": "2026-10-06T00:00:00.000Z",
++                    "project": project,
++                })),
++                project.clone(),
++            )
++            .expect("legacy save should succeed")
++        };
++
++        // Exclude one changed/no-op pair so measurements are warm and both paths
++        // have run before samples are collected.
++        project["project"]["title"] = json!("native-metrics-warm-000");
++        let warm = save(
++            &project,
++            expected_fingerprint.clone(),
++            revision,
++            "native-metrics-warmup-change".into(),
++        );
++        expected_fingerprint =
++            serde_json::from_value(warm["fingerprint"].clone()).expect("warm save fingerprint");
++        revision += 1;
++        let warm_noop = save(
++            &project,
++            expected_fingerprint.clone(),
++            revision,
++            "native-metrics-warmup-noop".into(),
++        );
++        expected_fingerprint = serde_json::from_value(warm_noop["fingerprint"].clone())
++            .expect("warm no-op fingerprint");
++        revision += 1;
++
++        let canonical_dir = fs::canonicalize(&directory).expect("canonical fixture directory");
++        let generation_before = false; // baseline does not expose a lease generation
++        let workers_before = PROJECT_LOCK_WORKERS_STARTED.load(Ordering::Relaxed);
++        let active_handles_before = active_project_locks()
++            .lock()
++            .unwrap()
++            .contains_key(&canonical_dir);
++        let mut samples = Vec::with_capacity(20);
++        for index in 0..10_u64 {
++            project["project"]["title"] = json!(format!("native-metrics-change-{index:03}"));
++            reset_project_validation_reads(&directory);
++            let started = std::time::Instant::now();
++            let changed = save(
++                &project,
++                expected_fingerprint.clone(),
++                revision,
++                format!("native-metrics-change-{index:03}"),
++            );
++            let elapsed_us = started.elapsed().as_micros() as u64;
++            let io = take_project_validation_reads(&directory);
++            expected_fingerprint = serde_json::from_value(changed["fingerprint"].clone())
++                .expect("changed save fingerprint");
++            samples.push(json!({
++                "kind": "changed",
++                "sample": index + 1,
++                "elapsed_us": elapsed_us,
++                "committed_size": expected_fingerprint.size,
++                "committed_sha256": expected_fingerprint.hash,
++                "io": project_io_metrics_value(&io),
++            }));
++            revision += 1;
++
++            reset_project_validation_reads(&directory);
++            let started = std::time::Instant::now();
++            let unchanged = save(
++                &project,
++                expected_fingerprint.clone(),
++                revision,
++                format!("native-metrics-noop-{index:03}"),
++            );
++            let elapsed_us = started.elapsed().as_micros() as u64;
++            let io = take_project_validation_reads(&directory);
++            expected_fingerprint = serde_json::from_value(unchanged["fingerprint"].clone())
++                .expect("unchanged save fingerprint");
++            samples.push(json!({
++                "kind": "unchanged",
++                "sample": index + 1,
++                "elapsed_us": elapsed_us,
++                "committed_size": expected_fingerprint.size,
++                "committed_sha256": expected_fingerprint.hash,
++                "io": project_io_metrics_value(&io),
++            }));
++            revision += 1;
++        }
++        let generation_after = false; // baseline does not expose a lease generation
++        let workers_after = PROJECT_LOCK_WORKERS_STARTED.load(Ordering::Relaxed);
++        let active_handles_after = active_project_locks()
++            .lock()
++            .unwrap()
++            .contains_key(&canonical_dir);
++        assert_eq!(
++            generation_before, generation_after,
++            "save paths must reuse the lease handle"
++        );
++        assert!(active_handles_before && active_handles_after);
++        assert_eq!(
++            workers_after - workers_before,
++            0,
++            "save paths must not spawn heartbeat workers"
++        );
++
++        println!(
++            "NATIVE_IO_WARM_METRICS={}",
++            json!({
++                "fixture_bytes": fixture_bytes.len(),
++                "fixture_sha256": fixture_hash,
++                "initial_canonical_bytes": initial_canonical_size,
++                "initial_canonical_sha256": initial_canonical_hash,
++                "canonical_size_delta_from_fixture": initial_canonical_size as i64 - fixture_bytes.len() as i64,
++                "blocks": project["blocks"].as_array().map(Vec::len),
++                "assets": project["assets"].as_array().map(Vec::len),
++                "warmup_pairs_excluded": 1,
++                "sample_count_per_kind": 10,
++                "lease_generation_reused": Value::Null,
++                "active_lease_handle_before": active_handles_before,
++                "active_lease_handle_after": active_handles_after,
++                "worker_registrations_during_samples": workers_after - workers_before,
++                "samples": samples,
++            })
++        );
++        project_close(project_dir).expect("fixture lease should close");
++        let _ = fs::remove_dir_all(directory);
++    }
++
++    fn reset_project_validation_reads(directory: &Path) {
++        let directory = fs::canonicalize(directory).expect("project directory should canonicalize");
++        PROJECT_IO_METRICS
++            .get_or_init(|| Mutex::new(HashMap::new()))
++            .lock()
++            .unwrap()
++            .insert(directory, ProjectIoMetrics::default());
++    }
++
++    fn take_project_validation_reads(directory: &Path) -> ProjectIoMetrics {
++        let directory = fs::canonicalize(directory).expect("project directory should canonicalize");
++        PROJECT_IO_METRICS
++            .get_or_init(|| Mutex::new(HashMap::new()))
++            .lock()
++            .unwrap()
++            .remove(&directory)
++            .unwrap_or_default()
++    }
++
++    fn project_io_metrics_value(metrics: &ProjectIoMetrics) -> Value {
++        let files = [
++            "project.json",
++            ".workspace/recovery.json",
++            "project.bak",
++            ".workspace/recovery.bak",
++        ]
++        .into_iter()
++        .map(|path| {
++            let file = metrics.files.get(path).copied().unwrap_or_default();
++            (
++                path.to_owned(),
++                json!({
++                    "read_ops": file.read_ops,
++                    "read_bytes": file.read_bytes,
++                    "hash_bytes": file.hash_bytes,
++                    "write_ops": file.write_ops,
++                    "write_bytes": file.write_bytes,
++                    "copy_ops": file.copy_ops,
++                    "copy_bytes": file.copy_bytes,
++                    "sync_ops": file.sync_ops,
++                    "rename_ops": file.rename_ops,
++                }),
++            )
++        })
++        .collect::<Map<String, Value>>();
++        json!({
++            "full_reads": metrics.full_reads,
++            "full_read_bytes": metrics.full_read_bytes,
++            "hash_bytes": metrics.hash_bytes,
++            "write_ops": metrics.write_ops,
++            "write_bytes": metrics.write_bytes,
++            "copy_ops": metrics.copy_ops,
++            "copy_bytes": metrics.copy_bytes,
++            "sync_ops": metrics.sync_ops,
++            "rename_ops": metrics.rename_ops,
++            "files": files,
++        })
++    }
++
+     fn test_markdown_payload(source: &Path, blocks: Value, refs: Value) -> Value {
+         let bytes = fs::read(source).expect("Markdown fixture should be readable");
+         json!({
