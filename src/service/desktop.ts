@@ -18,20 +18,14 @@ import {
   addPlacement,
   createLayoutInstance,
 } from "../domain/layout.ts";
-import {
-  AiTransport,
-  type AiTransportOptions,
-} from "./ai_transport.ts";
+import { AiTransport, type AiTransportOptions } from "./ai_transport.ts";
 import { AuditLog } from "./audit.ts";
 import { BrowserSessionStore } from "./browser_session.ts";
 import { CommandBus, type CommandContext, QueryBus } from "./commands.ts";
 import { EventBus } from "./events.ts";
 import { error, ServiceError } from "./errors.ts";
 import { JobManager } from "./jobs.ts";
-import {
-  MacKeychainSecretStore,
-  type SecretStore,
-} from "./security.ts";
+import { MacKeychainSecretStore, type SecretStore } from "./security.ts";
 import { DiagnosticLogger } from "./diagnostics.ts";
 import {
   createSearchIndex,
@@ -58,7 +52,13 @@ import {
   preflightExport,
   previewImport,
 } from "./import_export.ts";
-import { inspectMarkdownImage, readFolderPreview, readFolderSource, scanFolder, scanMediaDescendants } from "./folder_scan.ts";
+import {
+  inspectMarkdownImage,
+  readFolderPreview,
+  readFolderSource,
+  scanFolder,
+  scanMediaDescendants,
+} from "./folder_scan.ts";
 import { confirmFolderAdoption } from "./folder_adoption.ts";
 import { ProjectRegistryStore } from "./project_registry.ts";
 import type { ImportMappingPlan } from "./folder_mapping.ts";
@@ -78,7 +78,8 @@ function isFileFingerprint(value: unknown): value is FileFingerprint {
   if (!value || typeof value !== "object" || Array.isArray(value)) return false;
   const fingerprint = value as Partial<FileFingerprint>;
   return typeof fingerprint.exists === "boolean" &&
-    (fingerprint.mtime_ms === null || typeof fingerprint.mtime_ms === "number") &&
+    (fingerprint.mtime_ms === null ||
+      typeof fingerprint.mtime_ms === "number") &&
     (fingerprint.size === null || typeof fingerprint.size === "number") &&
     (fingerprint.hash === null || typeof fingerprint.hash === "string");
 }
@@ -96,6 +97,85 @@ function normalizeImportSources(value: unknown): ImportSource[] {
     }
     return candidate;
   });
+}
+
+const IMPORT_PREVIEW_LIMIT = 8;
+const IMPORT_PREVIEW_TTL_MS = 15 * 60 * 1000;
+
+interface ImportPreviewSlot {
+  created_at: number;
+  active: boolean;
+  preview: ImportPreview | null;
+  project_id: string | null;
+  input_directory: string | null;
+  controller: AbortController | null;
+  completion: Promise<unknown> | null;
+  release_requested: boolean;
+  expiry_timer?: ReturnType<typeof setTimeout>;
+}
+
+function throwIfImportAborted(signal: AbortSignal): void {
+  if (signal.aborted) {
+    throw new DOMException("Import operation cancelled", "AbortError");
+  }
+}
+
+async function writeImportInput(
+  path: string,
+  bytes: Uint8Array,
+  signal: AbortSignal,
+): Promise<void> {
+  const file = await Deno.open(path, { write: true, createNew: true });
+  try {
+    for (let offset = 0; offset < bytes.byteLength;) {
+      throwIfImportAborted(signal);
+      const end = Math.min(offset + 1024 * 1024, bytes.byteLength);
+      let written = 0;
+      while (offset + written < end) {
+        const count = await file.write(bytes.subarray(offset + written, end));
+        if (count === 0) throw new Error("导入来源暂存写入没有进展");
+        written += count;
+      }
+      offset = end;
+    }
+    await file.sync();
+  } finally {
+    file.close();
+  }
+}
+
+async function materializeImportSources(
+  sources: ImportSource[],
+  signal: AbortSignal,
+): Promise<{ sources: ImportSource[]; input_directory: string | null }> {
+  if (!sources.some((source) => source.bytes !== undefined)) {
+    return { sources, input_directory: null };
+  }
+  const inputDirectory = await Deno.makeTempDir({
+    prefix: "acw-import-preview-",
+  });
+  try {
+    const materialized: ImportSource[] = [];
+    for (let index = 0; index < sources.length; index += 1) {
+      throwIfImportAborted(signal);
+      const source = sources[index]!;
+      if (source.bytes === undefined) {
+        materialized.push(source);
+        continue;
+      }
+      const bytes = typeof source.bytes === "string"
+        ? new TextEncoder().encode(source.bytes)
+        : source.bytes;
+      const path = join(inputDirectory, `source-${index}.bin`);
+      await writeImportInput(path, bytes, signal);
+      const { bytes: _bytes, ...descriptor } = source;
+      materialized.push({ ...descriptor, path });
+    }
+    return { sources: materialized, input_directory: inputDirectory };
+  } catch (caught) {
+    await Deno.remove(inputDirectory, { recursive: true });
+    throw caught;
+  }
 }
 
 /** Small composition root for the UI bridge; all system access stays behind it. */
@@ -121,7 +201,7 @@ export class DesktopService {
   readonly context: CommandContext;
   readonly commands: CommandBus;
   readonly queries: QueryBus;
-  private readonly importPreviews = new Map<string, ImportPreview>();
+  private readonly importPreviews = new Map<string, ImportPreviewSlot>();
   /** In-flight `ai.complete` requests, shared across project directories. */
   private readonly aiRequests = new Map<string, AbortController>();
   private readonly aiOptions: AiTransportOptions;
@@ -171,6 +251,15 @@ export class DesktopService {
   }
 
   private registerCommands(): void {
+    this.commands.register("project.read_state", async () => {
+      const state = await this.store.readProjectSnapshot();
+      return {
+        value: {
+          ...state,
+          project_id: state.project?.project.id ?? null,
+        },
+      };
+    });
     this.commands.register("project.open_state", async () => {
       const state = await this.store.readProjectState();
       this.context.project = state.project;
@@ -208,7 +297,9 @@ export class DesktopService {
       const path = String(
         candidate.path ?? candidate.project_dir ?? candidate.folder_path ?? "",
       ).trim();
-      if (!path) throw new Error("project.inspect requires an absolute folder path");
+      if (!path) {
+        throw new Error("project.inspect requires an absolute folder path");
+      }
       const inspection = await inspectProjectDirectory(path);
       return {
         value: inspection,
@@ -381,7 +472,9 @@ export class DesktopService {
         }
         : {};
       if (!candidate.project || !candidate.expected_current) {
-        throw new Error("project.resolve requires project and expected_current");
+        throw new Error(
+          "project.resolve requires project and expected_current",
+        );
       }
       const fingerprint = await this.store.resolveExternalChanges(
         candidate.project,
@@ -583,9 +676,15 @@ export class DesktopService {
     this.commands.register("asset.rename", async (input) => {
       if (!this.context.project) throw new Error("No project is open");
       const candidate = input && typeof input === "object"
-        ? input as { asset_id?: string; assetId?: string; new_name?: string; newName?: string }
+        ? input as {
+          asset_id?: string;
+          assetId?: string;
+          new_name?: string;
+          newName?: string;
+        }
         : {};
-      const assetId = String(candidate.asset_id ?? candidate.assetId ?? "").trim();
+      const assetId = String(candidate.asset_id ?? candidate.assetId ?? "")
+        .trim();
       const newName = String(candidate.new_name ?? candidate.newName ?? "");
       if (!assetId) throw new Error("asset.rename requires asset_id");
       const outcome = await this.store.renameManagedAsset(
@@ -595,7 +694,9 @@ export class DesktopService {
       );
       this.context.project = outcome.project;
       await this.search.rebuild(this.context.project);
-      const renamed = outcome.project.assets.find((asset) => asset.id === assetId) ?? null;
+      const renamed = outcome.project.assets.find((asset) =>
+        asset.id === assetId
+      ) ?? null;
       return {
         value: {
           status: outcome.status,
@@ -934,22 +1035,78 @@ export class DesktopService {
         ? input as {
           sources?: ImportSource[];
           mode?: "content" | "blueprint" | "asset" | "project";
+          preview_id?: string;
         }
         : {};
-      const preview = await previewImport(
-        normalizeImportSources(candidate.sources),
-        {
+      const id = candidate.preview_id?.trim() || crypto.randomUUID();
+      const slot = await this.reserveImportPreview(
+        id,
+        this.context.project?.project.id ?? null,
+      );
+      const controller = slot.controller!;
+      const operation = (async () => {
+        const materialized = await materializeImportSources(
+          normalizeImportSources(candidate.sources),
+          controller.signal,
+        );
+        slot.input_directory = materialized.input_directory;
+        throwIfImportAborted(controller.signal);
+        return await previewImport(materialized.sources, {
           data: this.context.project,
           mode: candidate.mode,
-        },
+          preview_id: id,
+          signal: controller.signal,
+        });
+      })();
+      slot.completion = operation.then(() => undefined, () => undefined);
+      let preview: ImportPreview;
+      try {
+        preview = await operation;
+        slot.preview = preview;
+      } catch (caught) {
+        slot.active = false;
+        await this.disposeImportPreview(id, slot);
+        throw caught;
+      } finally {
+        slot.active = false;
+        slot.controller = null;
+        slot.completion = null;
+      }
+      if (
+        slot.release_requested ||
+        Date.now() - slot.created_at >= IMPORT_PREVIEW_TTL_MS
+      ) {
+        await this.disposeImportPreview(id, slot);
+        throw new Error("导入预览已取消或过期，请重新选择文件");
+      }
+      this.scheduleImportPreviewExpiry(
+        id,
+        slot,
+        Math.max(1, IMPORT_PREVIEW_TTL_MS - (Date.now() - slot.created_at)),
       );
-      this.importPreviews.set(preview.id, preview);
       return {
         value: preview,
         audit: {
           object_type: "import",
           action: "preview",
           metadata: { count: preview.items.length, mode: preview.mode },
+        },
+      };
+    });
+    this.commands.register("import.preview.release", async (input) => {
+      const candidate = input && typeof input === "object"
+        ? input as { preview_id?: unknown }
+        : {};
+      const id = typeof candidate.preview_id === "string"
+        ? candidate.preview_id
+        : "";
+      const released = id ? await this.releaseImportPreview(id) : false;
+      return {
+        value: { released },
+        audit: {
+          object_type: "import",
+          action: "release_preview",
+          metadata: { released },
         },
       };
     });
@@ -962,7 +1119,9 @@ export class DesktopService {
       const path = String(
         candidate.path ?? candidate.folder_path ?? candidate.root ?? "",
       ).trim();
-      if (!path) throw new Error("folder.scan requires an absolute folder path");
+      if (!path) {
+        throw new Error("folder.scan requires an absolute folder path");
+      }
       const report = await scanFolder(path);
       return {
         value: report,
@@ -995,7 +1154,9 @@ export class DesktopService {
       const relativeDir = String(
         candidate.relative_dir ?? candidate.relative_path ?? "",
       ).trim();
-      if (!root) throw new Error("folder.scan_media requires an absolute folder path");
+      if (!root) {
+        throw new Error("folder.scan_media requires an absolute folder path");
+      }
       const report = await scanMediaDescendants(root, relativeDir);
       return {
         value: report,
@@ -1016,7 +1177,9 @@ export class DesktopService {
         : {};
       const root = String(candidate.root ?? candidate.plan?.root ?? "").trim();
       if (!root || !candidate.plan) {
-        throw new Error("folder.scan_documents requires a root and confirmed mapping plan");
+        throw new Error(
+          "folder.scan_documents requires a root and confirmed mapping plan",
+        );
       }
       const report = await scanFolderDocuments(root, candidate.plan);
       return {
@@ -1025,7 +1188,10 @@ export class DesktopService {
           object_type: "import",
           action: "folder_scan_documents",
           metadata: {
-            count: report.groups.reduce((total, group) => total + group.items.length, 0),
+            count: report.groups.reduce(
+              (total, group) => total + group.items.length,
+              0,
+            ),
             root: report.root,
           },
         },
@@ -1045,7 +1211,9 @@ export class DesktopService {
       const relativePath = String(
         candidate.relative_path ?? candidate.relativePath ?? "",
       ).trim();
-      if (!root) throw new Error("folder.read_preview requires the scanned root");
+      if (!root) {
+        throw new Error("folder.read_preview requires the scanned root");
+      }
       if (!relativePath) {
         throw new Error("folder.read_preview requires a relative_path");
       }
@@ -1065,11 +1233,19 @@ export class DesktopService {
     });
     this.commands.register("folder.read_source", async (input) => {
       const candidate = input && typeof input === "object"
-        ? input as { root?: string; relative_path?: string; relativePath?: string }
+        ? input as {
+          root?: string;
+          relative_path?: string;
+          relativePath?: string;
+        }
         : {};
       const root = String(candidate.root || "").trim();
-      const relativePath = String(candidate.relative_path ?? candidate.relativePath ?? "").trim();
-      if (!root || !relativePath) throw new Error("folder.read_source requires root and relative_path");
+      const relativePath = String(
+        candidate.relative_path ?? candidate.relativePath ?? "",
+      ).trim();
+      if (!root || !relativePath) {
+        throw new Error("folder.read_source requires root and relative_path");
+      }
       const source = await readFolderSource(root, relativePath);
       return {
         value: source,
@@ -1082,21 +1258,39 @@ export class DesktopService {
     });
     this.commands.register("folder.markdown_image_status", async (input) => {
       const candidate = input && typeof input === "object"
-        ? input as { root?: string; markdown_relative_path?: string; markdownRelativePath?: string; href?: string }
+        ? input as {
+          root?: string;
+          markdown_relative_path?: string;
+          markdownRelativePath?: string;
+          href?: string;
+        }
         : {};
       const root = String(candidate.root || "").trim();
-      const markdownRelativePath = String(candidate.markdown_relative_path ?? candidate.markdownRelativePath ?? "").trim();
+      const markdownRelativePath = String(
+        candidate.markdown_relative_path ?? candidate.markdownRelativePath ??
+          "",
+      ).trim();
       const href = String(candidate.href || "");
       if (!root || !markdownRelativePath || !href) {
-        throw new Error("folder.markdown_image_status requires root, markdownRelativePath, and href");
+        throw new Error(
+          "folder.markdown_image_status requires root, markdownRelativePath, and href",
+        );
       }
-      const status = await inspectMarkdownImage(root, markdownRelativePath, href);
+      const status = await inspectMarkdownImage(
+        root,
+        markdownRelativePath,
+        href,
+      );
       return {
         value: status,
         audit: {
           object_type: "import",
           action: "folder_markdown_image_status",
-          metadata: { root, relative_path: markdownRelativePath, status: status.status },
+          metadata: {
+            root,
+            relative_path: markdownRelativePath,
+            status: status.status,
+          },
         },
       };
     });
@@ -1112,7 +1306,9 @@ export class DesktopService {
           replace_invalid_project?: boolean;
         }
         : {};
-      if (!candidate.plan) throw new Error("folder.adopt requires a mapping plan");
+      if (!candidate.plan) {
+        throw new Error("folder.adopt requires a mapping plan");
+      }
       if (candidate.plan.confirmed !== true) {
         throw new Error("只能对已确认的导入计划执行文件夹接管");
       }
@@ -1158,9 +1354,15 @@ export class DesktopService {
           document_paths?: string[];
         }
         : {};
-      if (!candidate.plan) throw new Error("folder.append requires a mapping plan");
-      if (candidate.plan.confirmed !== true) throw new Error("只能对已确认的导入计划执行文件追加");
-      if (!this.context.project) throw new Error("请先打开课程项目，再追加文件");
+      if (!candidate.plan) {
+        throw new Error("folder.append requires a mapping plan");
+      }
+      if (candidate.plan.confirmed !== true) {
+        throw new Error("只能对已确认的导入计划执行文件追加");
+      }
+      if (!this.context.project) {
+        throw new Error("请先打开课程项目，再追加文件");
+      }
       const data = structuredClone(this.context.project);
       let fingerprint: FileFingerprint | null = null;
       let recoveryWarning: string | null = null;
@@ -1208,25 +1410,58 @@ export class DesktopService {
       const candidate = input && typeof input === "object"
         ? input as {
           preview?: ImportPreview;
+          preview_id?: string;
           options?: Parameters<typeof confirmImport>[2];
         }
         : {};
-      if (!candidate.preview) {
+      const id = candidate.preview_id ?? candidate.preview?.id;
+      if (!id) {
         throw new Error("import.confirm requires a preview");
       }
-      const preview = this.importPreviews.get(candidate.preview.id) ??
-        candidate.preview;
-      const result = await confirmImport(
-        this.context.project,
-        preview,
-        candidate.options ?? {},
-      );
-      this.importPreviews.delete(preview.id);
-      // A confirmed project import returns a migrated replacement project;
-      // content/asset imports mutate the current project in place.
-      if (result.project) this.context.project = result.project;
-      await this.store.saveWithRecovery(this.context.project);
-      await this.search.rebuild(this.context.project);
+      await this.pruneImportPreviews();
+      const slot = this.importPreviews.get(id);
+      if (!slot?.preview) throw new Error("导入预览已释放或过期，请重新预览");
+      if (slot.active) throw new Error("导入预览正在处理中，请稍后重试");
+      if (slot.project_id !== this.context.project.project.id) {
+        await this.disposeImportPreview(id, slot);
+        throw new Error("当前项目已变化，请重新预览导入内容");
+      }
+      const preview = slot.preview;
+      const controller = new AbortController();
+      slot.controller = controller;
+      slot.active = true;
+      slot.release_requested = false;
+      const operation = (async () => {
+        const candidateProject = structuredClone(this.context.project!);
+        const result = await confirmImport(
+          candidateProject,
+          preview,
+          {
+            ...(candidate.options ?? {}),
+            project_root: this.store.directory,
+            signal: controller.signal,
+          },
+        );
+        throwIfImportAborted(controller.signal);
+        const committedProject = result.project ?? candidateProject;
+        await this.store.saveWithRecovery(committedProject);
+        this.context.project = committedProject;
+        await this.search.rebuild(committedProject);
+        return result;
+      })();
+      slot.completion = operation.then(() => undefined, () => undefined);
+      let result: Awaited<typeof operation>;
+      try {
+        result = await operation;
+      } catch (caught) {
+        await this.disposeImportPreview(id, slot);
+        throw caught;
+      } finally {
+        slot.active = false;
+        slot.controller = null;
+        slot.completion = null;
+      }
+      await this.disposeImportPreview(id, slot);
       return {
         value: result,
         audit: {
@@ -1326,10 +1561,11 @@ export class DesktopService {
           project?: unknown;
         }
         : {};
-      const project = candidate.project && typeof candidate.project === "object" &&
+      const project =
+        candidate.project && typeof candidate.project === "object" &&
           !Array.isArray(candidate.project)
-        ? candidate.project as ProjectData
-        : null;
+          ? candidate.project as ProjectData
+          : null;
       if (!project) throw new Error("snapshot.create requires project data");
       if (
         candidate.snapshot_id !== undefined &&
@@ -1339,7 +1575,9 @@ export class DesktopService {
       const name = candidate.name ?? "未命名版本";
       const note = candidate.note ?? "";
       await this.store.writeSnapshotCopy(snapshotId, project);
-      const snapshot = project.snapshots.find((entry) => entry.id === snapshotId) ?? {
+      const snapshot = project.snapshots.find((entry) =>
+        entry.id === snapshotId
+      ) ?? {
         id: snapshotId,
         project_id: project.project.id,
         name,
@@ -1579,18 +1817,25 @@ export class DesktopService {
         },
       };
     });
-    for (const command of [
-      "ai.subscription.start",
-      "ai.subscription.status",
-      "ai.subscription.cancel",
-      "ai.subscription.logout",
-    ] as const) {
+    for (
+      const command of [
+        "ai.subscription.start",
+        "ai.subscription.status",
+        "ai.subscription.cancel",
+        "ai.subscription.logout",
+      ] as const
+    ) {
       this.commands.register(command, async () => {
         throw error(
           "subscription_native_only",
           "ChatGPT 订阅登录需要 macOS 桌面版的系统浏览器回调和系统钥匙串。",
           "Sign in with ChatGPT is supported by the native Tauri runtime only",
-          { recoverable: false, recommended_action: "请在 macOS 桌面版 Workbench 的 AI 设置中管理订阅账户。", details: {} },
+          {
+            recoverable: false,
+            recommended_action:
+              "请在 macOS 桌面版 Workbench 的 AI 设置中管理订阅账户。",
+            details: {},
+          },
         );
       });
     }
@@ -1872,6 +2117,119 @@ export class DesktopService {
     });
   }
 
+  private scheduleImportPreviewExpiry(
+    id: string,
+    slot: ImportPreviewSlot,
+    delay = IMPORT_PREVIEW_TTL_MS,
+  ): void {
+    if (slot.expiry_timer !== undefined) clearTimeout(slot.expiry_timer);
+    slot.expiry_timer = setTimeout(() => {
+      void this.expireImportPreview(id, slot);
+    }, delay);
+  }
+
+  private async expireImportPreview(
+    id: string,
+    slot: ImportPreviewSlot,
+  ): Promise<void> {
+    if (this.importPreviews.get(id) !== slot) return;
+    if (slot.active) {
+      this.scheduleImportPreviewExpiry(id, slot, 60_000);
+      return;
+    }
+    const remaining = IMPORT_PREVIEW_TTL_MS - (Date.now() - slot.created_at);
+    if (remaining > 0) {
+      this.scheduleImportPreviewExpiry(id, slot, remaining);
+      return;
+    }
+    await this.disposeImportPreview(id, slot);
+  }
+
+  private async disposeImportPreview(
+    id: string,
+    slot = this.importPreviews.get(id),
+  ): Promise<void> {
+    if (!slot) return;
+    if (slot.expiry_timer !== undefined) clearTimeout(slot.expiry_timer);
+    if (this.importPreviews.get(id) === slot) this.importPreviews.delete(id);
+    if (slot.input_directory) {
+      try {
+        await Deno.remove(slot.input_directory, { recursive: true });
+      } catch (caught) {
+        if (!(caught instanceof Deno.errors.NotFound)) throw caught;
+      }
+      slot.input_directory = null;
+    }
+    slot.preview = null;
+  }
+
+  private async pruneImportPreviews(): Promise<void> {
+    const now = Date.now();
+    for (const [id, slot] of this.importPreviews) {
+      if (!slot.active && now - slot.created_at >= IMPORT_PREVIEW_TTL_MS) {
+        await this.disposeImportPreview(id, slot);
+      }
+    }
+  }
+
+  private async reserveImportPreview(
+    id: string,
+    projectId: string | null,
+  ): Promise<ImportPreviewSlot> {
+    await this.pruneImportPreviews();
+    if (this.importPreviews.has(id)) {
+      throw error(
+        "import_preview_id_conflict",
+        "导入预览标识已被使用，请重新开始预览。",
+        "Import preview identifier is already active",
+        {
+          recoverable: true,
+          recommended_action: "生成新的预览标识后重试。",
+          details: {},
+        },
+      );
+    }
+    if (this.importPreviews.size >= IMPORT_PREVIEW_LIMIT) {
+      throw error(
+        "import_preview_limit",
+        "导入预览缓存已达上限，请释放预览后稍后重试。",
+        "Pending import preview cache reached its bounded capacity",
+        {
+          recoverable: true,
+          recommended_action: "释放不再使用的预览后重试。",
+          details: { limit: IMPORT_PREVIEW_LIMIT },
+        },
+      );
+    }
+    const slot: ImportPreviewSlot = {
+      created_at: Date.now(),
+      active: true,
+      preview: null,
+      project_id: projectId,
+      input_directory: null,
+      controller: new AbortController(),
+      completion: null,
+      release_requested: false,
+    };
+    this.importPreviews.set(id, slot);
+    this.scheduleImportPreviewExpiry(id, slot);
+    return slot;
+  }
+
+  private async releaseImportPreview(id: string): Promise<boolean> {
+    const slot = this.importPreviews.get(id);
+    if (!slot) return false;
+    slot.release_requested = true;
+    if (slot.active) {
+      slot.controller?.abort();
+      await slot.completion;
+    }
+    if (this.importPreviews.get(id) === slot) {
+      await this.disposeImportPreview(id, slot);
+    }
+    return true;
+  }
+
   /**
    * Read a browser resume pointer only after checking the current canonical
    * project. Missing, corrupt, stale, or inaccessible records are equivalent
@@ -1898,7 +2256,9 @@ export class DesktopService {
       throw error(
         "browser_session_unavailable",
         "上次阅读位置暂时无法保存，但课程内容仍可继续使用。",
-        `Cannot validate browser session project: ${caught instanceof Error ? caught.message : "unknown failure"}`,
+        `Cannot validate browser session project: ${
+          caught instanceof Error ? caught.message : "unknown failure"
+        }`,
         {
           recoverable: true,
           recommended_action: "重新打开项目后重试；课程内容不会因此改变。",
@@ -1926,7 +2286,9 @@ export class DesktopService {
       throw error(
         "browser_session_unavailable",
         "上次阅读位置暂时无法保存，但课程内容仍可继续使用。",
-        `Cannot save browser session: ${caught instanceof Error ? caught.message : "unknown failure"}`,
+        `Cannot save browser session: ${
+          caught instanceof Error ? caught.message : "unknown failure"
+        }`,
         {
           recoverable: true,
           recommended_action: "检查项目目录权限后重试；课程内容不会因此改变。",
@@ -1954,6 +2316,15 @@ export class DesktopService {
   }
 
   async close(): Promise<void> {
+    const previews = [...this.importPreviews.entries()];
+    for (const [, slot] of previews) {
+      slot.release_requested = true;
+      if (slot.active) slot.controller?.abort();
+    }
+    await Promise.all(previews.map(([, slot]) => slot.completion));
+    for (const [id, slot] of previews) {
+      await this.disposeImportPreview(id, slot);
+    }
     await this.store.close();
   }
 }

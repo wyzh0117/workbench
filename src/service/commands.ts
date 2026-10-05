@@ -20,6 +20,7 @@ import {
 export const HIGH_LEVEL_COMMANDS = [
   "project.open",
   "project.open_state",
+  "project.read_state",
   "project.inspect",
   // §4 application-level project registry: app-global, rebuildable, never a
   // second copy of a course. Both shells expose the same four operations.
@@ -38,6 +39,7 @@ export const HIGH_LEVEL_COMMANDS = [
   "blueprint.confirm",
   "blueprint.discard",
   "import.preview",
+  "import.preview.release",
   "import.confirm",
   "folder.scan",
   "folder.scan_documents",

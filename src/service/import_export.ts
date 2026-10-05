@@ -6,6 +6,7 @@ import {
   join,
   normalize,
 } from "node:path";
+import { createHash } from "node:crypto";
 import { addAsset } from "../domain/assets.ts";
 import { createInboxItem, createPublication } from "../domain/workflow.ts";
 import { buildBlueprintDraft, createCourseSeed } from "../domain/course.ts";
@@ -42,6 +43,18 @@ import type { PublishProjection } from "./publish.ts";
  */
 
 export type ImportMode = "content" | "blueprint" | "asset" | "project";
+export const IMPORT_PREVIEW_SUMMARY_BYTES = 512 * 1024;
+export const IMPORT_IO_CHUNK_BYTES = 1024 * 1024;
+
+export interface ImportSourceState {
+  size: number;
+  modified_ms: number | null;
+  device: number | null;
+  inode: number | null;
+  summary_bytes: number;
+  summary_checksum: string | null;
+}
+
 export type ImportFormat =
   | "markdown"
   | "text"
@@ -81,7 +94,9 @@ export interface ImportItemPreview {
   warnings: string[];
   errors: string[];
   children: ImportItemPreview[];
-  /** Kept in memory between preview and confirm; never serialized to a project. */
+  source_state?: ImportSourceState;
+  summary_truncated?: boolean;
+  /** Only bounded in-memory inputs may be held between preview and confirm. */
   payload?: Uint8Array;
 }
 
@@ -107,6 +122,7 @@ export interface ImportConfirmOptions {
   duplicate_choice?: "existing" | "copy" | "cancel";
   duplicate_choices?: Record<string, "existing" | "copy" | "cancel">;
   project_root?: string;
+  signal?: AbortSignal;
 }
 
 export interface ImportConfirmationResult {
@@ -519,33 +535,158 @@ function parseBlocks(
   return blocks;
 }
 
-async function sourceBytes(
+interface PreviewReadBudget {
+  remaining_bytes: number;
+}
+
+function throwIfAborted(signal?: AbortSignal): void {
+  if (signal?.aborted) {
+    throw new DOMException("Import operation cancelled", "AbortError");
+  }
+}
+
+function fileState(stat: Deno.FileInfo, checksum = ""): ImportSourceState {
+  const extended = stat as Deno.FileInfo & { dev?: number; ino?: number };
+  return {
+    size: stat.size,
+    modified_ms: stat.mtime?.getTime() ?? null,
+    device: typeof extended.dev === "number" ? extended.dev : null,
+    inode: typeof extended.ino === "number" ? extended.ino : null,
+    summary_bytes: 0,
+    summary_checksum: checksum || null,
+  };
+}
+
+function sameFileState(
+  left: ImportSourceState,
+  right: ImportSourceState,
+): boolean {
+  return left.size === right.size &&
+    (left.modified_ms === null || right.modified_ms === left.modified_ms) &&
+    (left.device === null || right.device === left.device) &&
+    (left.inode === null || right.inode === left.inode);
+}
+
+function joinChunks(chunks: Uint8Array[], length: number): Uint8Array {
+  const result = new Uint8Array(length);
+  let offset = 0;
+  for (const chunk of chunks) {
+    result.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return result;
+}
+
+async function readSourceSnapshot(
   source: ImportSource,
-): Promise<{ bytes: Uint8Array; path: string | null; name: string }> {
+  summaryLimit: number,
+  signal?: AbortSignal,
+): Promise<{
+  bytes: Uint8Array;
+  name: string;
+  path: string | null;
+  source_state: ImportSourceState;
+  payload?: Uint8Array;
+}> {
   if (source.bytes !== undefined) {
+    const bytes = toBytes(source.bytes);
+    if (bytes.byteLength > IMPORT_PREVIEW_SUMMARY_BYTES) {
+      throw new Error(
+        "大于 512 KiB 的内存导入来源无法安全保留预览；请通过文件路径选择该文件。",
+      );
+    }
+    const checksum = await sha256Bytes(bytes);
     return {
-      bytes: toBytes(source.bytes),
-      path: null,
+      bytes: bytes.subarray(0, Math.min(bytes.byteLength, summaryLimit))
+        .slice(),
       name: cleanName(source.name ?? "导入内容"),
+      path: null,
+      source_state: {
+        size: bytes.byteLength,
+        modified_ms: null,
+        device: null,
+        inode: null,
+        summary_bytes: bytes.byteLength,
+        summary_checksum: checksum,
+      },
+      payload: bytes,
     };
   }
   if (!source.path) throw new Error("导入需要文件内容或路径");
-  const stat = await Deno.lstat(source.path);
-  if (stat.isSymlink) {
+  const before = await Deno.lstat(source.path);
+  if (before.isSymlink) {
     throw new Error("为避免越过项目边界，导入不支持符号链接文件");
   }
-  if (stat.isDirectory) throw new Error("文件夹需要通过文件夹入口导入");
+  if (before.isDirectory) throw new Error("文件夹需要通过文件夹入口导入");
+  if (!before.isFile) throw new Error("导入来源不是普通文件");
+  const expectedState = fileState(before);
+  if (summaryLimit <= 0) {
+    return {
+      bytes: new Uint8Array(),
+      name: cleanName(source.name ?? basename(source.path)),
+      path: source.path,
+      source_state: expectedState,
+    };
+  }
+  const file = await Deno.open(source.path, { read: true });
+  const summaryParts: Uint8Array[] = [];
+  let summaryBytes = 0;
+  let totalBytes = 0;
+  try {
+    const opened = fileState(await file.stat());
+    if (!sameFileState(expectedState, opened)) {
+      throw new Error("预览来源在打开时发生变化，请重新选择文件");
+    }
+    const buffer = new Uint8Array(
+      Math.min(IMPORT_IO_CHUNK_BYTES, summaryLimit),
+    );
+    while (true) {
+      throwIfAborted(signal);
+      const count = await file.read(buffer);
+      if (count === null) break;
+      if (count === 0) continue;
+      const chunk = buffer.subarray(0, count);
+      totalBytes += count;
+      const take = Math.min(count, Math.max(0, summaryLimit - summaryBytes));
+      if (take > 0) {
+        summaryParts.push(chunk.subarray(0, take).slice());
+        summaryBytes += take;
+      }
+      if (summaryBytes >= summaryLimit) break;
+    }
+    const openedAfter = fileState(await file.stat());
+    const pathAfter = await Deno.lstat(source.path);
+    if (
+      pathAfter.isSymlink || !pathAfter.isFile ||
+      (summaryBytes < summaryLimit && totalBytes !== expectedState.size) ||
+      !sameFileState(expectedState, openedAfter) ||
+      !sameFileState(expectedState, fileState(pathAfter))
+    ) {
+      throw new Error("源文件在预览读取期间发生变化，请重新选择文件");
+    }
+  } finally {
+    file.close();
+  }
+  const summary = joinChunks(summaryParts, summaryBytes);
+  const summaryChecksum = summaryBytes > 0 ? await sha256Bytes(summary) : null;
   return {
-    bytes: await Deno.readFile(source.path),
-    path: source.path,
+    bytes: summary,
     name: cleanName(source.name ?? basename(source.path)),
+    path: source.path,
+    source_state: {
+      ...expectedState,
+      summary_bytes: summaryBytes,
+      summary_checksum: summaryChecksum,
+    },
   };
 }
 
 async function listFiles(
   path: string,
   visited = new Set<string>(),
+  signal?: AbortSignal,
 ): Promise<string[]> {
+  throwIfAborted(signal);
   const stat = await Deno.lstat(path);
   // Symlinks are deliberately skipped instead of followed.  This prevents
   // both circular folder links and imports that escape the selected folder.
@@ -559,11 +700,13 @@ async function listFiles(
   visited.add(identity);
   const result: string[] = [];
   for await (const entry of Deno.readDir(path)) {
+    throwIfAborted(signal);
     if (entry.name.startsWith(".")) continue;
     const child = join(path, entry.name);
     if (entry.isSymlink) continue;
-    if (entry.isDirectory) result.push(...await listFiles(child, visited));
-    else if (entry.isFile) result.push(child);
+    if (entry.isDirectory) {
+      result.push(...await listFiles(child, visited, signal));
+    } else if (entry.isFile) result.push(child);
   }
   return result.sort();
 }
@@ -588,7 +731,13 @@ async function previewOne(
   source: ImportSource,
   data: ProjectData | null,
   mode: ImportMode,
+  budget: PreviewReadBudget,
+  signal?: AbortSignal,
 ): Promise<ImportItemPreview> {
+  throwIfAborted(signal);
+  const displayName = cleanName(
+    source.name ?? (source.path ? basename(source.path) : "导入内容"),
+  );
   if (source.path) {
     const stat = await Deno.lstat(source.path);
     if (stat.isSymlink) {
@@ -596,8 +745,8 @@ async function previewOne(
     }
     if (stat.isDirectory) {
       const children: ImportItemPreview[] = [];
-      for (const path of await listFiles(source.path)) {
-        children.push(await previewOne({ path }, data, mode));
+      for (const path of await listFiles(source.path, new Set(), signal)) {
+        children.push(await previewOne({ path }, data, mode, budget, signal));
       }
       return {
         id: uuid(),
@@ -615,15 +764,74 @@ async function previewOne(
         warnings: children.flatMap((child) => child.warnings),
         errors: children.flatMap((child) => child.errors),
         children,
+        summary_truncated: children.some((child) => child.summary_truncated),
       };
     }
   }
-  const loaded = await sourceBytes(source);
   const format = formatFor(
-    loaded.name,
-    source.mime_type ?? mimeFor(loaded.name),
+    displayName,
+    source.mime_type ?? mimeFor(displayName),
   );
-  const checksum = await sha256Bytes(loaded.bytes);
+  const isScript = SCRIPT_EXTENSIONS.has(extension(displayName));
+  if (isScript || format === "unsupported") {
+    let size = 0;
+    if (source.path) {
+      const stat = await Deno.lstat(source.path);
+      if (stat.isSymlink) {
+        throw new Error("为避免越过项目边界，导入不支持符号链接文件");
+      }
+      if (stat.isDirectory || !stat.isFile) {
+        throw new Error("导入来源不是普通文件");
+      }
+      size = stat.size;
+    } else if (source.bytes !== undefined) {
+      size = toBytes(source.bytes).byteLength;
+    } else {
+      throw new Error("导入需要文件内容或路径");
+    }
+    return {
+      id: uuid(),
+      name: displayName,
+      format,
+      mode,
+      supported: false,
+      size,
+      checksum: null,
+      duplicate_asset_id: null,
+      source_path: source.path ?? null,
+      title: inferTitle(displayName, null),
+      text: null,
+      blocks: [],
+      warnings: [],
+      errors: [
+        isScript
+          ? "脚本和可执行文件只允许作为普通文件查看，导入过程不会执行它。"
+          : "该文件类型暂不支持导入。",
+      ],
+      children: [],
+      summary_truncated: false,
+    };
+  }
+  const needsTextSummary = format === "markdown" || format === "text" ||
+    format === "json";
+  if (
+    source.bytes !== undefined &&
+    toBytes(source.bytes).byteLength > budget.remaining_bytes
+  ) {
+    throw new Error(
+      "预览缓存已达到 512 KiB 上限；请改用文件路径导入或减少同时选择的内存内容。",
+    );
+  }
+  const summaryLimit = needsTextSummary ? budget.remaining_bytes : 0;
+  const loaded = await readSourceSnapshot(source, summaryLimit, signal);
+  const checksum = loaded.source_state.summary_bytes ===
+      loaded.source_state.size
+    ? loaded.source_state.summary_checksum
+    : null;
+  const summaryTruncated = needsTextSummary &&
+    loaded.source_state.size > loaded.bytes.byteLength;
+  const retainedBytes = loaded.payload?.byteLength ?? loaded.bytes.byteLength;
+  budget.remaining_bytes = Math.max(0, budget.remaining_bytes - retainedBytes);
   const duplicate =
     data?.assets.find((asset) =>
       asset.checksum === checksum && !asset.archived
@@ -634,7 +842,7 @@ async function previewOne(
     format,
     mode,
     supported: true,
-    size: loaded.bytes.byteLength,
+    size: loaded.source_state.size,
     checksum,
     duplicate_asset_id: duplicate?.id ?? null,
     source_path: loaded.path,
@@ -644,15 +852,10 @@ async function previewOne(
     warnings: [],
     errors: [],
     children: [],
-    payload: loaded.bytes,
+    source_state: loaded.source_state,
+    summary_truncated: summaryTruncated,
+    ...(loaded.payload ? { payload: loaded.payload } : {}),
   };
-  if (SCRIPT_EXTENSIONS.has(extension(loaded.name))) {
-    item.supported = false;
-    item.errors.push(
-      "脚本和可执行文件只允许作为普通文件查看，导入过程不会执行它。",
-    );
-    return item;
-  }
   if (format === "word") {
     item.supported = false;
     item.warnings.push(
@@ -671,16 +874,17 @@ async function previewOne(
     item.title = cleanName(loaded.name).replace(/\.[^.]+$/, "");
     return item;
   }
-  if (format === "unsupported") {
-    item.supported = false;
-    item.errors.push("该文件类型暂不支持导入。");
-    return item;
-  }
   const text = textDecoder(loaded.bytes);
   item.text = text;
   item.title = inferTitle(loaded.name, text);
+  if (summaryTruncated) {
+    item.warnings.push(
+      "当前只显示不超过 512 KiB 的预览摘要；确认时会重新读取并完整处理源文件。",
+    );
+  }
   if (format === "json") {
     try {
+      if (summaryTruncated) return item;
       const parsed = JSON.parse(text) as unknown;
       if (parsed && typeof parsed === "object" && "project" in parsed) {
         migrateProject(parsed);
@@ -707,14 +911,32 @@ async function previewOne(
 
 export async function previewImport(
   sources: ImportSource[],
-  options: { data?: ProjectData | null; mode?: ImportMode } = {},
+  options: {
+    data?: ProjectData | null;
+    mode?: ImportMode;
+    preview_id?: string;
+    signal?: AbortSignal;
+  } = {},
 ): Promise<ImportPreview> {
   const mode = options.mode ?? "content";
+  const budget: PreviewReadBudget = {
+    remaining_bytes: IMPORT_PREVIEW_SUMMARY_BYTES,
+  };
   const items: ImportItemPreview[] = [];
   for (const source of sources) {
     try {
-      items.push(await previewOne(source, options.data ?? null, mode));
+      throwIfAborted(options.signal);
+      items.push(
+        await previewOne(
+          source,
+          options.data ?? null,
+          mode,
+          budget,
+          options.signal,
+        ),
+      );
     } catch (caught) {
+      throwIfAborted(options.signal);
       const name = cleanName(
         source.name ?? (source.path ? basename(source.path) : "导入内容"),
       );
@@ -738,6 +960,7 @@ export async function previewImport(
           }`,
         ],
         children: [],
+        summary_truncated: false,
       });
     }
   }
@@ -745,7 +968,7 @@ export async function previewImport(
   const duplicates =
     all.filter((item) => item.duplicate_asset_id !== null).length;
   return {
-    id: uuid(),
+    id: options.preview_id ?? uuid(),
     mode,
     items,
     counts: countItems(items),
@@ -754,22 +977,6 @@ export async function previewImport(
     errors: all.flatMap((item) => item.errors),
     requires_confirmation: true,
   };
-}
-
-async function writeAsset(
-  root: string | undefined,
-  relativePath: string,
-  bytes: Uint8Array,
-): Promise<void> {
-  if (!root) return;
-  if (!relativeSafePath(relativePath)) {
-    throw new Error("素材路径必须是项目内相对路径");
-  }
-  const rootPath = normalize(root);
-  await assertNoSymlinkEscape(rootPath, relativePath);
-  const target = join(rootPath, relativePath);
-  await Deno.mkdir(dirname(target), { recursive: true });
-  await Deno.writeFile(target, bytes);
 }
 
 /** Reject writes through an existing symlink component in an import/export root. */
@@ -892,15 +1099,407 @@ function projectRootStoragePath(
   return `assets/${idValue}-${cleanName(filename)}`;
 }
 
+interface PreparedImportAsset {
+  item_id: string;
+  staged_path: string | null;
+  relative_path: string;
+  size: number;
+  checksum: string;
+}
+
+interface StagedImportAsset extends PreparedImportAsset {
+  staged_path: string;
+}
+
+interface ImportAssetTransaction {
+  root: string | undefined;
+  staging_root: string | null;
+  prepared: Map<string, PreparedImportAsset>;
+  staged: StagedImportAsset[];
+}
+
+function assetNeedsImport(
+  item: ImportItemPreview,
+  options: ImportConfirmOptions,
+) {
+  return item.supported && item.format === "asset" ||
+    (item.format === "word" || item.format === "pdf") &&
+      options.accept_as_reference !== false;
+}
+
+async function writeAll(file: Deno.FsFile, bytes: Uint8Array): Promise<void> {
+  let offset = 0;
+  while (offset < bytes.byteLength) {
+    const count = await file.write(bytes.subarray(offset));
+    if (count === 0) throw new Error("导入暂存文件写入没有进展");
+    offset += count;
+  }
+}
+
+async function readConfirmedSource(
+  item: ImportItemPreview,
+  signal: AbortSignal | undefined,
+  onChunk: (chunk: Uint8Array) => Promise<void>,
+  collect: boolean,
+): Promise<{ checksum: string; size: number; text?: string }> {
+  const expected = item.source_state;
+  if (!item.source_path) {
+    if (!item.payload) throw new Error("预览来源已经释放，请重新选择文件");
+    const bytes = item.payload;
+    throwIfAborted(signal);
+    const checksum = await sha256Bytes(bytes);
+    if (
+      expected?.summary_checksum &&
+      expected.summary_bytes === bytes.byteLength &&
+      checksum !== expected.summary_checksum
+    ) throw new Error("预览来源内容已变化，请重新预览");
+    await onChunk(bytes);
+    return {
+      checksum,
+      size: bytes.byteLength,
+      ...(collect ? { text: textDecoder(bytes) } : {}),
+    };
+  }
+  if (!expected) throw new Error("预览缺少来源身份，请重新选择文件");
+  const before = await Deno.lstat(item.source_path);
+  if (before.isSymlink || !before.isFile) {
+    throw new Error("导入来源已变为符号链接或非普通文件");
+  }
+  if (!sameFileState(expected, fileState(before))) {
+    throw new Error("预览来源的大小、时间或文件身份已变化，请重新预览");
+  }
+  const file = await Deno.open(item.source_path, { read: true });
+  const fullHash = createHash("sha256");
+  const summaryHash = expected.summary_bytes > 0 ? createHash("sha256") : null;
+  const textParts: string[] = [];
+  const textDecoderStream = collect
+    ? new TextDecoder("utf-8", { fatal: false })
+    : null;
+  let summaryBytes = 0;
+  let totalBytes = 0;
+  try {
+    if (!sameFileState(expected, fileState(await file.stat()))) {
+      throw new Error("预览来源在打开时发生变化，请重新预览");
+    }
+    const buffer = new Uint8Array(IMPORT_IO_CHUNK_BYTES);
+    while (true) {
+      throwIfAborted(signal);
+      const count = await file.read(buffer);
+      if (count === null) break;
+      if (count === 0) continue;
+      const chunk = buffer.subarray(0, count);
+      fullHash.update(chunk);
+      const prefixLength = Math.min(
+        chunk.byteLength,
+        Math.max(0, expected.summary_bytes - summaryBytes),
+      );
+      if (prefixLength > 0) {
+        summaryHash?.update(chunk.subarray(0, prefixLength));
+        summaryBytes += prefixLength;
+      }
+      if (textDecoderStream) {
+        textParts.push(textDecoderStream.decode(chunk, { stream: true }));
+      }
+      await onChunk(chunk);
+      totalBytes += count;
+    }
+    const afterOpen = fileState(await file.stat());
+    const afterPath = await Deno.lstat(item.source_path);
+    if (
+      afterPath.isSymlink || !afterPath.isFile ||
+      totalBytes !== expected.size ||
+      !sameFileState(expected, afterOpen) ||
+      !sameFileState(expected, fileState(afterPath))
+    ) throw new Error("源文件在确认读取期间发生变化，请重新预览");
+  } finally {
+    file.close();
+  }
+  if (
+    expected.summary_checksum &&
+    (summaryBytes !== expected.summary_bytes ||
+      summaryHash?.digest("hex") !== expected.summary_checksum)
+  ) throw new Error("预览摘要已变化，请重新预览后确认");
+  if (textDecoderStream) textParts.push(textDecoderStream.decode());
+  return {
+    checksum: fullHash.digest("hex"),
+    size: totalBytes,
+    ...(textDecoderStream
+      ? {
+        text: textParts.join("").replace(/\r\n?/g, "\n").replace(/^\uFEFF/, ""),
+      }
+      : {}),
+  };
+}
+
+async function prepareImportAssets(
+  preview: ImportPreview,
+  data: ProjectData,
+  options: ImportConfirmOptions,
+): Promise<ImportAssetTransaction> {
+  const transaction: ImportAssetTransaction = {
+    root: options.project_root,
+    staging_root: null,
+    prepared: new Map(),
+    staged: [],
+  };
+  if (options.project_root) {
+    const root = normalize(options.project_root);
+    const stageRelative = `.workspace/import-staging/${uuid()}`;
+    await assertNoSymlinkEscape(root, `${stageRelative}/probe`);
+    transaction.staging_root = join(root, stageRelative);
+    await Deno.mkdir(transaction.staging_root, { recursive: true });
+    await assertNoSymlinkEscape(root, `${stageRelative}/probe`);
+  }
+  let index = 0;
+  const visit = async (items: ImportItemPreview[]): Promise<void> => {
+    for (const item of items) {
+      throwIfAborted(options.signal);
+      if (item.children.length) {
+        await visit(item.children);
+        continue;
+      }
+      if (!assetNeedsImport(item, options)) continue;
+      const relativePath = projectRootStoragePath(
+        options.project_root,
+        cleanName(item.name),
+        item.id,
+      );
+      if (!relativeSafePath(relativePath)) {
+        throw new Error("素材路径必须是项目内相对路径");
+      }
+      const stagedPath = transaction.staging_root
+        ? join(transaction.staging_root, `${index++}.asset`)
+        : null;
+      const stageHandle = stagedPath
+        ? await Deno.open(stagedPath, { write: true, createNew: true })
+        : null;
+      let verified: { checksum: string; size: number };
+      try {
+        verified = await readConfirmedSource(
+          item,
+          options.signal,
+          async (chunk) => {
+            if (stageHandle) await writeAll(stageHandle, chunk);
+          },
+          false,
+        );
+        await stageHandle?.sync();
+      } finally {
+        stageHandle?.close();
+      }
+      item.checksum = verified.checksum;
+      item.size = verified.size;
+      const duplicate = data.assets.find((asset) =>
+        !asset.archived && asset.checksum === verified.checksum
+      );
+      item.duplicate_asset_id = duplicate?.id ?? null;
+      const duplicateChoice = options.duplicate_choices?.[item.id] ??
+        options.duplicate_choice ?? "existing";
+      if (duplicate && duplicateChoice === "cancel") {
+        throw new Error("已取消重复素材导入");
+      }
+      const prepared: PreparedImportAsset = {
+        item_id: item.id,
+        staged_path: duplicate && duplicateChoice === "existing"
+          ? null
+          : stagedPath,
+        relative_path: relativePath,
+        size: verified.size,
+        checksum: verified.checksum,
+      };
+      transaction.prepared.set(item.id, prepared);
+      if (stagedPath && prepared.staged_path) {
+        transaction.staged.push(prepared as StagedImportAsset);
+      } else if (stagedPath) {
+        await Deno.remove(stagedPath);
+      }
+    }
+  };
+  try {
+    await visit(preview.items);
+  } catch (caught) {
+    await removeImportStaging(transaction);
+    throw caught;
+  }
+  return transaction;
+}
+
+async function removeImportStaging(
+  transaction: ImportAssetTransaction,
+): Promise<void> {
+  if (!transaction.staging_root) return;
+  try {
+    await Deno.remove(transaction.staging_root, { recursive: true });
+  } catch (caught) {
+    if (!(caught instanceof Deno.errors.NotFound)) throw caught;
+  }
+}
+
+async function commitImportAssets(
+  transaction: ImportAssetTransaction,
+  options: ImportConfirmOptions,
+): Promise<string[]> {
+  if (!transaction.root) return [];
+  const root = normalize(transaction.root);
+  const promoted: Array<{
+    target: string;
+    checksum: string;
+    backup: string | null;
+  }> = [];
+  let index = 0;
+  try {
+    for (const asset of transaction.staged) {
+      throwIfAborted(options.signal);
+      const targetRelative = asset.relative_path;
+      await assertNoSymlinkEscape(root, targetRelative);
+      const target = join(root, targetRelative);
+      await Deno.mkdir(dirname(target), { recursive: true });
+      let backup: string | null = null;
+      try {
+        const targetStat = await Deno.lstat(target);
+        if (targetStat.isSymlink || !targetStat.isFile) {
+          throw new Error("已有素材目标不是普通文件，无法安全替换");
+        }
+        backup = join(transaction.staging_root!, `backup-${index}`);
+        await Deno.rename(target, backup);
+      } catch (caught) {
+        if (!(caught instanceof Deno.errors.NotFound)) throw caught;
+      }
+      try {
+        await Deno.rename(asset.staged_path, target);
+      } catch (caught) {
+        if (backup) await Deno.rename(backup, target);
+        throw caught;
+      }
+      promoted.push({ target, checksum: asset.checksum, backup });
+      index += 1;
+    }
+  } catch (caught) {
+    const rollbackErrors: string[] = [];
+    for (const entry of promoted.reverse()) {
+      try {
+        const targetStat = await Deno.lstat(entry.target);
+        if (targetStat.isSymlink || !targetStat.isFile) {
+          throw new Error("提交目标已被替换，拒绝删除外部文件");
+        }
+        const actual = await hashFile(entry.target);
+        if (actual !== entry.checksum) {
+          throw new Error("提交目标内容已被外部修改，拒绝覆盖");
+        }
+        await Deno.remove(entry.target);
+        if (entry.backup) await Deno.rename(entry.backup, entry.target);
+      } catch (rollbackCaught) {
+        rollbackErrors.push(
+          rollbackCaught instanceof Error
+            ? rollbackCaught.message
+            : String(rollbackCaught),
+        );
+      }
+    }
+    if (rollbackErrors.length) {
+      throw new Error(
+        `导入提交失败，且回滚未完全完成；恢复文件保留在 ${transaction.staging_root}: ${
+          rollbackErrors.join("；")
+        }`,
+        { cause: caught },
+      );
+    }
+    await removeImportStaging(transaction);
+    throw caught;
+  }
+  const warnings: string[] = [];
+  try {
+    await removeImportStaging(transaction);
+  } catch (caught) {
+    warnings.push(
+      `导入已提交，但暂存/备份清理失败：${
+        caught instanceof Error ? caught.message : String(caught)
+      }`,
+    );
+  }
+  return warnings;
+}
+
+async function hashFile(path: string): Promise<string> {
+  const file = await Deno.open(path, { read: true });
+  const hash = createHash("sha256");
+  const buffer = new Uint8Array(IMPORT_IO_CHUNK_BYTES);
+  try {
+    while (true) {
+      const count = await file.read(buffer);
+      if (count === null) break;
+      if (count > 0) hash.update(buffer.subarray(0, count));
+    }
+  } finally {
+    file.close();
+  }
+  return hash.digest("hex");
+}
+
+async function hydrateTextItems(
+  items: ImportItemPreview[],
+  options: ImportConfirmOptions,
+): Promise<void> {
+  for (const item of items) {
+    throwIfAborted(options.signal);
+    if (item.children.length) {
+      await hydrateTextItems(item.children, options);
+      continue;
+    }
+    if (
+      !item.supported || !["markdown", "text", "json"].includes(item.format)
+    ) {
+      continue;
+    }
+    if (!item.source_path && !item.payload) {
+      throw new Error("预览来源已经释放，请重新选择文件");
+    }
+    const verified = await readConfirmedSource(
+      item,
+      options.signal,
+      async () => {},
+      true,
+    );
+    const text = verified.text ?? "";
+    item.text = text;
+    item.title = inferTitle(item.name, text);
+    if (item.format === "json") {
+      try {
+        const parsed = JSON.parse(text) as unknown;
+        if (parsed && typeof parsed === "object" && "project" in parsed) {
+          migrateProject(parsed);
+          item.mode = "project";
+        } else {
+          item.blocks = [{ type: "code", content: text }];
+        }
+      } catch (caught) {
+        throw new Error(
+          `JSON 导入内容无效：${
+            caught instanceof Error ? caught.message : String(caught)
+          }`,
+        );
+      }
+    } else {
+      item.blocks = parseBlocks(
+        text,
+        item.format === "text" ? "text" : "markdown",
+      );
+    }
+    item.checksum = verified.checksum;
+    item.size = verified.size;
+  }
+}
+
 async function confirmOne(
   data: ProjectData,
   item: ImportItemPreview,
   options: ImportConfirmOptions,
   result: ImportConfirmationResult,
+  preparedAssets: Map<string, PreparedImportAsset>,
 ): Promise<void> {
   if (item.children.length) {
     for (const child of item.children) {
-      await confirmOne(data, child, options, result);
+      await confirmOne(data, child, options, result, preparedAssets);
     }
     return;
   }
@@ -914,18 +1513,14 @@ async function confirmOne(
       filename,
       item.id,
     );
-    await writeAsset(
-      options.project_root,
-      storagePath,
-      item.payload ?? new Uint8Array(),
-    );
+    const prepared = preparedAssets.get(item.id);
     const added = addAsset(data, data.project.id, {
       type: "document",
       filename,
       storage_path: storagePath,
       mime_type: mimeFor(filename),
-      checksum: item.checksum ?? "",
-      file_size: item.size,
+      checksum: prepared?.checksum ?? item.checksum ?? "",
+      file_size: prepared?.size ?? item.size,
       source_type: "imported",
     }, false);
     result.asset_ids.push(added.asset.id);
@@ -952,18 +1547,14 @@ async function confirmOne(
       filename,
       item.id,
     );
-    await writeAsset(
-      options.project_root,
-      storagePath,
-      item.payload ?? new Uint8Array(),
-    );
+    const prepared = preparedAssets.get(item.id);
     const added = addAsset(data, data.project.id, {
       type: assetTypeFor(filename, mimeFor(filename)),
       filename,
       storage_path: storagePath,
       mime_type: mimeFor(filename),
-      checksum: item.checksum ?? "",
-      file_size: item.size,
+      checksum: prepared?.checksum ?? item.checksum ?? "",
+      file_size: prepared?.size ?? item.size,
       source_type: "imported",
     }, Boolean(item.duplicate_asset_id && choice === "copy"));
     result.asset_ids.push(added.asset.id);
@@ -1035,10 +1626,37 @@ export async function confirmImport(
     project: null,
     warnings: [...preview.warnings],
   };
-  for (const item of preview.items) {
-    await confirmOne(data, item, effectiveOptions, result);
+  const confirmedPreview = structuredClone(preview);
+  const workingData = structuredClone(data);
+  const transaction = await prepareImportAssets(
+    confirmedPreview,
+    workingData,
+    effectiveOptions,
+  );
+  try {
+    await hydrateTextItems(confirmedPreview.items, effectiveOptions);
+    for (const item of confirmedPreview.items) {
+      await confirmOne(
+        workingData,
+        item,
+        effectiveOptions,
+        result,
+        transaction.prepared,
+      );
+    }
+    if (!result.project) {
+      result.warnings.push(
+        ...await commitImportAssets(transaction, effectiveOptions),
+      );
+      Object.assign(data, workingData);
+    } else {
+      await removeImportStaging(transaction);
+    }
+    return result;
+  } catch (caught) {
+    await removeImportStaging(transaction);
+    throw caught;
   }
-  return result;
 }
 
 function jsonBytes(value: unknown): Uint8Array {
@@ -1279,8 +1897,12 @@ function resolveTarget(preset: ExportPreset): ExportTarget {
   if (target === "project_json" || target === "json_project") return "json";
   if (target === "asset" || target === "assets") return "asset_package";
   if (target === "package" || target === "full_package") return "full_project";
-  if (target === "static_web" || target === "web_package" || target === "web") return "web";
-  if (target === "rich_text" || target === "wechat" || target === "wechat_html") return "wechat";
+  if (target === "static_web" || target === "web_package" || target === "web") {
+    return "web";
+  }
+  if (
+    target === "rich_text" || target === "wechat" || target === "wechat_html"
+  ) return "wechat";
   return target as ExportTarget;
 }
 
@@ -1347,8 +1969,14 @@ function projectionForExport(
   data: ProjectData,
   options: ExportOptions,
 ): PublishProjection {
-  const expected = buildPublishProjection(data, exportProjectionOptions(options));
-  if (options.projection && JSON.stringify(options.projection) !== JSON.stringify(expected)) {
+  const expected = buildPublishProjection(
+    data,
+    exportProjectionOptions(options),
+  );
+  if (
+    options.projection &&
+    JSON.stringify(options.projection) !== JSON.stringify(expected)
+  ) {
     throw new Error("预检与导出使用的页面投影不一致，请重新预检。");
   }
   return options.projection ?? expected;
@@ -1388,7 +2016,10 @@ export async function preflightExport(
   data = structuredClone(data);
   const report = emptyReport();
   report.snapshot_revision = await exportSnapshotRevision(data);
-  if (options.snapshot_revision && options.snapshot_revision !== report.snapshot_revision) {
+  if (
+    options.snapshot_revision &&
+    options.snapshot_revision !== report.snapshot_revision
+  ) {
     reportIssue(report, {
       severity: "blocking",
       code: "stale_snapshot",
@@ -1440,7 +2071,8 @@ export async function preflightExport(
   const layoutId = options.layout_instance_id ?? preset.layout_instance_id;
   const projectionOptions = {
     ...options,
-    layout_instance_id: options.layout_instance_id ?? preset.layout_instance_id ?? null,
+    layout_instance_id: options.layout_instance_id ??
+      preset.layout_instance_id ?? null,
   };
   let publicationProjection: PublishProjection | null = null;
   const checkedMissingAssets = new Set<string>();
@@ -1448,7 +2080,9 @@ export async function preflightExport(
     try {
       publicationProjection = projectionForExport(data, projectionOptions);
       for (const media of publicationProjection.media) {
-        const asset = data.assets.find((candidate) => candidate.id === media.id);
+        const asset = data.assets.find((candidate) =>
+          candidate.id === media.id
+        );
         if (!asset || checkedMissingAssets.has(media.id)) continue;
         if (!relativeSafePath(asset.storage_path)) {
           checkedMissingAssets.add(media.id);
@@ -1471,14 +2105,16 @@ export async function preflightExport(
         }
       }
       if (
-        target === "pdf" && publicationProjection.media.some((media) =>
+        target === "pdf" &&
+        publicationProjection.media.some((media) =>
           media.type === "image" || media.type === "gif"
         )
       ) {
         reportIssue(report, {
           severity: "warning",
           code: "pdf_inline_images_omitted",
-          message: "当前服务版 PDF 保留可选择文字，但不嵌入图片；请使用 HTML/Web 导出保留图片。",
+          message:
+            "当前服务版 PDF 保留可选择文字，但不嵌入图片；请使用 HTML/Web 导出保留图片。",
         });
       }
     } catch (caught) {
@@ -1541,7 +2177,9 @@ export async function preflightExport(
   );
   const warnedMedia = new Set<string>();
   for (const usage of referencedAssets) {
-    const asset = data.assets.find((candidate) => candidate.id === usage.asset_id);
+    const asset = data.assets.find((candidate) =>
+      candidate.id === usage.asset_id
+    );
     if (!asset || warnedMedia.has(asset.id)) continue;
     const needsDowngrade =
       ((target === "markdown" || target === "pdf" || target === "wechat") &&
@@ -1614,7 +2252,9 @@ export async function preflightExport(
     itemIds.has(layout.content_item_id) &&
     (layoutId ? layout.id === layoutId : layoutAwareTarget)
   );
-  const selectedPageIds = options.page_ids == null ? null : new Set(options.page_ids);
+  const selectedPageIds = options.page_ids == null
+    ? null
+    : new Set(options.page_ids);
   for (const layout of layouts) {
     const grid = layout.grid_definition as Record<string, unknown>;
     const columns = Array.isArray(grid.columns) ? grid.columns.length : 1;
@@ -1622,12 +2262,14 @@ export async function preflightExport(
     for (
       const placement of data.placements.filter((candidate) =>
         candidate.layout_instance_id === layout.id &&
-        (!selectedPageIds || (candidate.page_id != null && selectedPageIds.has(candidate.page_id)))
+        (!selectedPageIds ||
+          (candidate.page_id != null && selectedPageIds.has(candidate.page_id)))
       )
     ) {
       const page = placement.page_id
         ? data.layout_pages.find((candidate) =>
-          candidate.id === placement.page_id && candidate.layout_instance_id === layout.id
+          candidate.id === placement.page_id &&
+          candidate.layout_instance_id === layout.id
         )
         : null;
       const section = placement.section_id
@@ -1636,10 +2278,11 @@ export async function preflightExport(
           candidate.layout_instance_id === layout.id
         )
         : null;
-      const sectionGrid = (page?.grid_definition ?? section?.grid_definition ?? grid) as Record<
-        string,
-        unknown
-      >;
+      const sectionGrid =
+        (page?.grid_definition ?? section?.grid_definition ?? grid) as Record<
+          string,
+          unknown
+        >;
       const sectionColumns = Array.isArray(sectionGrid.columns)
         ? sectionGrid.columns.length
         : columns;
@@ -1726,21 +2369,24 @@ export async function preflightExport(
       }
     }
   }
-  const hasGridLayout = publicationProjection?.lessons.some((lesson) =>
-    lesson.layout?.mode === "grid"
-  ) ?? false;
+  const hasGridLayout =
+    publicationProjection?.lessons.some((lesson) =>
+      lesson.layout?.mode === "grid"
+    ) ?? false;
   if (options.target_page_size) {
     reportIssue(report, {
       severity: "blocking",
       code: "layout_export_unsupported",
-      message: "浏览器服务的导出适配器不支持统一输出页面尺寸；请在桌面版使用原生 PDF/PPTX 导出。",
+      message:
+        "浏览器服务的导出适配器不支持统一输出页面尺寸；请在桌面版使用原生 PDF/PPTX 导出。",
     });
   }
   if (target === "pdf" && hasGridLayout) {
     reportIssue(report, {
       severity: "blocking",
       code: "layout_export_unsupported",
-      message: "浏览器服务的 PDF 适配器不保留页面布局；请在桌面版使用原生分页导出。",
+      message:
+        "浏览器服务的 PDF 适配器不保留页面布局；请在桌面版使用原生分页导出。",
     });
   }
   const ambiguousLegacyGrid = publicationProjection?.notices.find((notice) =>
@@ -1754,7 +2400,10 @@ export async function preflightExport(
       message: ambiguousLegacyGrid.message,
     });
   }
-  if (publicationProjection && hasGridLayout && ["markdown", "wechat"].includes(target)) {
+  if (
+    publicationProjection && hasGridLayout &&
+    ["markdown", "wechat"].includes(target)
+  ) {
     reportIssue(report, {
       severity: "warning",
       code: "layout_linearized",
@@ -1776,7 +2425,8 @@ export async function preflightExport(
         code: "unplaced_content",
         count: unplaced.length,
         block_ids: unplaced,
-        message: `仍有 ${unplaced.length} 块正文尚未放置；本次仅输出已排版内容。`,
+        message:
+          `仍有 ${unplaced.length} 块正文尚未放置；本次仅输出已排版内容。`,
       });
     }
   }
@@ -1862,7 +2512,9 @@ async function writeOutput(
     const target = join(rootPath, file.relative_path);
     try {
       await Deno.lstat(target);
-      if (!replaceExisting) throw new Error(`导出目标已存在：${file.relative_path}`);
+      if (!replaceExisting) {
+        throw new Error(`导出目标已存在：${file.relative_path}`);
+      }
     } catch (caught) {
       if (!(caught instanceof Deno.errors.NotFound)) throw caught;
     }
@@ -1945,15 +2597,25 @@ export async function exportProject(
   // Warnings may be acknowledged by the caller; a blocking issue must never
   // be bypassed because that would create a known damaged export.
   if (preflight.blocking.length) throw new ExportBlockedError(preflight);
-  const requiredWarnings = [...new Set(preflight.warnings.map((issue) => issue.code))];
+  const requiredWarnings = [
+    ...new Set(preflight.warnings.map((issue) => issue.code)),
+  ];
   const acknowledgedWarnings = new Set(options.acknowledged_warnings ?? []);
-  const missingWarnings = requiredWarnings.filter((code) => !acknowledgedWarnings.has(code));
+  const missingWarnings = requiredWarnings.filter((code) =>
+    !acknowledgedWarnings.has(code)
+  );
   if (missingWarnings.length) {
     throw new ExportWarningConfirmationError(preflight, missingWarnings);
   }
   const files: ExportFile[] = [];
   const items = semanticItems(data, options.content_item_id);
-  const projectionTargets: ExportTarget[] = ["markdown", "html", "web", "wechat", "pdf"];
+  const projectionTargets: ExportTarget[] = [
+    "markdown",
+    "html",
+    "web",
+    "wechat",
+    "pdf",
+  ];
   const projection = projectionTargets.includes(target)
     ? projectionForExport(data, options)
     : null;
@@ -2176,7 +2838,9 @@ export async function exportProject(
   if (projection && target !== "pdf") {
     for (const media of projection.media) {
       const asset = data.assets.find((candidate) => candidate.id === media.id);
-      if (!asset || files.some((file) => file.relative_path === media.output_path)) continue;
+      if (
+        !asset || files.some((file) => file.relative_path === media.output_path)
+      ) continue;
       const bytes = await bytesForAsset(data, asset, options);
       if (!bytes) continue;
       files.push({
@@ -2192,7 +2856,11 @@ export async function exportProject(
     const bAsset = b.relative_path.startsWith("assets/") ? 1 : 0;
     return (aAsset - bAsset) || a.relative_path.localeCompare(b.relative_path);
   });
-  await writeOutput(files, options.output_dir, options.replace_existing === true);
+  await writeOutput(
+    files,
+    options.output_dir,
+    options.replace_existing === true,
+  );
   return { files, preflight, target };
 }
 

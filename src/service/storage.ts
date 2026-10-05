@@ -1034,6 +1034,35 @@ export class ProjectDirectoryStore {
     });
   }
 
+  /** Pure canonical snapshot read; it never adopts a save baseline or creates a lease. */
+  async readProjectSnapshot(): Promise<{
+    project: ProjectData | null;
+    fingerprint: FileFingerprint;
+  }> {
+    assertNoSymlink(this.directory, this.projectPath);
+    try {
+      const stat = await Deno.lstat(this.projectPath);
+      if (!stat.isFile) {
+        throw error(
+          "invalid_project_path",
+          "项目文件路径无效。",
+          `Canonical project path is not a regular file: ${this.projectPath}`,
+          { recoverable: false, recommended_action: null, details: {} },
+        );
+      }
+      const state = await readProjectState(this.projectPath);
+      return { project: state.project, fingerprint: state.fingerprint };
+    } catch (caught) {
+      if (!isNotFound(caught)) throw caught;
+      const fingerprint = await fileFingerprint(this.projectPath);
+      if (fingerprint.exists) {
+        const state = await readProjectState(this.projectPath);
+        return { project: state.project, fingerprint: state.fingerprint };
+      }
+      return { project: null, fingerprint };
+    }
+  }
+
   async readProject(): Promise<ProjectData> {
     const state = await this.readProjectState();
     if (!state.project) throw new Deno.errors.NotFound("project.json is missing");
