@@ -13,6 +13,49 @@ function assert(condition: unknown, message: string): asserts condition {
   if (!condition) throw new Error(message);
 }
 
+function snapshotRequest(
+  desktop: DesktopService,
+  project: ProjectData,
+  snapshotId: string,
+  name: string,
+) {
+  return {
+    project_dir: desktop.store.directory,
+    expected_project_id: project.project.id,
+    lease_generation: desktop.store.leaseGeneration,
+    editor_generation: 1,
+    operation_id: "save-cas-snapshot-" + crypto.randomUUID(),
+    revision: 1,
+    snapshot_id: snapshotId,
+    name,
+    note: "",
+    project,
+  };
+}
+
+function saveRequest(
+  desktop: DesktopService,
+  project: ProjectData,
+  fingerprint: {
+    exists: boolean;
+    mtime_ms: number | null;
+    size: number | null;
+    hash: string | null;
+  },
+  revision: number,
+) {
+  return {
+    project,
+    project_dir: desktop.store.directory,
+    expected_project_id: project.project.id,
+    lease_generation: desktop.store.leaseGeneration,
+    editor_generation: 1,
+    operation_id: "save-cas-" + crypto.randomUUID(),
+    revision,
+    expected_fingerprint: fingerprint,
+  };
+}
+
 Deno.test("folder.append rejects a stale project.save and accepts the fresh baseline", async () => {
   const target = await Deno.makeTempDir({ prefix: "acw-save-cas-target-" });
   const source = await Deno.makeTempDir({ prefix: "acw-save-cas-source-" });
@@ -41,8 +84,8 @@ Deno.test("folder.append rejects a stale project.save and accepts the fresh base
       project: oldState.project,
     });
     assert(
-      missingBaseline.error?.code === "save_baseline_required",
-      "the command boundary must reject saves without a loaded fingerprint",
+      missingBaseline.error?.code === "save_binding_invalid",
+      "the command boundary must reject saves without valid project and fingerprint bindings",
     );
 
     await Deno.writeTextFile(source + "/reading.md", "# Imported lesson\n\nImported body.\n");
@@ -58,10 +101,10 @@ Deno.test("folder.append rejects a stale project.save and accepts the fresh base
 
     const staleProject = structuredClone(oldState.project);
     staleProject.project.title = "stale browser save";
-    const rejected = await desktop.commands.execute("project.save", {
-      project: staleProject,
-      expected_fingerprint: oldState.fingerprint,
-    });
+    const rejected = await desktop.commands.execute(
+      "project.save",
+      saveRequest(desktop, staleProject, oldState.fingerprint, 1),
+    );
     assert(
       rejected.error?.code === "external_modification_conflict",
       "project.save must reject the pre-append client fingerprint",
@@ -78,10 +121,10 @@ Deno.test("folder.append rejects a stale project.save and accepts the fresh base
     const freshState = fresh.value as typeof oldState;
     const freshProject = structuredClone(freshState.project);
     freshProject.project.description = "saved from the current baseline";
-    const accepted = await desktop.commands.execute("project.save", {
-      project: freshProject,
-      expected_fingerprint: freshState.fingerprint,
-    });
+    const accepted = await desktop.commands.execute(
+      "project.save",
+      saveRequest(desktop, freshProject, freshState.fingerprint, 2),
+    );
     assert(!accepted.error, "a save using the fresh fingerprint should succeed");
     disk = await desktop.store.readProject();
     assert(
@@ -128,10 +171,10 @@ Deno.test("snapshot.create stores the caller copy without changing the CAS basel
       git_commit_hash: null,
       created_at: new Date().toISOString(),
     });
-    const saved = await desktop.commands.execute("project.save", {
-      project,
-      expected_fingerprint: initial.fingerprint,
-    });
+    const saved = await desktop.commands.execute(
+      "project.save",
+      saveRequest(desktop, project, initial.fingerprint, 1),
+    );
     assert(!saved.error, "the snapshot row should be committed through project.save");
     const committed = await desktop.commands.execute("project.open_state", {});
     assert(!committed.error, "the committed project state should be readable");
@@ -139,32 +182,25 @@ Deno.test("snapshot.create stores the caller copy without changing the CAS basel
     const canonicalBefore = JSON.stringify(committedState.project);
 
     const tooLongId = await desktop.commands.execute("snapshot.create", {
-      snapshot_id: "s".repeat(129),
-      name: "过长编号",
-      note: "",
-      project: committedState.project,
+      ...snapshotRequest(desktop, committedState.project, "s".repeat(129), "过长编号"),
     });
     assert(
       tooLongId.error?.code === "snapshot_invalid",
       "the service must reject snapshot ids longer than the native 128-byte limit",
     );
     const boundaryId = "s".repeat(128);
-    const boundaryCopy = await desktop.commands.execute("snapshot.create", {
-      snapshot_id: boundaryId,
-      name: "边界编号",
-      note: "",
-      project: committedState.project,
-    });
+    const boundaryCopy = await desktop.commands.execute(
+      "snapshot.create",
+      snapshotRequest(desktop, committedState.project, boundaryId, "边界编号"),
+    );
     assert(!boundaryCopy.error, "the maximum 128-byte ASCII snapshot id should be accepted");
     const reopenedBoundaryCopy = await desktop.store.diffSnapshots(boundaryId, boundaryId);
     assert(!reopenedBoundaryCopy.changed, "the maximum-length snapshot copy should reopen");
 
-    const sidecar = await desktop.commands.execute("snapshot.create", {
-      snapshot_id: snapshotId,
-      name: "唯一版本",
-      note: "",
-      project: committedState.project,
-    });
+    const sidecar = await desktop.commands.execute(
+      "snapshot.create",
+      snapshotRequest(desktop, committedState.project, snapshotId, "唯一版本"),
+    );
     assert(!sidecar.error, "snapshot.create should write the requested sidecar copy");
     const reopenedCopy = await desktop.store.diffSnapshots(snapshotId, snapshotId);
     assert(!reopenedCopy.changed, "the caller's snapshot id should reopen from its sidecar");
@@ -179,10 +215,10 @@ Deno.test("snapshot.create stores the caller copy without changing the CAS basel
 
     const nextProject = structuredClone(afterState.project);
     nextProject.project.description = "saved after sidecar creation";
-    const nextSave = await desktop.commands.execute("project.save", {
-      project: nextProject,
-      expected_fingerprint: afterState.fingerprint,
-    });
+    const nextSave = await desktop.commands.execute(
+      "project.save",
+      saveRequest(desktop, nextProject, afterState.fingerprint, 2),
+    );
     assert(!nextSave.error, "the current baseline should still save after sidecar creation");
     const disk = await desktop.store.readProject();
     assert(

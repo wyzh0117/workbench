@@ -86,6 +86,89 @@ function isFileFingerprint(value: unknown): value is FileFingerprint {
     (fingerprint.hash === null || typeof fingerprint.hash === "string");
 }
 
+interface SnapshotCommandBinding {
+  project_id: string;
+  project_dir: string;
+  lease_generation: string;
+  editor_generation: number;
+  operation_id: string;
+  revision: number;
+}
+
+function snapshotCommandBinding(
+  input: unknown,
+  store: ProjectDirectoryStore,
+  activeProjectId: string | null,
+): SnapshotCommandBinding {
+  if (!input || typeof input !== "object" || Array.isArray(input)) {
+    throw error(
+      "snapshot_request_invalid",
+      "历史版本请求无效。",
+      "Snapshot command requires a request object",
+      { recoverable: false, recommended_action: null, details: { stage: "request_validate", commit_state: "not_committed", retryable: false } },
+    );
+  }
+  const candidate = input as Record<string, unknown>;
+  if (
+    typeof candidate.project_dir !== "string" ||
+    normalize(candidate.project_dir) !== normalize(store.directory)
+  ) {
+    throw error(
+      "project_path_mismatch",
+      "历史版本请求与当前项目路径不匹配。",
+      "Snapshot request project directory does not match the active store",
+      { recoverable: false, recommended_action: null, details: { stage: "project_path_validate", commit_state: "not_committed", retryable: false } },
+    );
+  }
+  if (
+    !activeProjectId ||
+    candidate.expected_project_id !== activeProjectId
+  ) {
+    throw error(
+      "project_id_mismatch",
+      "历史版本请求与当前课程身份不匹配。",
+      "Snapshot request project id does not match the active project",
+      { recoverable: false, recommended_action: null, details: { stage: "project_identity", commit_state: "not_committed", retryable: false } },
+    );
+  }
+  const activeLease = store.leaseGeneration;
+  if (
+    !activeLease || typeof candidate.lease_generation !== "string" ||
+    candidate.lease_generation !== activeLease
+  ) {
+    throw error(
+      "project_lock_lost",
+      "项目编辑租约已变化，历史版本操作已暂停。",
+      "Snapshot request lease generation does not match the active writer lease",
+      { recoverable: false, recommended_action: null, details: { stage: "lease_validate", commit_state: "not_committed", retryable: false } },
+    );
+  }
+  if (
+    !Number.isSafeInteger(candidate.editor_generation) ||
+    (candidate.editor_generation as number) < 0 ||
+    typeof candidate.operation_id !== "string" ||
+    !candidate.operation_id ||
+    candidate.operation_id.length > 256 ||
+    !Number.isSafeInteger(candidate.revision) ||
+    (candidate.revision as number) < 0
+  ) {
+    throw error(
+      "snapshot_binding_invalid",
+      "历史版本请求绑定无效。",
+      "Snapshot request has invalid editor generation, operation id, or revision",
+      { recoverable: false, recommended_action: null, details: { stage: "request_binding", commit_state: "not_committed", retryable: false } },
+    );
+  }
+  return {
+    project_id: activeProjectId,
+    project_dir: store.directory,
+    lease_generation: activeLease,
+    editor_generation: candidate.editor_generation as number,
+    operation_id: candidate.operation_id,
+    revision: candidate.revision as number,
+  };
+}
+
 function normalizeImportSources(value: unknown): ImportSource[] {
   if (!Array.isArray(value)) return [];
   return value.map((source) => {
@@ -1720,73 +1803,180 @@ export class DesktopService {
       };
     });
     this.commands.register("snapshot.create", async (input) => {
-      if (!this.context.project) throw new Error("No project is open");
-      const candidate = input && typeof input === "object"
-        ? input as {
-          snapshot_id?: string;
-          name?: string;
-          note?: string;
-          project?: unknown;
-        }
-        : {};
-      const project =
-        candidate.project && typeof candidate.project === "object" &&
+      const activeProjectId = this.context.project?.project.id ?? null;
+      const binding = snapshotCommandBinding(input, this.store, activeProjectId);
+      const candidate = input as Record<string, unknown>;
+      const project = candidate.project && typeof candidate.project === "object" &&
           !Array.isArray(candidate.project)
-          ? candidate.project as ProjectData
-          : null;
-      if (!project) throw new Error("snapshot.create requires project data");
+        ? candidate.project as ProjectData
+        : null;
+      if (!project || project.project.id !== binding.project_id) {
+        throw error(
+          "project_id_mismatch",
+          "历史版本内容与当前课程身份不匹配。",
+          "Snapshot copy payload does not match the active project",
+          { recoverable: false, recommended_action: null, details: { stage: "snapshot_identity", commit_state: "not_committed", retryable: false } },
+        );
+      }
       if (
         candidate.snapshot_id !== undefined &&
         typeof candidate.snapshot_id !== "string"
-      ) throw new Error("snapshot_id must be a string");
-      const snapshotId = candidate.snapshot_id ?? crypto.randomUUID();
-      const name = candidate.name ?? "未命名版本";
-      const note = candidate.note ?? "";
-      await this.store.writeSnapshotCopy(snapshotId, project);
-      const snapshot = project.snapshots.find((entry) =>
-        entry.id === snapshotId
-      ) ?? {
-        id: snapshotId,
-        project_id: project.project.id,
+      ) {
+        throw error(
+          "snapshot_invalid",
+          "历史版本编号无效。",
+          "snapshot_id must be a string",
+          { recoverable: false, recommended_action: null, details: { stage: "snapshot_id_validate", commit_state: "not_committed", retryable: false } },
+        );
+      }
+      if (
+        (candidate.name !== undefined && typeof candidate.name !== "string") ||
+        (candidate.note !== undefined && typeof candidate.note !== "string")
+      ) {
+        throw error(
+          "snapshot_metadata_invalid",
+          "历史版本名称或备注无效。",
+          "Snapshot name and note must be strings",
+          { recoverable: false, recommended_action: null, details: { stage: "snapshot_metadata_validate", commit_state: "not_committed", retryable: false } },
+        );
+      }
+      const snapshotId = typeof candidate.snapshot_id === "string"
+        ? candidate.snapshot_id
+        : crypto.randomUUID();
+      const name = typeof candidate.name === "string" ? candidate.name : "未命名版本";
+      const note = typeof candidate.note === "string" ? candidate.note : "";
+      if (name.length > 200 || note.length > 2_000) {
+        throw error(
+          "snapshot_metadata_invalid",
+          "历史版本名称或备注过长。",
+          "Snapshot name or note exceeds the supported size",
+          { recoverable: false, recommended_action: null, details: { stage: "snapshot_metadata_validate", commit_state: "not_committed", retryable: false } },
+        );
+      }
+      const persisted = await this.store.writeSnapshotCopy(
+        snapshotId,
+        project,
         name,
         note,
-        git_commit_hash: null,
-        created_at: new Date().toISOString(),
-      };
+      );
       return {
-        value: snapshot,
-        events: [
-          EventBus.domainEvent({
-            type: "SnapshotCreated",
-            project_id: project.project.id,
-            entity_type: "snapshot",
-            entity_id: snapshot.id,
-            source: "user",
-            metadata: {},
-          }),
-        ],
+        value: {
+          id: snapshotId,
+          snapshot_id: snapshotId,
+          persisted: true,
+          outcome: persisted.outcome,
+          content_hash: persisted.content_hash,
+          created_at: persisted.created_at,
+          project_id: binding.project_id,
+          project_dir: binding.project_dir,
+          lease_generation: binding.lease_generation,
+          editor_generation: binding.editor_generation,
+          operation_id: binding.operation_id,
+          revision: binding.revision,
+        },
+        ...(persisted.outcome === "written"
+          ? {
+            events: [
+              EventBus.domainEvent({
+                type: "SnapshotCreated",
+                project_id: binding.project_id,
+                entity_type: "snapshot",
+                entity_id: snapshotId,
+                source: "user",
+                metadata: {},
+              }),
+            ],
+          }
+          : {}),
         audit: {
           object_type: "snapshot",
-          object_id: snapshot.id,
+          object_id: snapshotId,
           action: "create",
+          metadata: { outcome: persisted.outcome },
         },
       };
     });
+    this.commands.register("snapshot.list", async (input) => {
+      const candidate = input && typeof input === "object" &&
+          !Array.isArray(input)
+        ? input as Record<string, unknown>
+        : {};
+      if (
+        typeof candidate.project_dir !== "string" ||
+        normalize(candidate.project_dir) !== normalize(this.store.directory)
+      ) {
+        throw error(
+          "project_path_mismatch",
+          "历史版本列表与当前项目路径不匹配。",
+          "Snapshot list project directory does not match the active store",
+          { recoverable: false, recommended_action: null, details: { stage: "project_path_validate", retryable: false } },
+        );
+      }
+      if (
+        candidate.expected_project_id !== undefined &&
+        typeof candidate.expected_project_id !== "string"
+      ) {
+        throw error(
+          "snapshot_binding_invalid",
+          "历史版本列表请求绑定无效。",
+          "Snapshot list expected project id must be a string",
+          { recoverable: false, recommended_action: null, details: { stage: "request_binding", retryable: false } },
+        );
+      }
+      const listed = await this.store.listSnapshotCopies(
+        candidate.expected_project_id as string | undefined,
+      );
+      return { value: listed };
+    });
     this.commands.register("snapshot.restore", async (input) => {
-      if (!this.context.project) throw new Error("No project is open");
-      const snapshotId = input && typeof input === "object" &&
-          typeof (input as { snapshot_id?: unknown }).snapshot_id === "string"
-        ? (input as { snapshot_id: string }).snapshot_id
+      const activeProjectId = this.context.project?.project.id ?? null;
+      const binding = snapshotCommandBinding(input, this.store, activeProjectId);
+      const candidate = input as Record<string, unknown>;
+      const snapshotId = typeof candidate.snapshot_id === "string"
+        ? candidate.snapshot_id
         : "";
-      if (!snapshotId) throw new Error("snapshot_id is required");
+      if (!snapshotId) {
+        throw error(
+          "snapshot_invalid",
+          "历史版本编号无效。",
+          "snapshot.restore requires a snapshot id",
+          { recoverable: false, recommended_action: null, details: { stage: "snapshot_id_validate", commit_state: "not_committed", retryable: false } },
+        );
+      }
+      const currentState = await this.store.readProjectSnapshot();
+      if (
+        !currentState.project ||
+        currentState.project.project.id !== binding.project_id
+      ) {
+        throw error(
+          "project_id_mismatch",
+          "当前磁盘课程与恢复请求不匹配。",
+          "Canonical project owner changed before snapshot restore",
+          { recoverable: false, recommended_action: null, details: { stage: "project_identity", commit_state: "not_committed", retryable: false } },
+        );
+      }
       const restored = await this.store.restoreSnapshot(
-        structuredClone(this.context.project),
+        currentState.project,
         snapshotId,
       );
       this.context.project = restored.project;
       await this.search.rebuild(this.context.project);
       return {
-        value: restored,
+        value: {
+          restored: true,
+          snapshot_id: snapshotId,
+          project: restored.project,
+          fingerprint: restored.fingerprint,
+          project_id: binding.project_id,
+          project_dir: binding.project_dir,
+          lease_generation: binding.lease_generation,
+          editor_generation: binding.editor_generation,
+          operation_id: binding.operation_id,
+          revision: binding.revision,
+          backup_snapshot_id: restored.backup.id,
+          backup_persisted: true,
+          commit_state: "committed",
+        },
         audit: {
           object_type: "project",
           object_id: restored.project.project.id,

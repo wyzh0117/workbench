@@ -1,0 +1,5 @@
+Check src/service/storage.ts
+Check src/service/desktop.ts
+Check src/service/commands.ts
+Check tests/snapshot_persistence_test.ts
+Check tests/save_cas_test.ts

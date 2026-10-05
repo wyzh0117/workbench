@@ -65,6 +65,7 @@ export const HIGH_LEVEL_COMMANDS = [
   "layout.section.create",
   "placement.create",
   "snapshot.create",
+  "snapshot.list",
   "snapshot.restore",
   "export.run",
   "export.release",

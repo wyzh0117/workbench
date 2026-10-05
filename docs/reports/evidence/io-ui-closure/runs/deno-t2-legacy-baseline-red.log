@@ -1,0 +1,33 @@
+Check tests/legacy_snapshot_list_red_test.ts
+running 3 tests from ./tests/legacy_snapshot_list_red_test.ts
+legacy snapshots.list must discover a persisted orphan sidecar ... FAILED (47ms)
+legacy snapshots.list must isolate a malformed persisted sidecar ... FAILED (12ms)
+legacy snapshots.list does not create an absent snapshots directory ... ok (12ms)
+
+ ERRORS
+
+legacy snapshots.list must discover a persisted orphan sidecar => ./tests/legacy_snapshot_list_red_test.ts:17:6
+error: Error: persisted orphan sidecar should appear in snapshots.list
+  if (!condition) throw new Error(message);
+                        ^
+    at assert (file:///private/tmp/workbench-deno-t2.eqIdwz/tests/legacy_snapshot_list_red_test.ts:5:25)
+    at file:///private/tmp/workbench-deno-t2.eqIdwz/tests/legacy_snapshot_list_red_test.ts:23:5
+
+legacy snapshots.list must isolate a malformed persisted sidecar => ./tests/legacy_snapshot_list_red_test.ts:30:6
+error: Error: corrupt sidecar should appear as an isolated error row
+  if (!condition) throw new Error(message);
+                        ^
+    at assert (file:///private/tmp/workbench-deno-t2.eqIdwz/tests/legacy_snapshot_list_red_test.ts:5:25)
+    at file:///private/tmp/workbench-deno-t2.eqIdwz/tests/legacy_snapshot_list_red_test.ts:37:5
+
+ FAILURES
+
+legacy snapshots.list must discover a persisted orphan sidecar => ./tests/legacy_snapshot_list_red_test.ts:17:6
+legacy snapshots.list must isolate a malformed persisted sidecar => ./tests/legacy_snapshot_list_red_test.ts:30:6
+
+FAILED | 1 passed | 2 failed (77ms)
+
+error: Test failed
+
+BASELINE_EXPECTED_RED_EXIT=1
+BASELINE_DIR=/tmp/workbench-deno-t2.eqIdwz

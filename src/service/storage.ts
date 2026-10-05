@@ -50,6 +50,31 @@ export interface ProjectSaveBinding {
   recovery_metadata?: unknown;
 }
 
+export interface SnapshotCopyWriteResult {
+  content_hash: string;
+  created_at: string;
+  outcome: "written" | "unchanged";
+}
+
+export interface SnapshotListRow {
+  id: string;
+  name: string;
+  note: string;
+  created_at: string;
+  status: "available" | "error";
+  error?: { code: string; message: string };
+  content_hash?: string;
+}
+
+interface SnapshotFileMetadata {
+  version: 1;
+  snapshot_id: string;
+  name: string;
+  note: string;
+  created_at: string;
+  content_hash: string;
+}
+
 export interface ProjectDiffEntry {
   path: string;
   before: unknown;
@@ -1108,7 +1133,7 @@ export class ProjectDirectoryStore {
   private async writeProjectUnlocked(
     data: ProjectData,
     options: { allow_external_overwrite?: boolean } = {},
-  ): Promise<void> {
+  ): Promise<FileFingerprint> {
     await this.ensureDirectory();
     const externalState = await this.externalChange();
     if (
@@ -1141,6 +1166,7 @@ export class ProjectDirectoryStore {
       hash: await sha256Bytes(bytes),
     };
     this.baselineProject = clone(migrateProject(data));
+    return clone(this.baseline);
   }
 
   private async writeAtomicText(
@@ -1664,7 +1690,12 @@ export class ProjectDirectoryStore {
   }
 
   /** Store the caller's version copy without changing Canonical. */
-  async writeSnapshotCopy(snapshotId: string, data: ProjectData): Promise<void> {
+  async writeSnapshotCopy(
+    snapshotId: string,
+    data: ProjectData,
+    name = "未命名版本",
+    note = "",
+  ): Promise<SnapshotCopyWriteResult> {
     if (snapshotId.length > 128 || !/^[A-Za-z0-9_-]+$/.test(snapshotId)) {
       throw error(
         "snapshot_invalid",
@@ -1675,7 +1706,7 @@ export class ProjectDirectoryStore {
     }
     const canonical = migrateProject(JSON.parse(serializeProject(data)));
     const contents = serializeProject(canonical);
-    await this.withWritableLease(async () => {
+    return await this.withWritableLease(async () => {
       const externalState = await this.externalChange();
       if (
         externalState.changed ||
@@ -1695,19 +1726,281 @@ export class ProjectDirectoryStore {
           },
         );
       }
-      await this.writeAtomicText(
-        join(".workspace", "snapshots", `${snapshotId}.json`),
-        contents,
-        false,
+      if (canonical.project.id !== this.baselineProject?.project.id) {
+        throw error(
+          "project_id_mismatch",
+          "历史版本与当前课程身份不匹配。",
+          "Refusing to persist a snapshot copy for a different project",
+          {
+            recoverable: false,
+            recommended_action: null,
+            details: {
+              stage: "project_identity",
+              commit_state: "not_committed",
+              retryable: false,
+            },
+          },
+        );
+      }
+
+      const relativePath = join(
+        ".workspace",
+        "snapshots",
+        snapshotId + ".json",
       );
+      const metadataPath = join(
+        ".workspace",
+        "snapshots",
+        snapshotId + ".meta.json",
+      );
+      const fullPath = this.path(relativePath);
+      const metadataFullPath = this.path(metadataPath);
+      const bytes = new TextEncoder().encode(contents);
+      const contentHash = await sha256Bytes(bytes);
+      let existingBytes: Uint8Array | null = null;
+      try {
+        const stat = await Deno.lstat(fullPath);
+        if (!stat.isFile || stat.isSymlink) {
+          throw error(
+            "invalid_project_path",
+            "历史版本文件路径无效。",
+            "Snapshot target is not a regular file: " + fullPath,
+            { recoverable: false, recommended_action: null, details: {} },
+          );
+        }
+        existingBytes = await Deno.readFile(fullPath);
+      } catch (caught) {
+        if (!isNotFound(caught)) throw caught;
+      }
+      if (existingBytes && await sha256Bytes(existingBytes) !== contentHash) {
+        throw error(
+          "snapshot_id_conflict",
+          "这个历史版本编号已经用于其他内容。",
+          "Snapshot id " + snapshotId + " already refers to different bytes",
+          {
+            recoverable: false,
+            recommended_action: null,
+            details: {
+              stage: "snapshot_id_validate",
+              commit_state: "not_committed",
+              retryable: false,
+            },
+          },
+        );
+      }
+
+      let metadata: SnapshotFileMetadata | null = null;
+      try {
+        const stat = await Deno.lstat(metadataFullPath);
+        if (!stat.isFile || stat.isSymlink) {
+          throw error(
+            "invalid_project_path",
+            "历史版本索引路径无效。",
+            "Snapshot metadata is not a regular file: " + metadataFullPath,
+            { recoverable: false, recommended_action: null, details: {} },
+          );
+        }
+        const value = JSON.parse(await Deno.readTextFile(metadataFullPath));
+        if (
+          !value || value.version !== 1 || value.snapshot_id !== snapshotId ||
+          typeof value.name !== "string" || typeof value.note !== "string" ||
+          typeof value.created_at !== "string" ||
+          typeof value.content_hash !== "string" ||
+          value.content_hash !== contentHash
+        ) {
+          throw error(
+            "snapshot_metadata_invalid",
+            "历史版本索引已损坏。",
+            "Snapshot metadata does not match " + snapshotId,
+            {
+              recoverable: false,
+              recommended_action: null,
+              details: {
+                stage: "snapshot_metadata_validate",
+                commit_state: "not_committed",
+                retryable: false,
+              },
+            },
+          );
+        }
+        metadata = value as SnapshotFileMetadata;
+      } catch (caught) {
+        if (!isNotFound(caught)) throw caught;
+      }
+
+      const createdAt = metadata?.created_at ?? now();
+      if (!existingBytes) {
+        await this.writeAtomicText(relativePath, contents, false);
+      }
+      if (!metadata) {
+        await this.writeAtomicText(
+          metadataPath,
+          JSON.stringify({
+            version: 1,
+            snapshot_id: snapshotId,
+            name,
+            note,
+            created_at: createdAt,
+            content_hash: contentHash,
+          } satisfies SnapshotFileMetadata),
+          false,
+        );
+      }
+      return {
+        content_hash: contentHash,
+        created_at: createdAt,
+        outcome: existingBytes ? "unchanged" : "written",
+      };
     });
+  }
+
+  async listSnapshotCopies(expectedProjectId?: string): Promise<{
+    project_id: string | null;
+    snapshots: SnapshotListRow[];
+  }> {
+    const state = await this.readProjectSnapshot();
+    const project = state.project;
+    if (!project) return { project_id: null, snapshots: [] };
+    if (
+      expectedProjectId !== undefined &&
+      expectedProjectId !== project.project.id
+    ) {
+      throw error(
+        "project_id_mismatch",
+        "历史版本列表与当前课程身份不匹配。",
+        "Refusing to list snapshots for a different project",
+        {
+          recoverable: false,
+          recommended_action: null,
+          details: { stage: "project_identity", retryable: false },
+        },
+      );
+    }
+
+    const directory = this.path(join(".workspace", "snapshots"));
+    try {
+      const stat = await Deno.lstat(directory);
+      if (!stat.isDirectory || stat.isSymlink) {
+        throw error(
+          "invalid_project_path",
+          "历史版本目录路径无效。",
+          "Snapshot directory is not a regular directory: " + directory,
+          { recoverable: false, recommended_action: null, details: {} },
+        );
+      }
+    } catch (caught) {
+      if (isNotFound(caught)) {
+        return { project_id: project.project.id, snapshots: [] };
+      }
+      throw caught;
+    }
+
+    const rows: SnapshotListRow[] = [];
+    for await (const entry of Deno.readDir(directory)) {
+      if (!entry.name.endsWith(".json") || entry.name.endsWith(".meta.json")) {
+        continue;
+      }
+      const snapshotId = entry.name.slice(0, -".json".length);
+      if (!/^[A-Za-z0-9_-]{1,128}$/.test(snapshotId)) continue;
+      try {
+        const relativePath = join(".workspace", "snapshots", entry.name);
+        const fullPath = this.path(relativePath);
+        const stat = await Deno.lstat(fullPath);
+        if (!stat.isFile || stat.isSymlink) {
+          throw error(
+            "snapshot_invalid",
+            "历史版本文件无法读取。",
+            "Snapshot is not a regular file: " + fullPath,
+            { recoverable: false, recommended_action: null, details: {} },
+          );
+        }
+        const bytes = await Deno.readFile(fullPath);
+        const snapshot = migrateProject(
+          JSON.parse(new TextDecoder().decode(bytes)),
+        );
+        if (snapshot.project.id !== project.project.id) {
+          throw error(
+            "project_id_mismatch",
+            "历史版本属于其他课程。",
+            "Snapshot " + snapshotId + " belongs to a different project",
+            { recoverable: false, recommended_action: null, details: {} },
+          );
+        }
+        const contentHash = await sha256Bytes(bytes);
+        const metadataPath = this.path(
+          join(".workspace", "snapshots", snapshotId + ".meta.json"),
+        );
+        let metadata: SnapshotFileMetadata | null = null;
+        try {
+          const metadataStat = await Deno.lstat(metadataPath);
+          if (!metadataStat.isFile || metadataStat.isSymlink) {
+            throw error(
+              "snapshot_metadata_invalid",
+              "历史版本索引无法读取。",
+              "Snapshot metadata is not a regular file: " + metadataPath,
+              { recoverable: false, recommended_action: null, details: {} },
+            );
+          }
+          const value = JSON.parse(await Deno.readTextFile(metadataPath));
+          if (
+            !value || value.version !== 1 ||
+            value.snapshot_id !== snapshotId ||
+            typeof value.name !== "string" || typeof value.note !== "string" ||
+            typeof value.created_at !== "string" ||
+            typeof value.content_hash !== "string" ||
+            value.content_hash !== contentHash
+          ) {
+            throw error(
+              "snapshot_metadata_invalid",
+              "历史版本索引已损坏。",
+              "Snapshot metadata does not match " + snapshotId,
+              { recoverable: false, recommended_action: null, details: {} },
+            );
+          }
+          metadata = value as SnapshotFileMetadata;
+        } catch (caught) {
+          if (!isNotFound(caught)) throw caught;
+        }
+        const legacyRow = project.snapshots.find((row) =>
+          row.id === snapshotId
+        );
+        rows.push({
+          id: snapshotId,
+          name: metadata?.name ?? legacyRow?.name ?? snapshotId,
+          note: metadata?.note ?? legacyRow?.note ?? "",
+          created_at: metadata?.created_at ?? legacyRow?.created_at ??
+            stat.mtime?.toISOString() ?? "",
+          status: "available",
+          content_hash: contentHash,
+        });
+      } catch (caught) {
+        const code = caught instanceof ServiceError
+          ? caught.error.code
+          : "snapshot_invalid";
+        rows.push({
+          id: snapshotId,
+          name: snapshotId,
+          note: "",
+          created_at: "",
+          status: "error",
+          error: { code, message: "历史版本文件或索引已损坏。" },
+        });
+      }
+    }
+    rows.sort((left, right) =>
+      right.created_at.localeCompare(left.created_at)
+    );
+    return { project_id: project.project.id, snapshots: rows };
   }
 
   private async createSnapshotUnlocked(
     data: ProjectData,
     name: string,
     note = "",
-    options: { allow_external_overwrite?: boolean } = {},
+    options: {
+      allow_external_overwrite?: boolean;
+      persist_canonical?: boolean;
+    } = {},
   ): Promise<Snapshot> {
     // Detect before creating a snapshot side effect; the canonical write also
     // repeats this check immediately before replacement.
@@ -1735,21 +2028,53 @@ export class ProjectDirectoryStore {
     // Validate before createDomainSnapshot mutates the in-memory object.
     serializeProject(data);
     const snapshot = createDomainSnapshot(data, name, note, null);
-    const snapshotDir = join(this.workspacePath, "snapshots");
-    await Deno.mkdir(snapshotDir, { recursive: true });
+    const contents = serializeProject(data);
+    const contentHash = await sha256Bytes(new TextEncoder().encode(contents));
     await this.writeAtomicText(
-      join(".workspace", "snapshots", `${snapshot.id}.json`),
-      serializeProject(data),
+      join(".workspace", "snapshots", snapshot.id + ".json"),
+      contents,
       false,
     );
-    await this.writeProjectUnlocked(data, options);
+    const relativeSnapshotPath = join(
+      ".workspace",
+      "snapshots",
+      snapshot.id + ".json",
+    );
+    try {
+      await this.writeAtomicText(
+        join(".workspace", "snapshots", snapshot.id + ".meta.json"),
+        JSON.stringify({
+          version: 1,
+          snapshot_id: snapshot.id,
+          name: snapshot.name,
+          note: snapshot.note,
+          created_at: snapshot.created_at,
+          content_hash: contentHash,
+        } satisfies SnapshotFileMetadata),
+        false,
+      );
+    } catch (caught) {
+      try {
+        await Deno.remove(this.path(relativeSnapshotPath));
+      } catch (cleanup) {
+        if (!isNotFound(cleanup)) void cleanup;
+      }
+      throw caught;
+    }
+    if (options.persist_canonical !== false) {
+      await this.writeProjectUnlocked(data, options);
+    }
     return snapshot;
   }
 
   async restoreSnapshot(
     data: ProjectData,
     snapshotId: string,
-  ): Promise<{ project: ProjectData; backup: Snapshot }> {
+  ): Promise<{
+    project: ProjectData;
+    backup: Snapshot;
+    fingerprint: FileFingerprint;
+  }> {
     return await this.withWritableLease(() =>
       this.restoreSnapshotUnlocked(data, snapshotId)
     );
@@ -1758,7 +2083,11 @@ export class ProjectDirectoryStore {
   private async restoreSnapshotUnlocked(
     data: ProjectData,
     snapshotId: string,
-  ): Promise<{ project: ProjectData; backup: Snapshot }> {
+  ): Promise<{
+    project: ProjectData;
+    backup: Snapshot;
+    fingerprint: FileFingerprint;
+  }> {
     if (!/^[A-Za-z0-9_-]+$/.test(snapshotId)) {
       throw error(
         "snapshot_invalid",
@@ -1768,11 +2097,47 @@ export class ProjectDirectoryStore {
       );
     }
     const path = this.path(
-      join(".workspace", "snapshots", `${safeName(snapshotId)}.json`),
+      join(".workspace", "snapshots", safeName(snapshotId) + ".json"),
     );
     let restored: ProjectData;
     try {
-      restored = await loadProject(path);
+      const bytes = await Deno.readFile(path);
+      restored = migrateProject(
+        JSON.parse(new TextDecoder().decode(bytes)),
+      );
+      const metadataPath = this.path(
+        join(".workspace", "snapshots", safeName(snapshotId) + ".meta.json"),
+      );
+      try {
+        const metadataStat = await Deno.lstat(metadataPath);
+        if (!metadataStat.isFile || metadataStat.isSymlink) {
+          throw error(
+            "snapshot_metadata_invalid",
+            "历史版本索引无法读取。",
+            "Snapshot metadata is not a regular file: " + metadataPath,
+            { recoverable: false, recommended_action: null, details: {} },
+          );
+        }
+        const metadata = JSON.parse(await Deno.readTextFile(metadataPath));
+        const contentHash = await sha256Bytes(bytes);
+        if (
+          !metadata || metadata.version !== 1 ||
+          metadata.snapshot_id !== snapshotId ||
+          typeof metadata.name !== "string" ||
+          typeof metadata.note !== "string" ||
+          typeof metadata.created_at !== "string" ||
+          metadata.content_hash !== contentHash
+        ) {
+          throw error(
+            "snapshot_metadata_invalid",
+            "历史版本内容与索引不匹配。",
+            "Snapshot metadata does not match " + snapshotId,
+            { recoverable: false, recommended_action: null, details: {} },
+          );
+        }
+      } catch (caught) {
+        if (!isNotFound(caught)) throw caught;
+      }
     } catch (caught) {
       if (isNotFound(caught)) {
         throw error(
@@ -1788,17 +2153,26 @@ export class ProjectDirectoryStore {
       }
       throw caught;
     }
+    if (restored.project.id !== data.project.id) {
+      throw error(
+        "project_id_mismatch",
+        "历史版本属于其他课程。",
+        "Snapshot " + snapshotId + " belongs to a different project",
+        { recoverable: false, recommended_action: null, details: {} },
+      );
+    }
     const backup = await this.createSnapshotUnlocked(
       data,
       "恢复前备份",
       "恢复旧版本前自动保存当前项目",
+      { persist_canonical: false },
     );
     restored.snapshots = [
       backup,
       ...restored.snapshots.filter((snapshot) => snapshot.id !== backup.id),
     ];
-    await this.writeProjectUnlocked(restored);
-    return { project: restored, backup };
+    const fingerprint = await this.writeProjectUnlocked(restored);
+    return { project: restored, backup, fingerprint };
   }
 
   async importAssetFile(

@@ -1,0 +1,18 @@
+Check tests/snapshot_persistence_test.ts
+Check tests/save_cas_test.ts
+Check tests/project_save_protocol_test.ts
+running 5 tests from ./tests/snapshot_persistence_test.ts
+snapshot.create binds a persisted copy, is idempotent, and lists bad rows separately ... ok (79ms)
+snapshot.list is read-only when the snapshot directory is absent ... ok (15ms)
+snapshot.list keeps a persisted orphan visible after canonical index commit fails ... ok (24ms)
+snapshot.restore persists a before-backup and returns the committed fingerprint ... ok (52ms)
+snapshot.restore leaves Canonical intact when its before-backup cannot persist ... ok (45ms)
+running 2 tests from ./tests/save_cas_test.ts
+folder.append rejects a stale project.save and accepts the fresh baseline ... ok (76ms)
+snapshot.create stores the caller copy without changing the CAS baseline ... ok (82ms)
+running 3 tests from ./tests/project_save_protocol_test.ts
+project.read_state stays pure and open_state returns the active lease ... ok (30ms)
+bound project saves return compact ack and unchanged saves perform zero writes ... ok (39ms)
+project.save rejects stale lease and wrong owner before changing canonical ... ok (19ms)
+
+ok | 10 passed | 0 failed (605ms)
