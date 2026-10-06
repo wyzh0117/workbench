@@ -21,6 +21,8 @@ import {
   type RegistryRequest,
   type RegistryRow,
 } from "../src/service/project_registry.ts";
+import { createEmptyProjectData, serializeProject } from "../src/domain/store.ts";
+import { ProjectDirectoryStore } from "../src/service/storage.ts";
 
 function assert(condition: unknown, message: string): asserts condition {
   if (!condition) throw new Error(message);
@@ -258,20 +260,26 @@ Deno.test("a damaged registry reads as empty and keeps the file for diagnosis", 
   }
 });
 
-Deno.test("a row is offered only when its folder is a Workbench project root", async () => {
+Deno.test("closed project roots stay available while bare folders do not", async () => {
   const dir = await Deno.makeTempDir({ prefix: "workbench-registry-live-" });
   const root = await Deno.makeTempDir({ prefix: "workbench-registry-root-", dir });
   const bare = await Deno.makeTempDir({ prefix: "workbench-registry-bare-", dir });
-  await Deno.mkdir(`${bare}/.workbench.lock`);
+  await Deno.writeTextFile(`${bare}/.workbench.lock`, "legacy marker\n");
+  let projectStore: ProjectDirectoryStore | null = null;
   try {
     const store = new ProjectRegistryStore(dir);
-    const opened = await Deno.open(`${root}/.workbench.lock`, {
-      create: true,
-      write: true,
+    const canonical = createEmptyProjectData("Available after close");
+    await Deno.writeTextFile(`${root}/project.json`, serializeProject(canonical));
+    projectStore = new ProjectDirectoryStore(root, {
+      app_instance_id: "registry-availability-test",
     });
-    opened.close();
+    await projectStore.open();
+    assert(
+    await Deno.stat(projectStore.lockPath).then((stat) => stat.isFile),
+      "the real store open creates its active lease",
+    );
     const rows = [
-      row("proj-root", root, stamp(3)),
+      row(canonical.project.id, root, stamp(3)),
       row("proj-bare", bare, stamp(2)),
       row("proj-gone", `${dir}/does-not-exist`, stamp(1)),
     ];
@@ -279,14 +287,27 @@ Deno.test("a row is offered only when its folder is a Workbench project root", a
     const listed = await store.list();
     eq(
       listed.projects.map((candidate) => [candidate.project_id, candidate.available]),
-      [["proj-root", true], ["proj-bare", false], ["proj-gone", false]],
-      "newest first, and only a real lock file counts as available",
+      [[canonical.project.id, true], ["proj-bare", false], ["proj-gone", false]],
+      "Canonical roots stay openable; lease and legacy marker do not define availability",
+    );
+    await projectStore.close();
+    eq(
+      await Deno.stat(projectStore.lockPath).then(() => true, () => false),
+      false,
+      "real store close releases its lease",
+    );
+    const afterClose = await store.list();
+    eq(
+      afterClose.projects[0]?.available,
+      true,
+      "closing the project lease does not hide its Canonical root",
     );
     assert(
       !("api_key" in (listed.projects[0] ?? {})),
       "the derived flags are the only additions",
     );
   } finally {
+    await projectStore?.close().catch(() => undefined);
     await Deno.remove(dir, { recursive: true });
   }
 });
@@ -296,12 +317,28 @@ Deno.test("registryProjectAvailable rejects paths it must not trust", async () =
   try {
     const project = `${dir}/course`;
     await Deno.mkdir(project);
-    await Deno.writeTextFile(`${project}/.workbench.lock`, "{}");
-    eq(registryProjectAvailable(project), true, "a folder with a lock file is openable");
+    await Deno.writeTextFile(
+      `${project}/project.json`,
+      serializeProject(createEmptyProjectData("Registry probe")),
+    );
+    eq(
+      registryProjectAvailable(project),
+      true,
+      "a Canonical file identifies an openable project root",
+    );
     eq(registryProjectAvailable(`${dir}/missing`), false, "a folder that is gone is not");
     eq(registryProjectAvailable("relative/course"), false, "a relative path is not a location");
     eq(registryProjectAvailable(""), false, "an empty path is not a location");
     eq(registryProjectAvailable(dir), false, "the parent of projects is not a project");
+    const linkedCanonical = `${project}/linked-project.json`;
+    try {
+      await Deno.symlink(`${project}/project.json`, linkedCanonical);
+      await Deno.remove(`${project}/project.json`);
+      await Deno.symlink(linkedCanonical, `${project}/project.json`);
+      eq(registryProjectAvailable(project), false, "a symlinked Canonical file is refused");
+    } catch {
+      // Some filesystems refuse symlinks; the root-symlink case below remains meaningful.
+    }
     const link = `${dir}/linked-course`;
     try {
       await Deno.symlink(project, link);

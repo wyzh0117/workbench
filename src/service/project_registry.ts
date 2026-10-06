@@ -358,20 +358,18 @@ export function relocateRows(
 }
 
 /**
- * Availability probe matching native `registry_project_available`: a row is
- * openable only when `<folder>/.workbench.lock` is a real file, which is what
- * makes a folder a Workbench project root in the first place. A folder that
- * exists but holds someone else's course therefore reads as *not available* and
- * offers 「选择项目文件夹」 instead of an open button. A symlinked root is refused,
- * the same way `reject_symlink` refuses one when the project is opened.
+ * A registry row remains openable after its writer closes and removes its lease.
+ * The Canonical file identifies a project root; lock presence only says that a
+ * writer currently owns it. A symlinked root or Canonical file is refused.
  */
 export function registryProjectAvailable(candidate: string): boolean {
-  const path = String(candidate || "").trim();
+  const path = String(candidate ?? "");
   if (!path || !isAbsolute(path)) return false;
   try {
     const root = Deno.lstatSync(path);
     if (!root.isDirectory || root.isSymlink) return false;
-    return Deno.statSync(`${path.replace(/\/+$/, "")}/.workbench.lock`).isFile;
+    const project = Deno.lstatSync(join(path, "project.json"));
+    return project.isFile && !project.isSymlink;
   } catch {
     return false;
   }
