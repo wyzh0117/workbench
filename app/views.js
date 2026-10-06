@@ -3743,11 +3743,12 @@ export function createViews(store) {
     }
     if (store.pendingRecovery) {
       const pending = store.pendingRecovery;
+      const resolving = store.recoveryResolution?.pending === pending;
       const recoveredBlocks = pending.project?.blocks?.length || 0;
       const savedAt = pending.saved_at
         ? new Date(pending.saved_at).toLocaleString("zh-CN")
         : "未知时间";
-      return `<div class="overlay"><div class="conflict-modal modal" role="dialog" aria-modal="true" aria-labelledby="recovery-title" tabindex="-1" data-stop-click="true"><div class="modal-head"><div><span class="eyebrow">恢复</span><h2 id="recovery-title">发现未完成的保存</h2></div></div><p class="muted">上次保存没有完成，磁盘版本没有改变。暂存内容来自 ${esc(savedAt)}，包含 ${recoveredBlocks} 个正文区块。请选择恢复暂存内容，或保留磁盘版本继续工作。</p><div class="modal-actions"><button class="secondary" data-action="recovery-discard">保留磁盘版本</button><button class="primary" data-action="recovery-restore">恢复暂存内容</button></div></div></div>`;
+      return `<div class="overlay"><div class="conflict-modal modal" role="dialog" aria-modal="true" aria-labelledby="recovery-title" tabindex="-1" data-stop-click="true"><div class="modal-head"><div><span class="eyebrow">恢复</span><h2 id="recovery-title">发现未完成的保存</h2></div></div><p class="muted">上次保存没有完成，磁盘版本没有改变。暂存内容来自 ${esc(savedAt)}，包含 ${recoveredBlocks} 个正文区块。请选择恢复暂存内容，或保留磁盘版本继续工作。</p>${resolving ? `<p class="small muted" role="status">正在核对恢复记录与磁盘状态…</p>` : ""}<div class="modal-actions"><button class="secondary" data-action="recovery-discard" ${resolving ? "disabled" : ""}>保留磁盘版本</button><button class="primary" data-action="recovery-restore" ${resolving ? "disabled" : ""}>恢复暂存内容</button></div></div></div>`;
     }
     if (store.ui.editingAssetId) {
       const asset = store.data.assets.find((candidate) =>

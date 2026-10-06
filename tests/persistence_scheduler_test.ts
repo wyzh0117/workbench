@@ -529,6 +529,65 @@ Deno.test("explicit not-committed failures may advance to the latest cumulative 
   assert(writes.join(",") === "1,3", "known-not-committed failure may proceed with the latest cumulative snapshot");
 });
 
+Deno.test("explicit retry replays only the same failed draft and editor generation", async () => {
+  const timers = fakeTimers();
+  const attempts: Array<ReturnType<typeof request>> = [];
+  const scheduler = createPersistenceScheduler({
+    debounceMs: 350,
+    maxWaitMs: 2000,
+    setTimeout: timers.setTimeout,
+    clearTimeout: timers.clearTimeout,
+    write: async (value: ReturnType<typeof request>) => {
+      attempts.push(value);
+      if (attempts.length === 1) {
+        const error = new Error("temporary save failure") as Error & {
+          code: string;
+          commit_state: string;
+          retryable: boolean;
+        };
+        error.code = "save_io_failed";
+        error.commit_state = "not_committed";
+        error.retryable = true;
+        throw error;
+      }
+      return saved(value, "after-explicit-retry");
+    },
+  });
+  const original = request(1);
+  const failed = scheduler.enqueue(original);
+  timers.tick(350);
+  const failedDrain = scheduler.flush();
+  await failed.catch(() => undefined);
+  await failedDrain.catch(() => undefined);
+
+  const differentDraft = {
+    ...request(1),
+    project: { project: { id: "project-1" }, revision: 1, title: "newer draft" },
+  };
+  let draftRejected = false;
+  try { await scheduler.retry(differentDraft); } catch (error) {
+    draftRejected = error instanceof Error && (error as Error & { code?: string }).code === "save_retry_stale";
+  }
+  const expiredEditor = { ...request(1), editor_generation: 5 };
+  let epochRejected = false;
+  try { await scheduler.retry(expiredEditor); } catch (error) {
+    epochRejected = error instanceof Error && (error as Error & { code?: string }).code === "save_retry_stale";
+  }
+  assert(draftRejected && epochRejected, "a changed draft or expired editor generation must not retry the failed write");
+
+  const retry = scheduler.retry(request(1));
+  const retryDrain = scheduler.flush();
+  await retryDrain;
+  await retry;
+  assert(attempts.length === 2, "the exact failed draft should be retried once");
+  assert(attempts[1]?.operation_id === attempts[0]?.operation_id, "retry should retain the original operation id");
+  assert(attempts[1]?.revision === attempts[0]?.revision, "retry should retain the original revision");
+  assert(attempts[1]?.editor_generation === attempts[0]?.editor_generation, "retry should not advance editor generation");
+  assert(JSON.stringify(attempts[1]?.expected_fingerprint) === JSON.stringify(attempts[0]?.expected_fingerprint), "retry should retain the original CAS fingerprint");
+  assert(JSON.stringify(attempts[1]?.project) === JSON.stringify(attempts[0]?.project), "retry should replay the immutable failed snapshot");
+  scheduler.close();
+});
+
 Deno.test("unknown not-committed errors pause unless the bridge marks them retryable", async () => {
   const timers = fakeTimers();
   const firstGate = deferred<ReturnType<typeof saved>>();
@@ -555,8 +614,44 @@ Deno.test("unknown not-committed errors pause unless the bridge marks them retry
   firstGate.reject(unknown);
   await first.catch(() => undefined);
   assert(writes.join(",") === "1", "an unclassified failure must not be treated as safe to retry");
+  let retryRejected = false;
+  try { await scheduler.retry(request(1)); } catch (error) {
+    retryRejected = error === unknown;
+  }
+  assert(retryRejected && writes.join(",") === "1", "unclassified failures must remain paused instead of retrying blindly");
   await scheduler.reconcileGeneration({ ...request(4), editor_generation: 5 });
   await pending;
+});
+
+Deno.test("CAS conflicts and lost leases cannot use the transient retry path", async () => {
+  for (const code of ["external_modification_conflict", "project_lock_lost"]) {
+    const timers = fakeTimers();
+    let attempts = 0;
+    const scheduler = createPersistenceScheduler({
+      debounceMs: 350,
+      maxWaitMs: 2000,
+      setTimeout: timers.setTimeout,
+      clearTimeout: timers.clearTimeout,
+      write: async () => {
+        attempts++;
+        const error = new Error(code) as Error & { code: string; commit_state: string; retryable: boolean };
+        error.code = code;
+        error.commit_state = "not_committed";
+        error.retryable = true;
+        throw error;
+      },
+    });
+    const value = request(1);
+    const failed = scheduler.enqueue(value);
+    timers.tick(350);
+    await scheduler.flush().catch(() => undefined);
+    await failed.catch(() => undefined);
+    const retryError = await scheduler.retry(value).catch((error: unknown) => error);
+    assert(retryError instanceof Error && retryError.message === code, `${code} must retain its terminal error`);
+    assert(attempts === 1, `${code} must not dispatch a second write`);
+    scheduler.reconcileGeneration({ ...request(2), editor_generation: 5 });
+    scheduler.close();
+  }
 });
 
 Deno.test("save requests are cloned, revision-bound, and directory identity is normalized", async () => {

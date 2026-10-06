@@ -75,6 +75,30 @@ export interface FileFingerprint {
   hash: string | null;
 }
 
+export interface RecoveryJournalClearRequest {
+  project_dir: string;
+  expected_project_id: string;
+  lease_generation: string | number;
+  editor_generation: number;
+  operation_id: string;
+  revision: number;
+  expected_fingerprint: FileFingerprint;
+  expected_transaction_id: string;
+}
+
+export interface RecoveryJournalClearResult {
+  cleared: boolean;
+  transaction_id: string | null;
+  durability_warning?: string | null;
+  project_id: string;
+  project_dir: string;
+  lease_generation: string | number;
+  editor_generation: number;
+  operation_id: string;
+  revision: number;
+  fingerprint: FileFingerprint;
+}
+
 export interface ProjectReadState {
   project: unknown | null;
   project_id: string | null;
@@ -244,9 +268,16 @@ export interface DesktopBridge {
   writeProject(request: ProjectSaveRequest): Promise<ProjectSaveResult>;
   writeRecoveryJournal(journal: unknown): Promise<void>;
   readRecoveryJournal(): Promise<unknown | null>;
+  clearRecoveryJournal(
+    request: RecoveryJournalClearRequest,
+  ): Promise<RecoveryJournalClearResult>;
   saveSession(
     session: PersistedWorkbenchSession,
-    metadata?: { operation_id: string; session_generation: number; revision: number },
+    metadata?: {
+      operation_id: string;
+      session_generation: number;
+      revision: number;
+    },
   ): Promise<unknown>;
   loadSession(): Promise<PersistedWorkbenchSession | null>;
   openSession?(projectId: string): Promise<{
@@ -264,7 +295,9 @@ export interface DesktopBridge {
     snapshotId: string,
     request: SnapshotRestoreRequest,
   ): Promise<SnapshotRestoreResult>;
-  readAssetBatch?(input: AssetPreviewBatchRequest): Promise<AssetPreviewBatchResult>;
+  readAssetBatch?(
+    input: AssetPreviewBatchRequest,
+  ): Promise<AssetPreviewBatchResult>;
 }
 
 /** Names exposed by the desktop bridge are intentionally high-level. */
@@ -275,6 +308,7 @@ export type BridgeCommandName =
   | "project.create"
   | "project.save"
   | "project.resolve"
+  | "project.recovery.clear"
   | "import.preview"
   | "import.preview.release"
   | "import.confirm"

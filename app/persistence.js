@@ -144,6 +144,7 @@ export function createPersistenceScheduler({
   let highestRequest = null;
   let lastResult = null;
   let lastFailure = null;
+  let lastFailedRequest = null;
   let paused = false;
   let trailingTimer = 0;
   let maxTimer = 0;
@@ -233,6 +234,7 @@ export function createPersistenceScheduler({
         acknowledgedFingerprint = result.fingerprint;
         acknowledgedGeneration = flight.generation;
         lastFailure = null;
+        lastFailedRequest = null;
         lastResult = result;
       }
       if (flight.generation === generation && !closed) {
@@ -243,6 +245,7 @@ export function createPersistenceScheduler({
       if (flight.generation === generation) {
         lastFailure = error;
         paused = requiresReconciliation(error);
+        lastFailedRequest = { generation: flight.generation, request: flight.request };
       }
       if (flight.generation === generation && !closed) {
         try { onError?.(error, request); } catch { /* Preserve the storage error as the request result. */ }
@@ -274,6 +277,7 @@ export function createPersistenceScheduler({
     initialFingerprint = undefined;
     highestRequest = null;
     lastResult = null;
+    lastFailedRequest = null;
     paused = false;
     clearTimers();
     resolveDrains();
@@ -288,6 +292,7 @@ export function createPersistenceScheduler({
       pending = null;
     }
     lastFailure = null;
+    lastFailedRequest = null;
     paused = false;
     const nextIdentity = identity ? identityOf(identity) : null;
     const nextKey = nextIdentity ? identityKey(nextIdentity) : "";
@@ -357,6 +362,45 @@ export function createPersistenceScheduler({
     return new Promise((resolve, reject) => drains.add({ resolve, reject }));
   }
 
+  function retry(value) {
+    if (closed) return Promise.reject(codedError("save_scheduler_closed", "save scheduler is closed"));
+    if (!lastFailure || requiresReconciliation(lastFailure)) {
+      return Promise.reject(lastFailure || codedError("save_retry_unavailable", "there is no safely retryable save"));
+    }
+    if (paused || pending || inflight) {
+      return Promise.reject(codedError("save_retry_busy", "wait for the current save before retrying"));
+    }
+    const candidate = immutableRequest(value);
+    const failed = lastFailedRequest;
+    if (!failed || failed.generation !== generation || identityKey(identityOf(candidate)) !== currentIdentityKey) {
+      return Promise.reject(codedError("save_retry_stale", "retry no longer matches the active project generation"));
+    }
+    const original = failed.request;
+    if (
+      candidate.revision !== original.revision ||
+      stableJson(candidate.project) !== stableJson(original.project) ||
+      stableJson(candidate.expected_fingerprint) !== stableJson(original.expected_fingerprint) ||
+      !highestRequest || highestRequest.revision !== original.revision ||
+      stableJson(highestRequest.project) !== stableJson(original.project)
+    ) {
+      return Promise.reject(codedError("save_retry_stale", "retry must use the exact failed project snapshot and revision"));
+    }
+    clearTimers();
+    lastFailure = null;
+    lastFailedRequest = null;
+    paused = false;
+    return new Promise((resolve, reject) => {
+      pending = {
+        request: original,
+        waiters: [{ resolve, reject }],
+        generation,
+        ready: false,
+        maxWaitReached: false,
+      };
+      schedulePending();
+    });
+  }
+
   function pause(error) {
     if (closed) return false;
     lastFailure = error && typeof error === "object"
@@ -383,7 +427,7 @@ export function createPersistenceScheduler({
     resolveDrains();
   }
 
-  return { enqueue, flush, pause, changeGeneration, reconcileGeneration, close };
+  return { enqueue, flush, retry, pause, changeGeneration, reconcileGeneration, close };
 }
 
 /** Reader/session sidecar: same-value no-op, one write in flight, latest wins. */

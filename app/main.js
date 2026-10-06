@@ -944,10 +944,26 @@ class DesktopBridge {
       return await invoke(command, input);
     }
   }
-  async clearRecoveryJournal() {
+  async clearRecoveryJournal(binding) {
     const invoke = globalThis.__TAURI__?.core?.invoke;
-    if (!invoke || !this.projectDir) return;
-    return await this.nativeInvoke("clear_recovery_journal", { projectDir: this.projectDir, project_dir: this.projectDir });
+    if (invoke) {
+      if (
+        !binding || !this.projectDir ||
+        normalizeProjectDir(binding.project_dir) !== normalizeProjectDir(this.projectDir)
+      ) throw new Error("恢复日志清理请求没有绑定当前课程目录。");
+      return await this.nativeInvoke("clear_recovery_journal", {
+        projectDir: binding.project_dir,
+        expectedProjectId: binding.expected_project_id,
+        leaseGeneration: binding.lease_generation,
+        editorGeneration: binding.editor_generation,
+        operationId: binding.operation_id,
+        revision: binding.revision,
+        expectedFingerprint: binding.expected_fingerprint,
+        expectedTransactionId: binding.expected_transaction_id,
+      });
+    }
+    if (!binding) throw new Error("恢复日志清理请求缺少课程身份绑定。");
+    return await this.invoke("project.recovery.clear", binding);
   }
   async listenNativeDrops(onPaths) {
     if (!this.isNative()) return () => {};
@@ -1814,6 +1830,7 @@ class WorkbenchStore {
     this.flushQueue = createSerialQueue();
     this.recoveryWarning = "";
     this.saveStatus = "未保存";
+    this.lastSaveFailure = null;
     this.uncertainMutation = null;
     this.uncertainMutationPending = false;
     this.canonicalMutationPending = false;
@@ -1830,6 +1847,7 @@ class WorkbenchStore {
     this.nativeSwitchPending = null;
     this.externalConflict = null;
     this.pendingRecovery = null;
+    this.recoveryResolution = null;
     this.editTimer = 0;
     this.assetSearchTimer = 0;
     this.explorerFilterTimer = 0;
@@ -2683,6 +2701,7 @@ class WorkbenchStore {
     identity.editor_generation = this.editorGeneration + 1;
     this.saveScheduler.reconcileGeneration(identity);
     this.editorGeneration = identity.editor_generation;
+    this.lastSaveFailure = null;
     if (!preserveRevision) this.saveRevision = 0;
     this.lastSaveProjectKey = null;
   }
@@ -2930,6 +2949,7 @@ class WorkbenchStore {
       request.lease_generation !== identity.lease_generation ||
       request.editor_generation !== identity.editor_generation
     ) return;
+    this.lastSaveFailure = null;
     this.projectFingerprint = clone(result.fingerprint);
     this.projectFingerprintGeneration += 1;
     this.noteRecoveryWarning(result);
@@ -4464,7 +4484,10 @@ class WorkbenchStore {
       this.notifyChrome();
       return false;
     }
-    if (this.pendingRecovery) {
+    const recoverySaveInProgress = this.recoveryResolution?.pending === this.pendingRecovery &&
+      this.recoveryResolution.action === "restore" &&
+      this.recoveryResolution.allowRecoverySave === true;
+    if (this.pendingRecovery && !recoverySaveInProgress) {
       this.saveStatus = "恢复待处理";
       this.ui.toast = "发现未完成的保存，当前不能继续保存。请先恢复暂存内容或保留磁盘版本。";
       this.notifyChrome();
@@ -4479,7 +4502,10 @@ class WorkbenchStore {
     let request = null;
     try {
       request = this.saveRequest();
-      const completion = this.saveScheduler.enqueue(request);
+      const retryingRecoverySave = recoverySaveInProgress && this.lastSaveFailure;
+      const completion = retryingRecoverySave
+        ? this.saveScheduler.retry(request)
+        : this.saveScheduler.enqueue(request);
       completion.catch(() => {});
       await this.saveScheduler.flush();
       await completion;
@@ -4489,6 +4515,7 @@ class WorkbenchStore {
       await this.sessionScheduler.flush().catch((error) => this.reportSessionFailure(error, sessionSnapshot));
       return this.saveStatus === "已保存";
     } catch (error) {
+      if (request && this.saveIdentityMatches(request)) this.lastSaveFailure = error;
       if ((error?.commit_state ?? error?.details?.commit_state) === "outcome_uncertain") {
         if (request) this.reportSaveFailure(error, request);
         return false;
@@ -4527,24 +4554,41 @@ class WorkbenchStore {
     this.ui.toast = "正在处理外部修改…";
     this.notify();
     if (action === "reload") {
+      const pendingRecovery = this.pendingRecovery;
+      let didReload = false;
+      let clearResult = null;
       try {
         await this.queueFlush(async () => {
-          const reloaded = await this.bridge.reloadExternalProject();
-          if (!this.adoptProjectSnapshot(reloaded)) throw new Error("磁盘版本不是可识别的课程项目");
+          const state = await this.bridge.reloadExternalProject();
+          if (!this.adoptProjectSnapshot(state)) throw new Error("磁盘版本不是可识别的课程项目");
+          didReload = true;
           this.reconcileEditorSaveState();
           this.history = [];
           this.future = [];
           this.resetAiState();
           this.retainUiSelection();
-          await this.bridge.clearRecoveryJournal().catch(() => {});
+          if (pendingRecovery) {
+            const request = this.recoveryClearRequest(pendingRecovery);
+            clearResult = await this.bridge.clearRecoveryJournal(request);
+            if (!this.recoveryClearAcknowledged(clearResult, request) ||
+              this.pendingRecovery !== pendingRecovery || !this.saveIdentityMatches(request)) {
+              throw new Error("磁盘版本已载入，但未能确认清理原恢复日志；恢复提示仍保留。");
+            }
+            this.projectFingerprint = clone(clearResult.fingerprint);
+            this.pendingRecovery = null;
+          }
           this.externalConflict = null;
           this.uncertainMutation = null;
-          this.saveStatus = "已保存";
-          this.ui.toast = "已载入磁盘版本";
+          this.saveStatus = this.projectFingerprint?.exists ? "已保存" : "未保存";
+          this.ui.toast = clearResult?.durability_warning
+            ? `已载入磁盘版本；${clearResult.durability_warning}`
+            : "已载入磁盘版本";
           this.notify();
         });
       } catch (error) {
-        this.ui.toast = userFacingError(error, "重新载入没有完成。当前内容没有改变，请重试。");
+        this.ui.toast = didReload
+          ? userFacingError(error, "磁盘版本已载入，但恢复记录仍待处理。请保留提示并重试。")
+          : userFacingError(error, "重新载入没有完成。当前内容没有改变，请重试。");
         this.notify();
       }
       return;
@@ -4602,42 +4646,232 @@ class WorkbenchStore {
   }
   async resolvePendingRecovery(action) {
     const pending = this.pendingRecovery;
-    if (!pending) return;
-    if (action === "discard") {
-      this.pendingRecovery = null;
-      await this.bridge.clearRecoveryJournal().catch(() => {});
-      this.saveStatus = "未保存";
-      this.ui.toast = "已保留磁盘版本";
-      this.notify();
-      return;
-    }
-    const current = clone(this.data);
-    const backup = { id: uid(), project_id: current.project?.id || null, name: "恢复前备份", note: "恢复自动保存前自动创建", git_commit_hash: null, created_at: now() };
-    this.localSnapshots.set(backup.id, current);
-    await this.bridge.createSnapshot({ snapshot_id: backup.id, name: backup.name, note: backup.note, project: current }).catch(() => {});
-    // Adopt the journal through the ordinary commit path so it is written to
-    // canonical data by autosave and stays undoable like any other edit.
-    this.pendingRecovery = null;
-    this.commit("恢复自动保存", (data) => {
-      const next = clone(pending.project);
-      Object.keys(next).forEach((key) => { data[key] = next[key]; });
-      // Recovery restores the course the shell already has open; adopting a
-      // different project id would silently switch the open project and orphan
-      // every reference to it.
-      data.project = { ...next.project, id: current.project.id };
-      data.snapshots = [backup, ...(next.snapshots || []).filter((snapshot) => snapshot.id !== backup.id)];
-    });
-    // Persist immediately: the user just resolved a recovery decision, and a
-    // debounced write could still lose the restored content.  The write-through
-    // also clears the recovery journal as part of the normal autosave path.
-    await this.writeThrough();
-    // The journal replaced the whole project in memory, so no AI preview, Diff
-    // or result may survive it.
-    this.resetAiState();
-    this.ui.toast = this.recoveryWarning
-      ? `已恢复自动保存内容；${this.recoveryWarning}`
-      : "已恢复自动保存内容，恢复前备份已保留";
+    if (!pending || this.recoveryResolution?.pending === pending) return;
+    let identity = this.saveIdentity();
+    const operation = { pending, identity, action };
+    this.recoveryResolution = operation;
     this.notify();
+    try {
+      if (action === "discard") {
+        if (pending.restore_attempt &&
+          JSON.stringify(this.data) !== pending.restore_attempt.project_json) {
+          throw new Error("恢复后的编辑内容已变化；没有清理恢复日志，请先处理当前编辑。");
+        }
+        const request = this.recoveryClearRequest(pending, identity);
+        const result = await this.bridge.clearRecoveryJournal(request);
+        if (!this.recoveryClearAcknowledged(result, request) ||
+          this.pendingRecovery !== pending || !this.saveIdentityMatches(identity)) {
+          throw new Error("未能确认清理这次恢复日志；磁盘版本保持不变，请重试。");
+        }
+        this.projectFingerprint = clone(result.fingerprint);
+        if (pending.restore_attempt) {
+          if (
+            JSON.stringify(this.data) !== pending.restore_attempt.project_json ||
+            !this.isProjectData(pending.canonical) ||
+            !this.adoptProjectSnapshot({
+              project: pending.canonical,
+              project_id: identity.expected_project_id,
+              fingerprint: this.projectFingerprint,
+            })
+          ) throw new Error("恢复中的编辑内容已变化；恢复日志已清理，请重新读取磁盘版本后继续。");
+          this.reconcileEditorSaveState();
+          this.history = [];
+          this.future = [];
+          this.resetAiState();
+          this.retainUiSelection();
+        }
+        this.pendingRecovery = null;
+        this.saveStatus = this.projectFingerprint?.exists ? "已保存" : "未保存";
+        this.ui.toast = result.durability_warning
+          ? `已保留磁盘版本；${result.durability_warning}`
+          : "已保留磁盘版本";
+        this.notify();
+        return;
+      }
+
+      if (action !== "restore") throw new Error("未知的恢复操作。");
+      const priorRestore = pending.restore_attempt;
+      if (priorRestore) {
+        if (
+          !this.saveIdentityMatches(priorRestore.identity) ||
+          JSON.stringify(this.data) !== priorRestore.project_json ||
+          this.saveRevision !== priorRestore.revision
+        ) throw new Error("恢复后的编辑内容已变化；没有用旧内容覆盖，请检查当前编辑并重新载入磁盘状态。");
+        if (this.lastSaveFailure) {
+          const failure = this.lastSaveFailure;
+          const code = String(failure?.code || failure?.details?.code || "");
+          const safelyRetryable =
+            (failure?.commit_state ?? failure?.details?.commit_state) === "not_committed" &&
+            (failure?.retryable ?? failure?.details?.retryable) === true &&
+            !/external_modification_conflict|project_(?:not_open|lock_lost|lock_not_owned|locked)|save_response_binding_mismatch/.test(code);
+          if (!safelyRetryable) {
+            throw new Error("上次正文写入结果不能安全重试；恢复前备份和本地内容均保留，请先核验磁盘状态。");
+          }
+        }
+        operation.allowRecoverySave = true;
+        const saved = await this.writeThrough();
+        if (!saved) {
+          this.ui.toast = "恢复内容仍保留在编辑器，正文尚未确认写入磁盘；恢复前备份已保留，请重试保存。";
+          this.notify();
+          return;
+        }
+        if (this.pendingRecovery !== pending || !this.saveIdentityMatches(identity)) return;
+        this.pendingRecovery = null;
+        const warnings = [priorRestore.durability_warning, this.recoveryWarning]
+          .filter((warning) => typeof warning === "string" && warning.trim());
+        this.ui.toast = warnings.length
+          ? `已恢复自动保存内容；恢复前备份已创建，但持久化确认有限：${warnings.join("；")}`
+          : "已恢复自动保存内容，恢复前备份已持久保存";
+        this.notify();
+        return;
+      }
+
+      const current = clone(this.data);
+      const revision = this.saveRevision;
+      if (!identity.expected_project_id || !this.isFileFingerprint(this.projectFingerprint) || !this.projectFingerprint.exists) {
+        throw new Error("当前磁盘版本身份无效；恢复前备份没有创建，请重新打开课程后重试。");
+      }
+      let attempt = pending.backup_attempt;
+      if (
+        !attempt || attempt.name !== "恢复前备份" ||
+        JSON.stringify(attempt.project) !== JSON.stringify(current) ||
+        !this.saveIdentityMatches(attempt.identity)
+      ) {
+        attempt = {
+          identity,
+          project: current,
+          name: "恢复前备份",
+          note: "恢复自动保存前自动创建",
+          snapshot_id: uid(),
+          operation_id: uid(),
+          revision: Math.max(1, this.saveRevision),
+        };
+        pending.backup_attempt = attempt;
+      }
+      const request = {
+        project_dir: attempt.identity.project_dir,
+        snapshot_id: attempt.snapshot_id,
+        name: attempt.name,
+        note: attempt.note,
+        project: clone(attempt.project),
+        expected_project_id: attempt.identity.expected_project_id,
+        lease_generation: attempt.identity.lease_generation,
+        editor_generation: attempt.identity.editor_generation,
+        operation_id: attempt.operation_id,
+        revision: attempt.revision,
+      };
+      const result = await this.bridge.createSnapshot(request);
+      const validBackup = result && result.persisted === true &&
+        result.id === request.snapshot_id && result.snapshot_id === request.snapshot_id &&
+        result.project_id === request.expected_project_id &&
+        normalizeProjectDir(result.project_dir) === normalizeProjectDir(request.project_dir) &&
+        result.lease_generation === request.lease_generation &&
+        result.editor_generation === request.editor_generation &&
+        result.operation_id === request.operation_id && result.revision === request.revision &&
+        ["written", "unchanged"].includes(result.outcome) &&
+        typeof result.content_hash === "string" && /^[a-f0-9]{64}$/i.test(result.content_hash) &&
+        typeof result.created_at === "string";
+      if (!validBackup) throw new Error("恢复前备份没有返回匹配的持久化确认；磁盘课程未更改。");
+      if (
+        this.pendingRecovery !== pending || !this.saveIdentityMatches(identity) ||
+        revision !== this.saveRevision || JSON.stringify(this.data) !== JSON.stringify(current)
+      ) return;
+
+      const backup = {
+        id: result.id,
+        project_id: result.project_id,
+        name: attempt.name,
+        note: attempt.note,
+        git_commit_hash: null,
+        created_at: result.created_at,
+      };
+      this.localSnapshots.set(backup.id, clone(attempt.project));
+      this.commit("恢复自动保存", (data) => {
+        const next = clone(pending.project);
+        Object.keys(next).forEach((key) => { data[key] = next[key]; });
+        // Recovery restores the course the shell already has open; adopting a
+        // different project id would silently switch the open project and orphan
+        // every reference to it.
+        data.project = { ...next.project, id: current.project.id };
+        data.snapshots = [backup, ...(next.snapshots || []).filter((snapshot) => snapshot.id !== backup.id)];
+      });
+      pending.restore_attempt = {
+        identity: clone(identity),
+        project_json: JSON.stringify(this.data),
+        durability_warning: result.durability_warning || null,
+      };
+      this.resetAiState();
+      operation.allowRecoverySave = true;
+      const saved = await this.writeThrough();
+      if (!saved) {
+        pending.restore_attempt.revision = this.saveRevision;
+        this.ui.toast = "恢复内容仍保留在编辑器，正文尚未确认写入磁盘；恢复前备份已保留，请重试保存。";
+        this.notify();
+        return;
+      }
+      if (this.pendingRecovery !== pending || !this.saveIdentityMatches(identity)) return;
+      this.pendingRecovery = null;
+      const warnings = [result.durability_warning, this.recoveryWarning]
+        .filter((warning) => typeof warning === "string" && warning.trim());
+      this.ui.toast = warnings.length
+        ? `已恢复自动保存内容；恢复前备份已创建，但持久化确认有限：${warnings.join("；")}`
+        : "已恢复自动保存内容，恢复前备份已持久保存";
+      this.notify();
+    } catch (error) {
+      if (this.pendingRecovery === pending && this.saveIdentityMatches(identity)) {
+        this.ui.toast = userFacingError(error, "恢复没有完成；磁盘课程保持不变，请重试。");
+        this.notify();
+      }
+    } finally {
+      if (this.recoveryResolution === operation) {
+        this.recoveryResolution = null;
+        this.notify();
+      }
+    }
+  }
+  recoveryClearRequest(pending, identity = this.saveIdentity()) {
+    const transactionId = pending?.transaction_id;
+    if (
+      typeof transactionId !== "string" || !transactionId ||
+      !identity.project_dir || !identity.expected_project_id || !identity.lease_generation ||
+      (pending.project_id && pending.project_id !== identity.expected_project_id) ||
+      (pending.project?.project?.id && pending.project.project.id !== identity.expected_project_id) ||
+      !this.isFileFingerprint(this.projectFingerprint) || !this.projectFingerprint.exists ||
+      !Number.isSafeInteger(this.projectFingerprint.size) ||
+      typeof this.projectFingerprint.hash !== "string" || !this.projectFingerprint.hash
+    ) {
+      throw new Error("恢复日志与当前课程身份不匹配；没有清理恢复日志。");
+    }
+    const revision = Math.max(1, this.saveRevision);
+    if (!Number.isSafeInteger(revision)) throw new Error("恢复日志请求版本无效；没有清理恢复日志。");
+    return {
+      project_dir: identity.project_dir,
+      expected_project_id: identity.expected_project_id,
+      lease_generation: identity.lease_generation,
+      editor_generation: identity.editor_generation,
+      operation_id: uid(),
+      revision,
+      expected_fingerprint: clone(this.projectFingerprint),
+      expected_transaction_id: transactionId,
+    };
+  }
+  recoveryClearAcknowledged(result, request) {
+    const expectedFingerprint = request.expected_fingerprint;
+    const actualFingerprint = result?.fingerprint;
+    const fingerprintMatches = this.isFileFingerprint(actualFingerprint) &&
+      actualFingerprint.exists === expectedFingerprint.exists &&
+      actualFingerprint.size === expectedFingerprint.size &&
+      actualFingerprint.hash === expectedFingerprint.hash;
+    return result && typeof result.cleared === "boolean" &&
+      result.project_id === request.expected_project_id &&
+      normalizeProjectDir(result.project_dir) === normalizeProjectDir(request.project_dir) &&
+      result.lease_generation === request.lease_generation &&
+      result.editor_generation === request.editor_generation &&
+      result.operation_id === request.operation_id && result.revision === request.revision &&
+      fingerprintMatches &&
+      (result.cleared
+        ? result.transaction_id === request.expected_transaction_id
+        : result.transaction_id === null);
   }
   /**
    * Drop the in-memory project.
@@ -4869,8 +5103,11 @@ class WorkbenchStore {
       this.adoptProjectSnapshot(persistedState || { project });
       this.pendingRecovery = {
         project: migrateUiProject(journalProject),
-        canonical: this.data,
+        canonical: clone(this.data),
         saved_at: journalSavedAt,
+        transaction_id: recovery.transaction_id,
+        project_id: recovery.project_id,
+        canonical_revision: recovery.canonical_revision,
       };
       this.ui.toast = "发现未完成的保存；磁盘版本没有改变，请选择恢复暂存内容或保留磁盘版本。";
     } else if (journalProject && !project) {

@@ -45,6 +45,21 @@ function boundSaveAck(request: any, fingerprint: TestFingerprint) {
   };
 }
 
+function recoveryClearAck(request: any, fingerprint: TestFingerprint, cleared = true) {
+  return {
+    cleared,
+    transaction_id: cleared ? request.expected_transaction_id : null,
+    durability_warning: null,
+    project_id: request.expected_project_id,
+    project_dir: request.project_dir,
+    lease_generation: request.lease_generation,
+    editor_generation: request.editor_generation,
+    operation_id: request.operation_id,
+    revision: request.revision,
+    fingerprint: structuredClone(fingerprint),
+  };
+}
+
 const missingFingerprint: TestFingerprint = {
   exists: false,
   mtime_ms: null,
@@ -422,13 +437,13 @@ Deno.test("WorkbenchStore flush retries a mutation that lands during save", asyn
     const { WorkbenchStore } = await import("../app/main.js?recovery-test");
     await new Promise((resolve) => setTimeout(resolve, 0));
     const journals: Array<{ saved_at: string; canonical_revision: string; project: ProjectData }> = [];
-    const writes: Array<{ project: ProjectData; recovery_metadata: Record<string, unknown> }> = [];
+    const writes: Array<Record<string, any>> = [];
     let sessionCount = 0;
     let store: InstanceType<typeof WorkbenchStore>;
     const bridge = {
       isNative: () => false,
       writeRecoveryJournal: async () => {},
-      writeProject: async (request: typeof writes[number] & Record<string, any>) => {
+      writeProject: async (request: typeof writes[number]) => {
         const snapshot = request.project;
         const journal = {
           ...request.recovery_metadata,
@@ -582,11 +597,14 @@ Deno.test("pending recovery keeps canonical data until restore snapshots it", as
   globalThis.fetch = async () => { throw new Error("test fetch disabled"); };
   try {
     const { WorkbenchStore } = await import("../app/main.js?pending-recovery-test");
-    const backups: Array<{ project: { project: { title: string } } }> = [];
-    const writes: Array<{ project: ProjectData; recovery_metadata: Record<string, unknown> }> = [];
-    let clearCount = 0;
+    const backups: Array<Record<string, any>> = [];
+    const writes: Array<Record<string, any>> = [];
+    const clearRequests: Array<Record<string, any>> = [];
     let persisted: ProjectData | null = null;
     let journal: Record<string, unknown> | null = null;
+    let allowBackup = false;
+    let failCanonicalSave = false;
+    let failClear = false;
     let diskFingerprint = structuredClone(missingFingerprint);
     let fingerprintRevision = 1;
     const leaseGeneration = "lease:recovery-project";
@@ -629,17 +647,56 @@ Deno.test("pending recovery keeps canonical data until restore snapshots it", as
         assert(request.lease_generation === leaseGeneration, "recovery save must bind its active lease");
         assert(request.recovery_metadata?.project_id === project.project.id, "recovery journal metadata must bind the project");
         writes.push(structuredClone(request));
+        if (failCanonicalSave) {
+          const error = new Error("故障注入：正文保存未提交") as Error & {
+            code: string;
+            commit_state: string;
+            retryable: boolean;
+          };
+          error.code = "save_io_failed";
+          error.commit_state = "not_committed";
+          error.retryable = true;
+          throw error;
+        }
         persisted = structuredClone(project);
         journal = null;
-        clearCount += 1;
         diskFingerprint = fingerprintFor(project, ++fingerprintRevision);
         return boundSaveAck(request, diskFingerprint);
       },
       createSnapshot: async (input: typeof backups[number]) => {
         backups.push(structuredClone(input));
-        return { id: "recovery-before", name: "恢复前备份", note: "backup", created_at: "2026-09-21T00:00:00.000Z" };
+        if (!allowBackup) return { id: input.snapshot_id };
+        return {
+          id: input.snapshot_id,
+          snapshot_id: input.snapshot_id,
+          name: input.name,
+          note: input.note,
+          created_at: "2026-09-21T00:00:00.000Z",
+          content_hash: "a".repeat(64),
+          project_id: input.expected_project_id,
+          project_dir: input.project_dir,
+          lease_generation: input.lease_generation,
+          editor_generation: input.editor_generation,
+          operation_id: input.operation_id,
+          revision: input.revision,
+          persisted: true,
+          outcome: "written",
+        };
       },
-      clearRecoveryJournal: async () => { journal = null; clearCount += 1; },
+      clearRecoveryJournal: async (request: Record<string, any>) => {
+        clearRequests.push(structuredClone(request));
+        assert(request.project_dir === "/tmp/recovery-project", "journal clear must bind its project directory");
+        assert(request.expected_project_id === canonical.project.id, "journal clear must bind its project id");
+        assert(request.lease_generation === leaseGeneration, "journal clear must bind its live lease");
+        assert(typeof request.operation_id === "string" && request.operation_id, "journal clear must bind its operation id");
+        assert(Number.isSafeInteger(request.editor_generation) && Number.isSafeInteger(request.revision), "journal clear must bind editor generation and revision");
+        assert(request.expected_fingerprint.hash === diskFingerprint.hash, "journal clear must CAS the current canonical fingerprint");
+        if (failClear) throw new Error("故障注入：日志未清理");
+        assert(request.expected_transaction_id === journal?.transaction_id, "journal clear must match the exact visible transaction");
+        journal = null;
+        diskFingerprint = { ...diskFingerprint, mtime_ms: (diskFingerprint.mtime_ms ?? 0) + 1 };
+        return recoveryClearAck(request, diskFingerprint);
+      },
       saveSession: async () => {},
     };
     const store = new WorkbenchStore(bridge);
@@ -649,22 +706,84 @@ Deno.test("pending recovery keeps canonical data until restore snapshots it", as
     recovered.project.title = "自动保存版本";
     persisted = canonical;
     diskFingerprint = fingerprintFor(canonical, fingerprintRevision);
-    journal = { project: recovered, saved_at: "2999-09-21T00:00:00.000Z" };
+    journal = {
+      transaction_id: "recovery-txn-1",
+      project_id: canonical.project.id,
+      canonical_revision: canonical.project.updated_at,
+      project: recovered,
+      saved_at: "2999-09-21T00:00:00.000Z",
+    };
     await store.initialize();
     assert(store.data.project.title === "磁盘版本", "startup must keep canonical data visible");
     assert(store.pendingRecovery?.project.project.title === "自动保存版本", "startup must retain the newer recovery candidate");
     assert(!(await store.flush()), "pending recovery must block an ordinary flush");
     await store.resolvePendingRecovery("restore");
-    assert(String(store.data.project.title) === "自动保存版本", "restore must install the journal project");
-    assert(writes.at(-1)?.project.project.title === "自动保存版本", "restore must persist the journal project");
+    assert(String(store.data.project.title) === "磁盘版本", "an unconfirmed backup must not install the journal project");
+    assert(writes.length === 0 && store.pendingRecovery, "an unconfirmed backup must leave canonical data and the recovery choice intact");
+    const failedBackupRequest = structuredClone(backups[0]!);
+    allowBackup = true;
+    failCanonicalSave = true;
+    await store.resolvePendingRecovery("restore");
+    assert(String(store.data.project.title) === "自动保存版本", "a confirmed backup may install the journal project in memory");
+    assert(Number(writes.length) === 1 && store.pendingRecovery, "a failed canonical write must keep the recovery decision pending");
+    assert(journal?.transaction_id === "recovery-txn-1", "a failed canonical write must leave the exact recovery journal in place");
+    assert(store.saveStatus === "保存失败", "a failed restore write must remain visibly unsaved");
+    const failedRestoreWrite = structuredClone(writes.at(-1));
+    assert(failedRestoreWrite, "the failed restore must retain its exact save request");
     const backup = backups.at(0);
     assert(backup && backup.project.project.title === "磁盘版本", "restore must snapshot canonical data first");
+    const persistedBackupRequest = backups.at(-1);
+    assert(persistedBackupRequest?.snapshot_id === failedBackupRequest.snapshot_id && persistedBackupRequest?.operation_id === failedBackupRequest.operation_id, "backup retries must reuse the stable operation identity");
+    assert(persistedBackupRequest?.expected_project_id === canonical.project.id && persistedBackupRequest?.lease_generation === leaseGeneration, "backup create must bind the opened project and lease");
     assert(writes.at(-1)?.project.snapshots[0]?.name === "恢复前备份", "restore must retain the before-backup metadata");
-    assert(clearCount === 1 && !store.pendingRecovery, "restore must clear the journal and pending state");
-    store.pendingRecovery = { project: recovered, canonical: store.data, saved_at: "2999-09-21T00:00:00.000Z" };
+    store.data.project.title = "恢复失败后新增的草稿";
+    const writesBeforeChangedDraftRetry = writes.length;
+    await store.resolvePendingRecovery("restore");
+    assert(writes.length === writesBeforeChangedDraftRetry, "a changed draft must not be sent as a retry of the failed recovery write");
+    assert(store.data.project.title === "恢复失败后新增的草稿" && store.pendingRecovery, "a stale recovery retry must preserve the newer local draft and pending journal");
+    store.data = structuredClone(failedRestoreWrite.project);
+    failCanonicalSave = false;
+    await store.resolvePendingRecovery("restore");
+    assert(writes.at(-1)?.project.project.title === "自动保存版本", "retry must persist the recovered project");
+    assert(writes.at(-1)?.operation_id === failedRestoreWrite.operation_id, "retry must replay the same write operation");
+    assert(writes.at(-1)?.revision === failedRestoreWrite.revision, "retry must keep the same monotonic draft revision");
+    assert(writes.at(-1)?.editor_generation === failedRestoreWrite.editor_generation, "retry must stay in the same editor generation");
+    assert(JSON.stringify(writes.at(-1)?.expected_fingerprint) === JSON.stringify(failedRestoreWrite.expected_fingerprint), "retry must preserve the original CAS fingerprint");
+    assert(JSON.stringify(writes.at(-1)?.project) === JSON.stringify(failedRestoreWrite.project), "retry must replay the exact failed project snapshot");
+    assert(backups.length === 2, "retrying the write must not create a second backup");
+    assert(!store.pendingRecovery && journal === null, `successful restore must save and clear pending (pending=${Boolean(store.pendingRecovery)}, journal=${journal?.transaction_id}, status=${store.saveStatus}, toast=${store.ui.toast}, writes=${writes.length})`);
+
+    const preserved = structuredClone(store.data);
+    const keepCandidate = structuredClone(preserved);
+    keepCandidate.project.title = "另一个暂存候选";
+    journal = {
+      transaction_id: "recovery-txn-2",
+      project_id: canonical.project.id,
+      canonical_revision: preserved.project.updated_at,
+      project: keepCandidate,
+      saved_at: "2999-09-22T00:00:00.000Z",
+    };
+    store.pendingRecovery = {
+      project: keepCandidate,
+      canonical: structuredClone(preserved),
+      transaction_id: "recovery-txn-2",
+      project_id: canonical.project.id,
+      canonical_revision: preserved.project.updated_at,
+      saved_at: "2999-09-22T00:00:00.000Z",
+    };
+    failClear = true;
+    const writeCountBeforeClear = writes.length;
     await store.resolvePendingRecovery("discard");
-    assert(Number(clearCount) === 2 && !store.pendingRecovery, "discard must only clear the journal and pending state");
-    assert(String(store.data.project.title) === "自动保存版本", "discard must keep the canonical project untouched");
+    assert(store.pendingRecovery && journal?.transaction_id === "recovery-txn-2", "a failed clear acknowledgment must keep the prompt and exact journal");
+    assert(JSON.stringify(store.data) === JSON.stringify(preserved), "failed clear must not change in-memory canonical data");
+    failClear = false;
+    await store.resolvePendingRecovery("discard");
+    assert(clearRequests.at(-1)?.expected_transaction_id === "recovery-txn-2", "discard must clear only the visible journal transaction");
+    assert(writes.length === writeCountBeforeClear, "discard must not write Canonical");
+    assert(!store.pendingRecovery && journal === null, "a matching clear acknowledgment must close the prompt");
+    assert(String(store.saveStatus) === "已保存", "keeping the disk version without editing must retain the saved status");
+    assert(store.projectFingerprint.mtime_ms === diskFingerprint.mtime_ms, "a matching clear ack must adopt the actual locked fingerprint even when only mtime changed");
+    assert(String(store.data.project.title) === "自动保存版本", "discard must keep the committed Canonical project untouched");
   } finally {
     runtime.document = previousDocument;
     globalThis.fetch = previousFetch;

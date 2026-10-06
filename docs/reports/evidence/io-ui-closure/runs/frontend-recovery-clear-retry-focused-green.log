@@ -1,0 +1,45 @@
+Date: 2026-10-06
+Source: d9434ef97b9824b558134cc3d4243302039ec4b8
+Commands: deno test -A tests/persistence_scheduler_test.ts tests/recovery_ui_test.ts; deno check src/ui/contracts.ts app/main.js tests/persistence_scheduler_test.ts tests/recovery_ui_test.ts
+
+Check tests/persistence_scheduler_test.ts
+Check tests/recovery_ui_test.ts
+running 17 tests from ./tests/persistence_scheduler_test.ts
+session scheduler debounces 600ms, keeps the latest state, and skips unchanged payloads ... ok (1ms)
+session scheduler keeps the newest A-B-A state when the first A is in flight ... ok (224µs)
+session scheduler coalesces 100 interactions behind one write and honors the 2s max wait ... ok (863µs)
+session flush rejects failed writes even when the error reporter throws ... ok (385µs)
+save scheduler coalesces cumulative revisions and advances the bound fingerprint ... ok (1ms)
+later cumulative snapshots advance CAS through r1, r3, and r5 ... ok (312µs)
+save scheduler has a trailing 350ms delay and a 2s maximum wait ... ok (585µs)
+late save results cannot update a newer editor generation ... ok (112µs)
+A to B to A invalidates old leases and flush waits for the current generation ... ok (363µs)
+older revisions and mismatched bindings cannot replace the active save ... ok (759µs)
+failed writes reject drain, callback errors do not hide storage outcome ... ok (752µs)
+uncertain commits pause the latest pending save until explicit reconciliation ... ok (335µs)
+explicit not-committed failures may advance to the latest cumulative save ... ok (255µs)
+explicit retry replays only the same failed draft and editor generation ... ok (1ms)
+unknown not-committed errors pause unless the bridge marks them retryable ... ok (254µs)
+CAS conflicts and lost leases cannot use the transient retry path ... ok (288µs)
+save requests are cloned, revision-bound, and directory identity is normalized ... ok (166µs)
+running 13 tests from ./tests/recovery_ui_test.ts
+UI recovery queue serializes saves and survives a failed task ... ok (365µs)
+UI surfaces backend recovery warnings from import results ... ok (367µs)
+native project transitions keep A to B to A reader positions and session identities ... ok (38ms)
+native failed transitions keep the old session for missing, invalid, and locked targets ... ok (31ms)
+WorkbenchStore flush retries a mutation that lands during save ... ok (388ms)
+WorkbenchStore surfaces autosave conflicts and reload establishes a usable state ... ok (16ms)
+pending recovery keeps canonical data until restore snapshots it ... ok (20ms)
+browser startup keeps the recovery journal returned with open state ... ok (15ms)
+native startup clears a persisted project path when opening loses its lease ... ok (13ms)
+native project switching rolls back the target when the old lease cannot close ... ok (17ms)
+native open releases a provisional lease when project data is malformed ... ok (13ms)
+native open does not close a lease when project_open rejects ... ok (22ms)
+native open keeps a null project result unleased ... ok (13ms)
+
+ok | 30 passed | 0 failed (716ms)
+
+Check src/ui/contracts.ts
+Check app/main.js
+Check tests/persistence_scheduler_test.ts
+Check tests/recovery_ui_test.ts
