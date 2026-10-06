@@ -164,7 +164,64 @@ if (motionCopies) {
       assetFiles.push({ path: relativePath, bytes });
     }
   }
-  if (mode === "media-ui" && data.assets.length !== 120) throw new Error(`media-ui fixture needs 120 assets, got ${data.assets.length}`);
+  if (mode === "media-ui" && data.assets.length !== 120) {
+    throw new Error(
+      `media-ui fixture needs 120 valid assets, got ${data.assets.length}`,
+    );
+  }
+}
+if (mode === "media-ui") {
+  const missingPath = "assets/fixture-edge-missing.png";
+  const missingBytes = new TextEncoder().encode(
+    "intentionally absent media QA fixture",
+  );
+  addAsset(data, data.project.id, {
+    type: "image",
+    filename: "fixture-edge-missing.png",
+    storage_path: missingPath,
+    mime_type: "image/png",
+    checksum: await sha256Bytes(missingBytes),
+    file_size: missingBytes.byteLength,
+    width: 32,
+    height: 32,
+    title: "Boundary fixture: missing file",
+    source_type: "imported",
+  }, true);
+
+  const oversizeBytes = new Uint8Array(8 * 1024 * 1024 + 1);
+  for (let index = 0; index < oversizeBytes.length; index++) {
+    oversizeBytes[index] = (index * 73 + (index >>> 7) * 29 + 11) & 255;
+  }
+  const oversizePath = "assets/fixture-edge-oversize.png";
+  addAsset(data, data.project.id, {
+    type: "image",
+    filename: "fixture-edge-oversize.png",
+    storage_path: oversizePath,
+    mime_type: "image/png",
+    checksum: await sha256Bytes(oversizeBytes),
+    file_size: oversizeBytes.byteLength,
+    width: 32,
+    height: 32,
+    title: "Boundary fixture: exceeds preview cap",
+    source_type: "imported",
+  }, true);
+  assetFiles.push({ path: oversizePath, bytes: oversizeBytes });
+
+  const wrongMimeBytes = await qaPng(121);
+  const wrongMimePath = "assets/fixture-edge-wrong-mime.png";
+  addAsset(data, data.project.id, {
+    type: "image",
+    filename: "fixture-edge-wrong-mime.png",
+    storage_path: wrongMimePath,
+    mime_type: "text/plain",
+    checksum: await sha256Bytes(wrongMimeBytes),
+    file_size: wrongMimeBytes.byteLength,
+    width: 32,
+    height: 32,
+    title: "Boundary fixture: mismatched MIME",
+    source_type: "imported",
+  }, true);
+  assetFiles.push({ path: wrongMimePath, bytes: wrongMimeBytes });
 }
 if (mode === "layout-final") {
   const firstLesson = lessons[0]!;
