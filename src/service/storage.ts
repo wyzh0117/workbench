@@ -1442,6 +1442,7 @@ export class ProjectDirectoryStore {
       allow_external_overwrite?: boolean;
       expected_current?: FileFingerprint;
     } = {},
+    validatedCanonicalText?: string,
   ): Promise<ProjectWriteResult> {
     await this.ensureDirectory();
     const externalState = await this.externalChange();
@@ -1475,7 +1476,7 @@ export class ProjectDirectoryStore {
         },
       );
     }
-    const contents = serializeProject(data);
+    const contents = validatedCanonicalText ?? serializeProject(data);
     const bytes = new TextEncoder().encode(contents);
     let written: AtomicTextWriteResult;
     try {
@@ -2005,7 +2006,11 @@ export class ProjectDirectoryStore {
         }
         let projectWrite!: ProjectWriteResult;
         try {
-          projectWrite = await this.writeProjectUnlocked(canonical);
+          projectWrite = await this.writeProjectUnlocked(
+            canonical,
+            {},
+            canonicalText,
+          );
           canonicalCommitted = true;
         } catch (caught) {
           const details = caught instanceof ServiceError

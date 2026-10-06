@@ -193,6 +193,39 @@ Deno.test("bound project saves return compact ack and unchanged saves perform ze
       "unchanged save leaves project backup untouched",
     );
 
+    const assertRejectedWithoutWrites = async (
+      candidate: ProjectData,
+      label: string,
+    ) => {
+      const rejected = await desktop.commands.execute(
+        "project.save",
+        request(candidate, state, 2),
+      );
+      assert(
+        rejected.error?.code === "project_save_failed" &&
+          rejected.error.details.commit_state === "not_committed",
+        `${label} is rejected before commit`,
+      );
+      assert(
+        bytesEqual(await Deno.readFile(path), beforeBytes),
+        `${label} leaves canonical bytes unchanged`,
+      );
+      assert(
+        await Deno.readTextFile(recoveryPath) === "recovery sentinel" &&
+          await Deno.readTextFile(recoveryBackupPath) ===
+            "recovery backup sentinel" &&
+          await Deno.readTextFile(projectBackupPath) ===
+            "project backup sentinel",
+        `${label} leaves recovery and backup files unchanged`,
+      );
+    };
+    const secretProject = structuredClone(project);
+    Object.assign(secretProject.project, { api_key: "must-not-be-saved" });
+    await assertRejectedWithoutWrites(secretProject, "secret-bearing input");
+    const invalidProject = structuredClone(project);
+    invalidProject.project.id = "";
+    await assertRejectedWithoutWrites(invalidProject, "invalid project input");
+
     const changed = structuredClone(project);
     changed.project.title = "Bound save written";
     const writtenRequest = request(changed, state, 2);
@@ -217,6 +250,13 @@ Deno.test("bound project saves return compact ack and unchanged saves perform ze
       "written ack carries the operation id",
     );
     const committedBytes = await Deno.readFile(path);
+    assert(
+      bytesEqual(
+        committedBytes,
+        new TextEncoder().encode(serializeProject(changed)),
+      ),
+      "writer commits exactly the already validated canonical text",
+    );
     const actualHash = createHash("sha256").update(committedBytes).digest(
       "hex",
     );
