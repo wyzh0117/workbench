@@ -652,6 +652,46 @@ Deno.test("snapshot restore reports committed content with limited durability co
   }
 });
 
+Deno.test("version history formats ISO and native epoch-millisecond timestamps", async () => {
+  const { store, restore } = await bootStore();
+  const savedAt = Date.UTC(2026, 9, 6, 1, 2, 3);
+  const expected = new Date(savedAt).toLocaleString("zh-CN");
+  try {
+    (store as any).ui.route = "versions";
+    (store as any).snapshotRows = [
+      {
+        id: "iso",
+        name: "ISO",
+        status: "available",
+        created_at: new Date(savedAt).toISOString(),
+      },
+      {
+        id: "epoch",
+        name: "Native epoch",
+        status: "available",
+        created_at: String(savedAt),
+      },
+      {
+        id: "invalid",
+        name: "Invalid",
+        status: "available",
+        created_at: "not-a-timestamp",
+      },
+    ];
+    const html = createViews(store as any).shellView() as string;
+    assert(
+      html.split(`<small>${expected}</small>`).length - 1 === 2,
+      "ISO and native epoch-millisecond timestamps both render as saved dates",
+    );
+    assert(
+      html.includes("保存时间未知"),
+      "invalid timestamps keep the existing unknown-date fallback",
+    );
+  } finally {
+    restore();
+  }
+});
+
 Deno.test("restore stops when the pending Canonical save cannot drain", async () => {
   const { store, bridge, restore } = await bootStore();
   const internal = store as any;

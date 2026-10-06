@@ -2323,8 +2323,11 @@ export function createViews(store) {
     const snapshots = Array.isArray(store.snapshotRows) ? store.snapshotRows : [];
     const available = snapshots.filter((snapshot) => snapshot.status === "available");
     const savedAt = (value) => {
-      const time = Date.parse(String(value || ""));
-      return Number.isFinite(time) ? new Date(time).toLocaleString("zh-CN") : "保存时间未知";
+      const text = String(value ?? "").trim();
+      const epochMillis = /^\d{13}$/.test(text) ? Number(text) : NaN;
+      const time = Number.isSafeInteger(epochMillis) ? epochMillis : Date.parse(text);
+      const date = new Date(time);
+      return Number.isFinite(date.getTime()) ? date.toLocaleString("zh-CN") : "保存时间未知";
     };
     return `<section class="page versions-page"><div class="page-head"><div><span class="eyebrow">安全恢复</span><h1>版本历史</h1><p class="muted">版本记录保存课程正文、排版与引用关系，不复制素材文件；恢复不会找回已删除或改写的素材，也不会还原素材文件名。</p></div><div class="page-head-actions"><button class="primary" data-action="save-version">保存当前版本</button><button class="secondary" data-action="refresh-snapshots" ${store.snapshotLoading ? "disabled" : ""}>刷新</button></div></div><div class="summary-grid versions-summary" aria-label="版本概况"><article class="summary-card"><span>已保存版本</span><strong>${available.length}</strong><small>可随时恢复</small></article><article class="summary-card"><span>自动保存</span><strong>开启</strong><small>编辑内容持续保存</small></article><article class="summary-card"><span>恢复保护</span><strong>启用</strong><small>恢复前备份会先持久保存</small></article></div>${store.snapshotLoadError ? `<p class="error-text" role="alert">${esc(store.snapshotLoadError)}</p>` : ""}${store.snapshotLoading ? `<p class="muted" role="status">正在读取已保存版本…</p>` : ""}<section class="page-section versions-section"><div class="versions-section-head"><div><h2>命名版本</h2><p class="muted">为发布、审核或大幅修改前保存一个清楚的回退点。</p></div><span class="status-pill">${available.length}</span></div>${
       snapshots.length
