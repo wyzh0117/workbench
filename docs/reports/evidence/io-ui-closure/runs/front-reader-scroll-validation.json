@@ -1,0 +1,55 @@
+{
+  "task": "reader center scroll persistence and restore",
+  "source_parent": "3b605a1",
+  "changed_files": [
+    "app/main.js",
+    "tests/dogfooding_test.ts"
+  ],
+  "focused_green": {
+    "command": "deno test -A tests/dogfooding_test.ts tests/native_boot_test.ts",
+    "passed": 53,
+    "failed": 0,
+    "log": {
+      "path": "front-reader-scroll-focused.log",
+      "sha256": "4967e9054af9ea857b11d3a1a8aa5a79976d85b6e8c46fb3a4c88030f2a149b7"
+    }
+  },
+  "pre_fix_red": {
+    "baseline_source": "3b605a1",
+    "method": "detached worktree; copied only the new regression test; no shared source checkout was reverted",
+    "result": "0 passed, 1 failed",
+    "failing_assertion": "a center scroll must flow through the session writer",
+    "log": {
+      "path": "front-reader-scroll-baseline-red.log",
+      "sha256": "082b80c69b9cb3980f47a2237590e5197b396f33c23b7f1dde63f3d9002344a5"
+    }
+  },
+  "static_checks": [
+    {
+      "command": "deno check app/main.js tests/dogfooding_test.ts",
+      "result": "passed",
+      "log": {
+        "path": "front-reader-scroll-check.log",
+        "sha256": "8fcca92a9b75dbb0619b0e47fd26e7b926365cdbf388bff75affbfaea73f3512"
+      }
+    },
+    {
+      "command": "deno fmt --check app/main.js",
+      "result": "passed",
+      "log": {
+        "path": "front-reader-scroll-format.log",
+        "sha256": "2575a1b59e90591280fb03b5c22f783810b1dde862cd5891b5cfc9282a8f77c7"
+      }
+    },
+    {
+      "command": "git diff --check -- app/main.js tests/dogfooding_test.ts",
+      "result": "passed",
+      "log": {
+        "path": "front-reader-scroll-diff-check.log",
+        "sha256": "36db47be4dc3ea2017e9fc55e5b36efb7dfb03fd542da78e64c1bbd359de81aa"
+      }
+    }
+  ],
+  "independent_review": "Deno reviewed live-center identity and post-autosize restoration; no blocker",
+  "scope": "Native10 still needs real nonzero scroll persistence and cold-reopen confirmation."
+}

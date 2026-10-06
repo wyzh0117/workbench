@@ -157,6 +157,7 @@ async function bootDom() {
   const actionNodes: FakeNode[] = [];
   const textEditors: FakeNode[] = [];
   let detachOnNextRender: FakeNode | null = null;
+  let nextCenterOnRender: FakeNode | null = null;
   let activeDialog: any = null;
   let dialogRendered = false;
   let currentHtml = "";
@@ -172,6 +173,14 @@ async function bootDom() {
       if (detachOnNextRender) {
         detachOnNextRender.inRoot = false;
         detachOnNextRender = null;
+      }
+      if (nextCenterOnRender) {
+        for (const node of scrollNodes.get(".center") ?? []) {
+          node.inRoot = false;
+        }
+        nextCenterOnRender.inRoot = true;
+        scrollNodes.set(".center", [nextCenterOnRender]);
+        nextCenterOnRender = null;
       }
       // Replacing innerHTML throws the old subtree away, so every scroll
       // container starts at the top again — exactly what render() must undo.
@@ -194,11 +203,24 @@ async function bootDom() {
       if (selector === '[role="dialog"][aria-modal="true"]') {
         return dialogRendered ? activeDialog : null;
       }
+      if (selector === ".center") {
+        return currentHtml.includes('class="center"')
+          ? scrollNodes.get(".center")?.[0] ?? null
+          : null;
+      }
       return registered.get(selector) ?? null;
     },
     querySelectorAll: (selector: string) => {
       if (selector === "[data-action]") return actionNodes;
-      if (selector === "textarea[data-block-id], input[data-block-id]") return textEditors;
+      if (selector === "textarea[data-block-id]") {
+        return textEditors;
+      }
+      if (selector === "textarea[data-block-id], input[data-block-id]") {
+        return textEditors;
+      }
+      if (selector === ".center" && !currentHtml.includes('class="center"')) {
+        return [];
+      }
       return scrollNodes.get(selector) ?? [];
     },
   };
@@ -281,6 +303,9 @@ async function bootDom() {
     textEditors,
     createNode,
     detachOnNextRender: (node: FakeNode) => { detachOnNextRender = node; },
+    replaceCenterOnNextRender: (node: FakeNode) => {
+      nextCenterOnRender = node;
+    },
     renderProject,
     fireDocument,
     fireRoot,
@@ -748,6 +773,142 @@ Deno.test("a render keeps the scroll position of the editor panes", async () => 
     assert(
       center.scrollTop === 420,
       "a re-render must put the reading position back instead of jumping to the top",
+    );
+  } finally {
+    dom.restore();
+  }
+});
+
+Deno.test("reader center scroll persists and restores only for its rendered tab", async () => {
+  const dom = await bootDom();
+  try {
+    const data = projectWith("阅读位置");
+    const itemId = data.content_items[0]!.id;
+    const center = dom.createNode();
+    const persisted: any[] = [];
+    dom.store.bridge.projectDir = "/tmp/reader-scroll-a";
+    dom.store.tabs = [{
+      content_item_id: itemId,
+      mode: "writing",
+      pinned: false,
+      scroll_top: 0,
+    }];
+    dom.store.persistSessionDirect = async (session: unknown) => {
+      persisted.push(structuredClone(session));
+    };
+    dom.scrollNodes.set(".center", [center]);
+    dom.renderProject(data);
+
+    center.scrollTop = 420;
+    center.fire("scroll");
+    await dom.store.sessionScheduler.flush();
+    assert(
+      persisted.at(-1)?.tabs?.[0]?.scroll_top === 420,
+      "a center scroll must flow through the session writer",
+    );
+
+    const sameIdentityCenter = dom.createNode();
+    dom.replaceCenterOnNextRender(sameIdentityCenter);
+    dom.store.ui.rightPanel = "properties";
+    dom.store.notify();
+    assert(
+      sameIdentityCenter.scrollTop === 420,
+      "an ordinary render must retain the active reader position",
+    );
+    center.scrollTop = 900;
+    center.fire("scroll");
+    assert(
+      dom.store.session().tabs[0]?.scroll_top === 420,
+      "a detached center with the same reader identity must not overwrite the active tab",
+    );
+
+    const savedSession = dom.store.session();
+    dom.store.ui.route = "overview";
+    dom.store.notify();
+    assert(
+      dom.store.session().tabs[0]?.scroll_top === 420,
+      "non-reader pages must not replace the saved tab position with their center scroll",
+    );
+    dom.store.applyReaderState(
+      dom.store.normalizeReaderState(data, savedSession, "project"),
+    );
+    dom.store.ui.screen = "project";
+    const reopenedCenter = dom.createNode() as any;
+    let reopenedScrollTop = 0;
+    reopenedCenter.maxScrollTop = 0;
+    Object.defineProperty(reopenedCenter, "scrollTop", {
+      get: () => reopenedScrollTop,
+      set: (value) => {
+        reopenedScrollTop = Math.min(Number(value) || 0, reopenedCenter.maxScrollTop);
+      },
+    });
+    const autoSizeField = dom.createNode({ blockId: "reader-scroll-block" }) as any;
+    autoSizeField.scrollHeight = 500;
+    autoSizeField.style = {};
+    Object.defineProperty(autoSizeField.style, "height", {
+      set: (value) => {
+        if (value !== "auto") {
+          for (const activeCenter of dom.scrollNodes.get(".center") ?? []) {
+            (activeCenter as any).maxScrollTop = 500;
+          }
+        }
+      },
+    });
+    autoSizeField.closest = (selector: string) =>
+      selector === "article.block[data-block-id]"
+        ? {
+          dataset: {},
+          classList: { contains: () => false, toggle: () => {} },
+        }
+        : null;
+    dom.textEditors.push(autoSizeField);
+    dom.replaceCenterOnNextRender(reopenedCenter);
+    dom.store.notify();
+    assert(
+      reopenedCenter.scrollTop === 420,
+      "opening the saved reader tab must restore its position after content sizing expands the scroll range",
+    );
+
+    const editorCenter = reopenedCenter;
+    const previewCenter = dom.createNode();
+    dom.replaceCenterOnNextRender(previewCenter);
+    dom.store.ui.mode = "preview";
+    dom.store.notify();
+    editorCenter.scrollTop = 900;
+    editorCenter.fire("scroll");
+    assert(
+      dom.store.session().tabs[0]?.scroll_top === 420,
+      "a late scroll from the prior mode must not overwrite the active tab",
+    );
+    assert(
+      previewCenter.scrollTop === 420,
+      "mode changes must restore the tab's shared saved position",
+    );
+
+    const nextProject = projectWith("另一个项目");
+    const nextItemId = nextProject.content_items[0]!.id;
+    const nextCenter = dom.createNode();
+    dom.store.data = nextProject;
+    dom.store.tabs = [{
+      content_item_id: nextItemId,
+      mode: "writing",
+      pinned: false,
+      scroll_top: 73,
+    }];
+    dom.store.ui.activeId = nextItemId;
+    dom.store.ui.route = "editor";
+    dom.store.ui.mode = "writing";
+    dom.replaceCenterOnNextRender(nextCenter);
+    dom.store.notify();
+    previewCenter.scrollTop = 999;
+    previewCenter.fire("scroll");
+    assert(
+      nextCenter.scrollTop === 73,
+      "a different project must restore its own tab position, not the previous center's scroll",
+    );
+    assert(
+      dom.store.session().tabs[0]?.scroll_top === 73,
+      "late events from the previous project must not mutate the new project's session",
     );
   } finally {
     dom.restore();

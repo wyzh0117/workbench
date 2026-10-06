@@ -1978,6 +1978,34 @@ class WorkbenchStore {
       explorer_recent: normalizeExplorerPathList(this.ui.explorerRecent, 8),
     };
   }
+  readerScrollTarget() {
+    if (this.ui.route !== "editor" || !["writing", "structure", "preview"].includes(this.ui.mode)) return null;
+    const projectId = this.data?.project?.id;
+    const contentItemId = this.ui.activeId;
+    if (!projectId || !contentItemId) return null;
+    const tab = this.tabs.find((candidate) => candidate.content_item_id === contentItemId);
+    if (!tab) return null;
+    return {
+      identity: JSON.stringify([
+        normalizeProjectDir(this.bridge.projectDir) || "",
+        projectId,
+        contentItemId,
+        this.ui.mode,
+      ]),
+      tab,
+    };
+  }
+  syncReaderScrollPosition(center = root?.querySelector?.(".center")) {
+    const target = this.readerScrollTarget();
+    if (
+      !target || !center || root?.querySelector?.(".center") !== center ||
+      center.dataset?.readerIdentity !== target.identity
+    ) return false;
+    const scrollTop = Number(center.scrollTop);
+    if (!Number.isFinite(scrollTop) || scrollTop < 0 || target.tab.scroll_top === scrollTop) return false;
+    target.tab.scroll_top = scrollTop;
+    return true;
+  }
   defaultReaderState(project, route = "overview") {
     const activeId = resumeLessonId(project) || project?.content_items?.[0]?.id || null;
     return {
@@ -4913,6 +4941,7 @@ class WorkbenchStore {
   session() {
     const projectDir = this.bridge.projectDir || null;
     const projectId = this.data.project?.id || null;
+    this.syncReaderScrollPosition();
     const reader = this.readerState();
     return this.sessionWithReader(projectDir, projectId, reader);
   }
@@ -10696,22 +10725,48 @@ function render() {
     if (returnSelector) root.dataset.dialogReturnFocus = returnSelector;
   }
   const dialogReturnFocus = String(root.dataset?.dialogReturnFocus || "");
+  const previousCenter = root.querySelector?.(".center") || null;
+  store.syncReaderScrollPosition(previousCenter);
+  const previousReaderIdentity = previousCenter?.dataset?.readerIdentity || null;
+  const nextReaderTarget = store.ui.screen === "launcher" ? null : store.readerScrollTarget();
+  const preserveReaderCenter = Boolean(
+    nextReaderTarget && previousReaderIdentity === nextReaderTarget.identity
+  );
+  const preserveCenterState = nextReaderTarget
+    ? preserveReaderCenter
+    : !previousReaderIdentity;
   rendering = true;
   let typing = null;
   let scroll = [];
   try {
     typing = captureTypingState();
     scroll = captureScrollState();
+    if (!preserveCenterState) scroll = scroll.filter((item) => item.selector !== ".center");
     cancelActivePointerDrag?.();
     closeActiveBlockOverflowMenu?.();
     root.innerHTML = store.ui.screen === "launcher" ? views.launcherView() : views.shellView();
   } finally {
     rendering = false;
   }
+  const currentCenter = root.querySelector?.(".center") || null;
+  let restoredReaderPosition = false;
+  let readerRestoreTop = null;
+  if (currentCenter && nextReaderTarget) {
+    currentCenter.dataset.readerIdentity = nextReaderTarget.identity;
+    if (!preserveReaderCenter) {
+      readerRestoreTop = Math.max(0, Number(nextReaderTarget.tab.scroll_top) || 0);
+      restoredReaderPosition = readerRestoreTop > 0 && !store.ui.focusRequirementId;
+    }
+  } else if (currentCenter?.dataset) {
+    delete currentCenter.dataset.readerIdentity;
+  }
   bindEvents();
   autosizeBlockFields();
   scheduleToastDismissal();
   restoreScrollState(scroll);
+  if (currentCenter && readerRestoreTop !== null) {
+    currentCenter.scrollTop = readerRestoreTop;
+  }
   // Observe AFTER the viewport is back where the user left it: registered
   // first, every frame would be judged against the pre-restore scroll position
   // and the first cards of the library would all read at once.
@@ -10768,18 +10823,23 @@ function render() {
   // Only follow the pinned selection when it actually moved: re-centring the
   // page on every autosave is what made the editor jump while typing.
   const focused = store.ui.focusRequirementId || null;
-  if (focused && focused !== lastScrolledTo.requirement) {
-    lastScrolledTo.requirement = focused;
-    queueMicrotask(() => root.querySelector(`[data-requirement-id="${focused}"]`)?.scrollIntoView({ block: "center" }));
-  } else if (!focused) {
-    lastScrolledTo.requirement = null;
-  }
   const selected = store.ui.selectedBlockId || null;
-  if (selected && store.ui.mode === "writing" && selected !== lastScrolledTo.block) {
+  if (restoredReaderPosition) {
+    lastScrolledTo.requirement = focused;
     lastScrolledTo.block = selected;
-    queueMicrotask(() => root.querySelector(`[data-block-id="${selected}"]`)?.scrollIntoView({ block: "nearest" }));
-  } else if (!selected || store.ui.mode !== "writing") {
-    lastScrolledTo.block = null;
+  } else {
+    if (focused && focused !== lastScrolledTo.requirement) {
+      lastScrolledTo.requirement = focused;
+      queueMicrotask(() => root.querySelector(`[data-requirement-id="${focused}"]`)?.scrollIntoView({ block: "center" }));
+    } else if (!focused) {
+      lastScrolledTo.requirement = null;
+    }
+    if (selected && store.ui.mode === "writing" && selected !== lastScrolledTo.block) {
+      lastScrolledTo.block = selected;
+      queueMicrotask(() => root.querySelector(`[data-block-id="${selected}"]`)?.scrollIntoView({ block: "nearest" }));
+    } else if (!selected || store.ui.mode !== "writing") {
+      lastScrolledTo.block = null;
+    }
   }
   if (renderQueued) {
     renderQueued = false;
@@ -12023,6 +12083,12 @@ function bindDocumentImportRow(row) {
 
 function bindEvents() {
   bindActionControls(root);
+  const readerCenter = root?.querySelector?.(".center");
+  if (readerCenter?.dataset?.readerIdentity) {
+    readerCenter.addEventListener("scroll", () => {
+      if (store.syncReaderScrollPosition(readerCenter)) store.scheduleSessionSave();
+    }, { passive: true });
+  }
   if (root?.dataset && root.dataset.dialogFocusTrapBound !== "true") {
     root.dataset.dialogFocusTrapBound = "true";
     root.addEventListener("keydown", (event) => {

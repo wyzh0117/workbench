@@ -1,0 +1,20 @@
+Check tests/dogfooding_test.ts
+running 1 test from ./tests/dogfooding_test.ts
+reader center scroll persists and restores only for its rendered tab ... FAILED (46ms)
+
+ ERRORS
+
+reader center scroll persists and restores only for its rendered tab => ./tests/dogfooding_test.ts:782:6
+error: Error: a center scroll must flow through the session writer
+  if (!condition) throw new Error(message);
+                        ^
+    at assert (file:///private/tmp/workbench-scroll-red-proof-3b605a1/tests/dogfooding_test.ts:38:25)
+    at file:///private/tmp/workbench-scroll-red-proof-3b605a1/tests/dogfooding_test.ts:805:5
+
+ FAILURES
+
+reader center scroll persists and restores only for its rendered tab => ./tests/dogfooding_test.ts:782:6
+
+FAILED | 0 passed | 1 failed | 29 filtered out (52ms)
+
+error: Test failed
