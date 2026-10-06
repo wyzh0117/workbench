@@ -109,6 +109,36 @@ Deno.test("a selected directory imports descendant media as assets only", async 
   });
 });
 
+Deno.test("folder adoption reports new media separately from Markdown references reused in the same batch", async () => {
+  await withTempDir("acw-adoption-reused-markdown-assets-", async (root) => {
+    await Deno.mkdir(join(root, "course", "media"), { recursive: true });
+    await writeBytes(join(root, "course", "media", "shot.png"), [1, 2, 3]);
+    await writeBytes(join(root, "course", "media", "loop.gif"), [4, 5, 6]);
+    await writeBytes(join(root, "course", "media", "clip.mp4"), [7, 8, 9]);
+    await Deno.writeTextFile(
+      join(root, "course", "lesson.md"),
+      "# Lesson\n\n![shot](media/shot.png)\n\n![loop](media/loop.gif)\n",
+    );
+
+    const plan = await directoryPlan(root, true);
+    const result = await confirmFolderAdoption(plan, {
+      skip_project_write: true,
+      document_paths: ["course/lesson.md"],
+    });
+    const assetIds = result.data.assets.map((asset) => asset.id);
+    const usageIds = result.data.asset_usages.map((usage) => usage.asset_id);
+
+    assertEquals(result.data.assets.length, 3, "the three recursive media files create only three rows");
+    assertEquals(result.copied_files.length, 3, "Markdown image references must reuse staged descendant files");
+    assertEquals(result.asset_ids.length, 3, "asset_ids counts only the unique newly added Canonical rows");
+    assertEquals(new Set(result.asset_ids).size, 3, "new asset IDs are unique");
+    assertEquals(result.reused_asset_ids.length, 2, "each Markdown image reference is reported as a reuse event");
+    assertEquals([...result.reused_asset_ids].sort(), [...usageIds].sort(), "body usages keep the real reused asset IDs");
+    assert(usageIds.every((id) => assetIds.includes(id)), "every Markdown usage points at an existing Canonical asset row");
+    assertEquals(result.data.asset_usages.length, 2, "both image references keep their usage rows");
+  });
+});
+
 Deno.test("an unselected directory contributes no descendants", async () => {
   await withTempDir("acw-descendant-unselected-", async (root) => {
     await seedCourse(root);

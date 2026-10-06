@@ -1,0 +1,27 @@
+Check tests/descendant_media_adoption_test.ts
+running 5 tests from ./tests/descendant_media_adoption_test.ts
+a selected directory imports descendant media as assets only ... ok (110ms)
+folder adoption reports new media separately from Markdown references reused in the same batch ... FAILED (145ms)
+an unselected directory contributes no descendants ... ok (9ms)
+descendant media never follows a symlink out of the folder ... ok (16ms)
+a descendant the plan already lists keeps its own row and imports once ... ok (57ms)
+
+ ERRORS
+
+folder adoption reports new media separately from Markdown references reused in the same batch => ./tests/descendant_media_adoption_test.ts:112:6
+error: Error: asset_ids counts only the unique newly added Canonical rows: expected 3, got 5
+  if (!condition) throw new Error(message);
+                        ^
+    at assert (file:///Users/youngi/.codex/worktrees/io-ui-closure/workbench/tests/descendant_media_adoption_test.ts:17:25)
+    at assertEquals (file:///Users/youngi/.codex/worktrees/io-ui-closure/workbench/tests/descendant_media_adoption_test.ts:21:3)
+    at file:///Users/youngi/.codex/worktrees/io-ui-closure/workbench/tests/descendant_media_adoption_test.ts:133:5
+    at async withTempDir (file:///Users/youngi/.codex/worktrees/io-ui-closure/workbench/tests/descendant_media_adoption_test.ts:30:5)
+    at async file:///Users/youngi/.codex/worktrees/io-ui-closure/workbench/tests/descendant_media_adoption_test.ts:113:3
+
+ FAILURES
+
+folder adoption reports new media separately from Markdown references reused in the same batch => ./tests/descendant_media_adoption_test.ts:112:6
+
+FAILED | 4 passed | 1 failed (349ms)
+
+error: Test failed

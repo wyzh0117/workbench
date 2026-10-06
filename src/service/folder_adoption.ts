@@ -109,9 +109,11 @@ export interface FolderAdoptionResult {
   root: string;
   stage_ids: string[];
   content_item_ids: string[];
+  /** Unique Canonical asset ids added by this adoption. */
   asset_ids: string[];
   /** Inbox ids used as Source / Reference material (§33). */
   source_ids: string[];
+  /** Existing Canonical ids reused by this batch, one entry per reuse event. */
   reused_asset_ids: string[];
   warnings: string[];
   /** Relative paths written under assets/. */
@@ -1399,7 +1401,6 @@ async function importPathAsAsset(
     if (input.duplicateChoice === "existing") {
       await Deno.remove(stagingAbs);
       input.result.reused_asset_ids.push(existing.id);
-      input.result.asset_ids.push(existing.id);
       input.result.warnings.push(
         `素材「${input.filename}」checksum 已存在，已复用现有素材`,
       );
@@ -1421,9 +1422,10 @@ async function importPathAsAsset(
     source_type: "imported",
     title: input.filename,
   }, Boolean(existing && input.duplicateChoice === "copy"));
-  input.result.asset_ids.push(added.asset.id);
   if (added.duplicate) {
     input.result.reused_asset_ids.push(added.asset.id);
+  } else {
+    input.result.asset_ids.push(added.asset.id);
   }
   return added.asset.id;
 }
