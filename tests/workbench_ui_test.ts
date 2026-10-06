@@ -164,6 +164,10 @@ Deno.test("shared controls align core workbench surfaces without losing compact 
   assert(styles.includes("--control-height: 35px"), "alignment pass must expose one shared control height");
   assert(styles.includes("--statusbar-height: 30px"), "statusbar height must be a shared token");
   assert(
+    styles.includes(".overview-page .page-head .secondary { color: var(--primary-dark); }"),
+    "secondary actions on the dark overview hero must keep a readable foreground",
+  );
+  assert(
     /\.primary, \.secondary, \.text-button, \.icon-button, \.mode-button, \.filter\s*\{[\s\S]*?display: inline-flex/.test(styles),
     "button families must share inline-flex vertical alignment",
   );

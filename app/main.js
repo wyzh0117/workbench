@@ -5519,7 +5519,7 @@ class WorkbenchStore {
    * The rows shown here are copies of the confirmed plan's candidates: the dialog
    * filters what gets sent and never re-infers a Stage / Lesson (§19).
    */
-  async openDocumentImportDialog(plan) {
+  async openDocumentImportDialog(plan, opener = null) {
     const root = String(plan?.root || this.ui.importFolderRoot || "");
     const rootItems = collectDocumentImportCandidates(plan).map((item) => ({
       ...item,
@@ -5530,6 +5530,7 @@ class WorkbenchStore {
       (item.mapping === "stage" || item.mapping === "lesson")
     );
     if (!rootItems.length && !parentDirs.length) return "none";
+    if (opener) rememberDialogReturnFocus(opener);
     const generation = ++this.documentImportGeneration;
     const mappingGeneration = this.mappingGeneration;
     const groups = rootItems.length
@@ -5754,7 +5755,7 @@ class WorkbenchStore {
    * Confirm collects the editable plan into UI state (§31).
    * Does not write project.json / Canonical — call applyFolderAdoption next.
    */
-  async confirmImportMapping() {
+  async confirmImportMapping(opener = null) {
     if (!this.ui.importMappingPlan) {
       this.ui.toast = "没有可确认的映射计划。请先打开映射预览。";
       this.notifyChrome();
@@ -5764,10 +5765,10 @@ class WorkbenchStore {
     this.ui.importMappingError = "";
     this.ui.importMappingNeedsReview = false;
     this.ui.importMappingPlan = confirmImportMappingPlan(this.ui.importMappingPlan);
-    await this.applyFolderAdoption();
+    await this.applyFolderAdoption({ documentImportOpener: opener });
   }
   /** Confirm and execute the selected import plan as one user action. */
-  async applyFolderAdoption() {
+  async applyFolderAdoption({ documentImportOpener = null } = {}) {
     const plan = this.ui.importMappingPlan;
     if (!plan) {
       this.ui.toast = "没有可执行的映射计划。请先打开映射预览。";
@@ -5788,7 +5789,7 @@ class WorkbenchStore {
     const answered = this.ui.documentImportAnswered === true;
     this.ui.documentImportAnswered = false;
     if (!answered) {
-      const chooser = await this.openDocumentImportDialog(plan);
+      const chooser = await this.openDocumentImportDialog(plan, documentImportOpener);
       if (chooser !== "none") return;
     }
     if (appending && !await this.flush()) {
@@ -9742,7 +9743,8 @@ class WorkbenchStore {
     };
     if (this.bridge.isNative()) {
       try {
-        const extensions = { markdown: "md", html: "html", web: "zip", wechat: "html", pdf: "pdf", pptx: "pptx", json: "json", asset_package: "zip", full_project: "zip" };
+        const directoryFormats = new Set(["web", "asset_package", "full_project"]);
+        const extensions = { markdown: "md", html: "html", wechat: "html", pdf: "pdf", pptx: "pptx", json: "json" };
         const selectedItem = options.content_item_id
           ? this.data.content_items.find((candidate) => candidate.id === options.content_item_id)
           : null;
@@ -9750,12 +9752,16 @@ class WorkbenchStore {
         const stem = isCourse || !selectedItem
           ? this.data.project.title
           : `${selectedItem.code}-${selectedItem.title}`;
-        const outputPath = await this.bridge.selectExportPath(`${stem}.${extensions[format] || format}`, format);
+        const filename = directoryFormats.has(format) ? stem : `${stem}.${extensions[format] || format}`;
+        const outputPath = await this.bridge.selectExportPath(filename, format);
         if (!outputPath) return;
         const result = await this.bridge.exportProject(format, this.data, preset, outputPath, contentItemId, options);
         const files = Array.isArray(result?.files) ? result.files.length : 0;
-        this.ui.lastExport = { format, scope: isCourse ? "course" : "lesson", path: result?.output_path || outputPath, files };
-        this.ui.toast = `导出完成：${files || 1} 个文件，可在 ${this.ui.lastExport.path} 打开`;
+        const destination = result?.output_path || outputPath;
+        this.ui.lastExport = { format, scope: isCourse ? "course" : "lesson", path: destination, files };
+        this.ui.toast = directoryFormats.has(format)
+          ? `导出目录已生成：${files || 1} 个文件，位置：${destination}`
+          : `导出完成：${files || 1} 个文件，可在 ${destination} 打开`;
       } catch (error) {
         this.ui.lastExport = null;
         this.ui.toast = `导出没有完成。源课程没有修改。${userFacingError(error, "请先修复导出前检查列出的问题，再重试。")}`;
@@ -11105,7 +11111,7 @@ function handleAction(action, element, event) {
       return;
     case "import-folder-again": void store.importExistingFolderFromPicker(); return;
     case "open-import-mapping": store.openImportMappingPreview(); return;
-    case "confirm-import-mapping": store.confirmImportMapping(); return;
+    case "confirm-import-mapping": store.confirmImportMapping(element); return;
     // §18 — the body-document dialog opened from a confirmed plan.
     case "document-import-all": store.setAllDocumentImportSelected(true); return;
     case "document-import-none": store.setAllDocumentImportSelected(false); return;
@@ -11973,8 +11979,10 @@ function bindEvents() {
       const block = store.data.blocks.find((candidate) => candidate.id === element.dataset.blockId);
       if (!block) return;
       compileInlineAtCaret(element);
-      block.content = markdownFromEditable(element);
-      element.dataset.empty = String(!block.content.trim());
+      const value = markdownFromEditable(element);
+      element.dataset.empty = String(!value.trim());
+      if (textOf(block.content) === value) return;
+      block.content = value;
       store.markPendingEdit();
       scheduleCompile();
     };
@@ -12802,14 +12810,21 @@ document.addEventListener("keydown", (event) => {
 /* Native window lifecycle: flush, release the lease, then confirm exit. */
 const flushAndClose = async () => {
   try {
-    await store.resolveNativeSwitchPending();
-    if (!await store.flush()) return;
+    if (store.nativeSwitching) {
+      store.ui.toast = "项目切换尚未完成；请在切换完成后再次关闭。";
+      store.notifyChrome();
+      return;
+    }
+    if (!await store.resolveNativeSwitchPending()) return;
+    if (store.nativeSwitching) return;
+    // A cold Native window has only the in-memory launcher placeholder, not a
+    // Canonical project to flush. Keep the strict save barrier once a project
+    // identity or a project lease exists.
+    const hasLease = store.hasNativeLease();
+    if ((store.saveIdentity().expected_project_id || hasLease) && !await store.flush()) return;
     // Only release a lease this instance actually owns; releasing an unowned
     // directory would create a guard file for a project we never opened.
-    const hadLease = store.hasNativeLease();
-    if (hadLease) {
-      if (store.hasNativeLease()) await store.closeNativeProject();
-    }
+    if (hasLease) await store.closeNativeProject();
     await store.bridge.confirmClose();
   } catch (error) {
     store.ui.toast = userFacingError(error, "关闭前保存没有完成。课程内容没有改变，请先重试。");

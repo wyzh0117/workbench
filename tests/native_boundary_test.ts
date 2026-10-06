@@ -246,10 +246,10 @@ Deno.test("native shell exposes explicit project and high-level workflows", () =
     "project switching must explicitly roll back a target when releasing the old lease fails",
   );
   assert(
-    app.includes("this.bridge.restoreProjectDir(null, false)") &&
+      app.includes("this.bridge.restoreProjectDir(null, false)") &&
       app.includes("await this.persistSession({ project_dir: null })") &&
-      app.includes("const hadLease = store.hasNativeLease()") &&
-      app.includes("if (store.hasNativeLease()) await store.closeNativeProject()"),
+      app.includes("const hasLease = store.hasNativeLease()") &&
+      app.includes("if (hasLease) await store.closeNativeProject()"),
     "failed session recovery and close must clear stale paths and skip unowned release",
   );
   const closeStart = app.indexOf("const flushAndClose = async () =>");

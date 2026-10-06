@@ -1060,6 +1060,7 @@ body.pointer-reordering * { cursor: grabbing !important; user-select: none !impo
 .overview-page .page-head h1, .overview-page .page-head .eyebrow { color: #fff; }
 .overview-page .page-head p { color: #d3e6de; }
 .overview-page .page-head .primary { background: #fff; color: var(--primary-dark); }
+.overview-page .page-head .secondary { color: var(--primary-dark); }
 .overview-page .page-head .primary:hover { background: #e8f2ee; }
 .overview-page .summary-grid { gap: 12px; grid-template-columns: repeat(4, minmax(0, 1fr)); margin-bottom: 18px; }
 .overview-page .summary-card { min-height: 118px; padding: 17px; }

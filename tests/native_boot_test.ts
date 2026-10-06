@@ -56,6 +56,7 @@ interface SessionShape {
 /** The slice of the running store these tests need. */
 interface NativeStore {
   data: ProjectData;
+  saveTimer: number;
   saveRevision: number;
   editorGeneration: number;
   saveStatus: string;
@@ -108,6 +109,30 @@ interface NativeStore {
   clearExplorerPreview: () => void;
 }
 
+class NativeRichEditor {
+  readonly nodeType = 1;
+  readonly tagName = "DIV";
+  readonly dataset: Record<string, string>;
+  readonly isContentEditable = true;
+  readonly childNodes: Array<{ nodeType: number; nodeValue: string }>;
+  private readonly listeners = new Map<string, Array<(event?: { isComposing?: boolean }) => void>>();
+
+  constructor(blockId: string, content: string) {
+    this.dataset = { blockId, richEditor: "true" };
+    this.childNodes = [{ nodeType: 3, nodeValue: content }];
+  }
+
+  addEventListener(type: string, handler: (event?: { isComposing?: boolean }) => void): void {
+    const handlers = this.listeners.get(type) || [];
+    handlers.push(handler);
+    this.listeners.set(type, handlers);
+  }
+
+  dispatch(type: string, event: { isComposing?: boolean } = {}): void {
+    for (const handler of this.listeners.get(type) || []) handler(event);
+  }
+}
+
 let importCounter = 0;
 
 // These cases replace process-global shell APIs; keep each fake shell alive
@@ -152,6 +177,7 @@ async function bootNative(options: {
   launchProjectDir: string | null;
   persistedSession?: SessionShape | null;
   locationHref?: string;
+  bindRichEditor?: boolean;
   /** When set, the native open-state command fails with this shell message. */
   openError?: string;
 }) {
@@ -174,10 +200,14 @@ async function bootNative(options: {
     invokeOverrides: new Map<string, (args: Record<string, unknown>) => unknown>(),
     closeRequested: null as ((event: { preventDefault?: () => void }) => void) | null,
   };
+  const editorBlock = options.bindRichEditor
+    ? state.project.blocks.find((block) => block.type === "paragraph")
+    : null;
+  const richEditor = editorBlock ? new NativeRichEditor(editorBlock.id, String(editorBlock.content || "")) : null;
   const root = {
     innerHTML: "",
     querySelector: () => null,
-    querySelectorAll: () => [],
+    querySelectorAll: (selector: string) => selector === "[data-rich-editor]" && richEditor ? [richEditor] : [],
     classList: { add: () => {}, remove: () => {}, toggle: () => {} },
     addEventListener: () => {},
     dataset: {},
@@ -356,7 +386,7 @@ async function bootNative(options: {
     globalThis.fetch = previous.fetch;
   };
 
-  return { store, state, root, restore };
+  return { store, state, root, richEditor, restore };
 }
 
 /**
@@ -866,6 +896,186 @@ serialNativeBootTest("native close immediately flushes and releases the committe
     assertEquals(state.session?.active_content_item_id, lesson.id, "关闭保存必须保留当前课程");
     assertEquals(state.session?.mode, "preview", "关闭保存必须保留当前模式");
   } finally {
+    restore();
+  }
+});
+
+serialNativeBootTest("native rich-editor duplicate input does not revise or queue an unchanged body", async () => {
+  const { store, state, richEditor, restore } = await bootNative({
+    project: seededProject(),
+    launchProjectDir: "/tmp/native-editor-noop-project",
+    persistedSession: null,
+    bindRichEditor: true,
+  });
+  try {
+    await until(() => store.data.blocks.length > 0, "正文编辑器启动");
+    assert(richEditor, "测试需绑定实际富文本 input listener");
+    const block = store.data.blocks.find((candidate) => candidate.id === richEditor.dataset.blockId);
+    assert(block, "富文本监听器必须绑定到项目正文块");
+    const content = block.content;
+    const projectRevision = store.data.project.updated_at;
+    const saveRevision = store.saveRevision;
+    const saveTimer = store.saveTimer;
+    const saveCalls = state.calls.filter((call) => call.command === "project_save").length;
+
+    richEditor.dispatch("input", { isComposing: false });
+
+    assertEquals(block.content, content, "相同序列化正文不得改写 Canonical block");
+    assertEquals(store.data.project.updated_at, projectRevision, "重复 input 不得推进 Canonical 修订时间");
+    assertEquals(store.saveTimer, saveTimer, "重复 input 不得排入额外的 Canonical 保存");
+    assertEquals(
+      state.calls.filter((call) => call.command === "project_save").length,
+      saveCalls,
+      "重复 input 不得触发项目写入",
+    );
+
+    const changed = `${String(content)} 50`;
+    richEditor.childNodes[0]!.nodeValue = changed;
+    richEditor.dispatch("input", { isComposing: false });
+    assertEquals(block.content, changed, "真实正文变化仍立即进入 Canonical 编辑态");
+    assert(store.data.project.updated_at !== projectRevision, "真实正文变化仍推进 Canonical 修订时间");
+    assert(store.saveRevision > saveRevision, "真实正文变化仍排入新一代自动保存");
+  } finally {
+    clearTimeout(store.saveTimer);
+    restore();
+  }
+});
+
+serialNativeBootTest("native cold close confirms exit without saving a placeholder project", async () => {
+  const { store, state, restore } = await bootNative({
+    project: seededProject(),
+    launchProjectDir: null,
+    persistedSession: null,
+  });
+  try {
+    assertEquals(store.saveIdentity().expected_project_id, null, "冷启动没有已打开的 Canonical 身份");
+    assert(!store.hasNativeLease(), "冷启动不得拥有项目写租约");
+    state.closeRequested?.({ preventDefault: () => {} });
+    await until(() => state.calls.some((call) => call.command === "confirm_close"), "完成冷启动关闭");
+    assertEquals(
+      state.calls.filter((call) => call.command === "project_save").length,
+      0,
+      "没有打开的 Canonical 项目时不得保存占位数据",
+    );
+    assertEquals(
+      state.calls.filter((call) => call.command === "project_close").length,
+      0,
+      "冷启动不得释放未持有的项目租约",
+    );
+  } finally {
+    restore();
+  }
+});
+
+serialNativeBootTest("native directory exports use folder names and report folder output", async () => {
+  const { store, restore } = await bootNative({
+    project: seededProject(),
+    launchProjectDir: "/tmp/native-export-directory-project",
+    persistedSession: null,
+  });
+  const subject = store as unknown as {
+    ui: Record<string, unknown>;
+    publicationOptions: () => Record<string, unknown>;
+    exportCurrent: (format: string) => Promise<void>;
+    bridge: {
+      selectExportPath: (filename: string, format: string) => Promise<string | null>;
+      exportProject: (...args: unknown[]) => Promise<{ output_path: string; files: unknown[] }>;
+    };
+  };
+  const selected: Array<{ filename: string; format: string }> = [];
+  try {
+    subject.ui.publishScope = "course";
+    subject.bridge.selectExportPath = async (filename, format) => {
+      selected.push({ filename, format });
+      return `/tmp/native-export-directory-project/${format}/${filename}`;
+    };
+    subject.bridge.exportProject = async (...args) => ({
+      output_path: String(args[3]),
+      files: [{}, {}, {}],
+    });
+
+    for (const format of ["web", "asset_package", "full_project", "markdown"]) {
+      subject.ui.publishFormat = format;
+      subject.ui.preflightPending = false;
+      subject.ui.preflightReport = { blocking: 0, issues: [] };
+      subject.ui.preflightOptions = subject.publicationOptions();
+      subject.ui.preflightRevision = store.data.project.updated_at;
+      subject.ui.preflightFormat = format;
+      subject.ui.acknowledgedWarnings = [];
+      await subject.exportCurrent(format);
+      const selection = selected.at(-1);
+      assert(selection, `导出 ${format} 必须打开目标选择器`);
+      if (["web", "asset_package", "full_project"].includes(format)) {
+        assertEquals(selection.filename, store.data.project.title, `${format} 默认名称应表示目录`);
+        assert(String(subject.ui.toast).includes("导出目录"), `${format} 完成提示应说明输出是目录`);
+      } else {
+        assertEquals(selection.filename, `${store.data.project.title}.md`, "Markdown 文件名应保留 .md 扩展名");
+        assert(!String(subject.ui.toast).includes("导出目录"), "普通文件输出继续使用文件完成提示");
+      }
+    }
+  } finally {
+    restore();
+  }
+});
+
+serialNativeBootTest("native close waits for a first project switch before releasing its provisional lease", async () => {
+  const { store, state, restore } = await bootNative({
+    project: seededProject(),
+    launchProjectDir: null,
+    persistedSession: null,
+  });
+  let finishRead!: (value: unknown) => void;
+  const readState = new Promise<unknown>((resolve) => { finishRead = resolve; });
+  let opening: Promise<void> | null = null;
+  try {
+    state.invokeOverrides.set("project_read_state", () => readState);
+    opening = store.openProject("/tmp/native-close-switch-project");
+    await until(
+      () => state.calls.some((call) => call.command === "project_read_state"),
+      "目标租约取得后进入只读快照",
+    );
+    assert((store as unknown as { nativeSwitching: boolean }).nativeSwitching, "目标读取期间切换必须仍处于保护状态");
+    assert(store.hasNativeLease(), "project_open_state 返回后目标租约已由当前窗口持有");
+
+    state.closeRequested?.({ preventDefault: () => {} });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    assertEquals(
+      state.calls.filter((call) => call.command === "project_close").length,
+      0,
+      "切换未完成时不得释放刚取得的目标租约",
+    );
+    assertEquals(
+      state.calls.filter((call) => call.command === "confirm_close").length,
+      0,
+      "切换未完成时不得确认退出",
+    );
+
+    finishRead({
+      project: structuredClone(state.project),
+      fingerprint: structuredClone(state.fingerprint),
+      project_id: state.project.project.id,
+      lease_generation: null,
+    });
+    await opening;
+    assertEquals((store as unknown as { nativeSwitching: boolean }).nativeSwitching, false, "完成打开后才解除切换保护");
+    assertEquals(store.saveIdentity().expected_project_id, state.project.project.id, "完成打开后应提交目标身份");
+
+    state.closeRequested?.({ preventDefault: () => {} });
+    await until(() => state.calls.some((call) => call.command === "confirm_close"), "切换完成后允许关闭");
+    const closeOrder = state.calls
+      .filter((call) => ["project_save", "project_close", "confirm_close"].includes(call.command))
+      .map((call) => call.command);
+    assert(closeOrder.indexOf("project_save") >= 0, "稳定目标身份后关闭仍必须先完成保存屏障");
+    assert(closeOrder.indexOf("project_close") > closeOrder.indexOf("project_save"), "稳定目标身份后先保存再释放租约");
+    assert(closeOrder.indexOf("confirm_close") > closeOrder.indexOf("project_close"), "稳定目标身份后先释放租约再确认退出");
+  } finally {
+    finishRead({
+      project: structuredClone(state.project),
+      fingerprint: structuredClone(state.fingerprint),
+      project_id: state.project.project.id,
+      lease_generation: null,
+    });
+    await opening?.catch(() => {});
     restore();
   }
 });

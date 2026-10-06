@@ -1401,6 +1401,72 @@ Deno.test("modal keyboard trap wraps Tab, skips hidden controls and Escape resto
   }
 });
 
+Deno.test("mapping confirmation restores focus after its async document scan is escaped", async () => {
+  const { store, document, registered, actionNodes, fireDocument, setActiveDialog, createNode, restore } = await bootDom();
+  try {
+    const project = projectWith("Mapping 焦点");
+    store.data = project;
+    store.ui.screen = "project";
+    store.ui.route = "mapping";
+    store.ui.activeId = project.content_items[0]?.id ?? null;
+    store.ui.importFolderRoot = "/tmp/mapping-focus";
+    store.ui.importMappingPlan = {
+      root: "/tmp/mapping-focus",
+      confirmed: false,
+      confirmed_at: null,
+      items: [{
+        relative_path: "01 Stage",
+        kind: "directory",
+        selected: true,
+        mapping: "stage",
+        error: null,
+      }],
+    };
+
+    let finishScan!: (value: unknown) => void;
+    store.bridge.command = (name: string) => {
+      assert(name === "folder.scan_documents", "opening the body chooser must scan selected directories");
+      return new Promise((resolve) => { finishScan = resolve; });
+    };
+
+    const opener = createNode({ action: "confirm-import-mapping" });
+    const unrelatedFocus = createNode({});
+    const firstControl = createNode({ focusKey: "document-import-first" });
+    registered.set('[data-action="confirm-import-mapping"]', opener);
+    actionNodes.push(opener);
+    document.activeElement = unrelatedFocus;
+    const dialog = {
+      contains: (node: unknown) => node === firstControl,
+      querySelectorAll: () => [firstControl],
+      querySelector: () => firstControl,
+      focus: () => {},
+    };
+    setActiveDialog(dialog);
+    store.notify();
+
+    opener.fire("click");
+    assert(store.ui.documentImportDialog?.loading, "the document chooser should open while its scan is pending");
+    assert(document.activeElement === firstControl, "opening the chooser should focus its first control");
+    finishScan({
+      groups: [{
+        directory: "01 Stage",
+        mapping: "stage",
+        items: [{ relative_path: "01 Stage/lesson.md", kind: "file", selected: true }],
+      }],
+      errors: [],
+      warnings: [],
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    assert(!store.ui.documentImportDialog?.loading, "the chooser should finish after the async scan");
+
+    fireDocument("keydown", { key: "Escape", preventDefault() {} });
+    assert(!store.ui.documentImportDialog, "Escape should cancel the document chooser");
+    assert(document.activeElement === opener, "Escape should return focus to the mapping confirmation button");
+  } finally {
+    restore();
+  }
+});
+
 Deno.test("Escape safely dismisses rename, locked-project and duplicate-project dialogs", async () => {
   const { store, document, registered, fireDocument, setActiveDialog, createNode, restore } = await bootDom();
   try {
