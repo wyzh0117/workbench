@@ -1901,7 +1901,7 @@ export class ProjectDirectoryStore {
           );
         }
         const canonicalText = serializeProject(data);
-        const canonical = migrateProject(JSON.parse(canonicalText));
+        const canonical = JSON.parse(canonicalText) as ProjectData;
         const activeProjectId = this.baselineProject?.project.id ?? null;
         if (
           !activeProjectId || binding.expected_project_id !== activeProjectId ||
