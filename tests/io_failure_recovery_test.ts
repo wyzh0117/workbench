@@ -138,6 +138,144 @@ Deno.test("project.open_state returns the filtered recovery journal with its can
   }
 });
 
+Deno.test("bound recovery clear removes only the visible journal and leaves Canonical unchanged", async () => {
+  const directory = await Deno.makeTempDir({ prefix: "io-clear-recovery-" });
+  const desktop = new DesktopService(directory, {
+    app_instance_id: `clear-recovery-${crypto.randomUUID()}`,
+  });
+  try {
+    await desktop.open();
+    const created = await desktop.commands.execute("project.create", {
+      title: "Keep disk project",
+    });
+    assert(!created.error, "project.create should initialize the Canonical project");
+    const project = created.value as ProjectData;
+    const journal = journalFor(project);
+    journal.project.project.title = "Pending local recovery candidate";
+    await desktop.store.writeRecoveryJournal(journal);
+
+    const opened = await desktop.commands.execute("project.open_state", {});
+    assert(!opened.error, "project.open_state should return the active project and journal");
+    const state = opened.value as {
+      project: ProjectData;
+      project_id: string;
+      project_dir: string;
+      lease_generation: string;
+      fingerprint: FileFingerprint;
+      recovery_journal: RecoveryJournal | null;
+    };
+    assert(
+      state.recovery_journal?.transaction_id === journal.transaction_id,
+      "the pending transaction id should be the one shown to the user",
+    );
+    const canonicalPath = `${directory}/project.json`;
+    const canonicalBefore = await Deno.readFile(canonicalPath);
+    const sidecarPath = `${directory}/.workspace/recovery.json`;
+    const sidecarBefore = await Deno.readTextFile(sidecarPath);
+    const input = {
+      project_dir: state.project_dir,
+      expected_project_id: state.project_id,
+      lease_generation: state.lease_generation,
+      editor_generation: 3,
+      operation_id: `clear-${crypto.randomUUID()}`,
+      revision: 7,
+      expected_fingerprint: state.fingerprint,
+      expected_transaction_id: journal.transaction_id,
+    };
+
+    const wrongTransaction = await desktop.commands.execute(
+      "project.recovery.clear",
+      { ...input, expected_transaction_id: crypto.randomUUID() },
+    );
+    assert(
+      wrongTransaction.error?.code === "recovery_journal_mismatch",
+      "a different visible journal transaction must be rejected",
+    );
+    const foreignProject = await desktop.commands.execute(
+      "project.recovery.clear",
+      { ...input, expected_project_id: crypto.randomUUID() },
+    );
+    assert(
+      foreignProject.error?.code === "project_id_mismatch",
+      "a foreign project binding must be rejected",
+    );
+    const staleFingerprint = await desktop.commands.execute(
+      "project.recovery.clear",
+      {
+        ...input,
+        expected_fingerprint: { ...state.fingerprint, hash: "stale" },
+      },
+    );
+    assert(
+      staleFingerprint.error?.code === "external_modification_conflict",
+      "a stale Canonical fingerprint must be rejected",
+    );
+    assert(
+      await Deno.readTextFile(sidecarPath) === sidecarBefore,
+      "rejected requests must preserve the pending recovery journal",
+    );
+
+    const cleared = await desktop.commands.execute("project.recovery.clear", input);
+    assert(!cleared.error, `bound clear should succeed: ${cleared.error?.code}`);
+    const result = cleared.value as {
+      cleared: boolean;
+      transaction_id: string | null;
+      durability_warning: string | null;
+      fingerprint: FileFingerprint;
+      project_id: string;
+      project_dir: string;
+      lease_generation: string;
+      editor_generation: number;
+      operation_id: string;
+      revision: number;
+    };
+    assert(
+      result.cleared && result.transaction_id === journal.transaction_id,
+      "clear should acknowledge the exact transaction that was removed",
+    );
+    assert(
+      result.project_id === state.project_id &&
+        result.project_dir === state.project_dir &&
+        result.lease_generation === state.lease_generation &&
+        result.editor_generation === input.editor_generation &&
+        result.operation_id === input.operation_id &&
+        result.revision === input.revision &&
+        result.fingerprint.hash === state.fingerprint.hash &&
+        result.fingerprint.size === state.fingerprint.size,
+      "response should bind the exact request to the Canonical fingerprint checked under lock",
+    );
+    const repeated = await desktop.commands.execute(
+      "project.recovery.clear",
+      input,
+    );
+    assert(!repeated.error, "retrying the same completed clear should be idempotent");
+    const repeatedResult = repeated.value as typeof result;
+    assert(
+      !repeatedResult.cleared && repeatedResult.transaction_id === null &&
+        repeatedResult.project_id === state.project_id &&
+        repeatedResult.operation_id === input.operation_id &&
+        repeatedResult.revision === input.revision &&
+        repeatedResult.fingerprint.hash === state.fingerprint.hash,
+      "idempotent absence should still acknowledge the checked request and Canonical fingerprint",
+    );
+    const canonicalAfter = await Deno.readFile(canonicalPath);
+    assert(
+      canonicalBefore.length === canonicalAfter.length &&
+        canonicalBefore.every((byte, index) => byte === canonicalAfter[index]),
+      "keeping disk must not rewrite Canonical bytes",
+    );
+    const reopened = await desktop.commands.execute("project.open_state", {});
+    assert(!reopened.error, "project.open_state should remain available after clear");
+    assert(
+      (reopened.value as { recovery_journal: RecoveryJournal | null }).recovery_journal === null,
+      "a later open_state must no longer offer the cleared journal",
+    );
+  } finally {
+    await desktop.close();
+    await Deno.remove(directory, { recursive: true }).catch(() => {});
+  }
+});
+
 Deno.test("canonical mutation receipt is detached while command context keeps its live project reference", async () => {
   const directory = await Deno.makeTempDir({ prefix: "io-mutation-ack-" });
   const desktop = new DesktopService(directory, {

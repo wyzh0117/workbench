@@ -21,6 +21,7 @@ export const HIGH_LEVEL_COMMANDS = [
   "project.open",
   "project.open_state",
   "project.read_state",
+  "project.recovery.clear",
   "project.inspect",
   // §4 application-level project registry: app-global, rebuildable, never a
   // second copy of a course. Both shells expose the same four operations.

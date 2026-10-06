@@ -774,6 +774,55 @@ export class DesktopService {
         },
       };
     });
+    this.commands.register("project.recovery.clear", async (input) => {
+      const binding = canonicalMutationBinding(
+        input,
+        this.store,
+        this.context.project?.project.id ?? null,
+      );
+      if (!binding) {
+        throw error(
+          "mutation_binding_required",
+          "恢复记录请求绑定无效，请重新打开课程后重试。",
+          "Recovery clear requires a complete project mutation binding",
+          { recoverable: false, recommended_action: null, details: { stage: "request_binding", commit_state: "not_committed", retryable: false } },
+        );
+      }
+      const candidate = input as Record<string, unknown>;
+      if (
+        typeof candidate.expected_transaction_id !== "string" ||
+        !candidate.expected_transaction_id ||
+        candidate.expected_transaction_id.length > 256
+      ) {
+        throw error(
+          "recovery_binding_invalid",
+          "恢复记录请求无效，请重新打开课程后重试。",
+          "Recovery clear requires the exact visible journal transaction id",
+          { recoverable: false, recommended_action: null, details: { stage: "recovery_binding", commit_state: "not_committed", retryable: false } },
+        );
+      }
+      const outcome = await this.store.clearRecoveryJournal(
+        projectSaveBinding(binding),
+        candidate.expected_transaction_id,
+      );
+      return {
+        value: {
+          ...outcome,
+          project_id: binding.project_id,
+          project_dir: binding.project_dir,
+          lease_generation: binding.lease_generation,
+          editor_generation: binding.editor_generation,
+          operation_id: binding.operation_id,
+          revision: binding.revision,
+        },
+        audit: {
+          object_type: "recovery_journal",
+          object_id: outcome.transaction_id ?? candidate.expected_transaction_id,
+          action: outcome.cleared ? "clear" : "already_clear",
+          metadata: { durability_warning: outcome.durability_warning },
+        },
+      };
+    });
     this.commands.register("project.open", async () => {
       try {
         this.context.project = await this.store.readProject();

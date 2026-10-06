@@ -1674,13 +1674,58 @@ export class ProjectDirectoryStore {
     }
   }
 
-  async clearRecoveryJournal(): Promise<void> {
-    await this.withWritableLease(async () => {
+  async clearRecoveryJournal(
+    binding: ProjectSaveBinding,
+    expectedTransactionId: string,
+  ): Promise<{
+    cleared: boolean;
+    transaction_id: string | null;
+    durability_warning: string | null;
+    fingerprint: FileFingerprint;
+  }> {
+    return await this.withWritableLease(async () => {
+      const fingerprint = await this.assertMutationBaseline(
+        binding,
+        binding.expected_project_id,
+        "recovery_clear",
+      );
+      const target = this.path(JOURNAL_FILE);
+      let journal: RecoveryJournal;
       try {
-        await Deno.remove(this.journalPath);
+        journal = JSON.parse(await Deno.readTextFile(target)) as RecoveryJournal;
       } catch (caught) {
-        if (!isNotFound(caught)) throw caught;
+        if (isNotFound(caught)) {
+          return {
+            cleared: false,
+            transaction_id: null,
+            durability_warning: null,
+            fingerprint,
+          };
+        }
+        throw caught;
       }
+      if (
+        !journal || typeof journal !== "object" ||
+        journal.transaction_id !== expectedTransactionId ||
+        journal.project_id !== binding.expected_project_id
+      ) {
+        throw error(
+          "recovery_journal_mismatch",
+          "恢复记录已变化，请重新打开课程后选择处理方式。",
+          "Recovery clear request does not match the visible pending journal",
+          { recoverable: false, recommended_action: null, details: { stage: "recovery_binding", commit_state: "not_committed", retryable: false } },
+        );
+      }
+      await Deno.remove(target);
+      const durability_warning = await syncDirectoryPath(dirname(target))
+        ? null
+        : "恢复记录已清除，但目录元数据同步失败。";
+      return {
+        cleared: true,
+        transaction_id: journal.transaction_id,
+        durability_warning,
+        fingerprint,
+      };
     });
   }
 
