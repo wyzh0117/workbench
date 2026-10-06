@@ -12915,15 +12915,218 @@ fn append_asset_usage(
     Ok(Some(usage))
 }
 
+fn recovery_clear_ack(
+    binding: &CanonicalMutationBinding,
+    project_dir: &Path,
+    lease_generation: &str,
+    fingerprint: &FileFingerprint,
+    cleared: bool,
+    transaction_id: Option<&str>,
+    durability_warning: Option<&str>,
+) -> Value {
+    json!({
+        "cleared": cleared,
+        "transaction_id": transaction_id,
+        "durability_warning": durability_warning,
+        "project_id": binding.expected_project_id,
+        "project_dir": project_dir.to_string_lossy(),
+        "lease_generation": lease_generation,
+        "editor_generation": binding.editor_generation,
+        "operation_id": binding.operation_id,
+        "revision": binding.revision,
+        "fingerprint": fingerprint,
+    })
+}
+
 #[tauri::command]
-fn clear_recovery_journal(project_dir: String) -> Result<Value, String> {
+fn clear_recovery_journal(
+    project_dir: String,
+    expected_project_id: String,
+    expected_fingerprint: FileFingerprint,
+    lease_generation: String,
+    editor_generation: u64,
+    operation_id: String,
+    revision: u64,
+    expected_transaction_id: String,
+) -> Result<Value, String> {
     let project_dir = explicit_project_dir(&project_dir, false)?;
-    let _lease_guard = require_active_project_lock(&project_dir)?;
-    let cleared = clear_recovery_journal_path(&project_dir)?;
-    Ok(json!({
-        "status": if cleared { "cleared" } else { "missing" },
-        "project_dir": project_dir,
-    }))
+    let _lease_guard = require_active_project_lock(&project_dir)
+        .map_err(|error| project_save_error_contract(&error, "lease_validate", false, None))?;
+    let active_generation = verify_lease_generation(&project_dir, Some(&lease_generation))
+        .map_err(|error| project_save_error_contract(&error, "lease_validate", false, None))?;
+    if expected_transaction_id.trim().is_empty() || expected_transaction_id.len() > 256 {
+        let message = json!({ "error": {
+            "code": "recovery_binding_invalid",
+            "user_message": "恢复记录请求无效，请重新打开课程后选择处理方式。",
+            "message": "恢复记录请求缺少有效的 transaction id。",
+        }})
+        .to_string();
+        return Err(project_save_error_contract(
+            &message,
+            "recovery_binding",
+            false,
+            None,
+        ));
+    }
+    let binding = canonical_mutation_binding_from_parts(
+        Some(expected_project_id),
+        Some(expected_fingerprint),
+        Some(lease_generation),
+        Some(editor_generation),
+        Some(operation_id),
+        Some(revision),
+    )?
+    .ok_or_else(|| invalid_mutation_binding_error("恢复清理需要完整项目与编辑租约绑定。"))?;
+    let (canonical, fingerprint) = read_project_state(&project_dir)
+        .map_err(|error| project_save_error_contract(&error, "project_read", false, None))?;
+    validate_canonical_mutation_binding(
+        Some(&binding),
+        &canonical,
+        &fingerprint,
+        &active_generation,
+    )?;
+    let baseline = project_baselines()
+        .lock()
+        .unwrap()
+        .get(&project_dir)
+        .map(|baseline| baseline.fingerprint.clone());
+    if baseline
+        .as_ref()
+        .map(|baseline| fingerprints_differ(baseline, &fingerprint))
+        .unwrap_or(fingerprint.exists)
+    {
+        let error = external_conflict_error(baseline.as_ref(), &fingerprint);
+        return Err(project_save_error_contract(
+            &error,
+            "baseline_preflight",
+            false,
+            Some(&fingerprint),
+        ));
+    }
+
+    let workspace = project_dir.join(".workspace");
+    let workspace_metadata = match fs::symlink_metadata(&workspace) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return Ok(recovery_clear_ack(
+                &binding,
+                &project_dir,
+                &active_generation,
+                &fingerprint,
+                false,
+                None,
+                None,
+            ));
+        }
+        Err(error) => return Err(format!("无法检查恢复日志目录: {error}")),
+    };
+    if workspace_metadata.file_type().is_symlink() || !workspace_metadata.is_dir() {
+        return Err("恢复日志目录无效".into());
+    }
+    let path = workspace.join("recovery.json");
+    reject_symlink(&path, "恢复日志")?;
+    let journal_contents = match fs::read(&path) {
+        Ok(contents) => Some(contents),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+        Err(error) => {
+            let message = json!({ "error": {
+                "code": "recovery_journal_read_failed",
+                "user_message": "恢复记录无法读取，磁盘课程没有改变。",
+                "message": format!("无法读取恢复日志: {error}"),
+            }})
+            .to_string();
+            return Err(project_save_error_contract(
+                &message,
+                "recovery_read",
+                false,
+                Some(&fingerprint),
+            ));
+        }
+    };
+    let Some(journal_contents) = journal_contents else {
+        return Ok(recovery_clear_ack(
+            &binding,
+            &project_dir,
+            &active_generation,
+            &fingerprint,
+            false,
+            None,
+            None,
+        ));
+    };
+    let journal: Value = serde_json::from_slice(&journal_contents).map_err(|error| {
+        let message = json!({ "error": {
+            "code": "recovery_journal_invalid",
+            "user_message": "恢复记录已损坏，磁盘课程没有改变。",
+            "message": format!("恢复日志 JSON 无效: {error}"),
+        }})
+        .to_string();
+        project_save_error_contract(&message, "recovery_read", false, Some(&fingerprint))
+    })?;
+    let journal_project_id = journal.get("project_id").and_then(Value::as_str);
+    let journal_transaction_id = journal.get("transaction_id").and_then(Value::as_str);
+    if journal_project_id != Some(binding.expected_project_id.as_str())
+        || journal_transaction_id != Some(expected_transaction_id.as_str())
+    {
+        let message = json!({ "error": {
+            "code": "recovery_journal_mismatch",
+            "user_message": "恢复记录已变化，请重新打开课程后选择处理方式。",
+            "message": "恢复记录与当前课程或用户确认的 transaction id 不匹配。",
+        }})
+        .to_string();
+        return Err(project_save_error_contract(
+            &message,
+            "recovery_binding",
+            false,
+            Some(&fingerprint),
+        ));
+    }
+    if let Err(error) = fs::remove_file(&path) {
+        if error.kind() != std::io::ErrorKind::NotFound {
+            let message = json!({ "error": {
+                "code": "recovery_journal_clear_failed",
+                "user_message": "恢复记录没有清除，磁盘课程没有改变。",
+                "message": format!("无法清理恢复日志: {error}"),
+            }})
+            .to_string();
+            return Err(project_save_error_contract(
+                &message,
+                "recovery_remove",
+                false,
+                Some(&fingerprint),
+            ));
+        }
+        return Ok(recovery_clear_ack(
+            &binding,
+            &project_dir,
+            &active_generation,
+            &fingerprint,
+            false,
+            None,
+            None,
+        ));
+    }
+    let durability_warning =
+        if atomic_write_failure_requested(&path, "recovery_clear_directory_sync") {
+            Some("恢复记录已清除，但目录元数据同步失败（测试注入）".to_owned())
+        } else {
+            path.parent()
+                .and_then(|parent| {
+                    File::open(parent)
+                        .and_then(|directory| directory.sync_all())
+                        .err()
+                })
+                .map(|error| format!("恢复记录已清除，但目录元数据同步失败: {error}"))
+        };
+    Ok(recovery_clear_ack(
+        &binding,
+        &project_dir,
+        &active_generation,
+        &fingerprint,
+        true,
+        Some(&expected_transaction_id),
+        durability_warning.as_deref(),
+    ))
 }
 
 #[tauri::command]
@@ -18894,6 +19097,181 @@ mod tests {
             fs::read(&project_backup_path).unwrap(),
             b"project backup sentinel"
         );
+        project_close(project_dir).unwrap();
+        let _ = fs::remove_dir_all(directory);
+    }
+
+    #[test]
+    fn native_recovery_clear_requires_exact_transaction_and_is_idempotent() {
+        let directory = test_directory("recovery-clear-binding");
+        let project_dir = directory.to_string_lossy().into_owned();
+        let project = write_test_project(&directory);
+        project_open(project_dir.clone()).expect("project should open with an active lease");
+        let project_id = project_id_of(&project).expect("fixture project id");
+        let lease_generation = active_lease_generation(&directory).expect("active lease");
+        let fingerprint = project_fingerprint(&directory).expect("canonical fingerprint");
+        let canonical_path = directory.join("project.json");
+        let canonical_bytes = fs::read(&canonical_path).expect("canonical bytes");
+        let workspace = directory.join(".workspace");
+        fs::create_dir_all(&workspace).expect("workspace directory");
+        let journal_path = workspace.join("recovery.json");
+        let journal = json!({
+            "project_id": project_id,
+            "transaction_id": "visible-tx-01",
+            "project": project,
+        });
+        let journal_bytes = serde_json::to_vec(&journal).expect("journal serialization");
+        fs::write(&journal_path, &journal_bytes).expect("journal write");
+
+        let clear = |expected_project_id: &str,
+                     expected_fingerprint: FileFingerprint,
+                     expected_transaction_id: &str,
+                     operation_id: &str| {
+            clear_recovery_journal(
+                project_dir.clone(),
+                expected_project_id.to_owned(),
+                expected_fingerprint,
+                lease_generation.clone(),
+                9,
+                operation_id.to_owned(),
+                1,
+                expected_transaction_id.to_owned(),
+            )
+        };
+
+        let stale_transaction = clear(
+            &project_id,
+            fingerprint.clone(),
+            "stale-tx-00",
+            "clear-stale-tx",
+        )
+        .expect_err("a different transaction must be rejected");
+        let stale_error: Value = serde_json::from_str(&stale_transaction).unwrap();
+        assert_eq!(
+            stale_error["error"]["code"],
+            json!("recovery_journal_mismatch")
+        );
+        assert_eq!(stale_error["error"]["commit_state"], json!("not_committed"));
+        assert_eq!(fs::read(&journal_path).unwrap(), journal_bytes);
+
+        let foreign_project = clear(
+            "foreign-project",
+            fingerprint.clone(),
+            "visible-tx-01",
+            "clear-foreign-project",
+        )
+        .expect_err("a foreign project binding must be rejected");
+        assert_eq!(
+            serde_json::from_str::<Value>(&foreign_project).unwrap()["error"]["code"],
+            json!("invalid_mutation_binding")
+        );
+        assert_eq!(fs::read(&journal_path).unwrap(), journal_bytes);
+
+        let mut external_project = project.clone();
+        external_project["project"]["title"] = json!("external canonical replacement");
+        fs::write(
+            &canonical_path,
+            serde_json::to_vec(&external_project).unwrap(),
+        )
+        .unwrap();
+        let stale_fingerprint = clear(
+            &project_id,
+            fingerprint.clone(),
+            "visible-tx-01",
+            "clear-stale-fingerprint",
+        )
+        .expect_err("changed Canonical bytes must be rejected");
+        assert_eq!(
+            serde_json::from_str::<Value>(&stale_fingerprint).unwrap()["error"]["code"],
+            json!("external_modification_conflict")
+        );
+        assert_eq!(fs::read(&journal_path).unwrap(), journal_bytes);
+        fs::write(&canonical_path, &canonical_bytes).unwrap();
+
+        let cleared = clear(
+            &project_id,
+            fingerprint.clone(),
+            "visible-tx-01",
+            "clear-exact-tx",
+        )
+        .expect("the exact visible transaction should clear");
+        assert_eq!(cleared["cleared"], json!(true));
+        assert_eq!(cleared["transaction_id"], json!("visible-tx-01"));
+        assert_eq!(cleared["project_id"], json!(project_id));
+        assert_eq!(
+            cleared["project_dir"],
+            json!(fs::canonicalize(&directory).unwrap().to_string_lossy())
+        );
+        assert_eq!(cleared["lease_generation"], json!(lease_generation));
+        assert_eq!(cleared["editor_generation"], json!(9));
+        assert_eq!(cleared["operation_id"], json!("clear-exact-tx"));
+        assert_eq!(cleared["revision"], json!(1));
+        assert_eq!(cleared["fingerprint"]["exists"], json!(true));
+        assert_eq!(cleared["fingerprint"]["hash"], json!(fingerprint.hash));
+        assert_eq!(cleared["fingerprint"]["size"], json!(fingerprint.size));
+        assert!(!journal_path.exists());
+
+        let repeated = clear(
+            &project_id,
+            fingerprint.clone(),
+            "visible-tx-01",
+            "clear-idempotent",
+        )
+        .expect("an already-cleared journal should be idempotent");
+        assert_eq!(repeated["cleared"], json!(false));
+        assert_eq!(repeated["transaction_id"], Value::Null);
+        assert_eq!(repeated["fingerprint"], cleared["fingerprint"]);
+        assert_eq!(fs::read(&canonical_path).unwrap(), canonical_bytes);
+
+        project_close(project_dir).unwrap();
+        let _ = fs::remove_dir_all(directory);
+    }
+
+    #[test]
+    fn native_recovery_clear_reports_directory_sync_warning_after_commit() {
+        let directory = test_directory("recovery-clear-sync-warning");
+        let project_dir = directory.to_string_lossy().into_owned();
+        let project = write_test_project(&directory);
+        project_open(project_dir.clone()).expect("project should open with an active lease");
+        let project_id = project_id_of(&project).expect("fixture project id");
+        let lease_generation = active_lease_generation(&directory).expect("active lease");
+        let fingerprint = project_fingerprint(&directory).expect("canonical fingerprint");
+        let canonical_bytes = fs::read(directory.join("project.json")).unwrap();
+        let journal_path = directory.join(".workspace/recovery.json");
+        fs::write(
+            &journal_path,
+            serde_json::to_vec(&json!({
+                "project_id": project_id,
+                "transaction_id": "sync-warning-tx",
+                "project": project,
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+        fail_atomic_write_for_test(&journal_path, "recovery_clear_directory_sync");
+
+        let ack = clear_recovery_journal(
+            project_dir.clone(),
+            project_id.clone(),
+            fingerprint.clone(),
+            lease_generation.clone(),
+            10,
+            "clear-sync-warning".into(),
+            2,
+            "sync-warning-tx".into(),
+        )
+        .expect("directory-sync failure happens after the journal is committed clear");
+        assert_eq!(ack["cleared"], json!(true));
+        assert_eq!(ack["transaction_id"], json!("sync-warning-tx"));
+        assert!(ack["durability_warning"]
+            .as_str()
+            .is_some_and(|value| !value.is_empty()));
+        assert!(!journal_path.exists());
+        assert_eq!(
+            fs::read(directory.join("project.json")).unwrap(),
+            canonical_bytes
+        );
+
         project_close(project_dir).unwrap();
         let _ = fs::remove_dir_all(directory);
     }
