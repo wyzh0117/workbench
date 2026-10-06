@@ -4253,7 +4253,7 @@ v0.2.5 及更早 tag / DMG / sidecar 永久冻结；v0.2.5 的 DMG digest `a8488
 
 # 47. File I/O 与 UI 收尾（2026-10-06，本地验收进行中）
 
-> 本节是 v0.2.6 之后的本地滚动记录，不改写已发布版本、不创建新 V1 子任务，也不构成发布授权。最终 Deno source pin 为 `50aaea7268164b9fa066425ce4a5ac158ca87352`；`deno task check` exit 0、完整测试 716/0、bound-save focused 17/17。Native UI source 为 `9bbc8cf3067b6117be8de41e1bd5bef3960a671a`，Rust pin `fcefcb106c2cf4e957d54a1ee7e112e2aa83cac0` 的 fmt 与测试结果为 258/0/1 ignored。Deno-only source commit 未修改 Native app/Rust payload。
+> 本节记录 v0.2.6 之后的本地验收；用户于 2026-10-07 授权准备并发布 v0.2.7，但本节对应工作树尚未合并、打 tag 或发布。最终 Deno source pin 为 `50aaea7268164b9fa066425ce4a5ac158ca87352`；`deno task check` exit 0、完整测试 716/0、bound-save focused 17/17。Native UI source 为 `9bbc8cf3067b6117be8de41e1bd5bef3960a671a`，Rust pin `fcefcb106c2cf4e957d54a1ee7e112e2aa83cac0` 的 fmt 与测试结果为 258/0/1 ignored。Deno-only source commit 未修改 Native app/Rust payload。
 
 Final10 arm64 QA 包独立审计通过：签名有效，18 项嵌入资源中 17 项字节精确匹配，`index.html` 经路径/索引规范化核对；ZIP 为 7,082,849 B，SHA-256 `bb3413a4f4f8d7658e69f5e523da514aca034e32f241e2bdc09fe425fadd3822`。该包仅为未发布 QA 制品。
 
@@ -4294,6 +4294,12 @@ Browser 64 个页面×宽度和 42 个侧栏组合属于 `b990d49` 下的历史�
 
 no-op 每 10 次仍执行读取/哈希，但逻辑计数显示 Canonical、recovery journal、backup 均无写入、copy、sync、promotion 或 removal。Probe-on 是逻辑 API 计数，不等同设备级物理 I/O；probe-off 计数为 `null`，不是 0。不要将 no-op 改善与 changed-save tail 抵消。
 
-Native 最新 warm pair 是单独的 debug backend profile，不代表 GUI/IPC，也不与 Deno 横向排名：changed median 3.030287→2.809134 s（−7.30%），p95 3.062217→2.825630 s；no-op median 3.036862→0.859863 s（−71.69%），p95 3.322058→0.868051 s。Final 总状态维持 PARTIAL；公开 v0.2.6、历史 tag/DMG/sidecar 与 V1 状态保持冻结，不执行公开发布。
+Native 最新 warm pair 是单独的 debug backend profile，不代表 GUI/IPC，也不与 Deno 横向排名：changed median 3.030287→2.809134 s（−7.30%），p95 3.062217→2.825630 s；no-op median 3.036862→0.859863 s（−71.69%），p95 3.322058→0.868051 s。Final 总状态维持 PARTIAL；公开 v0.2.6、历史 tag/DMG/sidecar 与 V1 状态保持冻结。
 
 证据入口：[`HTML completion report`](docs/reports/io-ui-closure-completion-report.html)、[`requirements.json`](docs/reports/evidence/io-ui-closure/requirements.json)、[`ui-matrix.json`](docs/reports/evidence/io-ui-closure/ui-matrix.json)、[`metrics.json`](docs/reports/evidence/io-ui-closure/metrics.json)、[`artifacts.json`](docs/reports/evidence/io-ui-closure/artifacts.json)。
+
+## 48. v0.2.7 发布准备（2026-10-07，尚未发布）
+
+v0.2.7 已获发布授权，候选说明见 [release notes](.github/release-notes/v0.2.7.md) 与 [feature history draft](docs/feature-history/v0.2.7.md)。仓库应用版本已为 0.2.7；当前公开最新版本仍是 v0.2.6，尚无 v0.2.7 tag、Release 或公开资产。候选内容沿用 §47 的 PARTIAL 验收结论，包括未观察的 N06 in-flight/A→B→A 交互、真实 150%/200% 缩放与 reduced-motion 行为，以及 diagnostics-on changed-save p95 +21.12% 的未定位尾部回退。
+
+发布应由 `.github/workflows/release.yml` 的 tag-triggered workflow 生成 Universal DMG；`workflow_dispatch` 仅构建，不发布。Final10 arm64 ZIP 是 QA 制品，不是正式 DMG。最近一次只读检查未发现 Apple 签名/公证 secrets；若 secrets 未变化，CI 会使用 workflow 的 ad-hoc 回退。以实际 workflow 产物与校验结果更新本节和 feature history。发布准备 commit 不等于公开发布，只有 tag workflow 成功且 Release/资产经核验后，才能将 v0.2.7 记为 latest public。

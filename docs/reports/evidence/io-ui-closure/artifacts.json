@@ -1,12 +1,12 @@
 {
   "schema_version": 1,
-  "generated_at_utc": "2026-10-06T15:54:55Z",
+  "generated_at_utc": "2026-10-06T17:23:09Z",
   "generated_for_source_commit": "50aaea7268164b9fa066425ce4a5ac158ca87352",
   "source_state": "Current combined source 50aaea7268164b9fa066425ce4a5ac158ca87352. Deno check 0, full tests 716/0, focused writer 17/0. Rust fcefcb106c2cf4e957d54a1ee7e112e2aa83cac0: 258/0/1 ignored, fmt and dev build pass. Native Final10 embeds UI 9bbc8cf3067b6117be8de41e1bd5bef3960a671a and Rust fcefcb106c2cf4e957d54a1ee7e112e2aa83cac0; independently audited package, targeted cold-scroll restore and four-state rename evidence pass. Overall remains PARTIAL: diagnostics-on changed-save p95 regresses +21.12%; the cause is not isolated. Native matrix and compound N06 remain partial.",
   "overall_status": "PARTIAL",
   "scope_note": "Inventory of currently retained report and evidence files plus the offline HTML report. The index excludes its own hash entry, absent external archive payloads, and build/cache/temp trees. Historical and invalid attempts remain labeled with their own provenance and are not promoted to final evidence.",
-  "entry_count": 1193,
-  "total_bytes": 83882543,
+  "entry_count": 1196,
+  "total_bytes": 83898175,
   "self_reference_excluded": true,
   "external_archive_manifests": [
     "native-qa-historical-packages-archive-20261006.json",
@@ -14,11 +14,20 @@
   ],
   "entries": [
     {
+      "path": "../../../../.github/release-notes/v0.2.7.md",
+      "kind": "delivery_document",
+      "status": "release_preparation_draft",
+      "bytes": 1645,
+      "sha256": "e7f0eabeb956a5c9f5709c37df106e775a7681e25e113ff2531007da470c602a",
+      "note": "v0.2.7 release-notes draft; not a published release.",
+      "media_type": "text/markdown"
+    },
+    {
       "path": "../../../../PROJECT_MASTER_CONTROL.md",
       "kind": "delivery_document",
       "status": "current_delivery_document",
-      "bytes": 249666,
-      "sha256": "b922985be3cb64fe3313bce2d0dd3672dee5a9e99161bb3c58231dd30247a0d0",
+      "bytes": 250772,
+      "sha256": "94fddf2ec3626462711f7bf8b8f4c19369ba53bc680aa1a45c93c837892a53eb",
       "note": "Current delivery document: PROJECT_MASTER_CONTROL.md.",
       "media_type": "text/markdown"
     },
@@ -26,18 +35,36 @@
       "path": "../../../../README.md",
       "kind": "delivery_document",
       "status": "current_delivery_document",
-      "bytes": 36962,
-      "sha256": "aabb1cbceb192123aecd3d2e8961bcdb1646c363b60dbff14df6c8ab54a7b44c",
+      "bytes": 37339,
+      "sha256": "98c7df973a53c15d2767d720171661f695162c330c18907159809cfb3277db6b",
       "note": "Current delivery document: README.md.",
+      "media_type": "text/markdown"
+    },
+    {
+      "path": "../../../feature-history/README.md",
+      "kind": "delivery_document",
+      "status": "current_delivery_document",
+      "bytes": 10095,
+      "sha256": "02f5243a28c7c53867142862893daf250dc9efc89658ea7f377a21a6feeeecca",
+      "note": "Current delivery document: docs/feature-history/README.md.",
       "media_type": "text/markdown"
     },
     {
       "path": "../../../feature-history/UNRELEASED.md",
       "kind": "delivery_document",
       "status": "current_delivery_document",
-      "bytes": 8039,
-      "sha256": "99d84cacf98c8a3d6f8916592315a5dd987d4703c86dfd0994cb5954de1814bb",
+      "bytes": 8408,
+      "sha256": "190be641f33ae3f79b048678485fb4dab4aeb71d5aa716cf5dbc8efeb58e6ef7",
       "note": "Current delivery document: docs/feature-history/UNRELEASED.md.",
+      "media_type": "text/markdown"
+    },
+    {
+      "path": "../../../feature-history/v0.2.7.md",
+      "kind": "delivery_document",
+      "status": "release_preparation_draft",
+      "bytes": 2040,
+      "sha256": "33a61e61464aedcd6fe16e1738215d37c24818f2b98c7cfa2f82ddb2ebdf6ca8",
+      "note": "v0.2.7 release-preparation feature-history draft; not a published release.",
       "media_type": "text/markdown"
     },
     {

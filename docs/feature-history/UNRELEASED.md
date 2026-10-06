@@ -4,15 +4,17 @@
 
 ---
 
-## 当前状态（2026-10-06）
+## 当前状态（2026-10-07）
 
 ```text
-Latest public release       = v0.2.6，已发布、匿名下载和公开资产校验通过
+Latest public release       = v0.2.6，仍为最新公开版本
 Release/tag/source          = [v0.2.6](https://github.com/wyzh0117/workbench/releases/tag/v0.2.6) / 223a5944e50ffdc6f4bdd09509eacf8f09c47b0e
-Rolling content             = 本地 File I/O / UI 收尾改动尚未归档或发布
+Rolling content             = v0.2.7 发布准备已授权；尚未合并、打 tag 或发布
 Previous release            = v0.2.5，tag / DMG / sidecar 保持冻结
 V0 = CLOSED；V1 = ACTIVE；V1-T01–T06 保留原 VERIFIED；不创建 V1-T07，不关闭 V1
 ```
+
+v0.2.7 的准备稿见 [feature history](./v0.2.7.md) 与 [release notes](../../.github/release-notes/v0.2.7.md)。用户已授权合并并发布；仍须在候选提交通过独立门禁后，按 release workflow 建立 tag 并完成 CI。准备稿保留整体 PARTIAL 和未闭合验收项，不代表 Release 已存在。
 
 v0.2.6 功能与验收记录已归档到 [中文 feature history](./v0.2.6.md)。公开资产、校验和与签名状态见 [public release verification](../reports/evidence/v0.2.6/public-release-verification.md)，逐项行为和未闭合限制见 [HTML completion report](../reports/v0.2.6-ui-redesign-completion-report.html)。
 
@@ -36,7 +38,7 @@ Browser 16×4 默认视图 64 行与 42 个适用 1024 侧栏组合是 `b990d49`
 
 Native warm pair 是独立 debug backend，不与 Deno 或 GUI/IPC 横向比较：changed 3.030287→2.809134 s（−7.30%），p95 3.062217→2.825630 s；no-op 3.036862→0.859863 s（−71.69%），p95 3.322058→0.868051 s。整体验收保持 PARTIAL；公开 v0.2.6 与 V1 状态不变。
 
-证据： [File I/O / UI 验收报告](../reports/io-ui-closure-completion-report.html)、[需求状态](../reports/evidence/io-ui-closure/requirements.json)、[页面矩阵](../reports/evidence/io-ui-closure/ui-matrix.json)、[指标](../reports/evidence/io-ui-closure/metrics.json)、[九类夹具清单](../reports/evidence/io-ui-closure/fixture-manifest.json)、[证据来源索引](../reports/evidence/io-ui-closure/artifacts.json)。本地验收仍为 PARTIAL；公开版本维持 v0.2.6，V1 ACTIVE，不创建 V1-T07，也没有发布授权。
+证据： [File I/O / UI 验收报告](../reports/io-ui-closure-completion-report.html)、[需求状态](../reports/evidence/io-ui-closure/requirements.json)、[页面矩阵](../reports/evidence/io-ui-closure/ui-matrix.json)、[指标](../reports/evidence/io-ui-closure/metrics.json)、[九类夹具清单](../reports/evidence/io-ui-closure/fixture-manifest.json)、[证据来源索引](../reports/evidence/io-ui-closure/artifacts.json)。本地验收仍为 PARTIAL；公开版本维持 v0.2.6。v0.2.7 发布准备已授权，合并、tag、CI 发布与资产核验尚待完成；V1 ACTIVE，不创建 V1-T07。
 
 ## 下一个开发周期
 
