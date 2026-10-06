@@ -1899,7 +1899,8 @@ export class ProjectDirectoryStore {
             { recoverable: false, recommended_action: null, details: { stage: "lease_validate", commit_state: "not_committed", retryable: false } },
           );
         }
-        const canonical = migrateProject(JSON.parse(serializeProject(data)));
+        const canonicalText = serializeProject(data);
+        const canonical = migrateProject(JSON.parse(canonicalText));
         const activeProjectId = this.baselineProject?.project.id ?? null;
         if (
           !activeProjectId || binding.expected_project_id !== activeProjectId ||
@@ -1933,7 +1934,7 @@ export class ProjectDirectoryStore {
           const actual = await this.readProjectSnapshot().catch(() => null);
           if (
             actual?.project?.project.id === canonical.project.id &&
-            serializeProject(actual.project) === serializeProject(canonical)
+            serializeProject(actual.project) === canonicalText
           ) {
             this.baseline = structuredClone(actual.fingerprint);
             this.baselineProject = clone(actual.project);
@@ -1965,7 +1966,7 @@ export class ProjectDirectoryStore {
         }
         if (
           this.baselineProject &&
-          serializeProject(canonical) === serializeProject(this.baselineProject)
+          canonicalText === serializeProject(this.baselineProject)
         ) {
           return {
             project: clone(canonical),

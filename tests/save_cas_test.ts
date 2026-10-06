@@ -84,7 +84,7 @@ Deno.test("folder.append rejects a stale project.save and accepts the fresh base
       project: oldState.project,
     });
     assert(
-      missingBaseline.error?.code === "save_binding_invalid",
+      missingBaseline.error?.code === "save_baseline_required",
       "the command boundary must reject saves without valid project and fingerprint bindings",
     );
 

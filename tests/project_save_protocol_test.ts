@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { join } from "node:path";
 import { DesktopService } from "../src/service/desktop.ts";
+import { migrateProject, serializeProject } from "../src/domain/store.ts";
 import type { ProjectData } from "../src/domain/types.ts";
 import type { FileFingerprint } from "../src/service/storage.ts";
 
@@ -138,6 +139,12 @@ Deno.test("bound project saves return compact ack and unchanged saves perform ze
   const recoveryBackupPath = `${recoveryPath}.bak`;
   const projectBackupPath = `${path}.bak`;
   try {
+    const canonicalText = serializeProject(project);
+    assert(
+      serializeProject(migrateProject(JSON.parse(canonicalText))) ===
+        canonicalText,
+      "serialized canonical bytes remain stable after domain normalization",
+    );
     const beforeBytes = await Deno.readFile(path);
     await Deno.writeTextFile(recoveryPath, "recovery sentinel");
     await Deno.writeTextFile(recoveryBackupPath, "recovery backup sentinel");
