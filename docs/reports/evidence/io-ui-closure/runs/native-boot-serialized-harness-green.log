@@ -1,0 +1,24 @@
+Command: deno test -A tests/native_boot_test.ts
+Production source pin: 04e9fdf4276fe37b79d7a1ee87656c28865d0fac
+Result: 16 passed / 0 failed.
+The test harness serializes cases that replace process-global Tauri/UI APIs; all behavior assertions remain unchanged.
+
+running 16 tests from ./tests/native_boot_test.ts
+native launch opens the --project-dir project and persists it ... ok (30ms)
+URL project_dir preserves a legitimate trailing space ... ok (9ms)
+failed A-to-B switch restores A's opened lease before the next save ... ok (13ms)
+a late save acknowledgement cannot replace a newer accepted project baseline ... ok (9ms)
+native Bridge saves use monotonic numeric revisions and stale acknowledgements stay dirty ... ok (741ms)
+snapshot history only shows a matching persisted create acknowledgement ... ok (34ms)
+snapshot restore adopts the committed project without a duplicate save ... ok (21ms)
+native close immediately flushes and releases the committed project session ... ok (28ms)
+native session keeps the reader position for restart ... ok (25ms)
+native launch locator restores the matching persisted layout page ... ok (21ms)
+native launch does not inherit a different project's reader page ... ok (11ms)
+native relaunch without a launch locator reads a full session once ... ok (10ms)
+native boot degrades to the launcher when the project cannot open ... ok (13ms)
+a project that is only leased elsewhere keeps its resume pointer ... ok (14ms)
+asset.read carries the nested input the shell expects ... ok (11ms)
+native import, media, and AI bridge calls match Tauri command argument names ... ok (40ms)
+
+ok | 16 passed | 0 failed (1s)

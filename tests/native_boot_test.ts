@@ -110,6 +110,26 @@ interface NativeStore {
 
 let importCounter = 0;
 
+// These cases replace process-global shell APIs; keep each fake shell alive
+// through the whole test case so parallel cases cannot cross-wire commands.
+let nativeBootTestQueue = Promise.resolve();
+
+function serialNativeBootTest(name: string, fn: () => Promise<void>): void {
+  Deno.test(name, async () => {
+    const previous = nativeBootTestQueue;
+    let release!: () => void;
+    nativeBootTestQueue = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    await previous;
+    try {
+      await fn();
+    } finally {
+      release();
+    }
+  });
+}
+
 /** Poll until `predicate` holds; UI boot is asynchronous by design. */
 async function until(predicate: () => boolean, label: string): Promise<void> {
   const deadline = Date.now() + 4000;
@@ -394,7 +414,7 @@ function seededPagedProject(prefix = "page") {
   return { data, itemId: item.id, pageIds };
 }
 
-Deno.test("native launch opens the --project-dir project and persists it", async () => {
+serialNativeBootTest("native launch opens the --project-dir project and persists it", async () => {
   const { store, state, restore } = await bootNative({
     project: seededProject(),
     launchProjectDir: "/tmp/native-boot-project",
@@ -425,7 +445,7 @@ Deno.test("native launch opens the --project-dir project and persists it", async
   }
 });
 
-Deno.test("URL project_dir preserves a legitimate trailing space", async () => {
+serialNativeBootTest("URL project_dir preserves a legitimate trailing space", async () => {
   const projectDir = "/tmp/native-course ";
   const { store, restore } = await bootNative({
     project: seededProject(),
@@ -441,7 +461,7 @@ Deno.test("URL project_dir preserves a legitimate trailing space", async () => {
   }
 });
 
-Deno.test("failed A-to-B switch restores A's opened lease before the next save", async () => {
+serialNativeBootTest("failed A-to-B switch restores A's opened lease before the next save", async () => {
   const projectA = seededProject();
   const projectB = seededProject();
   const dirA = "/tmp/native-rollback-A";
@@ -544,7 +564,7 @@ Deno.test("failed A-to-B switch restores A's opened lease before the next save",
   }
 });
 
-Deno.test("a late save acknowledgement cannot replace a newer accepted project baseline", async () => {
+serialNativeBootTest("a late save acknowledgement cannot replace a newer accepted project baseline", async () => {
   const { store, state, restore } = await bootNative({
     project: seededProject(),
     launchProjectDir: "/tmp/native-stale-ack-project",
@@ -600,7 +620,7 @@ Deno.test("a late save acknowledgement cannot replace a newer accepted project b
   }
 });
 
-Deno.test("native Bridge saves use monotonic numeric revisions and stale acknowledgements stay dirty", async () => {
+serialNativeBootTest("native Bridge saves use monotonic numeric revisions and stale acknowledgements stay dirty", async () => {
   const { store, state, restore } = await bootNative({
     project: seededProject(),
     launchProjectDir: "/tmp/native-save-revision-project",
@@ -684,7 +704,7 @@ Deno.test("native Bridge saves use monotonic numeric revisions and stale acknowl
   }
 });
 
-Deno.test("snapshot history only shows a matching persisted create acknowledgement", async () => {
+serialNativeBootTest("snapshot history only shows a matching persisted create acknowledgement", async () => {
   const projectDir = "/tmp/native-snapshot-project";
   const { store, state, restore } = await bootNative({
     project: seededProject(),
@@ -744,7 +764,7 @@ Deno.test("snapshot history only shows a matching persisted create acknowledgeme
   }
 });
 
-Deno.test("snapshot restore adopts the committed project without a duplicate save", async () => {
+serialNativeBootTest("snapshot restore adopts the committed project without a duplicate save", async () => {
   const projectDir = "/tmp/native-snapshot-restore-project";
   const { store, state, restore } = await bootNative({
     project: seededProject(),
@@ -820,7 +840,7 @@ Deno.test("snapshot restore adopts the committed project without a duplicate sav
   }
 });
 
-Deno.test("native close immediately flushes and releases the committed project session", async () => {
+serialNativeBootTest("native close immediately flushes and releases the committed project session", async () => {
   const { store, state, restore } = await bootNative({
     project: seededProject(),
     launchProjectDir: "/tmp/native-close-project",
@@ -850,7 +870,7 @@ Deno.test("native close immediately flushes and releases the committed project s
   }
 });
 
-Deno.test("native session keeps the reader position for restart", async () => {
+serialNativeBootTest("native session keeps the reader position for restart", async () => {
   const project = seededProject();
   const first = await bootNative({
     project,
@@ -938,7 +958,7 @@ Deno.test("native session keeps the reader position for restart", async () => {
   }
 });
 
-Deno.test("native launch locator restores the matching persisted layout page", async () => {
+serialNativeBootTest("native launch locator restores the matching persisted layout page", async () => {
   const fixture = seededPagedProject();
   const projectDir = "/private/tmp/tauri-acceptance/project";
   const { store, state, restore } = await bootNative({
@@ -973,7 +993,7 @@ Deno.test("native launch locator restores the matching persisted layout page", a
   }
 });
 
-Deno.test("native launch does not inherit a different project's reader page", async () => {
+serialNativeBootTest("native launch does not inherit a different project's reader page", async () => {
   const savedProject = seededPagedProject("saved");
   const launchedProject = seededPagedProject("launched");
   const { store, state, restore } = await bootNative({
@@ -997,7 +1017,7 @@ Deno.test("native launch does not inherit a different project's reader page", as
   }
 });
 
-Deno.test("native relaunch without a launch locator reads a full session once", async () => {
+serialNativeBootTest("native relaunch without a launch locator reads a full session once", async () => {
   const fixture = seededPagedProject();
   const projectDir = "/private/tmp/session-only-project";
   const { store, state, restore } = await bootNative({
@@ -1024,7 +1044,7 @@ Deno.test("native relaunch without a launch locator reads a full session once", 
   }
 });
 
-Deno.test("native boot degrades to the launcher when the project cannot open", async () => {
+serialNativeBootTest("native boot degrades to the launcher when the project cannot open", async () => {
   const { store, state, restore } = await bootNative({
     project: seededProject(),
     launchProjectDir: "/tmp/native-boot-gone",
@@ -1054,7 +1074,7 @@ Deno.test("native boot degrades to the launcher when the project cannot open", a
   }
 });
 
-Deno.test("a project that is only leased elsewhere keeps its resume pointer", async () => {
+serialNativeBootTest("a project that is only leased elsewhere keeps its resume pointer", async () => {
   const project = seededProject();
   const pointer: SessionShape = {
     project_dir: "/tmp/native-boot-project",
@@ -1086,7 +1106,7 @@ Deno.test("a project that is only leased elsewhere keeps its resume pointer", as
   }
 });
 
-Deno.test("asset.read carries the nested input the shell expects", async () => {
+serialNativeBootTest("asset.read carries the nested input the shell expects", async () => {
   const { store, restore } = await bootNative({
     project: seededProject(),
     launchProjectDir: "/tmp/native-boot-project",
@@ -1113,7 +1133,7 @@ Deno.test("asset.read carries the nested input the shell expects", async () => {
   }
 });
 
-Deno.test("native import, media, and AI bridge calls match Tauri command argument names", async () => {
+serialNativeBootTest("native import, media, and AI bridge calls match Tauri command argument names", async () => {
   const { store, state, restore } = await bootNative({
     project: seededProject(),
     launchProjectDir: "/tmp/native-bridge-project",
