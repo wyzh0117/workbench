@@ -1281,6 +1281,8 @@ async function bootPointerDom() {
     scrollTop: 0,
     scrollHeight: 600,
     clientHeight: 100,
+    dataset: {} as Record<string, string>,
+    addEventListener: () => {},
     getBoundingClientRect: () => ({ top: 0, bottom: 100, height: 100 }),
   };
   let actionClick: DocListener | null = null;
