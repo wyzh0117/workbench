@@ -280,8 +280,27 @@ function imageAsset(kind: "image" | "gif" | "video", filename: string, mime: str
 
 const PNG_BYTES = new Uint8Array([137, 80, 78, 71, 13, 10]);
 
+type PreviewContext = {
+  project_dir: string;
+  project_id: string;
+  lease_generation: string | number;
+  editor_generation: number;
+  fingerprint: { exists: boolean; mtime_ms: number | null; size: number | null; hash: string | null };
+};
+type PreviewBatchRequest = Pick<PreviewContext, "project_dir" | "project_id" | "fingerprint"> & {
+    request_generation: number;
+    asset_ids: string[];
+};
+type PreviewBatchResponse = {
+    project_id: string;
+    fingerprint: { exists: boolean; mtime_ms: number | null; size: number | null; hash: string | null };
+    request_generation: number;
+    items: Array<{ asset_id: string; status: "ok" | "error" | "deferred"; bytes_base64?: string; error?: { code: string; message: string } }>;
+};
 type CacheHooks = {
   readAssetBytes?: (assetId: string, limit: number) => Promise<Uint8Array>;
+  previewRequestContext?: () => PreviewContext | null;
+  readAssetBatch?: (request: PreviewBatchRequest) => Promise<PreviewBatchResponse>;
   mediaLimit?: number;
 };
 
@@ -307,6 +326,8 @@ function cacheFor(
         ? await hooks.readAssetBytes(assetId, limit)
         : PNG_BYTES;
     },
+    ...(hooks.previewRequestContext ? { previewRequestContext: hooks.previewRequestContext } : {}),
+    ...(hooks.readAssetBatch ? { readAssetBatch: hooks.readAssetBatch } : {}),
     previewAssetVideoSource: async () => {
       stats.videoSourceCalls += 1;
       return { url: "blob:video-source" };
@@ -698,6 +719,177 @@ Deno.test("a non-image MIME on an image asset surfaces 素材类型与图片文�
       runtime.canvases.length === 0 && runtime.imageCalls === 0,
       "the mismatch must throw before any decode or placeholder",
     );
+  } finally {
+    runtime.restore();
+  }
+});
+
+Deno.test("asset previews use bounded, project-bound batches of up to eight items", async () => {
+  const runtime = fakeMediaRuntime();
+  try {
+    const stats = cacheStats();
+    const assets = Array.from({ length: 10 }, (_, index) =>
+      imageAsset("image", `batch-${index}.png`, "image/png")
+    );
+    const context: PreviewContext = {
+      project_dir: "/tmp/preview-project",
+      project_id: "project",
+      lease_generation: "lease-1",
+      editor_generation: 1,
+      fingerprint: { exists: true, mtime_ms: 1, size: 42, hash: "sha256:test" },
+    };
+    const requests: PreviewBatchRequest[] = [];
+    const bytesBase64 = btoa(String.fromCharCode(...PNG_BYTES));
+    const cache = cacheFor(assets, { maxConcurrentLoads: 2 }, runtime, {
+      previewRequestContext: () => context,
+      readAssetBatch: async (request) => {
+        requests.push(request);
+        return {
+          project_id: request.project_id,
+          fingerprint: request.fingerprint,
+          request_generation: request.request_generation,
+          items: request.asset_ids.map((asset_id) => ({
+            asset_id,
+            status: "ok" as const,
+            bytes_base64: bytesBase64,
+          })),
+        };
+      },
+    }, stats);
+    await Promise.all(assets.map((asset) => cache.load(asset.id)));
+    assert(requests.length === 2, `10 assets should be served by two concurrent batches, got ${requests.length}`);
+    assert(requests.every((request) => request.asset_ids.length <= 8), "each request stays within the service's 8-ID limit");
+    assert(requests.map((request) => request.asset_ids.length).sort().join(",") === "2,8", "the request scheduler fills an 8-item batch before the tail");
+    assert(requests.every((request) => request.project_dir === context.project_dir), "batch carries the opened canonical directory");
+    assert(requests.every((request) => request.project_id === context.project_id), "batch binds the opened project identity");
+    assert(requests.every((request) => JSON.stringify(request.fingerprint) === JSON.stringify(context.fingerprint)), "batch binds the current canonical fingerprint");
+    assert(new Set(requests.map((request) => request.request_generation)).size === 2, "each batch has its own stale-response generation");
+    assert(cache.entries.size === 10 && cache.failures === 0, "all current results are decoded without failure");
+    assert(stats.readBytesCalls === 0, "batch-capable previews do not fall back to per-asset reads");
+    cache.clear();
+  } finally {
+    runtime.restore();
+  }
+});
+
+Deno.test("deferred batch items retry when capacity is freed without counting as failures", async () => {
+  const runtime = fakeMediaRuntime();
+  try {
+    const assets = [
+      imageAsset("image", "deferred-a.png", "image/png"),
+      imageAsset("image", "deferred-b.png", "image/png"),
+    ];
+    const context: PreviewContext = {
+      project_dir: "/tmp/preview-project",
+      project_id: "project",
+      lease_generation: "lease-1",
+      editor_generation: 1,
+      fingerprint: { exists: true, mtime_ms: 1, size: 42, hash: "sha256:test" },
+    };
+    const calls: string[][] = [];
+    const bytesBase64 = btoa(String.fromCharCode(...PNG_BYTES));
+    const cache = cacheFor(assets, { maxConcurrentLoads: 2 }, runtime, {
+      previewRequestContext: () => context,
+      readAssetBatch: async (request) => {
+        calls.push(request.asset_ids);
+        return {
+          project_id: request.project_id,
+          fingerprint: request.fingerprint,
+          request_generation: request.request_generation,
+          items: request.asset_ids.map((asset_id, index) => ({
+            asset_id,
+            status: calls.length === 1 && index === 1 ? "deferred" as const : "ok" as const,
+            ...(calls.length === 1 && index === 1 ? {} : { bytes_base64: bytesBase64 }),
+          })),
+        };
+      },
+    });
+    await Promise.all(assets.map((asset) => cache.load(asset.id)));
+    for (let attempt = 0; attempt < 20 && cache.entries.size < 2; attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    }
+    assert(calls.length === 2, `the deferred asset should be retried in a smaller batch, got ${calls.length} calls`);
+    assert(cache.entries.size === 2, "both deferred and immediate assets eventually load");
+    assert(cache.failures === 0, "a service-deferred result is not counted as a preview failure");
+    cache.clear();
+  } finally {
+    runtime.restore();
+  }
+});
+
+Deno.test("switching preview generation drops a late batch response without caching it", async () => {
+  const runtime = fakeMediaRuntime();
+  try {
+    const asset = imageAsset("image", "stale-batch.png", "image/png");
+    const context: PreviewContext = {
+      project_dir: "/tmp/preview-project",
+      project_id: "project",
+      lease_generation: "lease-1",
+      editor_generation: 1,
+      fingerprint: { exists: true, mtime_ms: 1, size: 42, hash: "sha256:test" },
+    };
+    const holder: { request?: PreviewBatchRequest } = {};
+    let resolveBatch!: (response: PreviewBatchResponse) => void;
+    const cache = cacheFor([asset], {}, runtime, {
+      previewRequestContext: () => context,
+      readAssetBatch: (value) => {
+        holder.request = value;
+        return new Promise((resolve) => resolveBatch = resolve);
+      },
+    });
+    const loading = cache.load(asset.id);
+    for (let attempt = 0; attempt < 20 && !holder.request; attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    }
+    const request = holder.request;
+    assert(request !== undefined, "the preview request starts with a bound generation");
+    cache.clear();
+    resolveBatch({
+      project_id: request!.project_id,
+      fingerprint: request!.fingerprint,
+      request_generation: request!.request_generation,
+      items: [{ asset_id: asset.id, status: "ok", bytes_base64: btoa(String.fromCharCode(...PNG_BYTES)) }],
+    });
+    await loading;
+    assert(cache.entries.size === 0, "a response from the prior cache generation cannot repopulate the cache");
+    assert(cache.failures === 0, "a deliberately stale response is not a user-visible preview failure");
+  } finally {
+    runtime.restore();
+  }
+});
+
+Deno.test("changing the opened lease/editor binding drops an in-flight preview response", async () => {
+  const runtime = fakeMediaRuntime();
+  try {
+    const asset = imageAsset("image", "stale-identity-batch.png", "image/png");
+    const context: PreviewContext = {
+      project_dir: "/tmp/preview-project",
+      project_id: "project",
+      lease_generation: "lease-1",
+      editor_generation: 1,
+      fingerprint: { exists: true, mtime_ms: 1, size: 42, hash: "sha256:test" },
+    };
+    let resolveBatch!: (response: PreviewBatchResponse) => void;
+    const cache = cacheFor([asset], {}, runtime, {
+      previewRequestContext: () => context,
+      readAssetBatch: () => new Promise((resolve) => resolveBatch = resolve),
+    });
+    const loading = cache.load(asset.id);
+    for (let attempt = 0; attempt < 20 && !resolveBatch; attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    }
+    assert(resolveBatch !== undefined, "the preview request starts before the opened identity changes");
+    context.lease_generation = "lease-2";
+    context.editor_generation += 1;
+    resolveBatch({
+      project_id: context.project_id,
+      fingerprint: context.fingerprint,
+      request_generation: 1,
+      items: [{ asset_id: asset.id, status: "ok", bytes_base64: btoa(String.fromCharCode(...PNG_BYTES)) }],
+    });
+    await loading;
+    assert(cache.entries.size === 0, "a response from a prior lease/editor identity cannot repopulate the cache");
+    assert(cache.failures === 0, "a deliberately stale identity response is not a preview failure");
   } finally {
     runtime.restore();
   }

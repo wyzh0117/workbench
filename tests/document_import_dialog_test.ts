@@ -208,8 +208,9 @@ async function bootDocumentHarness(
   bootCount += 1;
   const module = await import(`../app/main.js?document-import-${bootCount}`) as LooseRecord;
   const bridge = {
-    projectDir: null,
+    projectDir: null as string | null,
     projectDirFromUrl: false,
+    lastOpenedProjectState: null as LooseRecord | null,
     isNative: () => true,
     currentProject: () => CURRENT,
     loadSession: async () => null,
@@ -220,7 +221,9 @@ async function bootDocumentHarness(
     clearRecoveryJournal: async () => {},
     saveSession: async () => {},
     createSnapshot: async () => ({}),
-    setProjectDir: (value: string) => value,
+    setProjectDir: (value: string) => {
+      bridge.projectDir = value;
+    },
     restoreProjectDir: () => {},
     projectIdentity: async () => CURRENT.project.id,
     listenNativeDrops: async () => () => {},
@@ -233,6 +236,49 @@ async function bootDocumentHarness(
         return typeof answer === "function" ? answer(payload) : answer;
       }
       throw new Error(`unexpected command ${name}`);
+    },
+    commandWithMutationAck: async (name: string, payload: LooseRecord) => {
+      const value = await bridge.command(name, payload);
+      const project = structuredClone(value?.data ?? CURRENT) as ProjectData;
+      const projectDir = String(value?.root || ROOT);
+      return {
+        value,
+        mutation_ack: {
+          project,
+          fingerprint: {
+            exists: true,
+            mtime_ms: 1,
+            size: JSON.stringify(project).length,
+            hash: "a".repeat(64),
+          },
+          project_id: project.project.id,
+          project_dir: projectDir,
+          lease_generation: name === "folder.adopt" ? null : payload.lease_generation ?? null,
+          editor_generation: payload.editor_generation,
+          operation_id: payload.operation_id,
+          revision: payload.revision,
+          commit_state: "committed",
+          outcome: "written",
+          recovery_warning: null,
+          durability_warning: null,
+        },
+      };
+    },
+    openProjectState: async () => {
+      const opened = {
+        project: structuredClone(CURRENT),
+        project_id: CURRENT.project.id,
+        project_dir: bridge.projectDir || ROOT,
+        lease_generation: `lease:${bridge.projectDir || ROOT}`,
+        fingerprint: {
+          exists: true,
+          mtime_ms: 1,
+          size: JSON.stringify(CURRENT).length,
+          hash: "a".repeat(64),
+        },
+      };
+      bridge.lastOpenedProjectState = opened;
+      return opened;
     },
     invoke: async (name: string, payload: LooseRecord) => bridge.command(name, payload),
   };

@@ -153,8 +153,8 @@ export function createViews(store) {
    * geometry lives in `styles.css` (`.asset-image-zoom`) so a card can size the
    * frame it owns instead of fighting an inline `object-fit: cover`.
    */
-  const mediaOpenButton = (asset, src, label, alt = label) =>
-    `<button type="button" class="asset-image-zoom" data-action="open-asset-image" data-asset="${esc(asset.id)}" aria-label="放大查看 ${esc(label)}" title="点击查看大图"><img class="asset-image" src="${esc(src)}" alt="${esc(alt)}" loading="lazy" /></button>`;
+  const mediaOpenButton = (asset, src, label, alt = label, focusKey = `asset-view-${asset.id}`) =>
+    `<button type="button" class="asset-image-zoom" data-focus-key="${esc(focusKey)}" data-action="open-asset-image" data-asset="${esc(asset.id)}" aria-label="放大查看 ${esc(label)}" title="点击查看大图"><img class="asset-image" src="${esc(src)}" alt="${esc(alt)}" loading="lazy" /></button>`;
   /**
    * A real trash glyph.  The emoji (U+1F5D1) depends on an emoji font being
    * installed and inherited `color`, which is how a delete control could end
@@ -277,7 +277,7 @@ export function createViews(store) {
       return `<div class="asset-thumb asset-preview-error" role="group" aria-label="${esc(label)} · ${esc(assetLabel(asset.type))} 预览失败" style="flex-direction:column;gap:3px;padding:6px"><b>${esc(label)} · ${esc(assetLabel(asset.type))} 预览失败</b><small>${esc(preview.error || "素材不可读")}</small>${retryAssetPreviewButton(asset)}</div>`;
     }
     if (isImageLike(asset) && url) {
-      return mediaOpenButton(asset, preview.thumbnailUrl || url, label);
+      return mediaOpenButton(asset, preview.thumbnailUrl || url, label, label, `asset-card-view-${asset.id}`);
     }
     if (preview?.pdf && url) {
       // No inline height: the frame owns it, so a PDF card is exactly as tall as
@@ -286,7 +286,7 @@ export function createViews(store) {
     }
     if (asset.type === "video" && url && preview.posterUrl) {
       const duration = mediaDuration(preview.durationSeconds);
-      const poster = mediaOpenButton(asset, preview.posterUrl, label, `${label} · 视频首帧`);
+      const poster = mediaOpenButton(asset, preview.posterUrl, label, `${label} · 视频首帧`, `asset-card-view-${asset.id}`);
       return duration
         ? `<div class="asset-media-duration">${poster}<small class="muted">${duration}</small></div>`
         : poster;
@@ -305,18 +305,18 @@ export function createViews(store) {
    * The media body of one editor block, on its own so a settled preview can be
    * written back into the frame that already exists.
    */
-  const mediaSlotBody = (asset) => {
+  const mediaSlotBody = (asset, blockId = "") => {
     const preview = assetPreview(asset);
     const url = preview?.url || "";
     const text = preview?.text;
     if (asset.type === "video" && url && preview.posterUrl) {
-      return mediaOpenButton(asset, preview.posterUrl, asset.title || asset.filename, `${asset.filename} · 视频首帧`);
+      return mediaOpenButton(asset, preview.posterUrl, asset.title || asset.filename, `${asset.filename} · 视频首帧`, `asset-slot-view-${blockId || asset.id}`);
     }
     if (asset.type === "audio" && url) {
       return `<audio class="asset-audio" src="${esc(url)}" controls preload="metadata"></audio>`;
     }
     if ((asset.type === "image" || asset.type === "gif") && url) {
-      return mediaOpenButton(asset, asset.type === "gif" ? preview.thumbnailUrl : url, asset.title || asset.filename);
+      return mediaOpenButton(asset, asset.type === "gif" ? preview.thumbnailUrl : url, asset.title || asset.filename, asset.title || asset.filename, `asset-slot-view-${blockId || asset.id}`);
     }
     if (preview?.pdf && url) {
       return `<iframe class="media-pdf-preview" src="${esc(url)}" title="${esc(asset.title || asset.filename)} · PDF 第一页预览" loading="lazy" referrerpolicy="no-referrer" style="display:block;width:100%;height:420px;border:0;background:#f4f4f4"></iframe>`;
@@ -360,10 +360,10 @@ export function createViews(store) {
     }
     if ((asset.type === "image" || asset.type === "gif") && url) {
       const label = asset.title || asset.filename;
-      return `<figure>${mediaOpenButton(asset, asset.type === "gif" ? preview.thumbnailUrl : url, label)}<figcaption>${esc(label)}</figcaption></figure>`;
+      return `<figure>${mediaOpenButton(asset, asset.type === "gif" ? preview.thumbnailUrl : url, label, label, `asset-preview-view-${block?.id || asset.id}`)}<figcaption>${esc(label)}</figcaption></figure>`;
     }
     if (asset.type === "video" && url && preview.posterUrl) {
-      return `<figure>${mediaOpenButton(asset, preview.posterUrl, asset.title || asset.filename, `${asset.filename} · 视频首帧`)}<figcaption>${
+      return `<figure>${mediaOpenButton(asset, preview.posterUrl, asset.title || asset.filename, `${asset.filename} · 视频首帧`, `asset-preview-view-${block?.id || asset.id}`)}<figcaption>${
         esc(asset.title || asset.filename)
       }</figcaption></figure>`;
     }
@@ -403,6 +403,17 @@ export function createViews(store) {
       (isImageLike(asset) || asset.type === "video");
     const preview = canPreview ? assetPreview(asset) : null;
     if (!canPreview) return `<p class="preview-media-failed">素材当前不可用。</p>`;
+    const viewerSource = store.ui.assetImagePreviewSource?.asset_id === asset.id
+      ? store.ui.assetImagePreviewSource.url
+      : "";
+    if (asset.type === "video" && viewerSource) {
+      const poster = !preview?.failed ? preview?.posterUrl : "";
+      return `<div class="asset-video-stage" style="display:grid;place-items:center;position:relative"><video class="asset-preview-video" src="${esc(viewerSource)}"${poster ? ` poster="${esc(poster)}"` : ""} controls preload="none" playsinline aria-label="${esc(label)}" style="display:block;margin:12px auto;max-height:72vh;max-width:100%"></video><button type="button" class="asset-video-play" data-action="play-asset-video" aria-label="播放视频" title="播放视频" style="align-items:center;background:#111b;border:0;border-radius:50%;color:white;cursor:pointer;display:flex;font-size:28px;height:64px;justify-content:center;left:50%;position:absolute;top:50%;transform:translate(-50%,-50%);width:64px">▶</button></div>${
+        !preview?.failed && preview?.width && preview?.height
+          ? `<small class="muted" style="text-align:center">${preview.width} × ${preview.height}</small>`
+          : ""
+      }`;
+    }
     if (preview?.failed) {
       return `<div class="preview-media-failed"><b>${esc(asset.filename)} · ${esc(assetLabel(asset.type))} 预览失败</b><p>${esc(preview.error || "素材不可读")}</p>${retryAssetPreviewButton(asset)}</div>`;
     }
@@ -620,17 +631,19 @@ export function createViews(store) {
       : store.saveStatus === "正在保存…"
       ? "正在保存课程内容"
       : store.saveStatus === "外部修改冲突"
-      ? "保存已暂停；课程文件在其他地方发生了变化，请先处理提示"
+      ? "保存已暂停；课程文件与当前编辑内容存在差异，请先处理提示"
+      : store.saveStatus === "保存结果待核验"
+      ? "保存结果暂时无法确认；自动保存已暂停，请核验磁盘结果"
       : store.saveStatus === "保存失败"
       ? "这次没有保存成功；请查看提示后重试"
       : "课程内容的保存状态";
     return `<span class="save-state ${
-      store.saveStatus === "保存失败" || store.saveStatus === "外部修改冲突"
+      store.saveStatus === "保存失败" || store.saveStatus === "外部修改冲突" || store.saveStatus === "保存结果待核验"
         ? "error"
         : ""
     }" data-chrome-save title="${saveHint}">${
       store.saveStatus === "已保存" ? "✓ " : ""
-    }${esc(store.saveStatus)}</span>`;
+    }${esc(store.saveStatus)}${store.uncertainMutation ? ` <button type="button" class="text-button" data-action="verify-save-result" aria-label="核验磁盘结果" ${store.uncertainMutationPending ? "disabled" : ""}>${store.uncertainMutationPending ? "正在核验…" : "核验磁盘结果"}</button>` : ""}</span>`;
   }
 
   function topbarView(item) {
@@ -1171,7 +1184,7 @@ export function createViews(store) {
     // The preview paints inside its own frame, so a preview that settles later
     // rewrites this frame and nothing else (§12.4).
     return `<div class="media-slot" data-block-id="${block.id}">${
-      previewFrame(asset, "block", mediaSlotBody(asset))
+      previewFrame(asset, "block", mediaSlotBody(asset, block.id))
     }<div class="media-meta"><span class="badge">${
       assetLabel(asset.type)
     }</span><b>${esc(asset.title || asset.filename)}</b><small class="muted">${
@@ -2300,30 +2313,31 @@ export function createViews(store) {
             store.ui.activeId
               ? `<button class="secondary asset-insert-action" data-action="insert-asset" data-id="${asset.id}" aria-label="插入素材：${esc(displayName)}" title="插入到当前位置">插入</button>`
               : ""
-          }<details class="asset-card-menu"><summary class="icon-button" aria-label="更多素材操作：${esc(displayName)}" title="更多素材操作">⋯</summary><div class="asset-card-menu-list"><button type="button" data-action="rename-asset" data-id="${asset.id}" aria-label="重命名素材文件并同步更新磁盘文件名：${esc(displayName)}" title="重命名素材文件（磁盘文件同步改名）">重命名</button><button type="button" class="danger" data-action="delete-asset" data-id="${asset.id}" aria-label="删除素材：${esc(displayName)}">${TRASH_ICON} 删除</button></div></details></div></article>`;
+          }<details class="asset-card-menu"><summary class="icon-button" data-focus-key="asset-menu-${esc(asset.id)}" aria-label="更多素材操作：${esc(displayName)}" title="更多素材操作">⋯</summary><div class="asset-card-menu-list"><button type="button" data-action="rename-asset" data-id="${esc(asset.id)}" aria-label="重命名素材文件并同步更新磁盘文件名：${esc(displayName)}" title="重命名素材文件（磁盘文件同步改名）">重命名</button><button type="button" class="danger" data-action="delete-asset" data-id="${esc(asset.id)}" aria-label="删除素材：${esc(displayName)}">${TRASH_ICON} 删除</button></div></details></div></article>`;
         }).join("")
         : `<div class="empty-state inline media-empty"><div class="empty-icon" aria-hidden="true">▧</div><h2>媒体库暂时为空</h2><p class="muted">添加后的素材会在这里生成静态缩略图与使用状态。GIF 和视频在明确打开后才播放。</p><button class="primary" data-action="open-file">添加第一项素材</button></div>`
     }</div></section>`;
   }
 
   function versionsView() {
-    const snapshots = Array.isArray(store.data.snapshots) ? store.data.snapshots : [];
+    const snapshots = Array.isArray(store.snapshotRows) ? store.snapshotRows : [];
+    const available = snapshots.filter((snapshot) => snapshot.status === "available");
     const savedAt = (value) => {
       const time = Date.parse(String(value || ""));
       return Number.isFinite(time) ? new Date(time).toLocaleString("zh-CN") : "保存时间未知";
     };
-    return `<section class="page versions-page"><div class="page-head"><div><span class="eyebrow">安全恢复</span><h1>版本历史</h1><p class="muted">命名版本记录重要节点；恢复前会自动保存当前内容，之后仍可撤销。</p></div><div class="page-head-actions"><button class="primary" data-action="save-version">保存当前版本</button></div></div><div class="summary-grid versions-summary" aria-label="版本概况"><article class="summary-card"><span>已保存版本</span><strong>${snapshots.length}</strong><small>可随时恢复</small></article><article class="summary-card"><span>自动保存</span><strong>开启</strong><small>编辑内容持续保存</small></article><article class="summary-card"><span>恢复保护</span><strong>启用</strong><small>恢复前会保留备份</small></article></div><section class="page-section versions-section"><div class="versions-section-head"><div><h2>命名版本</h2><p class="muted">为发布、审核或大幅修改前保存一个清楚的回退点。</p></div><span class="status-pill">${snapshots.length}</span></div>${
+    return `<section class="page versions-page"><div class="page-head"><div><span class="eyebrow">安全恢复</span><h1>版本历史</h1><p class="muted">版本记录保存课程正文、排版与引用关系，不复制素材文件；恢复不会找回已删除或改写的素材，也不会还原素材文件名。</p></div><div class="page-head-actions"><button class="primary" data-action="save-version">保存当前版本</button><button class="secondary" data-action="refresh-snapshots" ${store.snapshotLoading ? "disabled" : ""}>刷新</button></div></div><div class="summary-grid versions-summary" aria-label="版本概况"><article class="summary-card"><span>已保存版本</span><strong>${available.length}</strong><small>可随时恢复</small></article><article class="summary-card"><span>自动保存</span><strong>开启</strong><small>编辑内容持续保存</small></article><article class="summary-card"><span>恢复保护</span><strong>启用</strong><small>恢复前备份会先持久保存</small></article></div>${store.snapshotLoadError ? `<p class="error-text" role="alert">${esc(store.snapshotLoadError)}</p>` : ""}${store.snapshotLoading ? `<p class="muted" role="status">正在读取已保存版本…</p>` : ""}<section class="page-section versions-section"><div class="versions-section-head"><div><h2>命名版本</h2><p class="muted">为发布、审核或大幅修改前保存一个清楚的回退点。</p></div><span class="status-pill">${available.length}</span></div>${
       snapshots.length
         ? `<div class="version-list" role="list">${snapshots.map((snapshot) =>
-          `<article class="version-card list-row surface-card" role="listitem"><span class="version-icon" aria-hidden="true">◷</span><div class="version-main"><div class="version-row-title"><h3>${
+          `<article class="version-card list-row surface-card ${snapshot.status === "error" ? "degraded" : ""}" role="listitem"><span class="version-icon" aria-hidden="true">◷</span><div class="version-main"><div class="version-row-title"><h3>${
             esc(snapshot.name || "未命名版本")
-          }</h3><span class="status-pill is-done">可恢复</span></div><p>${esc(snapshot.note || "没有备注")}</p><small>${
+          }</h3><span class="status-pill ${snapshot.status === "error" ? "is-warning" : "is-done"}">${snapshot.status === "error" ? "无法读取" : "已保存"}</span></div><p>${esc(snapshot.error || snapshot.note || "没有备注")}</p><small>${
             savedAt(snapshot.created_at)
           }</small></div><div class="action-row"><button class="secondary" data-action="restore-version" data-id="${
-            esc(snapshot.id)
-          }">恢复此版本</button></div></article>`
+            esc(snapshot.id || "")
+          }" ${snapshot.status !== "available" || !snapshot.id || store.snapshotRestoringId ? "disabled" : ""}>${store.snapshotRestoringId === snapshot.id ? "正在恢复…" : "恢复此版本"}</button></div></article>`
         ).join("")}</div>`
-        : `<div class="empty-state versions-empty"><span class="empty-icon" aria-hidden="true">◷</span><h2>还没有命名版本</h2><p class="muted">保存一个版本后，就能回到这个明确节点。课程还会继续自动保存。</p><button class="primary" data-action="save-version">保存第一个版本</button></div>`
+        : `<div class="empty-state versions-empty"><span class="empty-icon" aria-hidden="true">◷</span><h2>${store.snapshotLoading ? "正在读取版本" : "还没有命名版本"}</h2><p class="muted">保存确认成功的版本才会显示在这里。</p><button class="primary" data-action="save-version">保存第一个版本</button></div>`
     }</section></section>`;
   }
 
@@ -2430,7 +2444,7 @@ export function createViews(store) {
       ${showLayoutControls ? `<section class="page-section card publish-card publish-section" aria-labelledby="publish-layout-heading"><div class="publish-section-heading"><span class="publish-step">02</span><div><h2 id="publish-layout-heading">2. 输出布局与页面</h2><p class="muted">页码范围与目标尺寸只影响本次输出。</p></div></div><div class="publish-layout-controls">${pageRange}${layout?.pagination_mode === "paged" && !supportsLayout ? `<p class="muted publish-format-note">当前格式不会保留页面布局，因此无法按页筛选。</p>` : ""}<div class="page-action-row">${targetSizeControl}</div>${targetSizeNotice}${fitPreview}</div><p class="publish-layout-note">页面筛选与目标尺寸仅影响本次导出；尺寸不同的课时会按同一比例居中适配，不裁掉页面内容。</p></section>` : ""}
       <section class="page-section card publish-card publish-section" aria-labelledby="publish-format-heading"><div class="publish-section-heading"><span class="publish-step">03</span><div><h2 id="publish-format-heading">3. 选择格式</h2><p class="muted">每种格式都会说明可用性和布局处理方式。</p></div></div><div class="format-grid">${formats.map(([key, label, detail]) => { let capability = { status: "unavailable" }; try { capability = store.publicationCapability(key); } catch { /* selection validation is shown in preflight */ } const unavailable = ["unavailable", "unsupported"].includes(capability.status); const capabilityLabel = capability.code === "explicit_target_page_size_required" ? "请先选择统一尺寸" : capability.status === "available" ? (adapters[key]?.layout ? "页面布局保留" : "可用") : capability.status === "lossy" ? "页面布局会线性化" : capability.status === "unsupported" ? "当前排版不支持" : "此环境不可用"; return `<button class="format-card ${store.ui.publishFormat === key ? "active" : ""}" data-action="publish-format" data-format="${key}" aria-pressed="${store.ui.publishFormat === key}" ${unavailable ? "disabled" : ""}><b>${label}</b><small>${detail}</small><small class="format-capability">${capabilityLabel}</small></button>`; }).join("")}</div><div class="action-row publish-preflight-action"><button class="secondary" data-action="preflight">运行导出前检查</button></div></section>
       ${store.ui.preflight ? publishPreflightView() : ""}
-      ${last ? `<section class="page-section card publish-card publish-last-export"><div class="publish-section-heading"><span class="publish-step" aria-hidden="true">✓</span><div><h2>最近一次导出</h2><p class="muted">导出已经完成，以下是实际保存位置。</p></div><span class="status-pill is-done">已完成</span></div><p><b>${esc(last.format)}</b> · ${last.scope === "course" ? "整门课程" : "当前课"} · ${last.files} 个文件</p><p class="muted">实际位置：<code>${esc(last.path)}</code></p><p class="muted">输出不依赖 Workbench 运行。</p>${store.bridge.isNative() ? `<div class="action-row"><button class="secondary" data-action="reveal-export">在 Finder 中显示</button></div>` : ""}</section>` : ""}
+      ${last ? `<section class="page-section card publish-card publish-last-export"><div class="publish-section-heading"><span class="publish-step" aria-hidden="true">✓</span><div><h2>最近一次导出</h2><p class="muted">${store.bridge.isNative() ? "导出已经完成，以下是实际保存位置。" : "文件已交给浏览器下载；完成情况请查看浏览器下载列表。"}</p></div><span class="status-pill is-done">${store.bridge.isNative() ? "已完成" : "已交给浏览器"}</span></div><p><b>${esc(last.format)}</b> · ${last.scope === "course" ? "整门课程" : "当前课"} · ${last.files} 个文件</p><p class="muted">${store.bridge.isNative() ? "实际位置" : "交付方式"}：<code>${esc(last.path)}</code></p>${store.bridge.isNative() ? `<p class="muted">输出不依赖 Workbench 运行。</p><div class="action-row"><button class="secondary" data-action="reveal-export">在 Finder 中显示</button></div>` : ""}</section>` : ""}
       <section class="page-section card publish-card publish-history" aria-labelledby="publish-history-heading"><div class="publish-section-heading"><div><h2 id="publish-history-heading">发布记录</h2><p class="muted">只记录你确认过的发布节点，不会改变课程内容。</p></div><button class="secondary" data-action="record-publication">记录已发布</button></div>${publications.length ? `<div class="version-list" role="list">${publications.map((publication) => `<article class="version-card list-row" role="listitem"><span class="version-icon" aria-hidden="true">↗</span><div><b>${esc(publication.version_label)}</b><p>${esc(publication.platform)} · ${esc(publication.status)}</p><small>${esc(publication.published_at || "")}</small></div></article>`).join("")}</div>` : `<div class="empty-state publish-history-empty"><h3>还没有发布记录</h3><p class="muted">导出并实际迁移后，可以记录这个发布节点；课程内容不会因此改变。</p></div>`}</section></section>`;
   }
 
@@ -2502,7 +2516,7 @@ export function createViews(store) {
     const modelList = modelRows.length
       ? `<ul class="settings-model-list">${modelRows.slice(0, 8).map((model) => `<li><span>${esc(model.id)}</span><small>${esc(model.provider)} · ${model.connected ? "已连接" : "未连接"}</small></li>`).join("")}</ul>`
       : `<p class="muted">尚未读取模型列表。连接服务商后可以在 AI 设置中发现并选择模型。</p>`;
-    return `<section class="page settings-page"><div class="page-head"><div><span class="eyebrow">项目偏好与账户</span><h1>项目设置</h1><p class="muted">在一个页面查看常用配置；密钥仍由现有连接管理器安全保存。</p></div><button class="secondary" data-action="select-project-properties">项目属性</button></div><nav class="settings-nav" aria-label="设置分类"><a href="#settings-general">常规</a><a href="#settings-ai">AI 连接</a><a href="#settings-models">模型</a><a href="#settings-accounts">账户</a><a href="#settings-project">项目</a></nav><section class="settings-section" id="settings-general"><div class="settings-section-head"><span class="settings-index">01</span><div><h2>常规</h2><p class="muted">保存行为与当前工作环境</p></div></div><div class="settings-cards"><article class="settings-card"><span class="eyebrow">保存方式</span><b>本地优先 · 自动保存</b><p class="muted">课程数据保存在当前项目中。顶部保存状态会显示写入结果。</p></article><article class="settings-card"><span class="eyebrow">当前界面</span><b>${store.bridge.isNative() ? "桌面应用" : "浏览器服务壳"}</b><p class="muted">应用布局会适配窗口宽度和系统缩放。</p></article></div></section><section class="settings-section" id="settings-ai"><div class="settings-section-head"><span class="settings-index">02</span><div><h2>AI 连接</h2><p class="muted">管理服务商、连接状态和凭据</p></div></div><article class="settings-card settings-ai-card"><div><span class="eyebrow">当前选择</span><b>${esc(selected?.label || selected?.id || "尚未选择服务商")}</b><p class="muted">模型：${esc(selectedModel)} · ${selected && configured[selected.id] ? "凭据已保存在本机" : "连接尚未配置"}</p></div><div class="settings-card-actions"><button class="secondary" data-action="ai-toggle-settings" aria-haspopup="dialog">管理连接</button><button class="text-button" data-action="right-panel" data-panel="assistant">打开 AI 助手</button></div></article></section><section class="settings-section" id="settings-models"><div class="settings-section-head"><span class="settings-index">03</span><div><h2>模型</h2><p class="muted">当前连接提供的可用模型</p></div><button class="secondary" data-action="ai-toggle-settings" aria-haspopup="dialog">发现或选择模型</button></div><article class="settings-card">${modelList}</article></section><section class="settings-section" id="settings-accounts"><div class="settings-section-head"><span class="settings-index">04</span><div><h2>账户</h2><p class="muted">订阅授权与 API Key 彼此独立</p></div></div><article class="settings-card settings-account-card">${aiSubscriptionSettingsView(store, configured)}</article><p class="settings-security-note">Access Token 与 Refresh Token 只保存在本机系统钥匙串；API Key 仅通过已配置的连接管理器保存，页面不会显示密钥。</p></section><section class="settings-section" id="settings-project"><div class="settings-section-head"><span class="settings-index">05</span><div><h2>项目</h2><p class="muted">当前课程项目的本地身份</p></div></div><article class="settings-card settings-project-card"><dl><dt>项目名称</dt><dd>${esc(project.title)}</dd><dt>项目编号</dt><dd><code>${esc(project.id)}</code></dd><dt>数据格式</dt><dd>${esc(String(project.schema_version))}</dd><dt>课程语言</dt><dd>${esc(project.language || "未设置")}</dd></dl><button class="secondary" data-action="route" data-route="map">在课程地图编辑项目名称</button></article></section></section>`;
+    return `<section class="page settings-page"><div class="page-head"><div><span class="eyebrow">项目偏好与账户</span><h1>项目设置</h1><p class="muted">在一个页面查看常用配置；密钥仍由现有连接管理器安全保存。</p></div><button class="secondary" data-action="select-project-properties">项目属性</button></div><nav class="settings-nav" aria-label="设置分类"><a href="#settings-general">常规</a><a href="#settings-ai">AI 连接</a><a href="#settings-models">模型</a><a href="#settings-accounts">账户</a><a href="#settings-project">项目</a></nav><section class="settings-section" id="settings-general"><div class="settings-section-head"><span class="settings-index">01</span><div><h2>常规</h2><p class="muted">保存行为与当前工作环境</p></div></div><div class="settings-cards"><article class="settings-card"><span class="eyebrow">保存方式</span><b>本地优先 · 自动保存</b><p class="muted">课程数据保存在当前项目中。顶部保存状态会显示写入结果。</p></article><article class="settings-card"><span class="eyebrow">当前界面</span><b>${store.bridge.isNative() ? "桌面应用" : "浏览器服务壳"}</b><p class="muted">应用布局会适配窗口宽度和系统缩放。</p></article></div></section><section class="settings-section" id="settings-ai"><div class="settings-section-head"><span class="settings-index">02</span><div><h2>AI 连接</h2><p class="muted">管理服务商、连接状态和凭据</p></div></div><article class="settings-card settings-ai-card"><div><span class="eyebrow">当前选择</span><b>${esc(selected?.label || selected?.id || "尚未选择服务商")}</b><p class="muted">模型：${esc(selectedModel)} · ${selected && configured[selected.id] ? "凭据已保存在本机" : "连接尚未配置"}</p></div><div class="settings-card-actions"><button class="secondary" data-focus-key="settings-ai-connections" data-action="ai-toggle-settings" aria-haspopup="dialog">管理连接</button><button class="text-button" data-action="right-panel" data-panel="assistant">打开 AI 助手</button></div></article></section><section class="settings-section" id="settings-models"><div class="settings-section-head"><span class="settings-index">03</span><div><h2>模型</h2><p class="muted">当前连接提供的可用模型</p></div><button class="secondary" data-focus-key="settings-ai-models" data-action="ai-toggle-settings" aria-haspopup="dialog">发现或选择模型</button></div><article class="settings-card">${modelList}</article></section><section class="settings-section" id="settings-accounts"><div class="settings-section-head"><span class="settings-index">04</span><div><h2>账户</h2><p class="muted">订阅授权与 API Key 彼此独立</p></div></div><article class="settings-card settings-account-card">${aiSubscriptionSettingsView(store, configured)}</article><p class="settings-security-note">Access Token 与 Refresh Token 只保存在本机系统钥匙串；API Key 仅通过已配置的连接管理器保存，页面不会显示密钥。</p></section><section class="settings-section" id="settings-project"><div class="settings-section-head"><span class="settings-index">05</span><div><h2>项目</h2><p class="muted">当前课程项目的本地身份</p></div></div><article class="settings-card settings-project-card"><dl><dt>项目名称</dt><dd>${esc(project.title)}</dd><dt>项目编号</dt><dd><code>${esc(project.id)}</code></dd><dt>数据格式</dt><dd>${esc(String(project.schema_version))}</dd><dt>课程语言</dt><dd>${esc(project.language || "未设置")}</dd></dl><button class="secondary" data-action="route" data-route="map">在课程地图编辑项目名称</button></article></section></section>`;
   }
 
   function emptyState(title, description, action, label) {
@@ -3592,8 +3606,9 @@ export function createViews(store) {
   }
 
   function versionsPanel() {
+    const snapshots = (store.snapshotRows || []).filter((snapshot) => snapshot.status === "available");
     return `<div class="side-head"><div><span class="eyebrow">安全恢复</span><h2>版本历史</h2></div><button class="icon-button" data-action="save-version" aria-label="保存版本" title="保存版本">＋</button></div><p class="side-note">恢复旧版本前会自动保留“恢复前备份”。</p>${
-      store.data.snapshots.slice(0, 4).map((snapshot) =>
+      snapshots.slice(0, 4).map((snapshot) =>
         `<button class="side-item" data-action="restore-version" data-id="${
           snapshot.id
         }"><span class="version-icon">◷</span><span><b>${
@@ -3700,7 +3715,7 @@ export function createViews(store) {
       const externalEntries = conflict.external_diff?.entries || [];
       const localEntries = conflict.local_diff?.entries || [];
       const mergeConflicts = conflict.merge?.conflicts || [];
-      return `<div class="overlay"><div class="conflict-modal modal" role="dialog" aria-modal="true" aria-labelledby="external-conflict-title" tabindex="-1" data-stop-click="true"><div class="modal-head"><div><span class="eyebrow">保存已暂停</span><h2 id="external-conflict-title">课程文件在其他地方发生了变化</h2></div></div><p class="muted">为避免覆盖别人的修改，手动保存和自动保存都已暂停；磁盘版本没有改变。你可以继续查看，下一步请选择重新载入、自动合并，或在确认后保留本地版本。</p>${
+      return `<div class="overlay"><div class="conflict-modal modal" role="dialog" aria-modal="true" aria-labelledby="external-conflict-title" tabindex="-1" data-stop-click="true"><div class="modal-head"><div><span class="eyebrow">保存已暂停</span><h2 id="external-conflict-title">课程文件与当前编辑内容存在差异</h2></div></div><p class="muted">为避免覆盖，手动保存和自动保存都已暂停。你可以继续查看；下一步请选择重新载入、自动合并，或在确认后保留本地版本。</p>${
         conflict.inspection_error
           ? `<p class="conflict-error">暂时无法读取磁盘差异。你仍可重新载入，或明确保留本地版本。</p><details class="diagnostic"><summary>显示技术信息</summary><code>${esc(conflict.inspection_error)}</code></details>`
           : ""
@@ -3741,7 +3756,7 @@ export function createViews(store) {
       if (asset) {
         const value = store.ui.assetRenameValue ?? asset.filename;
         const error = String(store.ui.assetRenameError || "");
-        return `<div class="overlay"><section class="conflict-modal modal asset-rename-modal" role="dialog" aria-modal="true" aria-labelledby="asset-rename-title" aria-describedby="asset-rename-description${error ? " asset-rename-error" : ""}" tabindex="-1" data-stop-click="true"><div class="modal-head"><div><span class="eyebrow">媒体库 · ${esc(assetLabel(asset.type))}</span><h2 id="asset-rename-title">重命名素材文件</h2></div></div><p class="small muted">当前文件：<b>${esc(asset.filename)}</b></p><label class="field-label" for="asset-rename-input">新文件名<input id="asset-rename-input" class="select asset-rename-input" data-asset-title data-focus-key="asset-title" data-id="${asset.id}" aria-describedby="asset-rename-description${error ? " asset-rename-error" : ""}" value="${esc(value)}" autocomplete="off" /></label><p class="small muted" id="asset-rename-description">这会重命名项目 assets 文件夹里的托管文件，并同步更新正文引用；素材内容与身份保持不变。原有扩展名会保留。</p>${error ? `<p class="form-error" id="asset-rename-error" role="alert">${esc(error)}</p>` : ""}<div class="modal-actions"><button class="secondary" data-action="cancel-rename-asset">取消</button><button class="primary" data-action="confirm-rename-asset" data-id="${asset.id}">保存新文件名</button></div></section></div>`;
+        return `<div class="overlay"><section class="conflict-modal modal asset-rename-modal" role="dialog" aria-modal="true" aria-labelledby="asset-rename-title" aria-describedby="asset-rename-description${error ? " asset-rename-error" : ""}" tabindex="-1" data-stop-click="true"><div class="modal-head"><div><span class="eyebrow">媒体库 · ${esc(assetLabel(asset.type))}</span><h2 id="asset-rename-title">重命名素材文件</h2></div></div><p class="small muted">当前文件：<b>${esc(asset.filename)}</b></p><label class="field-label" for="asset-rename-input">新文件名<input id="asset-rename-input" class="select asset-rename-input" data-asset-title data-focus-key="asset-title" data-id="${asset.id}" aria-describedby="asset-rename-description${error ? " asset-rename-error" : ""}" value="${esc(value)}" autocomplete="off" /></label><p class="small muted" id="asset-rename-description">这会重命名项目 assets 文件夹里的托管文件，并同步更新正文引用；素材内容与身份保持不变。原有扩展名会保留。</p>${error ? `<p class="form-error" id="asset-rename-error" role="alert">${esc(error)}</p>` : ""}${store.uncertainMutation ? `<div class="modal-actions"><button class="secondary" data-action="verify-save-result" ${store.uncertainMutationPending ? "disabled" : ""}>${store.uncertainMutationPending ? "正在核验…" : "核验磁盘结果"}</button></div>` : ""}<div class="modal-actions"><button class="secondary" data-action="cancel-rename-asset">取消</button><button class="primary" data-action="confirm-rename-asset" data-id="${asset.id}">保存新文件名</button></div></section></div>`;
       }
     }
     if (store.ui.assetImagePreviewId) {
@@ -3751,9 +3766,13 @@ export function createViews(store) {
       const label = asset?.title || asset?.filename || "素材";
       // The frame is what a settled preview rewrites while this modal is open,
       // instead of rebuilding the whole window behind it (§12.4).
-      const content = asset
-        ? previewFrame(asset, "overlay", overlayMediaBody(asset))
-        : `<p class="preview-media-failed">素材当前不可用。</p>`;
+      const content = !asset
+        ? `<p class="preview-media-failed">素材当前不可用。</p>`
+        : asset.type === "video" && store.ui.assetImagePreviewLoading
+        ? `<p class="preview-placeholder" role="status">正在准备视频预览…</p>`
+        : asset.type === "video" && store.ui.assetImagePreviewError
+        ? `<p class="preview-media-failed" role="alert">${esc(store.ui.assetImagePreviewError)}</p>`
+        : previewFrame(asset, "overlay", overlayMediaBody(asset))
       return `<div class="overlay" data-action="close-overlay"><div class="image-preview-modal modal asset-media-preview-modal" role="dialog" aria-modal="true" aria-label="媒体预览：${esc(label)}" data-stop-click="true" style="max-height:84vh;overflow:auto;padding:18px;width:min(92vw,1200px)"><div class="modal-head"><div><span class="eyebrow">媒体预览</span><h2>${esc(label)}</h2></div><button type="button" class="icon-button" data-action="close-overlay" aria-label="关闭媒体预览" title="关闭媒体预览">×</button></div>${content}</div></div>`;
     }
     if (store.ui.assetPicker) {
@@ -3812,7 +3831,7 @@ export function createViews(store) {
       ].map(([label, count, blocking]) => `<div><span class="check ${count ? blocking ? "danger" : "warning" : "ok"}">${count || "✓"}</span><span>${label}</span><b>${count}</b></div>`).join("")}</div>${issues.length ? `<div class="issue-list">${issues.map((issue) => `<article class="${issue.severity === "blocking" ? "issue-blocking" : "issue-warning"}"><b>${issue.severity === "blocking" ? "必须修复" : "提示"}</b><span>${esc(issueMessage(issue))}</span>${issueDiagnostics(issue)}</article>`).join("")}</div>` : ""}${warningIssues.length ? `<div class="warning-ack-list"><b>逐项确认本次输出提示</b>${warningIssues.map((issue) => `<label><input type="checkbox" data-action="acknowledge-export-warning" data-code="${esc(issue.code)}" ${acknowledged.has(issue.code) ? "checked" : ""}/><span>${esc(issueMessage(issue))}${issue.count > 1 ? `（${issue.count} 项）` : ""}</span></label>`).join("")}</div>` : ""}<div class="preflight-total">必须修复 <strong>${report.blocking}</strong> · 提示 <strong>${report.warnings}</strong></div>${report.blocking ? `<p class="error-text">当前不能导出：请先修复上面标为“必须修复”的问题。不会生成半成品，也不会修改源课程。</p>` : report.warnings ? `<p class="muted">仅在勾选确认全部提示后才会继续生成；未放置正文、线性化或媒体降级会按上方说明处理。</p>` : `<p class="success-text">检查通过，可以生成输出；源课程不会被修改。</p>`}<div class="modal-actions"><button class="secondary" data-action="close-overlay">返回继续修复</button><button class="primary" data-action="export-format" data-format="${esc(store.ui.publishFormat)}" ${report.blocking || !allWarningsAcknowledged ? "disabled" : ""}>${report.warnings ? "确认提示并导出" : "开始导出"}</button></div></div></div>`;
     }
     if (store.ui.snapshot) {
-      return `<div class="overlay" data-action="close-overlay"><div class="capture modal" role="dialog" aria-modal="true" aria-labelledby="save-version-title" data-stop-click="true"><div class="modal-head"><div><span class="eyebrow">长期历史</span><h2 id="save-version-title">保存版本</h2></div><button class="icon-button" data-action="close-overlay" aria-label="关闭保存版本" title="关闭保存版本">×</button></div><label class="field-label">版本名称<input data-snapshot-name data-focus-key="snapshot-name" placeholder="例如：第一课正文定稿" /></label><label class="field-label">备注<textarea data-snapshot-note data-focus-key="snapshot-note" placeholder="记录这个节点为什么重要"></textarea></label><div class="modal-actions"><button class="secondary" data-action="close-overlay">取消</button><button class="primary" data-action="submit-snapshot">保存版本</button></div></div></div>`;
+      return `<div class="overlay" data-action="close-overlay"><div class="capture modal" role="dialog" aria-modal="true" aria-labelledby="save-version-title" aria-busy="${store.snapshotSaving}" data-stop-click="true"><div class="modal-head"><div><span class="eyebrow">长期历史</span><h2 id="save-version-title">保存版本</h2></div><button class="icon-button" data-action="close-overlay" aria-label="关闭保存版本" title="关闭保存版本">×</button></div><label class="field-label">版本名称<input data-snapshot-name data-focus-key="snapshot-name" value="${esc(store.snapshotName)}" placeholder="例如：第一课正文定稿" /></label><label class="field-label">备注<textarea data-snapshot-note data-focus-key="snapshot-note" placeholder="记录这个节点为什么重要">${esc(store.snapshotNote)}</textarea></label>${store.snapshotError ? `<p class="error-text" role="alert">${esc(store.snapshotError)}</p>` : store.snapshotSaving ? `<p class="muted" role="status">正在写入并确认历史版本…</p>` : ""}<div class="modal-actions"><button class="secondary" data-action="close-overlay">取消</button><button class="primary" data-action="submit-snapshot" ${store.snapshotSaving ? "disabled" : ""}>${store.snapshotSaving ? "正在保存…" : store.snapshotError ? "重试保存" : "保存版本"}</button></div></div></div>`;
     }
     if (store.ui.aiSettingsOpen) {
       const choices = aiProviderChoices();

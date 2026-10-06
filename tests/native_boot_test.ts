@@ -59,6 +59,10 @@ interface NativeStore {
   saveRevision: number;
   editorGeneration: number;
   saveStatus: string;
+  snapshotRows: Array<Record<string, unknown>>;
+  snapshotError: string;
+  snapshotSaving: boolean;
+  snapshotRestoringId: string | null;
   projectFingerprint: FileFingerprint | null;
   projectFingerprintGeneration: number;
   ui: {
@@ -77,6 +81,11 @@ interface NativeStore {
   explorerMarkdownImageUrls?: Record<string, unknown>;
   bridge: {
     projectDir: string | null;
+    lastOpenedProjectState: {
+      project_id: string;
+      project_dir: string;
+      lease_generation: string | number;
+    } | null;
     isNative: () => boolean;
     nativeInput: (command: string, args?: Record<string, unknown>) => unknown;
     command: (name: string, input?: Record<string, unknown>) => Promise<unknown>;
@@ -84,12 +93,17 @@ interface NativeStore {
     previewAssetVideoSource: (assetId: string) => Promise<unknown>;
   };
   hasNativeLease: () => boolean;
+  openProject: (projectDir?: string, options?: { reopen?: boolean }) => Promise<void>;
+  saveIdentity: () => Record<string, unknown>;
   adoptProjectSnapshot: (state: unknown) => boolean;
   persistProjectSnapshot: (project: ProjectData) => Promise<unknown>;
   addMapItem: (title?: string) => void;
   enterProject: () => void;
   flush: () => Promise<unknown>;
   scheduleSave: () => void;
+  saveVersion: (name: string, note: string) => Promise<void>;
+  refreshSnapshots: () => Promise<unknown>;
+  restoreVersion: (id: string) => Promise<void>;
   selectExplorerEntry: (relativePath: string) => Promise<void>;
   clearExplorerPreview: () => void;
 }
@@ -427,6 +441,109 @@ Deno.test("URL project_dir preserves a legitimate trailing space", async () => {
   }
 });
 
+Deno.test("failed A-to-B switch restores A's opened lease before the next save", async () => {
+  const projectA = seededProject();
+  const projectB = seededProject();
+  const dirA = "/tmp/native-rollback-A";
+  const dirB = "/tmp/native-rollback-B";
+  const { store, state, restore } = await bootNative({
+    project: projectA,
+    launchProjectDir: dirA,
+    persistedSession: null,
+  });
+  try {
+    await until(() => store.hasNativeLease(), "rollback source lease");
+    const sourceLease = store.bridge.lastOpenedProjectState?.lease_generation;
+    assert(sourceLease, "source project must have an opened lease before switching");
+    const projectByDir = new Map([
+      [dirA, structuredClone(projectA)],
+      [dirB, structuredClone(projectB)],
+    ]);
+    const fingerprintByDir = new Map<string, FileFingerprint>([
+      [dirA, structuredClone(state.fingerprint)],
+      [dirB, {
+        exists: true,
+        mtime_ms: 1_780_000_000_123,
+        size: new TextEncoder().encode(JSON.stringify(projectB)).byteLength,
+        hash: "b".repeat(64),
+      }],
+    ]);
+    state.invokeOverrides.set("project_open_state", async (args) => {
+      const projectDir = String(args.projectDir ?? store.bridge.projectDir ?? "");
+      const project = projectByDir.get(projectDir);
+      const fingerprint = fingerprintByDir.get(projectDir);
+      assert(project && fingerprint, `test open must resolve owned directory ${projectDir}`);
+      return {
+        project: structuredClone(project),
+        fingerprint: structuredClone(fingerprint),
+        project_id: project.project.id,
+        project_dir: projectDir,
+        lease_generation: projectDir === dirA ? sourceLease : "native-lease-B",
+      };
+    });
+    state.invokeOverrides.set("project_read_state", async (args) => {
+      const projectDir = String(args.projectDir ?? store.bridge.projectDir ?? "");
+      const project = projectByDir.get(projectDir);
+      const fingerprint = fingerprintByDir.get(projectDir);
+      assert(project && fingerprint, `test read must resolve owned directory ${projectDir}`);
+      return {
+        project: structuredClone(project),
+        fingerprint: structuredClone(fingerprint),
+        project_id: project.project.id,
+        project_dir: projectDir,
+      };
+    });
+    let failSourceClose = true;
+    state.invokeOverrides.set("project_close", async (args) => {
+      if (args.projectDir === dirA && failSourceClose) {
+        failSourceClose = false;
+        throw new Error("source close failed once");
+      }
+      return null;
+    });
+    state.invokeOverrides.set("project_save", async (args) => {
+      assertEquals(args.projectDir, dirA, "the next save must target restored A");
+      assertEquals(args.expectedProjectId, projectA.project.id, "the next save must retain A identity");
+      assertEquals(args.leaseGeneration, sourceLease, "the next save must use A's still-active lease");
+      const project = structuredClone(args.project as ProjectData);
+      projectByDir.set(dirA, project);
+      const previous = fingerprintByDir.get(dirA)!;
+      const fingerprint = {
+        exists: true,
+        mtime_ms: (previous.mtime_ms || 0) + 1,
+        size: new TextEncoder().encode(JSON.stringify(project)).byteLength,
+        hash: "c".repeat(64),
+      };
+      fingerprintByDir.set(dirA, fingerprint);
+      return {
+        fingerprint,
+        project_id: args.expectedProjectId,
+        project_dir: args.projectDir,
+        lease_generation: args.leaseGeneration,
+        editor_generation: args.editorGeneration,
+        operation_id: args.operationId,
+        revision: args.revision,
+        outcome: "written",
+        commit_state: "committed",
+        recovery_warning: null,
+      };
+    });
+
+    await store.openProject(dirB);
+    assertEquals(store.bridge.projectDir, dirA, "a failed old-lease close must keep A selected");
+    assertEquals(store.data.project.id, projectA.project.id, "a failed switch must keep A's local project");
+    assertEquals(store.bridge.lastOpenedProjectState?.project_id, projectA.project.id, "rollback restores A's opened project state");
+    assertEquals(store.saveIdentity().lease_generation, sourceLease, "rollback restores A's lease binding");
+
+    store.data.project.title = "rollback后继续编辑";
+    store.scheduleSave();
+    assert(await store.flush(), "A must remain saveable after B rollback");
+    assertEquals(projectByDir.get(dirA)?.project.title, "rollback后继续编辑", "the post-rollback save must persist A edits");
+  } finally {
+    restore();
+  }
+});
+
 Deno.test("a late save acknowledgement cannot replace a newer accepted project baseline", async () => {
   const { store, state, restore } = await bootNative({
     project: seededProject(),
@@ -562,6 +679,142 @@ Deno.test("native Bridge saves use monotonic numeric revisions and stale acknowl
     });
     await until(() => store.saveStatus === "已保存", "latest native save acknowledgement");
     assertEquals(store.saveRevision, second.args.revision, "only the latest numeric revision is acknowledged as clean");
+  } finally {
+    restore();
+  }
+});
+
+Deno.test("snapshot history only shows a matching persisted create acknowledgement", async () => {
+  const projectDir = "/tmp/native-snapshot-project";
+  const { store, state, restore } = await bootNative({
+    project: seededProject(),
+    launchProjectDir: projectDir,
+    persistedSession: null,
+  });
+  try {
+    await until(() => store.hasNativeLease(), "snapshot project lease");
+    state.invokeOverrides.set("create_snapshot", (args) => ({
+      id: args.snapshotId,
+      snapshot_id: args.snapshotId,
+      name: args.name,
+      note: args.note,
+      created_at: "2026-10-06T00:00:00.000Z",
+      content_hash: "c".repeat(64),
+      project_id: args.expectedProjectId,
+      project_dir: projectDir,
+      lease_generation: args.leaseGeneration,
+      editor_generation: args.editorGeneration,
+      operation_id: args.operationId,
+      revision: args.revision,
+      persisted: true,
+      outcome: "written",
+    }));
+    await store.saveVersion("审核通过", "正文冻结");
+    assertEquals(store.snapshotRows.length, 1, "a persisted acknowledgement adds one visible row");
+    assertEquals(store.snapshotRows[0]?.status, "available", "only an acknowledged row is restorable");
+    assertEquals(store.data.snapshots[0]?.id, store.snapshotRows[0]?.id, "the canonical index uses the persisted snapshot ID");
+    const args = state.calls.find((call) => call.command === "create_snapshot")?.args;
+    assert(args, "create_snapshot must go through the native Bridge");
+    assert(Number.isSafeInteger(args.revision), "snapshot revision is numeric");
+    assertEquals(args.projectDir, projectDir, "Tauri receives its camelCase project directory");
+    assertEquals(args.expectedProjectId, store.data.project.id, "snapshot binds the current project");
+    assertEquals(args.leaseGeneration, "native-lease-1", "snapshot binds the current lease");
+    assertEquals(args.editorGeneration, store.editorGeneration, "snapshot binds the editor generation");
+
+    state.invokeOverrides.set("create_snapshot", (bad) => ({
+      id: bad.snapshotId,
+      snapshot_id: bad.snapshotId,
+      project_id: bad.expectedProjectId,
+      project_dir: projectDir,
+      lease_generation: bad.leaseGeneration,
+      editor_generation: bad.editorGeneration,
+      operation_id: bad.operationId,
+      revision: bad.revision,
+      persisted: false,
+      outcome: "written",
+      content_hash: "d".repeat(64),
+      created_at: "2026-10-06T00:00:00.000Z",
+    }));
+    await store.saveVersion("不能伪成功", "");
+    assertEquals(store.snapshotRows.length, 1, "an invalid acknowledgement must not create a history row");
+    assert(store.snapshotError.includes("持久化确认"), "the UI explains why the snapshot was not accepted");
+    assertEquals(store.data.snapshots.length, 1, "an invalid acknowledgement must not change the canonical index");
+  } finally {
+    restore();
+  }
+});
+
+Deno.test("snapshot restore adopts the committed project without a duplicate save", async () => {
+  const projectDir = "/tmp/native-snapshot-restore-project";
+  const { store, state, restore } = await bootNative({
+    project: seededProject(),
+    launchProjectDir: projectDir,
+    persistedSession: null,
+  });
+  try {
+    await until(() => store.hasNativeLease(), "restore project lease");
+    state.invokeOverrides.set("list_snapshots", () => [{
+      id: "persisted-version",
+      name: "已保存版本",
+      note: "",
+      created_at: "2026-10-05T00:00:00.000Z",
+      status: "available",
+    }]);
+    await store.refreshSnapshots();
+    assertEquals(store.snapshotRows[0]?.status, "available", "restore is offered only for a readable sidecar");
+
+    const committed = structuredClone(store.data);
+    committed.project.title = "来自已提交恢复结果";
+    const fingerprint: FileFingerprint = {
+      exists: true,
+      mtime_ms: 1_780_000_000_456,
+      size: new TextEncoder().encode(JSON.stringify(committed)).byteLength,
+      hash: "e".repeat(64),
+    };
+    state.invokeOverrides.set("restore_snapshot", (args) => ({
+      restored: true,
+      snapshot_id: args.snapshotId,
+      project: structuredClone(committed),
+      fingerprint: structuredClone(fingerprint),
+      project_id: args.expectedProjectId,
+      project_dir: projectDir,
+      lease_generation: args.leaseGeneration,
+      editor_generation: args.editorGeneration,
+      operation_id: args.operationId,
+      revision: args.revision,
+      backup_snapshot_id: "restore-before-confirmed",
+      backup_persisted: true,
+      commit_state: "committed",
+      outcome: "written",
+      mutation_ack: {
+        project: structuredClone(committed),
+        fingerprint: structuredClone(fingerprint),
+        project_id: args.expectedProjectId,
+        project_dir: projectDir,
+        lease_generation: args.leaseGeneration,
+        editor_generation: args.editorGeneration,
+        operation_id: args.operationId,
+        revision: args.revision,
+        commit_state: "committed",
+        outcome: "written",
+        recovery_warning: null,
+        durability_warning: null,
+      },
+    }));
+    await store.flush();
+    const saveCallsBefore = state.calls.filter((call) => call.command === "project_save").length;
+    await store.restoreVersion("persisted-version");
+    assertEquals(store.data.project.title, committed.project.title, "the returned committed project is authoritative");
+    assertEquals(store.projectFingerprint, fingerprint, "the returned fingerprint is adopted with the project");
+    assertEquals(store.saveStatus, "已保存", "a committed restore is clean");
+    assertEquals(
+      state.calls.filter((call) => call.command === "project_save").length,
+      saveCallsBefore,
+      "restore must not save a stale local copy after the backend commit",
+    );
+    const args = state.calls.find((call) => call.command === "restore_snapshot")?.args;
+    assert(args, "restore_snapshot must go through the native Bridge");
+    assert(Number.isSafeInteger(args.revision), "restore revision is numeric");
   } finally {
     restore();
   }

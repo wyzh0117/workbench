@@ -152,33 +152,66 @@ async function bootRoutingStore(): Promise<Harness> {
   bootCount += 1;
   const module = await import(`../app/main.js?smart-open-${bootCount}`) as LooseRecord;
   const bridge = {
-    projectDir: null,
+    projectDir: null as string | null,
     projectDirFromUrl: false,
+    lastOpenedProjectState: null as LooseRecord | null,
     isNative: () => false,
     currentProject: () => data,
     loadSession: async () => null,
     readProject: async () => state.project ? structuredClone(state.project) : null,
     readProjectState: async () => ({
       project: state.project ? structuredClone(state.project) : null,
+      project_id: state.project?.project.id ?? null,
+      project_dir: bridge.projectDir,
+      lease_generation: bridge.lastOpenedProjectState?.lease_generation ?? null,
       fingerprint: currentFingerprint(),
     }),
-    writeProject: async (
-      project: ReturnType<typeof createEmptyProjectData>,
-      expectedFingerprint: unknown,
-    ) => {
-      if (!state.project || JSON.stringify(expectedFingerprint) !== JSON.stringify(currentFingerprint())) {
+    inspectExternalModification: async () => ({
+      same: true,
+      project: state.project ? structuredClone(state.project) : null,
+      project_id: state.project?.project.id ?? null,
+      project_dir: bridge.projectDir,
+      lease_generation: bridge.lastOpenedProjectState?.lease_generation ?? null,
+      fingerprint: currentFingerprint(),
+    }),
+    writeProject: async (request: LooseRecord) => {
+      const project = request.project as ReturnType<typeof createEmptyProjectData>;
+      if (
+        !state.project || request.expected_project_id !== state.project.project.id ||
+        request.project_dir !== bridge.projectDir ||
+        request.lease_generation !== bridge.lastOpenedProjectState?.lease_generation ||
+        !Number.isSafeInteger(request.editor_generation) ||
+        typeof request.operation_id !== "string" || !request.operation_id ||
+        !Number.isSafeInteger(request.revision) ||
+        JSON.stringify(request.expected_fingerprint) !== JSON.stringify(currentFingerprint())
+      ) {
         throw new Error("external_modification_conflict");
       }
       state.project = structuredClone(project);
       state.revision += 1;
-      return { fingerprint: currentFingerprint(), recovery_warning: null };
+      return {
+        project: structuredClone(state.project),
+        fingerprint: currentFingerprint(),
+        project_id: state.project.project.id,
+        project_dir: bridge.projectDir,
+        lease_generation: bridge.lastOpenedProjectState?.lease_generation,
+        editor_generation: request.editor_generation,
+        operation_id: request.operation_id,
+        revision: request.revision,
+        outcome: "written",
+        commit_state: "committed",
+        recovery_warning: null,
+        durability_warning: null,
+      };
     },
     readRecoveryJournal: async () => null,
     writeRecoveryJournal: async () => {},
     clearRecoveryJournal: async () => {},
     saveSession: async () => {},
     createSnapshot: async () => ({}),
-    setProjectDir: () => {},
+    setProjectDir: (value: string) => {
+      bridge.projectDir = value;
+    },
     restoreProjectDir: () => {},
     projectIdentity: async () => data.project.id,
     listenNativeDrops: async () => () => {},
@@ -188,9 +221,43 @@ async function bootRoutingStore(): Promise<Harness> {
       if (name === "folder.adopt") {
         state.project = createEmptyProjectData("重新导入的课程");
         state.revision += 1;
-        return { data: structuredClone(state.project) };
+        return { data: structuredClone(state.project), root: String(payload.plan?.root || "") };
       }
       throw new Error(`unexpected command ${name}`);
+    },
+    commandWithMutationAck: async (name: string, payload: LooseRecord) => {
+      const value = await bridge.command(name, payload);
+      const project = structuredClone((value as LooseRecord)?.data ?? state.project!);
+      const projectDir = String((value as LooseRecord)?.root || payload.plan?.root || "");
+      return {
+        value,
+        mutation_ack: {
+          project,
+          fingerprint: currentFingerprint(),
+          project_id: project.project.id,
+          project_dir: projectDir,
+          lease_generation: null,
+          editor_generation: payload.editor_generation,
+          operation_id: payload.operation_id,
+          revision: payload.revision,
+          commit_state: "committed",
+          outcome: "written",
+          recovery_warning: null,
+          durability_warning: null,
+        },
+      };
+    },
+    openProjectState: async () => {
+      const projectDir = bridge.projectDir || "";
+      const opened = {
+        project: state.project ? structuredClone(state.project) : null,
+        project_id: state.project?.project.id ?? null,
+        project_dir: projectDir,
+        lease_generation: projectDir ? `lease:${projectDir}` : null,
+        fingerprint: currentFingerprint(),
+      };
+      bridge.lastOpenedProjectState = opened;
+      return opened;
     },
   };
   const store = new module.WorkbenchStore(bridge) as LooseStore;
@@ -333,7 +400,7 @@ Deno.test("confirmed re-import scans the folder and arms the manifest backup onc
 
     await store.applyFolderAdoption();
     const second = calls.filter((call) => call.name === "folder.adopt")[1];
-    assert(second, "the second adoption ran");
+    assert(second, `the second adoption ran; route=${store.ui.route} error=${store.ui.importMappingError} toast=${store.ui.toast} plan=${JSON.stringify(store.ui.importMappingPlan)}`);
     assertEqual(
       second.payload.replace_invalid_project,
       false,

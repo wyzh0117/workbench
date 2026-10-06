@@ -1139,6 +1139,9 @@ Deno.test("a superseded attempt for one key cannot write over the newer preview"
       size: 0,
       used: 1,
     });
+    // A successful newer attempt patches the existing frame in place; the
+    // direct cache insertion above stands in for that committed entry.
+    run.cache.repaint(retriedKey);
     releaseDecode();
     await settle(20);
 

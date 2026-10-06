@@ -810,9 +810,18 @@ async function bootGridHarness(
 ): Promise<Harness> {
   const projects: Record<string, ProjectData> = { "/tmp/grid": structuredClone(data) };
   const saved: ProjectData[] = [];
+  let revision = 1;
+  const leaseGeneration = "lease:/tmp/grid";
+  const fingerprintFor = (project: ProjectData) => ({
+    exists: true,
+    mtime_ms: revision,
+    size: new TextEncoder().encode(JSON.stringify(project)).byteLength,
+    hash: revision.toString(16).padStart(64, "0"),
+  });
   const bridge: any = {
     projectDir: "/tmp/grid",
     projectDirFromUrl: false,
+    lastOpenedProjectState: null,
     isNative: () => true,
     currentProject: () => projects["/tmp/grid"],
     setProjectDir: (value: string) => {
@@ -822,12 +831,33 @@ async function bootGridHarness(
     selectFolder: async () => null,
     openProject: async () => structuredClone(projects["/tmp/grid"]),
     readProject: async () => structuredClone(projects["/tmp/grid"]),
+    readProjectState: async () => ({
+      project: structuredClone(projects["/tmp/grid"]!),
+      project_id: projects["/tmp/grid"]!.project.id,
+      project_dir: "/tmp/grid",
+      lease_generation: leaseGeneration,
+      fingerprint: fingerprintFor(projects["/tmp/grid"]!),
+    }),
     readRecoveryJournal: async () => null,
     writeRecoveryJournal: async () => {},
     clearRecoveryJournal: async () => {},
-    writeProject: async (project: ProjectData) => {
-      projects["/tmp/grid"] = structuredClone(project);
-      saved.push(structuredClone(project));
+    writeProject: async (request: any) => {
+      assert(request.project_dir === "/tmp/grid", "save uses this project path");
+      assert(request.expected_project_id === data.project.id, "save binds this project id");
+      assert(request.lease_generation === leaseGeneration, "save binds the opened lease");
+      projects["/tmp/grid"] = structuredClone(request.project);
+      saved.push(structuredClone(request.project));
+      revision += 1;
+      return {
+        project_id: request.expected_project_id,
+        lease_generation: request.lease_generation,
+        editor_generation: request.editor_generation,
+        operation_id: request.operation_id,
+        revision: request.revision,
+        outcome: "written",
+        commit_state: "committed",
+        fingerprint: fingerprintFor(projects["/tmp/grid"]!),
+      };
     },
     projectIdentity: async () => projects["/tmp/grid"]?.project.id ?? null,
     saveSession: async () => {},
@@ -874,7 +904,15 @@ async function bootGridHarness(
   } catch { /* the launcher is a fine place to start */ }
 
   store.bridge = bridge;
-  store.data = structuredClone(projects["/tmp/grid"]);
+  const initialFingerprint = fingerprintFor(projects["/tmp/grid"]!);
+  bridge.lastOpenedProjectState = {
+    project: structuredClone(projects["/tmp/grid"]!),
+    project_id: projects["/tmp/grid"]!.project.id,
+    project_dir: "/tmp/grid",
+    lease_generation: leaseGeneration,
+    fingerprint: initialFingerprint,
+  };
+  assert(store.adoptProjectSnapshot(bridge.lastOpenedProjectState), "fixture opens with its bound project state");
   store.ui.screen = "project";
   store.ui.route = "free-layout";
   store.ui.mode = "writing";

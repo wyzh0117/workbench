@@ -86,7 +86,7 @@ export interface ProjectReadState {
 export interface ProjectSaveRequest {
   project_dir: string | null;
   expected_project_id: string;
-  lease_generation: string | null;
+  lease_generation: string | number | null;
   editor_generation: number;
   operation_id: string;
   revision: number;
@@ -109,6 +109,7 @@ export interface ProjectSaveResult {
 }
 
 export interface SnapshotWriteRequest {
+  project_dir: string;
   snapshot_id: string;
   name: string;
   note: string;
@@ -139,11 +140,28 @@ export interface SnapshotWriteResult {
 }
 
 export interface SnapshotRestoreRequest {
+  project_dir: string;
   expected_project_id: string;
+  expected_fingerprint: FileFingerprint;
   lease_generation: string | null;
   editor_generation: number;
   operation_id: string;
   revision: number;
+}
+
+export interface CanonicalMutationAcknowledgement {
+  project: unknown;
+  fingerprint: FileFingerprint;
+  project_id: string;
+  project_dir: string;
+  lease_generation: string | null;
+  editor_generation: number;
+  operation_id: string;
+  revision: number;
+  commit_state: "committed";
+  outcome: "written" | "unchanged";
+  recovery_warning?: string | null;
+  durability_warning?: string | null;
 }
 
 export interface SnapshotRestoreResult {
@@ -164,7 +182,23 @@ export interface SnapshotRestoreResult {
   durability_warning?: string | null;
 }
 
+export interface SnapshotListRow {
+  id: string | null;
+  name: string;
+  note: string;
+  created_at: string;
+  status: "available" | "error" | "persisted";
+  error?: { code: string; message: string };
+  content_hash?: string;
+}
+
+export interface SnapshotListResult {
+  project_id: string;
+  snapshots: SnapshotListRow[];
+}
+
 export interface AssetPreviewBatchRequest {
+  project_dir: string;
   project_id: string;
   fingerprint: FileFingerprint;
   request_generation: number;
@@ -215,7 +249,17 @@ export interface DesktopBridge {
     metadata?: { operation_id: string; session_generation: number; revision: number },
   ): Promise<unknown>;
   loadSession(): Promise<PersistedWorkbenchSession | null>;
+  openSession?(projectId: string): Promise<{
+    session: PersistedWorkbenchSession | null;
+    session_generation: number | null;
+    revision: number;
+  }>;
+  commandWithMutationAck?(name: string, input?: unknown): Promise<{
+    value: unknown;
+    mutation_ack: CanonicalMutationAcknowledgement | null;
+  }>;
   createSnapshot(input: SnapshotWriteRequest): Promise<SnapshotWriteResult>;
+  listSnapshots(): Promise<SnapshotListResult>;
   restoreSnapshot?(
     snapshotId: string,
     request: SnapshotRestoreRequest,
@@ -230,12 +274,19 @@ export type BridgeCommandName =
   | "project.read_state"
   | "project.create"
   | "project.save"
+  | "project.resolve"
   | "import.preview"
   | "import.preview.release"
   | "import.confirm"
   | "asset.import"
+  | "asset.rename"
   | "asset.preview_batch"
+  | "folder.adopt"
+  | "folder.append"
+  | "course.seed.create"
+  | "blueprint.build"
   | "snapshot.create"
+  | "snapshot.list"
   | "snapshot.restore"
   | "export.run"
   | "export.release"

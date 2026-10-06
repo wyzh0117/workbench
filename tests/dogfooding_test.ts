@@ -323,6 +323,8 @@ function nativeBridge(
   let currentDir = initialDir;
   let latestSession: any = null;
   const revisions = new Map(Object.keys(projects).map((dir) => [dir, 1]));
+  const leases = new Map<string, string>();
+  if (initialDir && projects[initialDir]) leases.set(initialDir, `lease:${initialDir}`);
   const fingerprintFor = (project: ProjectData, revision: number) => ({
     exists: true,
     mtime_ms: 1_780_000_000_000 + revision,
@@ -340,6 +342,15 @@ function nativeBridge(
   const bridge: any = {
     projectDir: currentDir,
     projectDirFromUrl: false,
+    lastOpenedProjectState: initialDir && projects[initialDir]
+      ? {
+        project: structuredClone(projects[initialDir]),
+        project_id: projects[initialDir]!.project.id,
+        project_dir: initialDir,
+        lease_generation: leases.get(initialDir),
+        fingerprint: currentFingerprint(),
+      }
+      : null,
     isNative: () => true,
     currentProject: () => (currentDir ? projects[currentDir] : null),
     setProjectDir: (value: string) => {
@@ -358,31 +369,62 @@ function nativeBridge(
       const project = currentDir ? projects[currentDir] : null;
       if (!project) throw new Error("项目目录不存在");
       calls.push(`open:${currentDir}`);
+      const lease = `lease:${currentDir}`;
+      leases.set(currentDir!, lease);
+      bridge.lastOpenedProjectState = {
+        project: structuredClone(project),
+        project_id: project.project.id,
+        project_dir: currentDir,
+        lease_generation: lease,
+        fingerprint: currentFingerprint(),
+      };
       return structuredClone(project);
     },
     readProject: async () =>
       currentDir && projects[currentDir] ? structuredClone(projects[currentDir]) : null,
-    readProjectState: async () => ({
-      project: currentDir && projects[currentDir]
+    readProjectState: async () => {
+      const project = currentDir && projects[currentDir]
         ? structuredClone(projects[currentDir])
-        : null,
-      fingerprint: currentFingerprint(),
-    }),
+        : null;
+      const state = {
+        project,
+        project_id: project?.project.id ?? null,
+        project_dir: currentDir,
+        lease_generation: currentDir ? leases.get(currentDir) ?? null : null,
+        fingerprint: currentFingerprint(),
+      };
+      if (state.lease_generation && state.project) bridge.lastOpenedProjectState = structuredClone(state);
+      return state;
+    },
     readRecoveryJournal: async () => null,
     listenNativeDrops: async () => () => {},
     writeRecoveryJournal: async () => {},
-    writeProject: async (project: ProjectData, expectedFingerprint: unknown) => {
+    writeProject: async (request: any) => {
       const dir = currentDir;
-      if (!dir || !projects[dir] || JSON.stringify(expectedFingerprint) !== JSON.stringify(currentFingerprint())) {
+      if (
+        !dir || !projects[dir] || request.project_dir !== dir ||
+        request.expected_project_id !== projects[dir]!.project.id ||
+        request.lease_generation !== leases.get(dir) ||
+        JSON.stringify(request.expected_fingerprint) !== JSON.stringify(currentFingerprint())
+      ) {
         throw new Error("external_modification_conflict");
       }
-      const nextProject = structuredClone(project);
+      const nextProject = structuredClone(request.project);
       projects[dir] = nextProject;
       const nextRevision = (revisions.get(dir) ?? 1) + 1;
       revisions.set(dir, nextRevision);
+      const fingerprint = fingerprintFor(nextProject, nextRevision);
       return {
-        fingerprint: fingerprintFor(nextProject, nextRevision),
+        project_id: request.expected_project_id,
+        lease_generation: request.lease_generation,
+        editor_generation: request.editor_generation,
+        operation_id: request.operation_id,
+        revision: request.revision,
+        outcome: "written",
+        commit_state: "committed",
+        fingerprint,
         recovery_warning: null,
+        durability_warning: null,
       };
     },
     clearRecoveryJournal: async () => {},
@@ -581,6 +623,19 @@ Deno.test("autosave refreshes the chrome without rebuilding the editor", async (
     const data = projectWith("不打断输入");
     const savesBefore = dom.htmlWrites.length;
     dom.renderProject(data);
+    dom.store.adoptProjectSnapshot({
+      project: data,
+      project_id: data.project.id,
+      fingerprint: {
+        exists: true,
+        mtime_ms: 1,
+        size: JSON.stringify(data).length,
+        hash: "a".repeat(64),
+      },
+    });
+    // This test is about the chrome patch, not the storage adapter; the real
+    // scheduler and Bridge contract are exercised in persistence tests.
+    dom.store.saveScheduler.enqueue = () => Promise.resolve({});
     assert(dom.htmlWrites.length === savesBefore + 1, "the first render must build the shell");
     const editorHtml = dom.lastHtml();
 

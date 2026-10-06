@@ -102,6 +102,111 @@ Deno.test("session scheduler debounces 600ms, keeps the latest state, and skips 
   scheduler.close();
 });
 
+Deno.test("session scheduler keeps the newest A-B-A state when the first A is in flight", async () => {
+  const timers = fakeTimers();
+  const firstGate = deferred<string>();
+  const writes: Array<{ value: { project_id: string; active_content_item_id: string }; metadata: unknown }> = [];
+  const scheduler = createSessionScheduler({
+    setTimeout: timers.setTimeout,
+    clearTimeout: timers.clearTimeout,
+    write: async (value: { project_id: string; active_content_item_id: string }, metadata: unknown) => {
+      writes.push({ value, metadata });
+      if (writes.length === 1) return await firstGate.promise;
+      return `ack-${writes.length}`;
+    },
+  });
+  const firstA = scheduler.enqueue({ project_id: "project-a", active_content_item_id: "lesson-a" });
+  timers.tick(600);
+  await Promise.resolve();
+  assert(writes.length === 1, "the first A session should be in flight after the trailing debounce");
+
+  const intermediateB = scheduler.enqueue({ project_id: "project-b", active_content_item_id: "lesson-b" });
+  const latestA = scheduler.enqueue({ project_id: "project-a", active_content_item_id: "lesson-a" });
+  const drain = scheduler.flush();
+  firstGate.resolve("ack-a");
+  await drain;
+  await Promise.all([firstA, intermediateB, latestA]);
+
+  assert(writes.length === 1, "A-B-A must not leave the stale B session queued after A is already durable");
+  const onlyWrite = writes[0];
+  assert(onlyWrite?.value.project_id === "project-a", "the durable session must match the latest project A state");
+  scheduler.close();
+});
+
+Deno.test("session scheduler coalesces 100 interactions behind one write and honors the 2s max wait", async () => {
+  const timers = fakeTimers();
+  const firstGate = deferred<string>();
+  const writes: Array<{ value: { project_id: string; active_content_item_id: string }; metadata: { session_generation: number; revision: number } }> = [];
+  const scheduler = createSessionScheduler({
+    setTimeout: timers.setTimeout,
+    clearTimeout: timers.clearTimeout,
+    write: async (value: { project_id: string; active_content_item_id: string }, metadata: { session_generation: number; revision: number }) => {
+      writes.push({ value, metadata });
+      if (writes.length === 1) return await firstGate.promise;
+      return `ack-${writes.length}`;
+    },
+  });
+  const completions: Promise<unknown>[] = [];
+  completions.push(scheduler.enqueue({ project_id: "project-a", active_content_item_id: "lesson-0" }));
+  timers.tick(600);
+  await Promise.resolve();
+  assert(writes.length === 1, "the first session remains the only in-flight write");
+
+  for (let index = 1; index <= 100; index++) {
+    const projectId = index === 100 ? "project-a" : index % 2 ? "project-b" : "project-a";
+    completions.push(scheduler.enqueue({
+      project_id: projectId,
+      active_content_item_id: `lesson-${index}`,
+    }));
+    timers.tick(25);
+  }
+  assert(writes.length === 1, "updates remain bounded to one in-flight write plus one pending latest value");
+  const drain = scheduler.flush();
+  firstGate.resolve("ack-first");
+  await drain;
+  await Promise.all(completions);
+
+  assert(Number(writes.length) === 2, "100 interactions collapse to the in-flight value and one final value");
+  const finalWrite = writes[1];
+  assert(finalWrite?.value.project_id === "project-a", "A-B-A interaction history persists the final A project");
+  assert(finalWrite?.value.active_content_item_id === "lesson-100", "the final reader position wins");
+  assert(finalWrite?.metadata.session_generation === 101, "session generations increase monotonically across replacements");
+  assert(finalWrite?.metadata.revision === 101, "the final session revision matches its monotonic generation");
+  scheduler.close();
+});
+
+Deno.test("session flush rejects failed writes even when the error reporter throws", async () => {
+  const timers = fakeTimers();
+  let shouldFail = true;
+  const scheduler = createSessionScheduler({
+    setTimeout: timers.setTimeout,
+    clearTimeout: timers.clearTimeout,
+    write: async () => {
+      if (shouldFail) throw new Error("session disk failure");
+      return { outcome: "written" };
+    },
+    onError: () => {
+      throw new Error("reporter failure must not hide the storage result");
+    },
+  });
+  const failed = scheduler.enqueue({ active_content_item_id: "lesson-a" });
+  const failedWaiter = failed.catch((error: unknown) => error);
+  const failedDrain = scheduler.flush().then(() => null, (error: unknown) => error);
+  const waiterError = await failedWaiter;
+  const drainError = await failedDrain;
+  assert(waiterError instanceof Error && waiterError.message === "session disk failure", "enqueue must expose the actual write failure");
+  assert(drainError instanceof Error && drainError.message === "session disk failure", "flush must reject when the session write failed");
+
+  let closeRejected = false;
+  try { scheduler.close(); } catch { closeRejected = true; }
+  assert(closeRejected, "close must refuse to hide a failed session write");
+  shouldFail = false;
+  const retry = scheduler.enqueue({ active_content_item_id: "lesson-a" });
+  await scheduler.flush();
+  await retry;
+  scheduler.close();
+});
+
 Deno.test("save scheduler coalesces cumulative revisions and advances the bound fingerprint", async () => {
   const timers = fakeTimers();
   const firstGate = deferred<ReturnType<typeof saved>>();

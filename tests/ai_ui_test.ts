@@ -53,6 +53,13 @@ interface BridgeFailure {
   details: Record<string, any>;
   recoverable: boolean;
   recommended_action: string | null;
+  commit_state?: string | null;
+  stage?: string | null;
+  retryable?: boolean;
+  fingerprint?: Record<string, unknown>;
+  expected_committed_fingerprint?: Record<string, unknown>;
+  operation_id?: string;
+  revision?: number;
 }
 
 /** The slice of the running store these tests need. */
@@ -321,6 +328,11 @@ async function bootStore(options: { executionWritesFail?: boolean } = {}) {
         else state.executions.push(record);
         return { id: recordId || "record" };
       }
+      case "project.create": {
+        state.project = createEmptyProjectData(String(input.title || "未命名课程"));
+        state.fingerprint = testFingerprint(state.project, state.writes + 1);
+        return structuredClone(state.project);
+      }
       case "ai.execution.list":
         return { records: structuredClone(state.executions.slice().reverse()) };
       default:
@@ -336,14 +348,35 @@ async function bootStore(options: { executionWritesFail?: boolean } = {}) {
   const store = runtime.__workbench as unknown as AiStore;
   assert(store && typeof store === "object", "模块必须暴露运行中的工作台");
   const bridgeTarget = store.bridge as unknown as Record<string, unknown>;
-  bridgeTarget.projectDir = null;
+  bridgeTarget.projectDir = "/tmp/workbench-ai-ui-test";
   bridgeTarget.projectDirFromUrl = false;
+  bridgeTarget.lastOpenedProjectState = {
+    project_dir: "/tmp/workbench-ai-ui-test",
+    lease_generation: "ai-ui-test-lease",
+  };
+  bridgeTarget.openProjectState = async () => {
+    bridgeTarget.lastOpenedProjectState = {
+      project_dir: "/tmp/workbench-ai-ui-test",
+      project_id: state.project.project.id,
+      lease_generation: "ai-ui-test-lease",
+    };
+    return {
+      project: structuredClone(state.project),
+      project_id: state.project.project.id,
+      project_dir: "/tmp/workbench-ai-ui-test",
+      lease_generation: "ai-ui-test-lease",
+      fingerprint: structuredClone(state.fingerprint),
+    };
+  };
   bridgeTarget.isNative = () => false;
   bridgeTarget.currentProject = () => state.project;
   bridgeTarget.loadSession = async () => null;
   bridgeTarget.readProject = async () => structuredClone(state.project);
   bridgeTarget.readProjectState = async () => ({
     project: structuredClone(state.project),
+    project_id: state.project.project.id,
+    project_dir: "/tmp/workbench-ai-ui-test",
+    lease_generation: "ai-ui-test-lease",
     fingerprint: structuredClone(state.fingerprint),
   });
   bridgeTarget.readRecoveryJournal = async () => null;
@@ -357,22 +390,46 @@ async function bootStore(options: { executionWritesFail?: boolean } = {}) {
   bridgeTarget.setProjectDir = () => {};
   bridgeTarget.restoreProjectDir = () => {};
   bridgeTarget.projectIdentity = async () => state.project.project.id;
-  bridgeTarget.writeProject = async (
-    project: ProjectData,
-    expectedFingerprint: TestFingerprint,
-  ) => {
+  bridgeTarget.writeProject = async (request: Record<string, any>) => {
     assert(
-      JSON.stringify(expectedFingerprint) === JSON.stringify(state.fingerprint),
+      JSON.stringify(request.expected_fingerprint) === JSON.stringify(state.fingerprint),
       "the UI save must send the currently adopted project fingerprint",
     );
+    assert(request.expected_project_id === state.project.project.id, "the save must bind the current project id");
+    assert(request.lease_generation === "ai-ui-test-lease", "the save must bind the current browser lease");
     state.writes += 1;
-    state.project = structuredClone(project);
-    state.fingerprint = testFingerprint(project, state.writes + 1);
-    return { fingerprint: structuredClone(state.fingerprint), recovery_warning: null };
+    state.project = structuredClone(request.project);
+    state.fingerprint = testFingerprint(request.project, state.writes + 1);
+    return {
+      project_id: request.expected_project_id,
+      lease_generation: request.lease_generation,
+      editor_generation: request.editor_generation,
+      operation_id: request.operation_id,
+      revision: request.revision,
+      outcome: "written",
+      commit_state: "committed",
+      fingerprint: structuredClone(state.fingerprint),
+      recovery_warning: null,
+    };
   };
   bridgeTarget.command = command;
   bridgeFailure = (value: unknown) => store.bridge.bridgeError(value);
   await (runtime as { __workbenchReady?: Promise<void> }).__workbenchReady;
+  // The web launcher used by these tests has no persisted project file. Bind
+  // the fake service to the live booted Canonical project before exercising
+  // autosave; a random pre-boot fixture id would correctly fail strict CAS.
+  state.project = structuredClone(store.data);
+  state.fingerprint = testFingerprint(state.project, 1);
+  assert(
+    (store as any).adoptProjectSnapshot({
+      project: state.project,
+      project_id: state.project.project.id,
+      project_dir: "/tmp/workbench-ai-ui-test",
+      lease_generation: "ai-ui-test-lease",
+      fingerprint: state.fingerprint,
+    }),
+    "the AI test service must adopt its project and fingerprint together",
+  );
   // Settle the side files deterministically (the boot used the real bridge).
   store.ui.toast = "";
   store.ui.aiError = null;
@@ -878,7 +935,7 @@ Deno.test("a failed review-record write only warns and never changes the Apply r
       () => String(store.ui.toast).includes("执行记录"),
       "记录写入失败必须给出可见提示",
     );
-    assert(store.saveStatus !== "保存失败", "记录写入失败不得影响课程保存状态");
+    assert(store.saveStatus !== "保存失败", `记录写入失败不得影响课程保存状态：${store.ui.toast}`);
     assert(state.executions.length === 0, "测试桥必须真的拒绝写入");
   } finally {
     restore();
@@ -907,6 +964,47 @@ Deno.test("bridgeError keeps the recommended action the shells send", async () =
     assert(failure.recoverable === true, "可恢复标记必须保留");
     const bare = store.bridge.bridgeError({ error: { code: "unknown_thing", user_message: "出错了" } });
     assert(bare.recommended_action === null, "服务端没有给出建议时必须是 null，而不是残留旧值");
+  } finally {
+    restore();
+  }
+});
+
+Deno.test("bridgeError preserves nested commit protocol fields and top-level precedence", async () => {
+  const { store, restore } = await bootStore();
+  try {
+    const fingerprint = { exists: true, mtime_ms: null, size: 17, hash: "a".repeat(64) };
+    const failure = store.bridge.bridgeError({
+      error: {
+        code: "project_save_failed",
+        user_message: "保存结果需要核验",
+        details: {
+          commit_state: "outcome_uncertain",
+          stage: "rename",
+          retryable: true,
+          fingerprint,
+          expected_committed_fingerprint: fingerprint,
+          operation_id: "op-7",
+          revision: 7,
+        },
+      },
+    });
+    assert(failure.commit_state === "outcome_uncertain", "nested commit state must survive bridge normalization");
+    assert(failure.stage === "rename", "nested stage must survive bridge normalization");
+    assert(failure.retryable === true, "nested retryable field must survive bridge normalization");
+    assert(failure.fingerprint?.hash === fingerprint.hash, "nested fingerprint must survive bridge normalization");
+    assert(failure.expected_committed_fingerprint?.size === 17, "expected commit fingerprint must survive bridge normalization");
+    assert(failure.operation_id === "op-7" && failure.revision === 7, "operation binding must survive bridge normalization");
+
+    const conflict = store.bridge.bridgeError({
+      error: {
+        code: "external_modification_conflict",
+        user_message: "外部修改冲突",
+        retryable: false,
+        details: { commit_state: "not_committed", retryable: true },
+      },
+    });
+    assert(conflict.commit_state === "not_committed", "conflict commit state must survive normalization");
+    assert(conflict.retryable === false, "explicit top-level false must override nested retryable true");
   } finally {
     restore();
   }
@@ -1200,6 +1298,7 @@ Deno.test("switching to another project clears the previous project's AI state",
     store.notify();
     assert(root.innerHTML.includes("P2-范围标记"), "P2 的面板必须显示 P2 自己的记录");
     assert(root.innerHTML.includes("执行记录（1）"), "P2 的计数必须是 1");
+    assert(await store.flush(), `pending saves must drain before direct project payload loading：${store.ui.toast}`);
     store.loadProjectPayload(createEmptyProjectData("P4"));
     assert(store.ui.aiExecutions.length === 0, "载入新项目载荷必须清空上一个项目的执行记录");
     assert(
@@ -1371,7 +1470,7 @@ Deno.test("a failed execution-record write only warns and never fails the save",
     assert(store.data.suggestions.length === 1, "建议仍然必须写入 canonical 数据");
     assert(
       store.saveStatus !== "保存失败",
-      "执行记录写入失败不得影响课程保存状态",
+      `执行记录写入失败不得影响课程保存状态：${store.ui.toast}`,
     );
     assert(
       String(store.ui.toast).includes("执行记录"),

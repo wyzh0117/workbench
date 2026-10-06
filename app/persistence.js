@@ -303,6 +303,7 @@ export function createPersistenceScheduler({
 
   function enqueue(value) {
     if (closed) return Promise.resolve({ suppressed: true });
+    if (paused) return Promise.reject(lastFailure || codedError("save_reconciliation_required", "reconcile project state before saving again"));
     const request = immutableRequest(value);
     const identity = identityOf(request);
     if (!currentIdentityKey) changeGeneration(identity);
@@ -356,6 +357,21 @@ export function createPersistenceScheduler({
     return new Promise((resolve, reject) => drains.add({ resolve, reject }));
   }
 
+  function pause(error) {
+    if (closed) return false;
+    lastFailure = error && typeof error === "object"
+      ? error
+      : codedError("save_reconciliation_required", "reconcile project state before saving again");
+    paused = true;
+    clearTimers();
+    if (pending) {
+      settle(pending.waiters, null, lastFailure);
+      pending = null;
+    }
+    resolveDrains();
+    return true;
+  }
+
   function close() {
     if (hasWork()) throw codedError("save_drain_required", "flush pending saves before closing the scheduler");
     if (lastFailure) throw codedError("save_drain_required", "resolve the failed save before closing the scheduler");
@@ -367,7 +383,7 @@ export function createPersistenceScheduler({
     resolveDrains();
   }
 
-  return { enqueue, flush, changeGeneration, reconcileGeneration, close };
+  return { enqueue, flush, pause, changeGeneration, reconcileGeneration, close };
 }
 
 /** Reader/session sidecar: same-value no-op, one write in flight, latest wins. */
@@ -458,12 +474,27 @@ export function createSessionScheduler({
     if (closed) return Promise.reject(codedError("session_scheduler_closed", "session scheduler is closed"));
     const snapshot = clone(value && typeof value === "object" ? value : {});
     const key = stableJson(snapshot);
-    if (!pending && !inflight && key === lastSavedKey) return Promise.resolve({ outcome: "unchanged" });
+    if (!pending && !inflight && key === lastSavedKey) {
+      // A reverted session that matches durable state supersedes any earlier
+      // failed intermediate write; there is no remaining session work to drain.
+      lastFailure = null;
+      return Promise.resolve({ outcome: "unchanged" });
+    }
     return new Promise((resolve, reject) => {
       const waiter = { resolve, reject };
-      const active = inflight?.key === key ? inflight : pending?.key === key ? pending : null;
-      if (active) {
-        active.waiters.push(waiter);
+      if (pending?.key === key) {
+        pending.waiters.push(waiter);
+        return;
+      }
+      if (inflight?.key === key) {
+        // A -> B -> A while A is writing means B is obsolete. Resolve all
+        // coalesced callers with A's acknowledgement and do not write B last.
+        if (pending) {
+          inflight.waiters.push(...pending.waiters);
+          pending = null;
+          clearTimers();
+        }
+        inflight.waiters.push(waiter);
         return;
       }
       const waiters = [...(pending?.waiters ?? []), waiter];

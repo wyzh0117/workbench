@@ -79,6 +79,8 @@ function importBridge(options: {
 } = {}) {
   let project = projectWith("批量导入");
   let revision = 1;
+  const projectDir = "/tmp/batch";
+  const leaseGeneration = "lease-batch";
   const fingerprint = (value: ProjectData, version: number) => ({
     exists: true,
     mtime_ms: 1_780_000_000_000 + version,
@@ -94,6 +96,13 @@ function importBridge(options: {
   const bridge: any = {
     projectDir: "/tmp/batch",
     projectDirFromUrl: false,
+    lastOpenedProjectState: {
+      project: structuredClone(project),
+      project_id: project.project.id,
+      project_dir: projectDir,
+      lease_generation: leaseGeneration,
+      fingerprint: currentFingerprint(),
+    },
     isNative: () => true,
     importCalls: calls,
     selectFiles: async () => [...(options.paths ?? [])],
@@ -104,19 +113,44 @@ function importBridge(options: {
     readProject: async () => structuredClone(project),
     readProjectState: async () => ({
       project: structuredClone(project),
+      project_id: project.project.id,
+      project_dir: projectDir,
+      lease_generation: leaseGeneration,
       fingerprint: currentFingerprint(),
     }),
     readRecoveryJournal: async () => null,
     listenNativeDrops: async () => () => {},
     writeRecoveryJournal: async () => {},
-    writeProject: async (value: ProjectData, expectedFingerprint: unknown) => {
-      if (JSON.stringify(expectedFingerprint) !== JSON.stringify(currentFingerprint())) {
+    writeProject: async (request: Record<string, any>) => {
+      if (JSON.stringify(request.expected_fingerprint) !== JSON.stringify(currentFingerprint())) {
         throw new Error("external_modification_conflict");
       }
-      project = structuredClone(value);
+      if (request.expected_project_id !== project.project.id || request.project_dir !== projectDir || request.lease_generation !== leaseGeneration) {
+        throw new Error("save_binding_invalid");
+      }
+      project = structuredClone(request.project);
       revision += 1;
-      return { fingerprint: currentFingerprint(), recovery_warning: null };
+      return {
+        project_id: project.project.id,
+        project_dir: projectDir,
+        lease_generation: leaseGeneration,
+        editor_generation: request.editor_generation,
+        operation_id: request.operation_id,
+        revision: request.revision,
+        outcome: "written",
+        commit_state: "committed",
+        fingerprint: currentFingerprint(),
+        recovery_warning: null,
+      };
     },
+    inspectExternalModification: async () => ({
+      same: true,
+      project: structuredClone(project),
+      project_id: project.project.id,
+      project_dir: projectDir,
+      lease_generation: leaseGeneration,
+      fingerprint: currentFingerprint(),
+    }),
     clearRecoveryJournal: async () => {},
     projectIdentity: async () => project.project.id,
     saveSession: async () => {},
@@ -140,6 +174,33 @@ function importBridge(options: {
         status: "imported",
         duplicate: false,
         asset: assetRow(project.project.id, assetId, key),
+      };
+    },
+    commandWithMutationAck: async (name: string, input: Record<string, unknown>) => {
+      const value = await bridge.command(name, input);
+      if (name !== "asset.import") return { value, mutation_ack: null };
+      const importedAsset = (value as { asset?: ProjectData["assets"][number]; duplicate?: boolean })?.asset;
+      if (importedAsset && !(value as { duplicate?: boolean }).duplicate) {
+        project = structuredClone(project);
+        project.assets.push(structuredClone(importedAsset));
+        revision += 1;
+      }
+      return {
+        value,
+        mutation_ack: {
+          project: structuredClone(project),
+          fingerprint: currentFingerprint(),
+          project_id: project.project.id,
+          project_dir: projectDir,
+          lease_generation: leaseGeneration,
+          editor_generation: input.editor_generation,
+          operation_id: input.operation_id,
+          revision: input.revision,
+          commit_state: "committed",
+          outcome: (value as { duplicate?: boolean })?.duplicate ? "unchanged" : "written",
+          recovery_warning: null,
+          durability_warning: null,
+        },
       };
     },
   };
@@ -181,11 +242,29 @@ Deno.test("native multi-select import runs one batch and undoes as one step", as
     await store.selectAndImportAsset();
     const imports = bridge.importCalls.filter((call: ImportCall) => call.name === "asset.import");
     assert(imports.length === 3, `three picked files must produce three imports, got ${imports.length}`);
+    const boundKeys = new Set([
+      "project_dir",
+      "expected_project_id",
+      "lease_generation",
+      "editor_generation",
+      "operation_id",
+      "revision",
+      "expected_fingerprint",
+    ]);
     assert(
       imports.every((call: ImportCall) =>
-        Object.keys(call.input).sort().join(",") === "filename,mime_type,source_path,type"
+        Object.keys(call.input).filter((key) => !boundKeys.has(key)).sort().join(",") ===
+          "filename,mime_type,source_path,type"
       ),
       "asset.import must keep its exact input shape without lesson context",
+    );
+    assert(
+      imports.every((call: ImportCall) => call.input.expected_project_id === store.data.project.id &&
+        call.input.project_dir === "/tmp/batch" && call.input.lease_generation === "lease-batch" &&
+        Number.isSafeInteger(call.input.editor_generation) && typeof call.input.operation_id === "string" &&
+        Number.isSafeInteger(call.input.revision) &&
+        (call.input.expected_fingerprint as { exists?: boolean } | undefined)?.exists === true),
+      "each asset.import request carries the active project lease, editor generation, revision and CAS fingerprint",
     );
     assert(
       imports.map((call: ImportCall) => call.input.source_path).join("|") === "/pick/a.png|/pick/b.png|/pick/c.png",
@@ -316,6 +395,7 @@ Deno.test("the browser shell imports every dropped file as one batch", async () 
     const file = (name: string, type: string) => ({
       name,
       type,
+      size: 3,
       arrayBuffer: async () => new Uint8Array([1, 2, 3]).buffer,
     });
     await store.importBrowserFiles([file("one.png", "image/png"), file("two.jpg", "image/jpeg")]);
@@ -345,12 +425,42 @@ Deno.test("a failing browser drop still reports the files that landed", async ()
     const file = (name: string) => ({
       name,
       type: "image/png",
+      size: 3,
       arrayBuffer: async () => new Uint8Array([1, 2, 3]).buffer,
     });
     await store.importBrowserFiles([file("ok.png"), file("bad.png")]);
     assert(store.data.assets.length === 1, "the readable file must still import");
     assert(store.ui.toast.includes("已将 1 个素材"), `success must stay visible, got ${store.ui.toast}`);
     assert(store.ui.toast.includes("1 个失败"), `failure must be counted, got ${store.ui.toast}`);
+  } finally {
+    restore();
+  }
+});
+
+Deno.test("browser import rejects unsupported and oversized files before buffering them", async () => {
+  const bridge = importBridge({ paths: [] });
+  bridge.isNative = () => false;
+  const { store, restore } = await bootStore(bridge);
+  let readCount = 0;
+  try {
+    await store.importBrowserFiles([
+      {
+        name: "too-large.png",
+        type: "image/png",
+        size: 8 * 1024 * 1024 + 1,
+        arrayBuffer: async () => { readCount += 1; throw new Error("must not buffer oversized input"); },
+      },
+      {
+        name: "installer.exe",
+        type: "application/octet-stream",
+        size: 12,
+        arrayBuffer: async () => { readCount += 1; throw new Error("must not buffer unsupported input"); },
+      },
+    ]);
+    assert(readCount === 0, "trust-boundary checks must run before arrayBuffer");
+    assert(store.ui.toast.includes("2 个失败"), `both rejections must be visible, got ${store.ui.toast}`);
+    assert(store.data.assets.length === 0, "rejected files must not reach the import bridge");
+    assert(bridge.importCalls.filter((call: ImportCall) => call.name === "asset.import").length === 0, "no rejected file reaches asset.import");
   } finally {
     restore();
   }

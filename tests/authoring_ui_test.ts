@@ -6,6 +6,7 @@
  * checked against real canonical data rather than rendered markup.
  */
 import { createEmptyProjectData } from "../src/domain/index.ts";
+import { buildBlueprintDraft, createCourseSeed } from "../src/domain/course.ts";
 import { validateProjectData } from "../src/domain/store.ts";
 import type { ProjectData } from "../src/domain/types.ts";
 import { courseMap, lessonView } from "../app/authoring.js";
@@ -36,6 +37,13 @@ async function bootStore(bridgeOverrides: Record<string, unknown> = {}) {
     writes: 0,
     sessions: [] as unknown[],
     acceptWrites: true,
+    revision: 0,
+    fingerprint: {
+      exists: true,
+      mtime_ms: 1,
+      size: new TextEncoder().encode(JSON.stringify(source)).byteLength,
+      hash: "1".repeat(64),
+    },
   };
   const root = {
     innerHTML: "",
@@ -67,24 +75,58 @@ async function bootStore(bridgeOverrides: Record<string, unknown> = {}) {
     `../app/main.js?authoring-ui-${importCounter}`
   );
   const bridge = {
-    projectDir: null,
+    projectDir: "/tmp/workbench-authoring-ui-test",
     projectDirFromUrl: false,
+    lastOpenedProjectState: {
+      project_dir: "/tmp/workbench-authoring-ui-test",
+      lease_generation: "authoring-ui-test-lease",
+    },
     isNative: () => false,
     currentProject: () => state.project,
     loadSession: async () => null,
     readProject: async () => structuredClone(state.project),
+    readProjectState: async () => ({
+      project: structuredClone(state.project),
+      project_id: state.project.project.id,
+      project_dir: "/tmp/workbench-authoring-ui-test",
+      lease_generation: "authoring-ui-test-lease",
+      fingerprint: structuredClone(state.fingerprint),
+    }),
     readRecoveryJournal: async () => null,
     listenNativeDrops: async () => () => {},
     writeRecoveryJournal: async () => {},
-    writeProject: async (project: ProjectData) => {
+    writeProject: async (request: Record<string, unknown>) => {
+      const project = request.project as ProjectData;
       state.writes += 1;
+      if (
+        request.expected_project_id !== state.project.project.id ||
+        JSON.stringify(request.expected_fingerprint) !== JSON.stringify(state.fingerprint) ||
+        state.acceptWrites === false
+      ) {
+        throw Object.assign(new Error("当前课程文件已经被替换或修改，请先重新读取。"), {
+          code: "external_modification_conflict",
+          commit_state: "not_committed",
+          retryable: false,
+        });
+      }
       // `acceptWrites` lets a test stand in for "another writer owns the file".
-      if (state.acceptWrites) state.project = structuredClone(project);
-      return {
+      state.project = structuredClone(project);
+      state.revision += 1;
+      state.fingerprint = {
         exists: true,
-        mtime_ms: Date.now(),
-        size: JSON.stringify(project).length,
-        hash: "authoring-ui-test",
+        mtime_ms: state.revision + 1,
+        size: new TextEncoder().encode(JSON.stringify(project)).byteLength,
+        hash: state.revision.toString(16).padStart(64, "0"),
+      };
+      return {
+        project_id: request.expected_project_id,
+        lease_generation: request.lease_generation,
+        editor_generation: request.editor_generation,
+        operation_id: request.operation_id,
+        revision: request.revision,
+        outcome: "written",
+        commit_state: "committed",
+        fingerprint: structuredClone(state.fingerprint),
       };
     },
     clearRecoveryJournal: async () => {},
@@ -95,6 +137,14 @@ async function bootStore(bridgeOverrides: Record<string, unknown> = {}) {
     setProjectDir: () => {},
     restoreProjectDir: () => {},
     projectIdentity: async () => state.project.project.id,
+    inspectExternalModification: async () => ({
+      changed: true,
+      baseline: null,
+      current: structuredClone(state.fingerprint),
+      external: structuredClone(state.project),
+      external_diff: { changed: true, entries: [] },
+      local_diff: null,
+    }),
   };
   Object.assign(bridge, bridgeOverrides);
   const store = new (WorkbenchStore as new (bridge: unknown) => {
@@ -176,6 +226,7 @@ async function bootStore(bridgeOverrides: Record<string, unknown> = {}) {
     triageInbox: (id: string, target?: string) => void;
     ignoreInbox: (id: string) => void;
     expectedProjectId: string | null;
+    adoptProjectSnapshot: (state: Record<string, unknown>) => boolean;
     trackProjectIdentity: (data?: unknown) => string | null;
     exportPreflight: () => {
       content: number;
@@ -190,6 +241,7 @@ async function bootStore(bridgeOverrides: Record<string, unknown> = {}) {
       total: number;
     };
     openPreflight: () => Promise<void>;
+    cancelPreflight: (options?: { clearContext?: boolean }) => void;
     returnFromPublish: () => void;
     exportCurrent: (format?: string) => Promise<void>;
     acknowledgeExportWarning: (code: string, checked?: boolean) => void;
@@ -202,12 +254,15 @@ async function bootStore(bridgeOverrides: Record<string, unknown> = {}) {
     openProject: (dir?: string, options?: { reopen?: boolean }) => Promise<void>;
     flush: () => Promise<boolean>;
     flushNow: () => Promise<boolean>;
+    verifyUncertainMutation: () => Promise<boolean>;
     saveTimer: number;
+    sessionScheduler: { enqueue: (session: unknown) => Promise<unknown>; flush: () => Promise<void> };
     initialize: () => Promise<void>;
     notify: () => void;
     externalConflict: unknown;
     resolveExternalConflict: (action: string) => Promise<void>;
   })(bridge);
+  store.adoptProjectSnapshot(await bridge.readProjectState());
   return {
     store,
     state,
@@ -220,6 +275,141 @@ async function bootStore(bridgeOverrides: Record<string, unknown> = {}) {
     },
   };
 }
+
+Deno.test("browser Launcher opens the created target before bound seed and blueprint writes", async () => {
+  const projectDir = "/private/tmp/workbench-launcher-created-target";
+  const leaseGeneration = "created-target-lease";
+  let target: ProjectData | null = null;
+  let targetFingerprint: Record<string, unknown> | null = null;
+  let diskRevision = 0;
+  let bridgeRef: Record<string, any> | null = null;
+  const commands: string[] = [];
+  const mutationRequests: Array<{ name: string; request: Record<string, any> }> = [];
+  const fingerprintFor = (project: ProjectData) => ({
+    exists: true,
+    mtime_ms: 1_780_000_000_000 + diskRevision,
+    size: new TextEncoder().encode(JSON.stringify(project)).byteLength,
+    hash: diskRevision.toString(16).padStart(64, "0"),
+  });
+  const assertRequest = (name: string, request: Record<string, any>) => {
+    assert(target, `${name} follows project.create`);
+    assert(request.project_dir === projectDir, `${name} uses open_state's canonical project_dir`);
+    assert(request.expected_project_id === target.project.id, `${name} binds the created project id`);
+    assert(request.lease_generation === leaseGeneration, `${name} uses the lease acquired by open_state`);
+    assert(Number.isSafeInteger(request.editor_generation), `${name} binds editor generation`);
+    assert(typeof request.operation_id === "string" && request.operation_id, `${name} binds operation id`);
+    assert(Number.isSafeInteger(request.revision) && request.revision > 0, `${name} binds numeric revision`);
+    assert(JSON.stringify(request.expected_fingerprint) === JSON.stringify(targetFingerprint), `${name} CAS uses the latest committed fingerprint`);
+  };
+  const harness = await bootStore({
+    command: async (name: string, input: Record<string, any>) => {
+      commands.push(name);
+      if (name !== "project.create") return null;
+      target = createEmptyProjectData(String(input.title));
+      diskRevision = 1;
+      targetFingerprint = fingerprintFor(target);
+      return structuredClone(target);
+    },
+    openProjectState: async () => {
+      assert(target, "project.create produces a target before open_state");
+      const opened = {
+        project: structuredClone(target),
+        project_id: target.project.id,
+        project_dir: projectDir,
+        lease_generation: leaseGeneration,
+        fingerprint: structuredClone(targetFingerprint),
+      };
+      bridgeRef!.projectDir = projectDir;
+      bridgeRef!.lastOpenedProjectState = opened;
+      commands.push("project.open_state");
+      return opened;
+    },
+    openSession: async (projectId: string) => ({
+      session: { project_id: projectId, route: "overview" },
+      session_generation: 42,
+      revision: 0,
+    }),
+    commandWithMutationAck: async (name: string, request: Record<string, any>) => {
+      assertRequest(name, request);
+      mutationRequests.push({ name, request: structuredClone(request) });
+      const next = structuredClone(target!);
+      let value: unknown;
+      if (name === "course.seed.create") {
+        value = createCourseSeed(next, {
+          source_type: request.source_type,
+          raw_text: request.raw_text,
+        });
+      } else if (name === "blueprint.build") {
+        const draft = buildBlueprintDraft(next, request.course_seed_id);
+        value = { draft, nodes: next.blueprint_nodes.filter((node) => node.blueprint_id === draft.id) };
+      } else {
+        throw new Error(`unexpected current-project mutation ${name}`);
+      }
+      target = next;
+      diskRevision += 1;
+      targetFingerprint = fingerprintFor(next);
+      return {
+        value,
+        mutation_ack: {
+          project: structuredClone(next),
+          fingerprint: structuredClone(targetFingerprint),
+          project_id: next.project.id,
+          project_dir: projectDir,
+          lease_generation: leaseGeneration,
+          editor_generation: request.editor_generation,
+          operation_id: request.operation_id,
+          revision: request.revision,
+          commit_state: "committed",
+          outcome: "written",
+          recovery_warning: null,
+          durability_warning: null,
+        },
+      };
+    },
+  });
+  bridgeRef = harness.bridge as Record<string, any>;
+  const legacyWrite = harness.bridge.writeProject as (request: Record<string, any>) => Promise<unknown>;
+  (harness.bridge as any).writeProject = async (request: Record<string, any>) => {
+    if (!target) return await legacyWrite(request);
+    assertRequest("project.save", request);
+    target = structuredClone(request.project as ProjectData);
+    diskRevision += 1;
+    targetFingerprint = fingerprintFor(target);
+    return {
+      project_id: request.expected_project_id,
+      project_dir: request.project_dir,
+      lease_generation: request.lease_generation,
+      editor_generation: request.editor_generation,
+      operation_id: request.operation_id,
+      revision: request.revision,
+      outcome: "written",
+      commit_state: "committed",
+      fingerprint: structuredClone(targetFingerprint),
+    };
+  };
+  try {
+    const internal = harness.store as any;
+    await internal.newProject("Launcher 新课程");
+    assert(commands.slice(0, 2).join(",") === "project.create,project.open_state", `launcher opens the created canonical target before editing (got ${commands.join(",")})`);
+    const createdProject = target as unknown as ProjectData;
+    assert(harness.store.data.project.id === createdProject.project.id, "the opened target becomes the editor's active project");
+    assert(internal.saveIdentity().project_dir === projectDir, "the editor adopts the service's actual canonical path");
+    assert(internal.saveIdentity().lease_generation === leaseGeneration, "the editor adopts the service's actual writer lease");
+
+    harness.store.ui.seedType = "overview";
+    harness.store.ui.seedText = "第一章\n课程目标";
+    await internal.startSeed();
+    assert(mutationRequests.map(({ name }) => name).join(",") === "course.seed.create,blueprint.build", "seed and blueprint use the active-project mutation path");
+    const finalizedProject = target as unknown as ProjectData;
+    assert(finalizedProject.course_seeds.length === 1, "the seed is committed to the created canonical project");
+    assert(finalizedProject.blueprint_drafts.length === 1, "the blueprint is committed to the same canonical project");
+    assert(internal.saveIdentity().project_dir === projectDir, "the editor remains bound to the actual target path");
+    assert(internal.expectedProjectId === createdProject.project.id, "the new target id remains active after both mutations");
+    assert(internal.saveIdentity().lease_generation === leaseGeneration, "the target lease remains active after both mutations");
+  } finally {
+    harness.restore();
+  }
+});
 
 Deno.test("project snapshots and save acknowledgements require valid fingerprints", async () => {
   const { store, bridge, restore } = await bootStore();
@@ -311,7 +501,16 @@ Deno.test("project snapshots and save acknowledgements require valid fingerprint
       size: 40,
       hash: "after",
     };
-    (bridge as any).writeProject = async () => ({ fingerprint: savedFingerprint });
+    (bridge as any).writeProject = async (request: Record<string, unknown>) => ({
+      project_id: request.expected_project_id,
+      lease_generation: request.lease_generation,
+      editor_generation: request.editor_generation,
+      operation_id: request.operation_id,
+      revision: request.revision,
+      outcome: "written",
+      commit_state: "committed",
+      fingerprint: savedFingerprint,
+    });
     await internal.persistProjectSnapshot(store.data);
     assert(
       JSON.stringify(internal.projectFingerprint) === JSON.stringify(savedFingerprint) &&
@@ -323,30 +522,194 @@ Deno.test("project snapshots and save acknowledgements require valid fingerprint
   }
 });
 
+Deno.test("snapshot creation freezes the clicked revision and reports index save failure", async () => {
+  const { store, bridge, restore } = await bootStore();
+  const internal = store as any;
+  const clickedProject = structuredClone(store.data);
+  let releaseFlush!: (saved: boolean) => void;
+  const firstFlush = new Promise<boolean>((resolve) => releaseFlush = resolve);
+  let flushCalls = 0;
+  (store as any).flush = () => {
+    flushCalls += 1;
+    return flushCalls === 1 ? firstFlush : Promise.resolve(false);
+  };
+  const requests: Record<string, unknown>[] = [];
+  (bridge as any).createSnapshot = async (request: Record<string, unknown>) => {
+    requests.push(structuredClone(request));
+    return {
+      id: request.snapshot_id,
+      snapshot_id: request.snapshot_id,
+      persisted: true,
+      outcome: "written",
+      content_hash: "a".repeat(64),
+      created_at: "2026-10-06T00:00:00.000Z",
+      project_id: request.expected_project_id,
+      project_dir: request.project_dir,
+      lease_generation: request.lease_generation,
+      editor_generation: request.editor_generation,
+      operation_id: request.operation_id,
+      revision: request.revision,
+      durability_warning: "snapshot directory sync failed",
+    };
+  };
+  try {
+    const saving = internal.saveVersion("点击时版本", "冻结正文");
+    // A duplicate click while the original request waits for its body save is
+    // ignored. This also proves the dialog cannot enqueue two snapshot writes.
+    await internal.saveVersion("点击时版本", "冻结正文");
+    store.commit("保存期间的后续编辑", (data: ProjectData) => {
+      data.project.title = "保存期间继续编辑";
+    });
+    releaseFlush(true);
+    await saving;
+
+    assert(requests.length === 1, "one pending click creates at most one snapshot request");
+    assert(
+      JSON.stringify(requests[0]!.project) === JSON.stringify(clickedProject),
+      "the immutable snapshot contains the project as it was when clicked",
+    );
+    assert(
+      store.data.project.title === "保存期间继续编辑",
+      "a later edit remains in the live Canonical project",
+    );
+    assert(
+      store.data.snapshots.some((row) => row.id === requests[0]!.snapshot_id),
+      "the persisted snapshot is indexed into the current live project",
+    );
+    assert(
+      String(store.ui.toast).includes("索引尚未写入"),
+      "a failed index save is reported even though the immutable snapshot persisted",
+    );
+    assert(
+      String(store.ui.toast).includes("持久化确认有限") &&
+        String(store.ui.toast).includes("snapshot directory sync failed"),
+      "a committed snapshot durability warning is preserved alongside the index failure",
+    );
+  } finally {
+    restore();
+  }
+});
+
+Deno.test("snapshot restore reports committed content with limited durability confirmation", async () => {
+  const { store, state, bridge, restore } = await bootStore();
+  const internal = store as any;
+  const restored = structuredClone(state.project);
+  restored.project.title = "已恢复正文";
+  const fingerprint = {
+    exists: true,
+    mtime_ms: 2,
+    size: new TextEncoder().encode(JSON.stringify(restored)).byteLength,
+    hash: "b".repeat(64),
+  };
+  internal.snapshotRows = [{ id: "durable-snapshot", status: "available" }];
+  internal.flush = async () => true;
+  (bridge as any).restoreSnapshot = async (id: string, request: Record<string, any>) => {
+    state.project = structuredClone(restored);
+    state.fingerprint = structuredClone(fingerprint);
+    const ack = {
+      project: structuredClone(restored),
+      fingerprint: structuredClone(fingerprint),
+      project_id: request.expected_project_id,
+      project_dir: request.project_dir,
+      lease_generation: request.lease_generation,
+      editor_generation: request.editor_generation,
+      operation_id: request.operation_id,
+      revision: request.revision,
+      commit_state: "committed",
+      outcome: "written",
+      durability_warning: "restore directory sync failed",
+    };
+    return {
+      restored: true,
+      snapshot_id: id,
+      project: structuredClone(restored),
+      fingerprint: structuredClone(fingerprint),
+      project_id: request.expected_project_id,
+      project_dir: request.project_dir,
+      lease_generation: request.lease_generation,
+      editor_generation: request.editor_generation,
+      operation_id: request.operation_id,
+      revision: request.revision,
+      backup_snapshot_id: "backup-before-restore",
+      backup_persisted: true,
+      commit_state: "committed",
+      durability_warning: "restore directory sync failed",
+      mutation_ack: ack,
+    };
+  };
+  (bridge as any).listSnapshots = async () => ({
+    project_id: restored.project.id,
+    snapshots: [],
+  });
+  try {
+    await internal.restoreVersion("durable-snapshot");
+    assert(store.data.project.title === "已恢复正文", "the committed restore result is adopted");
+    assert(String(store.ui.toast).includes("已恢复历史版本"), "the user sees that restore committed");
+    assert(String(store.ui.toast).includes("持久化确认有限"), "the warning does not turn committed restore into failure");
+    assert(String(store.ui.toast).includes("restore directory sync failed"), "the durability detail is preserved");
+  } finally {
+    restore();
+  }
+});
+
+Deno.test("restore stops when the pending Canonical save cannot drain", async () => {
+  const { store, bridge, restore } = await bootStore();
+  const internal = store as any;
+  const before = structuredClone(store.data);
+  let restores = 0;
+  (store as any).snapshotRows = [{ id: "ready", status: "available" }];
+  (store as any).flush = async () => false;
+  (bridge as any).restoreSnapshot = async () => {
+    restores += 1;
+    return {};
+  };
+  try {
+    await internal.restoreVersion("ready");
+    assert(restores === 0, "restore is not invoked until the current save drains successfully");
+    assert(JSON.stringify(store.data) === JSON.stringify(before), "failed drain preserves local edits");
+    assert(String(store.ui.toast).includes("没有恢复"), "the user is told that restore did not happen");
+  } finally {
+    restore();
+  }
+});
+
 Deno.test("persisted snapshot load and save indicators track the project baseline", async () => {
   let persisted = createEmptyProjectData("已保存的项目");
   const fingerprint = {
     exists: true,
     mtime_ms: 10,
     size: JSON.stringify(persisted).length,
-    hash: "loaded-baseline",
+    hash: "a".repeat(64),
   };
   const savedFingerprint = {
     exists: true,
     mtime_ms: 20,
     size: 1,
-    hash: "saved-baseline",
+    hash: "b".repeat(64),
   };
   const loaded = await bootStore({
     currentProject: () => persisted,
     projectIdentity: async () => persisted.project.id,
     readProjectState: async () => ({
       project: structuredClone(persisted),
+      project_id: persisted.project.id,
+      project_dir: "/tmp/workbench-authoring-ui-test",
+      lease_generation: "authoring-ui-test-lease",
       fingerprint,
     }),
-    writeProject: async (project: ProjectData) => {
+    writeProject: async (request: Record<string, unknown>) => {
+      const project = request.project as ProjectData;
       persisted = structuredClone(project);
-      return { fingerprint: savedFingerprint };
+      return {
+        project_id: request.expected_project_id,
+        lease_generation: request.lease_generation,
+        editor_generation: request.editor_generation,
+        operation_id: request.operation_id,
+        revision: request.revision,
+        outcome: "written",
+        commit_state: "committed",
+        fingerprint: savedFingerprint,
+      };
     },
   });
   try {
@@ -399,6 +762,58 @@ Deno.test("persisted snapshot load and save indicators track the project baselin
     );
   } finally {
     invalid.restore();
+  }
+});
+
+Deno.test("session write failure leaves saved content intact and ignores stale project errors", async () => {
+  const failure = Object.assign(new Error("permission denied"), { code: "session_write_failed" });
+  const current = await bootStore({ saveSession: async () => { throw failure; } });
+  try {
+    current.store.addMapItem("正文先保存");
+    assert(await current.store.flushNow(), "reader-position failure does not fail a committed project save");
+    assert(current.state.writes === 1, "the canonical project write completed");
+    assert(current.state.project.content_items.some((item) => item.title === "正文先保存"), "the saved lesson remains on disk");
+    assert(current.store.saveStatus === "已保存", "session failure does not change the content save status");
+    assert(String(current.store.ui.toast).includes("课程内容已经保存，但阅读位置没有记住"), "the user gets a separate reader-position warning");
+  } finally {
+    current.restore();
+  }
+
+  const delayedWrite: { reject?: (error: unknown) => void } = {};
+  const stale = await bootStore({
+    saveSession: () => new Promise((_resolve, reject) => { delayedWrite.reject = reject; }),
+  });
+  try {
+    const oldSession = stale.store.session();
+    const completion = stale.store.sessionScheduler.enqueue(oldSession);
+    completion.catch(() => {});
+    const drained = stale.store.sessionScheduler.flush().catch((error) => error);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    if (!delayedWrite.reject) throw new Error("the old session write is in flight");
+
+    const next = createEmptyProjectData("新课程");
+    const nextFingerprint = {
+      exists: true,
+      mtime_ms: 2,
+      size: new TextEncoder().encode(JSON.stringify(next)).byteLength,
+      hash: "2".repeat(64),
+    };
+    stale.store.adoptProjectSnapshot({
+      project: next,
+      project_id: next.project.id,
+      project_dir: "/tmp/workbench-authoring-ui-test",
+      lease_generation: "authoring-ui-test-lease",
+      fingerprint: nextFingerprint,
+    });
+    const currentToast = stale.store.ui.toast;
+    delayedWrite.reject(failure);
+    await drained;
+    await completion.catch(() => {});
+    assert(stale.store.data.project.id === next.project.id, "the new project remains active");
+    assert(stale.store.saveStatus === "已保存", "the stale session error does not mark the new project dirty or failed");
+    assert(stale.store.ui.toast === currentToast, "the stale position error does not replace the new project's feedback");
+  } finally {
+    stale.restore();
   }
 });
 
@@ -1076,6 +1491,69 @@ Deno.test("delete confirmation leaves data intact on cancel or Escape and commit
     dom.triggerAction("delete-confirm-accept");
     assert(!dom.store.data.blocks.some((candidate) => candidate.id === block.id), "confirm executes the delete action");
     assert(dom.store.history.length === historyBefore + 1, "confirm commits exactly one undoable action");
+  } finally {
+    dom.restore();
+  }
+});
+
+Deno.test("Free Layout page and section removal use the shared cancel, confirm, and undo path", async () => {
+  const dom = await bootPointerDom();
+  const store = dom.store as any;
+  try {
+    store.ui.screen = "project";
+    store.ui.route = "free-layout";
+    store.addMapItem("共享确认排版");
+    store.addBlock("paragraph", "页面删除不得删除正文");
+    store.createLayout("grid");
+    store.autofillGrid();
+    store.beginPaginationConversion();
+    store.confirmPaginationConversion();
+    const sourcePage = store.layoutPages()[0];
+    store.duplicatePage(sourcePage.id);
+    const duplicatePage = store.layoutPages().find((page: { id: string }) => page.id !== sourcePage.id);
+    assert(duplicatePage, "fixture contains a duplicated layout page");
+    store.duplicatePage(duplicatePage.id);
+    const thirdPage = store.layoutPages().find((page: { id: string }) =>
+      page.id !== sourcePage.id && page.id !== duplicatePage.id
+    );
+    assert(thirdPage, "fixture contains three ordered layout pages");
+    store.selectLayoutPage(duplicatePage.id);
+    const historyBefore = store.history.length;
+
+    dom.triggerAction("page-delete", duplicatePage.id);
+    const pageConfirmation = store.ui.pendingDeleteConfirmation as { action: string; id: string } | undefined;
+    assert(pageConfirmation?.action === "delete-page" && pageConfirmation.id === duplicatePage.id, "page delete opens the shared confirmation for its target");
+    assert(store.layoutPages().some((page: { id: string }) => page.id === duplicatePage.id), "opening the dialog leaves the page intact");
+    assert(store.history.length === historyBefore, "opening the dialog does not commit an undo item");
+
+    dom.triggerAction("delete-confirm-cancel");
+    assert(store.layoutPages().some((page: { id: string }) => page.id === duplicatePage.id), "Cancel preserves the page");
+    assert(store.history.length === historyBefore, "Cancel does not commit");
+    dom.triggerAction("page-delete", duplicatePage.id);
+    dom.fireDocument("keydown", { key: "Escape", preventDefault() {} });
+    assert(!store.ui.pendingDeleteConfirmation, "Escape closes the same shared dialog");
+    assert(store.layoutPages().some((page: { id: string }) => page.id === duplicatePage.id), "Escape preserves the page");
+
+    dom.triggerAction("page-delete", duplicatePage.id);
+    dom.triggerAction("delete-confirm-accept");
+    assert(!store.layoutPages().some((page: { id: string }) => page.id === duplicatePage.id), "one confirm removes the layout page");
+    assert(store.ui.layoutPageId === thirdPage.id, "deleting the active middle page selects its nearest surviving neighbor");
+    assert(store.data.blocks.some((block: { content: string }) => block.content === "页面删除不得删除正文"), "page deletion keeps canonical body content");
+    assert(store.history.length === historyBefore + 1, "page deletion is one undoable canonical change");
+    store.undo();
+    assert(store.layoutPages().some((page: { id: string }) => page.id === duplicatePage.id), "Undo restores the page identity for continued editing");
+
+    store.addSection();
+    const section = store.data.layout_sections.at(-1);
+    const sectionHistory = store.history.length;
+    dom.triggerAction("delete-section", section.id);
+    assert(store.ui.pendingDeleteConfirmation?.action === "delete-section", "section delete uses the same confirmation surface");
+    assert(store.data.layout_sections.some((candidate: { id: string }) => candidate.id === section.id), "opening section confirmation is non-mutating");
+    dom.triggerAction("delete-confirm-accept");
+    assert(!store.data.layout_sections.some((candidate: { id: string }) => candidate.id === section.id), "one confirm removes the selected section");
+    assert(store.history.length === sectionHistory + 1, "section deletion commits once");
+    store.undo();
+    assert(store.data.layout_sections.some((candidate: { id: string }) => candidate.id === section.id), "Undo restores the section");
   } finally {
     dom.restore();
   }
@@ -1761,6 +2239,20 @@ Deno.test("completion state is derived from real data and drives navigation", as
   }
 });
 
+Deno.test("browser export adapters expose the service-supported archive formats", async () => {
+  const { store, restore } = await bootStore();
+  try {
+    for (const format of ["json", "asset_package", "full_project"]) {
+      assert(
+        store.publicationCapability(format).status === "available",
+        `${format} is supported by the browser DesktopService export route`,
+      );
+    }
+  } finally {
+    restore();
+  }
+});
+
 Deno.test("authoring survives serialization, reopen and inbox capture", async () => {
   const { store, restore, state } = await bootStore();
   try {
@@ -1925,6 +2417,101 @@ Deno.test("service export reuses its authoritative revision, projection, and war
       JSON.stringify(runOptions.projection) === JSON.stringify(preflightOptions.projection),
       "run sends the exact projection checked during preflight",
     );
+  } finally {
+    restore();
+  }
+});
+
+Deno.test("browser export hands staged URLs to the download engine without an early release", async () => {
+  const links: Array<{ href: string; download: string }> = [];
+  const releases: string[] = [];
+  const { store, bridge, restore } = await bootStore({
+    command: async (name: string, input: Record<string, unknown>) => {
+      if (name === "export.release") releases.push(String(input.export_id));
+      return null;
+    },
+    exportProject: async (...args: unknown[]) => {
+      const options = args[5] as Record<string, unknown>;
+      const exportId = String(options.export_id);
+      return {
+        export_id: exportId,
+        files: [{
+          relative_path: "lesson/正文.md",
+          mime_type: "text/markdown",
+          size: 12,
+          sha256: "a".repeat(64),
+          download_url: `/api/export-file/${exportId}/0`,
+        }],
+      };
+    },
+  });
+  const runtime = globalThis as typeof globalThis & { document?: any };
+  const originalCreateElement = runtime.document?.createElement;
+  runtime.document.createElement = (tag: string) => {
+    assert(tag === "a", "service artifact URLs use browser download anchors");
+    const link = {
+      href: "",
+      download: "",
+      click() {
+        links.push({ href: this.href, download: this.download });
+      },
+      remove() {},
+    };
+    return link;
+  };
+  try {
+    const internal = store as any;
+    store.ui.publishScope = "course";
+    store.ui.publishFormat = "markdown";
+    store.ui.preflightReport = { blocking: 0, issues: [] };
+    store.ui.preflightOptions = internal.publicationOptions();
+    store.ui.preflightRevision = store.data.project.updated_at;
+    store.ui.preflightFormat = "markdown";
+    await store.exportCurrent("markdown");
+    assert(links.length === 1, "the staged file is handed to the browser download engine");
+    const link = links[0];
+    assert(link, "the browser download anchor was captured");
+    assert(link.href.includes("/api/export-file/"), "the anchor targets the staged export, not the live source asset");
+    assert(link.download === "正文.md", "the original relative filename is preserved");
+    assert((store.ui.lastExport as any)?.status === "handed_off", "the UI reports handoff rather than claiming the download completed");
+    assert(String(store.ui.toast).includes("浏览器下载列表"), "the user is told where to verify actual completion");
+
+    internal.cancelActiveExport();
+    assert(releases.length === 0, "route cleanup does not release a staged artifact after its URL has been handed to the browser");
+    assert((bridge as any).projectDir === "/tmp/workbench-authoring-ui-test", "export does not change the project target");
+  } finally {
+    if (originalCreateElement) runtime.document.createElement = originalCreateElement;
+    else delete runtime.document.createElement;
+    restore();
+  }
+});
+
+Deno.test("leaving publish invalidates an in-flight preflight response", async () => {
+  let resolveQuery!: (value: Record<string, unknown>) => void;
+  const queryResult = new Promise<Record<string, unknown>>((resolve) => resolveQuery = resolve);
+  const { store, restore } = await bootStore({
+    invoke: async () => await queryResult,
+  });
+  try {
+    store.addMapItem("异步预检离页");
+    store.addBlock("paragraph", "服务预检等待期间切换到设置");
+    store.ui.publishFormat = "markdown";
+    const request = store.openPreflight();
+    assert(store.ui.preflightPending, "preflight exposes its pending state while the service waits");
+    store.cancelPreflight({ clearContext: true });
+    store.ui.route = "settings";
+    store.notify();
+    resolveQuery({
+      issues: [],
+      blocking: [],
+      warnings: [],
+      snapshot_revision: "sha256:late-preflight",
+      counts: {},
+    });
+    await request;
+    assert(store.ui.route === "settings", "late preflight cannot navigate back to publish");
+    assert(store.ui.preflight === false && store.ui.preflightPending === false, "late preflight cannot reopen the modal");
+    assert(store.ui.preflightReport === null, "late preflight cannot publish a stale report into the next route");
   } finally {
     restore();
   }
@@ -2196,8 +2783,8 @@ Deno.test("a project replaced on disk is never overwritten under the wrong ident
       `the save must be refused when the disk project changed (expected=${expectedBefore}, disk=${stateIdBefore}, now=${state.project.project.id}, status=${store.saveStatus}, toast=${store.ui.toast})`,
     );
     assert(
-      store.saveStatus === "保存失败",
-      "the failure is surfaced in the save status",
+      store.saveStatus === "外部修改冲突",
+      "the identity conflict is surfaced in the save status",
     );
     assert(
       String(store.ui.toast).includes("已经被替换"),
@@ -2933,16 +3520,19 @@ Deno.test("renaming an asset renames the managed file and stays reversible", asy
     /磁盘文件同步改名/.test(viewsSource),
     "the rename control must say it changes the file",
   );
+  assert(
+    viewsSource.includes('data-focus-key="asset-menu-${esc(asset.id)}"') &&
+      viewsSource.includes('data-focus-key="${esc(focusKey)}" data-action="open-asset-image"'),
+    "media menu and zoom controls need stable return-focus targets",
+  );
 
   const calls: Array<{ name: string; args: Record<string, unknown> }> = [];
   const callCount = () => calls.length;
   let shellView: { data: ProjectData } | null = null;
-  const { store, restore } = await bootStore({
-    // Stands in for `asset_rename`: it renames the managed row and answers with
-    // the whole project, because the reference rewrite is the shell's job.  It
-    // derives the managed name exactly like `planAssetRename` does — the asset id
-    // as prefix, the extension preserved — because that is what lands on disk.
-    command: async (name: string, args: Record<string, unknown> = {}) => {
+  const { store, restore, state } = await bootStore({
+    // Stands in for the bound `asset.rename` command: the acknowledgement carries
+    // exactly the project/fingerprint written by this operation.
+    commandWithMutationAck: async (name: string, args: Record<string, unknown> = {}) => {
       calls.push({ name, args });
       if (name !== "asset.rename") throw new Error(`unexpected command: ${name}`);
       const project = structuredClone(shellView!.data);
@@ -2957,7 +3547,29 @@ Deno.test("renaming an asset renames the managed file and stays reversible", asy
       asset.filename = `${basename}.png`;
       asset.storage_path = `assets/${String(args.asset_id)}-${basename}.png`;
       asset.title = asset.filename;
-      return { project };
+      state.project = structuredClone(project);
+      state.revision += 1;
+      state.fingerprint = {
+        exists: true,
+        mtime_ms: state.revision + 1,
+        size: new TextEncoder().encode(JSON.stringify(project)).byteLength,
+        hash: state.revision.toString(16).padStart(64, "0"),
+      };
+      return {
+        value: { status: "renamed" },
+        mutation_ack: {
+          project: structuredClone(project),
+          fingerprint: structuredClone(state.fingerprint),
+          project_id: project.project.id,
+          project_dir: "/tmp/workbench-authoring-ui-test",
+          lease_generation: args.lease_generation,
+          editor_generation: args.editor_generation,
+          operation_id: args.operation_id,
+          revision: args.revision,
+          commit_state: "committed",
+          outcome: "written",
+        },
+      };
     },
   });
   shellView = store as unknown as { data: ProjectData };
@@ -3100,6 +3712,308 @@ Deno.test("renaming an asset renames the managed file and stays reversible", asy
         store.data.assets.find((asset) => asset.id === "asset-rename")!.filename === "课程封面.png",
       "cancel closes the dialog without changing the managed file",
     );
+  } finally {
+    restore();
+  }
+});
+
+Deno.test("an uncertain canonical mutation pauses later saves without discarding edits", async () => {
+  const { store, state, bridge, restore } = await bootStore();
+  let renameCalls = 0;
+  (bridge as Record<string, any>).commandWithMutationAck = async (
+    name: string,
+    request: Record<string, unknown>,
+  ) => {
+    assert(name === "asset.rename", "the uncertain mutation is the requested rename");
+    assert(request.expected_project_id === state.project.project.id, "rename is bound to the opened project");
+    renameCalls += 1;
+
+    // Model Deno's promotion succeeding while its verification read fails:
+    // Canonical points to the new target, but the bridge has no truthful ack.
+    const committed = structuredClone(state.project);
+    const asset = committed.assets.find((candidate) => candidate.id === "asset-uncertain");
+    assert(asset, "fixture asset exists on disk");
+    asset.filename = "已提交.png";
+    asset.storage_path = "assets/asset-uncertain-已提交.png";
+    asset.title = "已提交";
+    state.project = committed;
+    state.revision += 1;
+    state.fingerprint = {
+      exists: true,
+      mtime_ms: state.revision + 1,
+      size: new TextEncoder().encode(JSON.stringify(committed)).byteLength,
+      hash: state.revision.toString(16).padStart(64, "0"),
+    };
+    throw Object.assign(new Error("rename verification read failed"), {
+      code: "rename_outcome_uncertain",
+      commit_state: "outcome_uncertain",
+      stage: "asset_rename_commit",
+      retryable: false,
+      operation_id: request.operation_id,
+      revision: request.revision,
+      details: {
+        project_id: request.expected_project_id,
+        project_dir: request.project_dir,
+        lease_generation: request.lease_generation,
+        editor_generation: request.editor_generation,
+        operation_id: request.operation_id,
+        revision: request.revision,
+        expected_fingerprint: request.expected_fingerprint,
+        expected_committed_hash: state.fingerprint.hash,
+        expected_committed_size: state.fingerprint.size,
+        asset_id: "asset-uncertain",
+        original_path: "assets/asset-uncertain.png",
+        target_path: asset.storage_path,
+      },
+    });
+  };
+
+  try {
+    store.addMapItem("待确认重命名");
+    seedImageAsset(store, "asset-uncertain");
+    store.startAssetRename("asset-uncertain");
+    await store.renameAsset("asset-uncertain", "已提交");
+
+    assert(renameCalls === 1, "one rename reached the service");
+    assert(
+      state.project.assets.find((asset) => asset.id === "asset-uncertain")?.filename === "已提交.png",
+      "the service-side commit is retained",
+    );
+    assert(
+      store.data.assets.find((asset) => asset.id === "asset-uncertain")?.filename === "插图.png",
+      "the unacknowledged response is not adopted as a confirmed local snapshot",
+    );
+    assert(store.saveStatus === "保存结果待核验", "the editor reports an uncertain commit");
+    assert(String(store.ui.toast).includes("结果暂时无法确认"), "the toast does not claim the rename failed");
+    assert(
+      String(createViews(store as any).overlayView()).includes('data-action="verify-save-result"'),
+      "the rename dialog exposes the explicit disk-verification action",
+    );
+
+    const writesAfterMutation = state.writes;
+    const diskTitle = state.project.project.title;
+    store.commit("核验期间继续编辑", (data) => {
+      data.project.title = "本地待保存修改";
+    });
+    assert(store.data.project.title === "本地待保存修改", "the later local edit remains in memory");
+    assert(await store.flush() === false, "a paused queue refuses a blind follow-up save");
+    assert(state.writes === writesAfterMutation, "the uncertain old baseline is never auto-retried");
+    assert(state.project.project.title === diskTitle, "the later edit was not written over the unknown result");
+    assert(store.saveStatus === "保存结果待核验", "flush preserves the verification status");
+    assert(await store.verifyUncertainMutation() === false, "late local edits prevent automatic disk adoption");
+    assert(store.data.project.title === "本地待保存修改", "verification keeps the newer local edit");
+    assert(store.saveStatus === "保存结果待核验", "the queue remains paused while local and disk versions diverge");
+    assert(String(store.ui.toast).includes("本地修改"), `the user is told why verification did not adopt disk state: ${String(store.ui.toast)}`);
+  } finally {
+    restore();
+  }
+});
+
+Deno.test("an uncertain rename can be proven, reconciled, and saved without restoring its old path", async () => {
+  const { store, state, bridge, restore } = await bootStore();
+  let renameCalls = 0;
+  let resolveCalls = 0;
+  (bridge as Record<string, any>).commandWithMutationAck = async (
+    name: string,
+    request: Record<string, any>,
+  ) => {
+    if (name === "asset.rename") {
+      renameCalls += 1;
+      const committed = structuredClone(state.project);
+      const asset = committed.assets.find((candidate) => candidate.id === "asset-verify-rename");
+      assert(asset, "fixture asset exists in the committed project");
+      asset.filename = "已确认.png";
+      asset.storage_path = "assets/asset-verify-rename-已确认.png";
+      asset.title = "已确认";
+      state.project = committed;
+      state.revision += 1;
+      state.fingerprint = {
+        exists: true,
+        mtime_ms: state.revision + 1,
+        size: new TextEncoder().encode(JSON.stringify(committed)).byteLength,
+        hash: state.revision.toString(16).padStart(64, "0"),
+      };
+      throw Object.assign(new Error("rename promotion result is uncertain"), {
+        code: "rename_outcome_uncertain",
+        commit_state: "outcome_uncertain",
+        stage: "asset_rename_commit",
+        retryable: false,
+        operation_id: request.operation_id,
+        revision: request.revision,
+        details: {
+          project_id: request.expected_project_id,
+          project_dir: request.project_dir,
+          lease_generation: request.lease_generation,
+          editor_generation: request.editor_generation,
+          operation_id: request.operation_id,
+          revision: request.revision,
+          expected_fingerprint: request.expected_fingerprint,
+          expected_committed_hash: state.fingerprint.hash,
+          expected_committed_size: state.fingerprint.size,
+          asset_id: asset.id,
+          original_path: "assets/asset-verify-rename.png",
+          target_path: asset.storage_path,
+        },
+      });
+    }
+    assert(name === "project.resolve", "verified state is adopted through the existing bound resolve command");
+    resolveCalls += 1;
+    assert(
+      (request.project as ProjectData).assets.find((asset) => asset.id === "asset-verify-rename")?.storage_path ===
+        "assets/asset-verify-rename-已确认.png",
+      "the resolve write carries the proven committed target path",
+    );
+    assert(
+      JSON.stringify(request.expected_current) === JSON.stringify(state.fingerprint),
+      "the resolve write is CAS-bound to the verified read fingerprint",
+    );
+    const project = structuredClone(request.project as ProjectData);
+    state.project = project;
+    state.revision += 1;
+    state.fingerprint = {
+      exists: true,
+      mtime_ms: state.revision + 1,
+      size: new TextEncoder().encode(JSON.stringify(project)).byteLength,
+      hash: state.revision.toString(16).padStart(64, "0"),
+    };
+    return {
+      value: { project },
+      mutation_ack: {
+        project,
+        fingerprint: structuredClone(state.fingerprint),
+        project_id: request.expected_project_id,
+        project_dir: request.project_dir,
+        lease_generation: request.lease_generation,
+        editor_generation: request.editor_generation,
+        operation_id: request.operation_id,
+        revision: request.revision,
+        commit_state: "committed",
+        outcome: "written",
+      },
+    };
+  };
+
+  try {
+    store.addMapItem("待核验重命名");
+    seedImageAsset(store, "asset-verify-rename");
+    store.startAssetRename("asset-verify-rename");
+    await store.renameAsset("asset-verify-rename", "已确认");
+
+    assert(renameCalls === 1, "the rename request is attempted once");
+    assert(store.data.assets.find((asset) => asset.id === "asset-verify-rename")?.storage_path === "assets/插图.png", "the unacknowledged target is not adopted before proof");
+    assert(await store.verifyUncertainMutation(), "matching operation/revision and hash/size proof allows explicit reconciliation");
+    assert(resolveCalls === 1, "the existing bound resolve path refreshes the backend CAS baseline");
+    assert(store.data.assets.find((asset) => asset.id === "asset-verify-rename")?.storage_path === "assets/asset-verify-rename-已确认.png", "verified project data is adopted with its actual managed path");
+    assert(store.saveStatus === "已保存", "the editor resumes only after the resolve acknowledgement");
+
+    store.commit("验证后继续编辑", (data) => { data.project.title = "核验后继续保存"; });
+    assert(await store.flush(), "an ordinary save succeeds after explicit reconciliation");
+    assert(state.project.assets.find((asset) => asset.id === "asset-verify-rename")?.storage_path === "assets/asset-verify-rename-已确认.png", "the next save preserves the renamed managed file path");
+    assert(state.project.project.title === "核验后继续保存", "the post-verification edit is persisted");
+  } finally {
+    restore();
+  }
+});
+
+Deno.test("native uncertain save proof accepts null mtime and resumes only after bound resolve", async () => {
+  const { store, state, bridge, restore } = await bootStore();
+  let writeCalls = 0;
+  let resolveCalls = 0;
+  const nextFingerprint = (project: ProjectData) => ({
+    exists: true,
+    mtime_ms: state.revision + 2,
+    size: new TextEncoder().encode(JSON.stringify(project)).byteLength,
+    hash: state.revision.toString(16).padStart(64, "0"),
+  });
+  (bridge as any).writeProject = async (request: Record<string, any>) => {
+    writeCalls += 1;
+    const project = structuredClone(request.project as ProjectData);
+    state.project = project;
+    state.revision += 1;
+    state.fingerprint = nextFingerprint(project);
+    if (writeCalls === 1) {
+      // This mirrors DesktopBridge.bridgeError's normalized Native envelope:
+      // mtime_ms is intentionally unknown, while hash/size identify the bytes.
+      throw Object.assign(new Error("Canonical rename outcome is uncertain"), {
+        code: "project_save_failed",
+        commit_state: "outcome_uncertain",
+        stage: "canonical_rename",
+        retryable: false,
+        operation_id: request.operation_id,
+        revision: request.revision,
+        expected_committed_fingerprint: {
+          exists: true,
+          mtime_ms: null,
+          size: state.fingerprint.size,
+          hash: state.fingerprint.hash,
+        },
+      });
+    }
+    return {
+      project_id: request.expected_project_id,
+      project_dir: request.project_dir,
+      lease_generation: request.lease_generation,
+      editor_generation: request.editor_generation,
+      operation_id: request.operation_id,
+      revision: request.revision,
+      outcome: "written",
+      commit_state: "committed",
+      fingerprint: structuredClone(state.fingerprint),
+    };
+  };
+  (bridge as any).commandWithMutationAck = async (
+    name: string,
+    request: Record<string, any>,
+  ) => {
+    assert(name === "project.resolve", "uncertain save is reconciled through explicit project.resolve");
+    resolveCalls += 1;
+    assert(
+      JSON.stringify(request.expected_current) === JSON.stringify(state.fingerprint),
+      "resolve is bound to the actual pure-read fingerprint",
+    );
+    const project = structuredClone(request.project as ProjectData);
+    state.project = project;
+    state.revision += 1;
+    state.fingerprint = nextFingerprint(project);
+    return {
+      value: { project },
+      mutation_ack: {
+        project,
+        fingerprint: structuredClone(state.fingerprint),
+        project_id: request.expected_project_id,
+        project_dir: request.project_dir,
+        lease_generation: request.lease_generation,
+        editor_generation: request.editor_generation,
+        operation_id: request.operation_id,
+        revision: request.revision,
+        commit_state: "committed",
+        outcome: "written",
+      },
+    };
+  };
+  try {
+    store.addMapItem("Native 不确定保存");
+    assert(await store.flush() === false, "the uncertain write does not report a successful flush");
+    assert(store.saveStatus === "保存结果待核验", "the native outcome pauses the editor");
+    assert(await store.flush() === false && writeCalls === 1, "the same save is not blindly retried");
+
+    const uncertainError = (store as any).uncertainMutation.error;
+    const operationId = uncertainError.operation_id;
+    uncertainError.operation_id = "a-different-native-operation";
+    assert(await store.verifyUncertainMutation() === false, "a Native error for another operation cannot prove this write");
+    assert(Number(resolveCalls) === 0, "mismatched operation metadata never reaches project.resolve");
+    uncertainError.operation_id = operationId;
+
+    assert(await store.verifyUncertainMutation(), "matching native hash/size proof resolves despite unknown mtime");
+    assert(resolveCalls === 1, "the disk state is adopted through one explicit bound resolve");
+    assert(String(store.saveStatus) === "已保存", "the editor resumes after the actual resolve acknowledgement");
+
+    store.commit("核验后继续编辑", (project: ProjectData) => {
+      project.project.title = "Native 核验后继续保存";
+    });
+    assert(await store.flush(), "an ordinary save succeeds only after reconciliation");
+    assert(Number(writeCalls) === 2, "only the deliberate post-verification save is added");
+    assert(state.project.project.title === "Native 核验后继续保存", "later local content is persisted");
   } finally {
     restore();
   }
@@ -3797,6 +4711,73 @@ Deno.test("closing a preview stops and resets its media elements", () => {
   assert(calls.join(",") === "pause,remove:src,load,audio-pause,audio-remove:src,audio-load", "each source is detached and reloaded");
 });
 
+Deno.test("video viewer reacquires a fresh source and releases stale results", async () => {
+  let resolveFirst!: (source: { url: string; release: () => void }) => void;
+  const releases: string[] = [];
+  let requests = 0;
+  const { store, restore } = await bootStore({
+    previewAssetVideoSource: async () => {
+      requests += 1;
+      if (requests === 1) {
+        return await new Promise<{ url: string; release: () => void }>((resolve) => {
+          resolveFirst = resolve;
+        });
+      }
+      const token = `fresh-${requests}`;
+      return {
+        url: `http://localhost/api/media/${token}`,
+        release: () => releases.push(token),
+      };
+    },
+  });
+  try {
+    const workbench = store as any;
+    store.commit("添加视频预览夹具", (data) => {
+      data.assets.push({
+        id: "viewer-video",
+        project_id: data.project.id,
+        type: "video",
+        filename: "clip.mp4",
+        storage_path: "assets/clip.mp4",
+        mime_type: "video/mp4",
+        width: 64,
+        height: 64,
+        duration_ms: 2000,
+        file_size: 8,
+        checksum: "viewer-video-hash",
+        title: "clip.mp4",
+        description: "",
+        source_type: "imported",
+        source_url: null,
+        copyright_note: null,
+        created_at: "2026-10-06T00:00:00.000Z",
+        archived: false,
+      });
+    });
+    const opening = workbench.openAssetViewer("viewer-video");
+    workbench.releaseAssetViewerSource();
+    store.ui.assetImagePreviewId = null;
+    resolveFirst({
+      url: "http://localhost/api/media/stale",
+      release: () => releases.push("stale"),
+    });
+    await opening;
+    assert(releases.includes("stale"), "a late source is released after viewer close");
+    assert(!store.ui.assetImagePreviewSource, "a late source cannot repopulate a closed viewer");
+
+    await workbench.openAssetViewer("viewer-video");
+    assert(requests === 2, "each viewer opening requests a new source token");
+    assert(
+      (store.ui.assetImagePreviewSource as { url?: string } | null)?.url?.endsWith("fresh-2"),
+      "the viewer uses the newly issued source URL",
+    );
+    workbench.releaseAssetViewerSource();
+    assert(releases.includes("fresh-2"), "closing releases the viewer source token");
+  } finally {
+    restore();
+  }
+});
+
 Deno.test("property panel follows project and stage targets instead of the active lesson", async () => {
   const { store, restore } = await bootStore();
   try {
@@ -4028,6 +5009,87 @@ Deno.test("an active page renders exactly one visible page title", async () => {
         );
       }
     }
+  } finally {
+    restore();
+  }
+});
+
+Deno.test("explicit keep-local resolves a paused conflict without flushing its stale queue", async () => {
+  const observed = { resolveRequest: null as Record<string, unknown> | null };
+  const confirmedDiskFingerprint = {
+    exists: true,
+    mtime_ms: 8,
+    size: 4096,
+    hash: "8".repeat(64),
+  };
+  const { store, state, bridge, restore } = await bootStore({
+    inspectExternalModification: async () => ({
+      changed: true,
+      baseline: null,
+      current: structuredClone(confirmedDiskFingerprint),
+      external: structuredClone(state.project),
+      external_diff: { changed: true, entries: [] },
+      local_diff: null,
+    }),
+    commandWithMutationAck: async (name: string, request: Record<string, unknown>) => {
+      assert(name === "project.resolve", "explicit keep-local uses the bound resolve command");
+      observed.resolveRequest = structuredClone(request);
+      const project = structuredClone(request.project as ProjectData);
+      state.project = project;
+      state.fingerprint = {
+        exists: true,
+        mtime_ms: 9,
+        size: new TextEncoder().encode(JSON.stringify(project)).byteLength,
+        hash: "9".repeat(64),
+      };
+      return {
+        value: { resolved: true },
+        mutation_ack: {
+          project,
+          fingerprint: structuredClone(state.fingerprint),
+          project_id: request.expected_project_id,
+          project_dir: request.project_dir,
+          lease_generation: request.lease_generation,
+          editor_generation: request.editor_generation,
+          operation_id: request.operation_id,
+          revision: request.revision,
+          outcome: "written",
+          commit_state: "committed",
+          recovery_warning: null,
+          durability_warning: null,
+        },
+      };
+    },
+  });
+  try {
+    const runtimeStore = store as unknown as { saveRevision: number };
+    store.commit("本地编辑", (project) => {
+      project.project.title = "保留的本地版本";
+    });
+    const localRevision = runtimeStore.saveRevision;
+    state.acceptWrites = false;
+    state.fingerprint = structuredClone(confirmedDiskFingerprint);
+
+    assert(await store.flush() === false, "the old queued save stops on the external CAS conflict");
+    assert(store.saveStatus === "外部修改冲突", "the failed save pauses in the conflict state");
+    assert(state.writes === 1, "only the original failed save reached the bridge");
+
+    await store.resolveExternalConflict("keep-local");
+
+    const resolveRequest = observed.resolveRequest;
+    assert(resolveRequest !== null, "the explicit resolution was dispatched");
+    assert(
+      JSON.stringify(resolveRequest?.expected_fingerprint) === JSON.stringify(confirmedDiskFingerprint) &&
+        JSON.stringify(resolveRequest?.expected_current) === JSON.stringify(confirmedDiskFingerprint),
+      "resolve CAS is bound to the exact disk fingerprint the user confirmed",
+    );
+    assert(resolveRequest?.revision === localRevision, "resolve preserves the pending local editor revision");
+    assert(resolveRequest?.expected_project_id === state.project.project.id, "resolve remains bound to the active project");
+    assert(state.writes === 1, "the stale pending save is suppressed instead of replayed");
+    assert(store.data.project.title === "保留的本地版本", "the committed ack preserves the local project");
+    assert(String(store.saveStatus) === "已保存", "the committed resolve ack clears the conflict state");
+    assert(store.externalConflict === null, "the resolved conflict is cleared only after ack");
+    assert(bridge.projectDir === resolveRequest?.project_dir, "resolve stays on the active directory");
   } finally {
     restore();
   }

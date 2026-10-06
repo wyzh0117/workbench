@@ -124,6 +124,34 @@ export function stopPreviewMedia(scope = globalThis.document) {
  * rebuild destroys every card, the observer re-registers all of them, each new
  * intersect record reads the asset again, and the loop repeats.
  */
+function sameFingerprint(left, right) {
+  return Boolean(left && right && left.exists === right.exists &&
+    left.mtime_ms === right.mtime_ms && left.size === right.size &&
+    left.hash === right.hash);
+}
+
+function samePreviewContext(left, right) {
+  return Boolean(left && right && left.project_id === right.project_id &&
+    left.project_dir === right.project_dir &&
+    left.lease_generation === right.lease_generation &&
+    left.editor_generation === right.editor_generation &&
+    sameFingerprint(left.fingerprint, right.fingerprint));
+}
+
+function decodePreviewBase64(value, maxBytes) {
+  if (typeof value !== "string" || value.length > Math.ceil(maxBytes * 4 / 3) + 4) {
+    throw new Error("素材批量预览返回了无效或过大的内容");
+  }
+  let binary;
+  try {
+    binary = atob(value);
+  } catch {
+    throw new Error("素材批量预览返回了无效的 Base64 内容");
+  }
+  if (binary.length > maxBytes) throw new Error("素材超过单文件预览上限（8 MiB）");
+  return Uint8Array.from(binary, (character) => character.charCodeAt(0));
+}
+
 export class AssetPreviewCache {
   constructor(bridge, options = {}) {
     this.bridge = bridge;
@@ -138,8 +166,13 @@ export class AssetPreviewCache {
     this.maxQueuedLoads = options.maxQueuedLoads ?? 32;
     this.activeLoads = 0;
     this.loadQueue = [];
+    this.previewBatchQueue = [];
+    this.previewBatchScheduled = false;
+    this.previewRequestGeneration = 0;
     /** Declined while saturated; retried when a slot frees or dropped if not. */
     this.deferred = new Set();
+    this.deferredReasons = new Map();
+    this.retryCapacityDeferred = false;
     /** Settled previews dropped by the byte budget while their card was painted. */
     this.released = new Set();
     this.entries = new Map();
@@ -243,7 +276,10 @@ export class AssetPreviewCache {
     }
     // Keys that stopped being painted have nothing left to wait for.
     for (const key of [...this.deferred]) {
-      if (!activeKeys.has(key)) this.deferred.delete(key);
+      if (!activeKeys.has(key)) {
+        this.deferred.delete(key);
+        this.deferredReasons.delete(key);
+      }
     }
     // A card that scrolled away and comes back may load again. A card that stays
     // on screen waits for the user to ask, otherwise the byte budget would evict
@@ -315,6 +351,8 @@ export class AssetPreviewCache {
     // another card back — the eviction/re-render loop at a slower tempo. Only
     // `retry()` (§9's user action) may send a released key loading.
     if (this.released.has(key)) return false;
+    this.deferred.delete(key);
+    this.deferredReasons.delete(key);
     void this.load(asset, key);
     return true;
   }
@@ -373,6 +411,173 @@ export class AssetPreviewCache {
     });
   }
 
+  previewRequestContext() {
+    if (typeof this.bridge.readAssetBatch !== "function" ||
+      typeof this.bridge.previewRequestContext !== "function") return null;
+    const context = this.bridge.previewRequestContext();
+    if (
+      !context || typeof context.project_id !== "string" || !context.project_id ||
+      typeof context.project_dir !== "string" || !context.project_dir ||
+      !(typeof context.lease_generation === "string" && context.lease_generation ||
+        Number.isSafeInteger(context.lease_generation)) ||
+      !Number.isSafeInteger(context.editor_generation) || context.editor_generation < 0 ||
+      !context.fingerprint || context.fingerprint.exists !== true ||
+      !Number.isSafeInteger(context.fingerprint.size) ||
+      typeof context.fingerprint.hash !== "string" || !context.fingerprint.hash
+    ) return null;
+    return {
+      project_dir: context.project_dir,
+      project_id: context.project_id,
+      fingerprint: { ...context.fingerprint },
+      lease_generation: context.lease_generation,
+      editor_generation: context.editor_generation,
+    };
+  }
+
+  schedulePreviewBatch() {
+    if (this.previewBatchScheduled) return;
+    this.previewBatchScheduled = true;
+    const drain = () => {
+      this.previewBatchScheduled = false;
+      this.drainPreviewBatches();
+    };
+    if (typeof queueMicrotask === "function") queueMicrotask(drain);
+    else setTimeout(drain, 0);
+  }
+
+  enqueuePreviewRead(asset, key, token, generation) {
+    const context = this.previewRequestContext();
+    if (!context) return null;
+    if (this.previewBatchQueue.length >= this.maxQueuedLoads) {
+      this.deferred.add(key);
+      this.deferredReasons.set(key, "queue");
+      return Promise.resolve({ deferred: true });
+    }
+    const result = new Promise((resolve, reject) => {
+      this.previewBatchQueue.push({
+        asset,
+        key,
+        token,
+        generation,
+        context,
+        resolve,
+        reject,
+      });
+    });
+    this.deferred.delete(key);
+    this.deferredReasons.delete(key);
+    this.schedulePreviewBatch();
+    return result;
+  }
+
+  drainPreviewBatches() {
+    while (this.activeLoads < this.maxConcurrentLoads && this.previewBatchQueue.length) {
+      let first = this.previewBatchQueue.shift();
+      if (!first) return;
+      if (!this.canGrant(first.key, first.token, first.generation)) {
+        first.resolve({ stale: true });
+        continue;
+      }
+      const batch = [first];
+      for (let index = 0; index < this.previewBatchQueue.length && batch.length < 8;) {
+        const candidate = this.previewBatchQueue[index];
+        if (!candidate) break;
+        if (
+          !samePreviewContext(candidate.context, first.context) ||
+          !this.canGrant(candidate.key, candidate.token, candidate.generation)
+        ) {
+          if (!this.canGrant(candidate.key, candidate.token, candidate.generation)) {
+            this.previewBatchQueue.splice(index, 1);
+            candidate.resolve({ stale: true });
+          } else index += 1;
+          continue;
+        }
+        batch.push(...this.previewBatchQueue.splice(index, 1));
+      }
+      this.activeLoads += 1;
+      void this.runPreviewBatch(batch);
+    }
+  }
+
+  async runPreviewBatch(batch) {
+    const context = batch[0]?.context;
+    const generation = batch[0]?.generation;
+    const requestGeneration = ++this.previewRequestGeneration;
+    const stale = () => {
+      const current = this.previewRequestContext();
+      return generation !== this.generation || !samePreviewContext(current, context);
+    };
+    try {
+      if (!context || stale()) {
+        for (const item of batch) item.resolve({ stale: true });
+        return;
+      }
+      const response = await this.bridge.readAssetBatch({
+        project_dir: context.project_dir,
+        project_id: context.project_id,
+        fingerprint: context.fingerprint,
+        request_generation: requestGeneration,
+        asset_ids: batch.map((item) => item.asset.id),
+      });
+      if (
+        response?.project_id !== context.project_id ||
+        response?.request_generation !== requestGeneration ||
+        !sameFingerprint(response?.fingerprint, context.fingerprint) || stale()
+      ) {
+        for (const item of batch) item.resolve({ stale: true });
+        return;
+      }
+      const byId = new Map();
+      const requestedIds = new Set(batch.map((request) => request.asset.id));
+      for (const item of response.items) {
+        if (
+          !item || typeof item.asset_id !== "string" || byId.has(item.asset_id) ||
+          !requestedIds.has(item.asset_id)
+        ) {
+          throw new Error("素材批量预览返回了重复或无效的素材 ID");
+        }
+        byId.set(item.asset_id, item);
+      }
+      for (const request of batch) {
+        if (!this.isCurrent(request.key, request.token, request.generation)) {
+          request.resolve({ stale: true });
+          continue;
+        }
+        const asset = this.findAsset(request.asset.id);
+        if (!asset || this.keyFor(asset) !== request.key || stale()) {
+          request.resolve({ stale: true });
+          continue;
+        }
+        const item = byId.get(request.asset.id);
+        if (!item) {
+          request.reject(new Error("素材批量预览缺少素材结果"));
+        } else if (item.status === "deferred") {
+          this.deferred.add(request.key);
+          this.deferredReasons.set(request.key, "capacity");
+          request.resolve({ deferred: true });
+        } else if (item.status === "error") {
+          request.reject(new Error(item.error?.message || "素材不可读"));
+        } else if (item.status === "ok") {
+          request.resolve({ bytes: decodePreviewBase64(item.bytes_base64, this.mediaLimit) });
+        } else {
+          request.reject(new Error("素材批量预览返回了未知状态"));
+        }
+      }
+      if (batch.some((request) => {
+        const item = byId.get(request.asset.id);
+        return item?.status === "ok" || item?.status === "error";
+      })) this.retryCapacityDeferred = true;
+    } catch (error) {
+      if (stale()) {
+        for (const item of batch) item.resolve({ stale: true });
+      } else {
+        for (const item of batch) item.reject(error);
+      }
+    } finally {
+      this.releaseLoadSlot();
+    }
+  }
+
   /** A preview is only worth reading while its attempt — and its card — live. */
   canGrant(key, token, generation) {
     if (generation !== this.generation) return false;
@@ -399,6 +604,13 @@ export class AssetPreviewCache {
    * the library must not leave hundreds of doomed reads behind the live ones.
    */
   dropUnrenderedLoads() {
+    if (this.previewBatchQueue.length) {
+      this.previewBatchQueue = this.previewBatchQueue.filter((waiter) => {
+        if (this.canGrant(waiter.key, waiter.token, waiter.generation)) return true;
+        waiter.resolve({ stale: true });
+        return false;
+      });
+    }
     if (!this.loadQueue.length) return;
     const kept = [];
     for (const waiter of this.loadQueue) {
@@ -414,6 +626,7 @@ export class AssetPreviewCache {
 
   releaseLoadSlot() {
     this.activeLoads = Math.max(0, this.activeLoads - 1);
+    this.drainPreviewBatches();
     while (this.loadQueue.length && this.activeLoads < this.maxConcurrentLoads) {
       const waiter = this.loadQueue.shift();
       if (!this.canGrant(waiter.key, waiter.token, waiter.generation)) {
@@ -431,10 +644,23 @@ export class AssetPreviewCache {
 
   /** Retry only what is still painted; everything else is dropped for free. */
   drainDeferred() {
+    let capacityStillPending = false;
     for (const key of [...this.deferred]) {
+      const reason = this.deferredReasons.get(key) || "queue";
+      if (reason === "capacity" && !this.retryCapacityDeferred) continue;
+      if (this.entries.has(key)) {
+        this.deferred.delete(key);
+        this.deferredReasons.delete(key);
+        continue;
+      }
+      if (this.pending.has(key)) {
+        if (reason === "capacity") capacityStillPending = true;
+        continue;
+      }
       if (this.activeLoads >= this.maxConcurrentLoads) return;
+      if (this.previewBatchQueue.length >= this.maxQueuedLoads) return;
       this.deferred.delete(key);
-      if (this.entries.has(key) || this.pending.has(key)) continue;
+      this.deferredReasons.delete(key);
       if (!this.canGrantRendered(key)) continue;
       const asset = this.assetsByKey.get(key) ||
         this.assetFor(key, this.firstFrame(key));
@@ -442,6 +668,7 @@ export class AssetPreviewCache {
       this.assetsByKey.set(key, asset);
       this.loadByKey(key);
     }
+    if (!capacityStillPending) this.retryCapacityDeferred = false;
   }
 
   canGrantRendered(key) {
@@ -504,20 +731,29 @@ export class AssetPreviewCache {
         return url;
       };
       try {
-        acquired = await this.acquireLoadSlot(key, token, generation);
-        // The wait for a slot is where a doomed load leaves: its card may have
-        // been un-painted, or a newer attempt took the key over.
-        if (!acquired) return;
         let bytes = null;
         let source = null;
         if (asset.type === "video") {
+          acquired = await this.acquireLoadSlot(key, token, generation);
+          // The wait for a slot is where a doomed load leaves: its card may have
+          // been un-painted, or a newer attempt took the key over.
+          if (!acquired) return;
           if (!String(asset.mime_type || "").toLowerCase().startsWith("video/")) {
             throw new Error("素材类型与视频文件格式不匹配");
           }
           source = await this.bridge.previewAssetVideoSource(assetId);
           sourceRelease = source?.release || null;
         } else {
-          bytes = await this.bridge.readAssetBytes(assetId, this.mediaLimit);
+          const batched = this.enqueuePreviewRead(asset, key, token, generation);
+          if (batched) {
+            const result = await batched;
+            if (result?.stale || result?.deferred) return;
+            bytes = result?.bytes;
+          } else {
+            acquired = await this.acquireLoadSlot(key, token, generation);
+            if (!acquired) return;
+            bytes = await this.bridge.readAssetBytes(assetId, this.mediaLimit);
+          }
         }
         // Project switches, content edits and released entries invalidate reads
         // already in flight. Never let a late response repopulate newer state.
@@ -622,21 +858,27 @@ export class AssetPreviewCache {
         };
         this.cache(key, entry, 0);
       } finally {
-        if (acquired) this.releaseLoadSlot();
         const stale = generation !== this.generation ||
           this.tokenFor(key) !== token;
-        const waiting = !stale && this.deferred.has(key);
-        if (this.pending.get(key) === task) this.pending.delete(key);
-        if (stale) this.deferred.delete(key);
-        if (waiting) {
-          // Declined for a slot: the asset stays registered and a freed slot
-          // retries it, instead of this attempt queueing a doomed read.
-        } else {
-          this.assetsByKey.delete(key);
-          // Settled. Patch the one frame that paints this key; a full rebuild
-          // here is what restarted the observe → load → evict cycle.
-          this.repaint(key);
+        const ownsPending = this.pending.get(key) === task;
+        const waiting = ownsPending && !stale && this.deferred.has(key);
+        if (ownsPending) {
+          this.pending.delete(key);
+          if (stale) {
+            this.deferred.delete(key);
+            this.deferredReasons.delete(key);
+          } else if (!waiting) {
+            this.assetsByKey.delete(key);
+            // Settled. Patch the one frame that paints this key; a full rebuild
+            // here is what restarted the observe → load → evict cycle.
+            this.repaint(key);
+          }
         }
+        if (acquired) this.releaseLoadSlot();
+        // A batch can finish while an item's task still owns `pending`; the
+        // earlier slot-release pass preserves this reason, so retry after the
+        // item's promise has settled and freed its key.
+        if (waiting && this.activeLoads < this.maxConcurrentLoads) this.drainDeferred();
       }
     })();
     this.pending.set(key, task);
@@ -797,7 +1039,10 @@ export class AssetPreviewCache {
     stopPreviewMedia(globalThis.document);
     this.generation += 1;
     for (const waiter of this.loadQueue.splice(0)) waiter.resolve(false);
+    for (const waiter of this.previewBatchQueue.splice(0)) waiter.resolve({ stale: true });
     this.deferred.clear();
+    this.deferredReasons.clear();
+    this.retryCapacityDeferred = false;
     this.released.clear();
     for (const [key, entry] of [...this.entries]) {
       // Drop the entry first: a frame repainted below must read as waiting, and

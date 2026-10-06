@@ -132,10 +132,39 @@ async function bootRegistryHarness(
   const bridge = {
     projectDir,
     projectDirFromUrl: false,
+    lastOpenedProjectState: null as LooseRecord | null,
     isNative: () => true,
     currentProject: () => CURRENT,
     loadSession: async () => null,
     readProject: async () => structuredClone(CURRENT),
+    openProjectState: async () => {
+      const state = {
+        project: structuredClone(CURRENT),
+        project_id: CURRENT.project.id,
+        project_dir: bridge.projectDir,
+        lease_generation: `lease:${bridge.projectDir}`,
+        fingerprint: {
+          exists: true,
+          mtime_ms: 1,
+          size: JSON.stringify(CURRENT).length,
+          hash: "a".repeat(64),
+        },
+      };
+      bridge.lastOpenedProjectState = state;
+      return state;
+    },
+    readProjectState: async () => ({
+      project: structuredClone(CURRENT),
+      project_id: CURRENT.project.id,
+      project_dir: bridge.projectDir,
+      lease_generation: bridge.lastOpenedProjectState?.lease_generation ?? null,
+      fingerprint: bridge.lastOpenedProjectState?.fingerprint ?? {
+        exists: true,
+        mtime_ms: 1,
+        size: JSON.stringify(CURRENT).length,
+        hash: "a".repeat(64),
+      },
+    }),
     writeProject: async () => {},
     readRecoveryJournal: async () => null,
     writeRecoveryJournal: async () => {},
