@@ -1,0 +1,1195 @@
+{
+  "scope": "Actual IAB observations; source provenance and limited scope are recorded per row.",
+  "rows": [
+    {
+      "name": "browser-final-media-boundary-red",
+      "source_commit": "b990d49029333d4bacc46a2f92361779a554545c",
+      "observed_at_utc": "2026-10-06T01:04:21.861Z",
+      "url": "http://127.0.0.1:4188/",
+      "screenshot": "/Users/youngi/.codex/worktrees/io-ui-closure/workbench/docs/reports/evidence/io-ui-closure/screenshots/final/browser-final-media-boundary-red.jpg",
+      "details": {
+        "cards": [
+          {
+            "html": "<div class=\"asset-card-media\"><div class=\"asset-preview-frame asset-preview-frame--card\" data-asset-preview-key=\"[&quot;cccccccc-cccc-4ccc-8ccc-cccccccccccc&quot;,&quot;00000000-0000-4000-8000-000000000089&quot;,&quot;assets/fixture-edge-missing.png&quot;,37,&quot;d323e239449b1d9fe0150d22f3b7b8961c6",
+            "text": "等待加载Boundary fixture: missing file图片37 B尚未引用插入⋯重命名 删除"
+          },
+          {
+            "html": "<div class=\"asset-card-media\"><div class=\"asset-preview-frame asset-preview-frame--card\" data-asset-preview-key=\"[&quot;cccccccc-cccc-4ccc-8ccc-cccccccccccc&quot;,&quot;00000000-0000-4000-8000-00000000008a&quot;,&quot;assets/fixture-edge-oversize.png&quot;,8388609,&quot;5fbf3eb7e47b345223fa63a25958a",
+            "text": "等待加载Boundary fixture: exceeds preview cap图片8.0 MB尚未引用插入⋯重命名 删除"
+          },
+          {
+            "html": "<div class=\"asset-card-media\"><div class=\"asset-preview-frame asset-preview-frame--card\" data-asset-preview-key=\"[&quot;cccccccc-cccc-4ccc-8ccc-cccccccccccc&quot;,&quot;00000000-0000-4000-8000-00000000008b&quot;,&quot;assets/fixture-edge-wrong-mime.png&quot;,1478,&quot;2aaf0d36f2fc64bfe9df8e4ba4c7e7",
+            "text": "�PNG \u001a  IHDR  \b\u0006szz�\u0005�IDATx�\u0014��\u0007��\u001d���?���$I��Boundary fixture: mismatched MIME图片1 KB尚未引用插入⋯重命名 删除"
+          }
+        ],
+        "top": 12845.5
+      }
+    },
+    {
+      "name": "browser-final-media-mp4-playing",
+      "source_commit": "b990d49029333d4bacc46a2f92361779a554545c",
+      "observed_at_utc": "2026-10-06T01:05:02.683Z",
+      "url": "http://127.0.0.1:4188/",
+      "screenshot": "/Users/youngi/.codex/worktrees/io-ui-closure/workbench/docs/reports/evidence/io-ui-closure/screenshots/final/browser-final-media-mp4-playing.jpg",
+      "details": {
+        "dialogs": 1,
+        "video": [
+          {
+            "duration": 2,
+            "error": null,
+            "h": 64,
+            "paused": false,
+            "ready": 4,
+            "time": 0.525284,
+            "w": 64
+          }
+        ]
+      }
+    },
+    {
+      "name": "browser-final-media-20-cycles-closed",
+      "source_commit": "b990d49029333d4bacc46a2f92361779a554545c",
+      "observed_at_utc": "2026-10-06T01:06:25.846Z",
+      "url": "http://127.0.0.1:4188/",
+      "screenshot": "/Users/youngi/.codex/worktrees/io-ui-closure/workbench/docs/reports/evidence/io-ui-closure/screenshots/final/browser-final-media-20-cycles-closed.jpg",
+      "details": {
+        "cycles": 20,
+        "allPlaying": true,
+        "allClosed": true,
+        "decodedMemory": "not_measured",
+        "rss": "not_measured"
+      }
+    },
+    {
+      "name": "browser-final-history-bad-rows",
+      "source_commit": "b990d49029333d4bacc46a2f92361779a554545c",
+      "observed_at_utc": "2026-10-06T01:07:05.234Z",
+      "url": "http://127.0.0.1:4191/",
+      "screenshot": "/Users/youngi/.codex/worktrees/io-ui-closure/workbench/docs/reports/evidence/io-ui-closure/screenshots/final/browser-final-history-bad-rows.jpg",
+      "details": []
+    },
+    {
+      "name": "browser-final-history-persisted-bad-row-isolation",
+      "source_commit": "b990d49029333d4bacc46a2f92361779a554545c",
+      "observed_at_utc": "2026-10-06T01:07:28.566Z",
+      "url": "http://127.0.0.1:4191/",
+      "screenshot": "/Users/youngi/.codex/worktrees/io-ui-closure/workbench/docs/reports/evidence/io-ui-closure/screenshots/final/browser-final-history-persisted-bad-row-isolation.jpg",
+      "details": {
+        "disabledRestores": [
+          {
+            "disabled": false,
+            "label": "恢复此版本"
+          },
+          {
+            "disabled": false,
+            "label": "恢复此版本"
+          },
+          {
+            "disabled": false,
+            "label": "恢复此版本"
+          },
+          {
+            "disabled": true,
+            "label": "恢复此版本"
+          },
+          {
+            "disabled": true,
+            "label": "恢复此版本"
+          }
+        ],
+        "headings": [
+          "Final UI checkpoint",
+          "history_unindexed_20261006",
+          "Named history checkpoint",
+          "history_corrupt_20261006",
+          "history_incomplete_20261006"
+        ]
+      }
+    },
+    {
+      "name": "browser-final-history-restored-with-backup",
+      "source_commit": "b990d49029333d4bacc46a2f92361779a554545c",
+      "observed_at_utc": "2026-10-06T01:08:02.946Z",
+      "url": "http://127.0.0.1:4191/",
+      "screenshot": "/Users/youngi/.codex/worktrees/io-ui-closure/workbench/docs/reports/evidence/io-ui-closure/screenshots/final/browser-final-history-restored-with-backup.jpg",
+      "details": {
+        "body": "安全恢复版本历史版本记录保存课程正文、排版与引用关系，不复制素材文件；恢复不会找回已删除或改写的素材，也不会还原素材文件名。保存当前版本刷新已保存版本4可随时恢复自动保存开启编辑内容持续保存恢复保护启用恢复前备份会先持久保存命名版本为发布、审核或大幅修改前保存一个清楚的回退点。4◷恢复前备份已保存恢复旧版本前自动保存当前项目2026/10/6 09:07:45恢复此版本◷Final UI checkpoint已保存Created through the real browser UI for closure acceptance.2026/10/6 09:07:17恢复此版本◷history_unindexed_20261006已保存没有备注2026/10/6 08:59:03恢复此版本◷Named history checkpoint已保存Persisted through the real snapshot.create service command for owned UI QA.2026/10/6 08:59:03恢复此版本◷history_corrupt_20261006无法读取历史版本文件或索引已损坏。保存时间未知恢复此版本◷history_incomplete_20261006无法读取历史版本文件或索引已损坏。保存时间未知恢复此版本",
+        "dialogs": 0,
+        "headings": [
+          "恢复前备份",
+          "Final UI checkpoint",
+          "history_unindexed_20261006",
+          "Named history checkpoint",
+          "history_corrupt_20261006",
+          "history_incomplete_20261006"
+        ]
+      }
+    },
+    {
+      "name": "browser-final-layout-delete-confirm",
+      "source_commit": "b990d49029333d4bacc46a2f92361779a554545c",
+      "observed_at_utc": "2026-10-06T01:10:04.932Z",
+      "url": "http://127.0.0.1:4190/",
+      "screenshot": "/Users/youngi/.codex/worktrees/io-ui-closure/workbench/docs/reports/evidence/io-ui-closure/screenshots/final/browser-final-layout-delete-confirm.jpg",
+      "details": {
+        "page": "nonempty second page",
+        "focus": "取消"
+      }
+    },
+    {
+      "name": "browser-final-layout-restored-reloaded",
+      "source_commit": "b990d49029333d4bacc46a2f92361779a554545c",
+      "observed_at_utc": "2026-10-06T01:10:18.823Z",
+      "url": "http://127.0.0.1:4190/",
+      "screenshot": "/Users/youngi/.codex/worktrees/io-ui-closure/workbench/docs/reports/evidence/io-ui-closure/screenshots/final/browser-final-layout-restored-reloaded.jpg",
+      "details": {
+        "h1": "自由排版",
+        "tabs": [
+          "第 1 页1 / 3",
+          "跨页文本与图片2 / 3",
+          "长正文续页3 / 3"
+        ],
+        "visibleText": "FREE LAYOUT · S01-01自由排版Fixture lesson 1 · Canvas 位置与页面设置。返回工作台 GRID CANVAS2 列 × 2 行 · 有限页面；修改行列前先点「编辑网格」。三页排版验收 · 分页 Grid3 页 · 960 × 540 pt · 页面尺寸与屏幕缩放分开重命名排版第 1 页1 / 3跨页文本与图片2 / 3长正文续页3 / 3适合窗口实际尺寸分页画布处于查看模式；页面结构与内容位置不会被误改。编辑分页3 / 3 · 960 × 540 pt · 适合窗口正文Fixture lesson 1, paragraph 3. The quick brown fox measures canonical project I/O while preserving valid domain structure. The quick brown fox measures canonical project I/O while preserving valid domain structure. The quick brown fox measures canonical project I/O while preserving valid domain structure. The quick brown fox measures canonical project I/O while preserving valid domain structure. The quick brown fox measures canonical project I/O while preserving valid domain structure. The quick brown fox measures canonical project I/O while preserving valid domain structure. The quick brown fox measures canonical project I/O while pr"
+      }
+    },
+    {
+      "name": "browser-final-board-right-columns-reachable",
+      "source_commit": "b990d49029333d4bacc46a2f92361779a554545c",
+      "observed_at_utc": "2026-10-06T01:11:04.776Z",
+      "url": "http://127.0.0.1:4189/",
+      "screenshot": "/Users/youngi/.codex/worktrees/io-ui-closure/workbench/docs/reports/evidence/io-ui-closure/screenshots/final/browser-final-board-right-columns-reachable.jpg",
+      "details": {
+        "documentWidth": 1024,
+        "headings": [
+          {
+            "text": "待研究",
+            "x": 244
+          },
+          {
+            "text": "起草中",
+            "x": 486
+          },
+          {
+            "text": "待审核",
+            "x": 728
+          },
+          {
+            "text": "已定稿",
+            "x": 970
+          },
+          {
+            "text": "待补 0",
+            "x": 790
+          }
+        ],
+        "scroll": [
+          {
+            "cls": "kanban board-columns",
+            "left": 0,
+            "scroll": 956,
+            "width": 502
+          }
+        ],
+        "viewport": 1024
+      }
+    },
+    {
+      "name": "browser-final-board-right-columns-reachable",
+      "source_commit": "b990d49029333d4bacc46a2f92361779a554545c",
+      "observed_at_utc": "2026-10-06T01:11:26.858Z",
+      "url": "http://127.0.0.1:4189/",
+      "screenshot": "/Users/youngi/.codex/worktrees/io-ui-closure/workbench/docs/reports/evidence/io-ui-closure/screenshots/final/browser-final-board-right-columns-reachable.jpg",
+      "details": {
+        "documentWidth": 1024,
+        "headings": [
+          {
+            "text": "待研究",
+            "x": -210
+          },
+          {
+            "text": "起草中",
+            "x": 32
+          },
+          {
+            "text": "待审核",
+            "x": 274
+          },
+          {
+            "text": "已定稿",
+            "x": 516
+          }
+        ],
+        "keyboard_empty_column_scroll": "not_verified",
+        "scrollLeft": 454,
+        "viewport": 1024
+      }
+    },
+    {
+      "name": "browser-final-body-preview-real-media",
+      "source_commit": "b990d49029333d4bacc46a2f92361779a554545c",
+      "observed_at_utc": "2026-10-06T01:13:42.005Z",
+      "url": "http://127.0.0.1:4189/",
+      "screenshot": "/Users/youngi/.codex/worktrees/io-ui-closure/workbench/docs/reports/evidence/io-ui-closure/screenshots/final/browser-final-body-preview-real-media.jpg",
+      "details": {
+        "gifDetails": {
+          "dialogs": 1,
+          "images": [
+            {
+              "alt": "Fixture GIF 1",
+              "complete": true,
+              "h": 64,
+              "w": 64
+            }
+          ]
+        },
+        "closed": {
+          "dialogs": 0,
+          "focus": "放大查看 Fixture GIF 1",
+          "images": [
+            {
+              "alt": "fixture-00.mp4 · 视频首帧",
+              "complete": true,
+              "w": 64
+            },
+            {
+              "alt": "Fixture image 0",
+              "complete": true,
+              "w": 32
+            },
+            {
+              "alt": "Fixture GIF 1",
+              "complete": true,
+              "w": 64
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "browser-final-flow-reloaded",
+      "source_commit": "b990d49029333d4bacc46a2f92361779a554545c",
+      "observed_at_utc": "2026-10-06T01:14:35.374Z",
+      "url": "http://127.0.0.1:4189/",
+      "screenshot": "/Users/youngi/.codex/worktrees/io-ui-closure/workbench/docs/reports/evidence/io-ui-closure/screenshots/final/browser-final-flow-reloaded.jpg",
+      "details": {
+        "order": [
+          "01标题Fixture heading 1查看正文 ↗",
+          "02正文Final UI media preview check\\. \\!\\[Fixture PNG\\]\\(assets/fixt",
+          "03视频Fixture MP4 1查看正文 ↗",
+          "04正文Fixture long body 1. The quick brown fox measures canonical p",
+          "05正文Fixture lesson 1, paragraph 3. The quick brown fox measures c",
+          "06GIFFixture GIF 1查看正文 ↗",
+          "07图片Fixture image 0查看正文 ↗"
+        ]
+      }
+    },
+    {
+      "name": "browser-final-ai-settings-focus-trap",
+      "source_commit": "b990d49029333d4bacc46a2f92361779a554545c",
+      "observed_at_utc": "2026-10-06T01:14:56.394Z",
+      "url": "http://127.0.0.1:4189/",
+      "screenshot": "/Users/youngi/.codex/worktrees/io-ui-closure/workbench/docs/reports/evidence/io-ui-closure/screenshots/final/browser-final-ai-settings-focus-trap.jpg",
+      "details": {
+        "tabWrap": {
+          "inside": true,
+          "label": "关闭设置",
+          "text": "×"
+        },
+        "shiftWrap": {
+          "inside": true,
+          "label": null,
+          "text": "完成"
+        },
+        "credentialsEntered": false,
+        "networkConnectionTest": false
+      }
+    },
+    {
+      "name": "browser-final-conflict-before-external-edit",
+      "source_commit": "b990d49029333d4bacc46a2f92361779a554545c",
+      "observed_at_utc": "2026-10-06T01:16:12.106Z",
+      "url": "http://127.0.0.1:4189/",
+      "screenshot": "/Users/youngi/.codex/worktrees/io-ui-closure/workbench/docs/reports/evidence/io-ui-closure/screenshots/final/browser-final-conflict-before-external-edit.jpg",
+      "details": {
+        "stage": "before external canonical replacement"
+      }
+    },
+    {
+      "name": "browser-final-cas-conflict-paused",
+      "base_source_commit": "b990d49029333d4bacc46a2f92361779a554545c",
+      "source_state": "MIME and history UI review fixes in progress; final commit pin will be supplemented by focused re-verification",
+      "observed_at_utc": "2026-10-06T01:19:43.779Z",
+      "url": "http://127.0.0.1:4189/",
+      "screenshot": "/Users/youngi/.codex/worktrees/io-ui-closure/workbench/docs/reports/evidence/io-ui-closure/screenshots/final/browser-final-cas-conflict-paused.jpg",
+      "details": {
+        "external_canonical_hash": "7a54432e2001c9e73c877012447022f1956989e66d242e991bcb569a6b84a673",
+        "actual": {
+          "conflict": "保存已暂停课程文件与当前编辑内容存在差异为避免覆盖，手动保存和自动保存都已暂停。你可以继续查看；下一步请选择重新载入、自动合并，或在确认后保留本地版本。磁盘变化 2本地变化 5合并冲突 0project.title磁盘版本已变化project.updated_at磁盘版本已变化重新载入磁盘版本预览并自动合并",
+          "draft": "Local conflict draft retained for explicit resolution.\n",
+          "header": "⌂ 项目选择✦AI Course WorkbenchFile I/O small-final QA fixture⌄‹S01-01｜Fixture lesson 1›外部修改冲突↶↷设置保存保存版本预览导出"
+        }
+      }
+    },
+    {
+      "name": "browser-final-cas-merged",
+      "base_source_commit": "b990d49029333d4bacc46a2f92361779a554545c",
+      "source_state": "MIME and history UI review fixes in progress; final commit pin will be supplemented by focused re-verification",
+      "observed_at_utc": "2026-10-06T01:23:22.257Z",
+      "url": "http://127.0.0.1:4189/",
+      "screenshot": "/Users/youngi/.codex/worktrees/io-ui-closure/workbench/docs/reports/evidence/io-ui-closure/screenshots/final/browser-final-cas-merged.jpg",
+      "details": {
+        "action": "explicit conflict merge",
+        "status": "observed_saved",
+        "diskPreservedBeforeResolution": true,
+        "externalTitleVisible": true,
+        "localDraftExpected": "Local conflict draft retained for explicit resolution."
+      }
+    },
+    {
+      "name": "browser-final-markdown-path-observation",
+      "base_source_commit": "b990d49029333d4bacc46a2f92361779a554545c",
+      "source_state": "MIME and history UI review fixes in progress; final commit pin will be supplemented by focused re-verification",
+      "observed_at_utc": "2026-10-06T01:24:35.346Z",
+      "url": "http://127.0.0.1:4189/",
+      "screenshot": "/Users/youngi/.codex/worktrees/io-ui-closure/workbench/docs/reports/evidence/io-ui-closure/screenshots/final/browser-final-markdown-path-observation.jpg",
+      "details": {
+        "importedSource": "/tmp/workbench-io-ui-markdown-final.md",
+        "fileChooserUsed": true,
+        "assetCount": 7,
+        "markdownNode": [],
+        "observed": "assets/fixture-* references unresolved after imported Markdown moves into assets directory; direct media decode succeeds",
+        "status": "awaiting_relative_path_review"
+      }
+    },
+    {
+      "name": "browser-final-rename-invalid",
+      "base_source_commit": "b990d49029333d4bacc46a2f92361779a554545c",
+      "source_state": "MIME and history UI review fixes in progress; final commit pin will be supplemented by focused re-verification",
+      "observed_at_utc": "2026-10-06T01:26:14.045Z",
+      "url": "http://127.0.0.1:4190/",
+      "screenshot": "/Users/youngi/.codex/worktrees/io-ui-closure/workbench/docs/reports/evidence/io-ui-closure/screenshots/final/browser-final-rename-invalid.jpg",
+      "details": {
+        "input": "../invalid.png",
+        "dialogRemained": true,
+        "canonicalMutationExpected": false,
+        "error": "这项操作没有完成。工作台仍可继续使用，请重试。"
+      }
+    },
+    {
+      "name": "browser-final-rename-saved",
+      "base_source_commit": "b990d49029333d4bacc46a2f92361779a554545c",
+      "source_state": "MIME and history UI review fixes in progress; final commit pin will be supplemented by focused re-verification",
+      "observed_at_utc": "2026-10-06T01:27:03.691Z",
+      "url": "http://127.0.0.1:4190/",
+      "screenshot": "/Users/youngi/.codex/worktrees/io-ui-closure/workbench/docs/reports/evidence/io-ui-closure/screenshots/final/browser-final-rename-saved.jpg",
+      "details": {
+        "oldName": "fixture-000.png",
+        "newName": "renamed-final-qa.png",
+        "status": "observed_saved_awaiting_disk_proof"
+      }
+    },
+    {
+      "name": "browser-final-export-markdown-delivered",
+      "base_source_commit": "b990d49029333d4bacc46a2f92361779a554545c",
+      "source_state": "MIME and history UI review fixes in progress; final commit pin will be supplemented by focused re-verification",
+      "observed_at_utc": "2026-10-06T01:27:38.501Z",
+      "url": "http://127.0.0.1:4190/",
+      "screenshot": "/Users/youngi/.codex/worktrees/io-ui-closure/workbench/docs/reports/evidence/io-ui-closure/screenshots/final/browser-final-export-markdown-delivered.jpg",
+      "details": {
+        "preflight": {
+          "blockers": 0,
+          "warnings": 1,
+          "warningAcknowledged": true
+        },
+        "downloadPath": "/Users/youngi/Downloads/S01-01_Fixture lesson 1_正文_1.md",
+        "delivery": "2/2 handed to browser; actual one download path observed",
+        "status": "observed_download"
+      }
+    },
+    {
+      "name": "browser-final-export-html-delivered",
+      "base_source_commit": "b990d49029333d4bacc46a2f92361779a554545c",
+      "source_state": "MIME and history UI review fixes in progress; final commit pin will be supplemented by focused re-verification",
+      "observed_at_utc": "2026-10-06T01:28:28.243Z",
+      "url": "http://127.0.0.1:4190/",
+      "screenshot": "/Users/youngi/.codex/worktrees/io-ui-closure/workbench/docs/reports/evidence/io-ui-closure/screenshots/final/browser-final-export-html-delivered.jpg",
+      "details": {
+        "preflight": {
+          "blockers": 0,
+          "warnings": 0
+        },
+        "downloadPath": "/Users/youngi/Downloads/S01-01_Fixture lesson 1_正文_1.html",
+        "status": "observed_download"
+      }
+    },
+    {
+      "name": "browser-final-export-static-web-delivered",
+      "base_source_commit": "b990d49029333d4bacc46a2f92361779a554545c",
+      "source_state": "MIME and history UI review fixes in progress; final commit pin will be supplemented by focused re-verification",
+      "observed_at_utc": "2026-10-06T01:28:59.059Z",
+      "url": "http://127.0.0.1:4190/",
+      "screenshot": "/Users/youngi/.codex/worktrees/io-ui-closure/workbench/docs/reports/evidence/io-ui-closure/screenshots/final/browser-final-export-static-web-delivered.jpg",
+      "details": {
+        "preflight": {
+          "blockers": 0,
+          "warnings": 0
+        },
+        "downloadPath": "/Users/youngi/Downloads/manifest.json",
+        "status": "observed_download"
+      }
+    },
+    {
+      "name": "browser-final-inbox-assetize-assign",
+      "base_source_commit": "b990d49029333d4bacc46a2f92361779a554545c",
+      "source_state": "MIME and history UI review fixes in progress; final commit pin will be supplemented by focused re-verification",
+      "observed_at_utc": "2026-10-06T01:30:49.606Z",
+      "url": "http://127.0.0.1:4189/",
+      "screenshot": "/Users/youngi/.codex/worktrees/io-ui-closure/workbench/docs/reports/evidence/io-ui-closure/screenshots/final/browser-final-inbox-assetize-assign.jpg",
+      "details": {
+        "text": "QA inbox triage item: retain this synthetic text.",
+        "steps": [
+          "quick capture",
+          "persist pending",
+          "save as asset",
+          "assign current lesson"
+        ],
+        "status": "observed"
+      }
+    },
+    {
+      "name": "browser-final-rename-undo",
+      "base_source_commit": "b990d49029333d4bacc46a2f92361779a554545c",
+      "source_state": "MIME and history UI review fixes in progress; final commit pin will be supplemented by focused re-verification",
+      "observed_at_utc": "2026-10-06T01:32:05.949Z",
+      "url": "http://127.0.0.1:4190/",
+      "screenshot": "/Users/youngi/.codex/worktrees/io-ui-closure/workbench/docs/reports/evidence/io-ui-closure/screenshots/final/browser-final-rename-undo.jpg",
+      "details": {
+        "before": "renamed-final-qa.png",
+        "renamed": "renamed-second-qa.png",
+        "afterUndo": "renamed-final-qa.png",
+        "sameBoot": true,
+        "status": "observed_ui_awaiting_disk_proof"
+      }
+    },
+    {
+      "name": "browser-final-rename-redo",
+      "base_source_commit": "b990d49029333d4bacc46a2f92361779a554545c",
+      "source_state": "MIME and history UI review fixes in progress; final commit pin will be supplemented by focused re-verification",
+      "observed_at_utc": "2026-10-06T01:34:32.599Z",
+      "url": "http://127.0.0.1:4190/",
+      "screenshot": "/Users/youngi/.codex/worktrees/io-ui-closure/workbench/docs/reports/evidence/io-ui-closure/screenshots/final/browser-final-rename-redo.jpg",
+      "details": {
+        "renamed": "renamed-second-qa.png",
+        "undoPhysicalProof": "Deno verified final path present, second path absent, same ID/hash",
+        "status": "observed_ui_redo_awaiting_disk_proof"
+      }
+    },
+    {
+      "name": "browser-final-requirement-anchor",
+      "base_source_commit": "b990d49029333d4bacc46a2f92361779a554545c",
+      "source_state": "MIME and history UI review fixes in progress; final commit pin will be supplemented by focused re-verification",
+      "observed_at_utc": "2026-10-06T01:35:38.309Z",
+      "url": "http://127.0.0.1:4189/",
+      "screenshot": "/Users/youngi/.codex/worktrees/io-ui-closure/workbench/docs/reports/evidence/io-ui-closure/screenshots/final/browser-final-requirement-anchor.jpg",
+      "details": {
+        "note": "QA anchor requirement",
+        "priority": "重要",
+        "count": 1,
+        "routeAfterLocate": "Body",
+        "position": "正文 10",
+        "toast": "已定位到正文中的待补位置",
+        "status": "observed"
+      }
+    },
+    {
+      "name": "browser-final-requirement-resolved",
+      "base_source_commit": "b990d49029333d4bacc46a2f92361779a554545c",
+      "source_state": "MIME and history UI review fixes in progress; final commit pin will be supplemented by focused re-verification",
+      "observed_at_utc": "2026-10-06T01:35:47.789Z",
+      "url": "http://127.0.0.1:4189/",
+      "screenshot": "/Users/youngi/.codex/worktrees/io-ui-closure/workbench/docs/reports/evidence/io-ui-closure/screenshots/final/browser-final-requirement-resolved.jpg",
+      "details": {
+        "note": "QA anchor requirement",
+        "status": "observed_resolved_total_zero"
+      }
+    },
+    {
+      "name": "browser-final-map-fold-move-undo",
+      "base_source_commit": "b990d49029333d4bacc46a2f92361779a554545c",
+      "source_state": "MIME and history UI review fixes in progress; final commit pin will be supplemented by focused re-verification",
+      "observed_at_utc": "2026-10-06T01:36:44.302Z",
+      "url": "http://127.0.0.1:4189/",
+      "screenshot": "/Users/youngi/.codex/worktrees/io-ui-closure/workbench/docs/reports/evidence/io-ui-closure/screenshots/final/browser-final-map-fold-move-undo.jpg",
+      "details": {
+        "stageFoldExpand": true,
+        "moveClick": "last lesson down button produced no change",
+        "undoActual": "reverted preceding requirement completion",
+        "status": "fold_observed_move_not_verified"
+      }
+    },
+    {
+      "name": "browser-frozen-media-boundary-green",
+      "source_commit": "dab26b7b09dcde37eba2f59b018b9ac11e7f73e0",
+      "source_state": "frozen production source; server restarted and browser freshly loaded",
+      "observed_at_utc": "2026-10-06T01:47:49.848Z",
+      "url": "http://127.0.0.1:4188/",
+      "screenshot": "/Users/youngi/.codex/worktrees/io-ui-closure/workbench/docs/reports/evidence/io-ui-closure/screenshots/final/browser-frozen-media-boundary-green.jpg",
+      "details": {
+        "cardCount": 123,
+        "validSamples": 120,
+        "missing": "素材文件不可读或路径无效。",
+        "oversize": "素材超过单文件预览上限（8 MiB）。",
+        "wrongMime": "素材类型与声明的 MIME 不匹配。",
+        "allThreeVisibleFailures": true,
+        "peerMP4PosterDecoded": true,
+        "status": "observed_boundary_green"
+      }
+    },
+    {
+      "name": "browser-frozen-media-three-trips-complete",
+      "source_commit": "dab26b7b09dcde37eba2f59b018b9ac11e7f73e0",
+      "source_state": "frozen production source; server restarted and browser freshly loaded",
+      "observed_at_utc": "2026-10-06T01:51:27.453Z",
+      "url": "http://127.0.0.1:4188/",
+      "screenshot": "/Users/youngi/.codex/worktrees/io-ui-closure/workbench/docs/reports/evidence/io-ui-closure/screenshots/final/browser-frozen-media-three-trips-complete.jpg",
+      "details": {
+        "roundTrips": 3,
+        "interleavedInteractions": 20,
+        "cards": 123,
+        "decoded": 120,
+        "loading": 0,
+        "videos": 0,
+        "dialogs": 0,
+        "resourceScope": "DOM nodes, decode and focus; RSS not measured",
+        "status": "observed_three_trips_and_20_interactions"
+      }
+    },
+    {
+      "name": "browser-frozen-p11-media-1024",
+      "source_commit": "dab26b7b09dcde37eba2f59b018b9ac11e7f73e0",
+      "source_state": "frozen production source; server restarted and browser freshly loaded",
+      "observed_at_utc": "2026-10-06T01:51:50.302Z",
+      "url": "http://127.0.0.1:4188/",
+      "screenshot": "/Users/youngi/.codex/worktrees/io-ui-closure/workbench/docs/reports/evidence/io-ui-closure/screenshots/final/browser-frozen-p11-media-1024.jpg",
+      "details": {
+        "page": "P11",
+        "width": 1024,
+        "height": 900,
+        "scope": "populated default media layout after MIME fix; basic DOM geometry and screenshot",
+        "observation": {
+          "cards": 123,
+          "centerWidth": 592,
+          "decoded": 120,
+          "documentWidth": 1024,
+          "errorItems": [
+            "Boundary fixture: missing file · 图片 预览失败\n素材文件不可读或路径无效。\n重试预览\nBoundary fixture: missing file\n图片\n37 B\n尚未引用\n插入\n⋯",
+            "Boundary fixture: exceeds preview cap · 图片 预览失败\n素材超过单文件预览上限（8 MiB）。\n重试预览\nBoundary fixture: exceeds preview cap\n图片\n8.0 MB\n尚未引用\n插入\n⋯",
+            "Boundary fixture: mismatched MIME · 图片 预览失败\n素材类型与声明的 MIME 不匹配。\n重试预览\nBoundary fixture: mismatched MIME\n图片\n1 KB\n尚未引用\n插入\n⋯"
+          ],
+          "h1": "媒体库 123",
+          "loading": 0,
+          "viewport": 1024
+        },
+        "status": "OBSERVED"
+      }
+    },
+    {
+      "name": "browser-frozen-p11-media-1280",
+      "source_commit": "dab26b7b09dcde37eba2f59b018b9ac11e7f73e0",
+      "source_state": "frozen production source; server restarted and browser freshly loaded",
+      "observed_at_utc": "2026-10-06T01:51:50.876Z",
+      "url": "http://127.0.0.1:4188/",
+      "screenshot": "/Users/youngi/.codex/worktrees/io-ui-closure/workbench/docs/reports/evidence/io-ui-closure/screenshots/final/browser-frozen-p11-media-1280.jpg",
+      "details": {
+        "page": "P11",
+        "width": 1280,
+        "height": 900,
+        "scope": "populated default media layout after MIME fix; basic DOM geometry and screenshot",
+        "observation": {
+          "cards": 123,
+          "centerWidth": 764,
+          "decoded": 120,
+          "documentWidth": 1280,
+          "errorItems": [
+            "Boundary fixture: missing file · 图片 预览失败\n素材文件不可读或路径无效。\n重试预览\nBoundary fixture: missing file\n图片\n37 B\n尚未引用\n插入\n⋯",
+            "Boundary fixture: exceeds preview cap · 图片 预览失败\n素材超过单文件预览上限（8 MiB）。\n重试预览\nBoundary fixture: exceeds preview cap\n图片\n8.0 MB\n尚未引用\n插入\n⋯",
+            "Boundary fixture: mismatched MIME · 图片 预览失败\n素材类型与声明的 MIME 不匹配。\n重试预览\nBoundary fixture: mismatched MIME\n图片\n1 KB\n尚未引用\n插入\n⋯"
+          ],
+          "h1": "媒体库 123",
+          "loading": 0,
+          "viewport": 1280
+        },
+        "status": "OBSERVED"
+      }
+    },
+    {
+      "name": "browser-frozen-p11-media-1440",
+      "source_commit": "dab26b7b09dcde37eba2f59b018b9ac11e7f73e0",
+      "source_state": "frozen production source; server restarted and browser freshly loaded",
+      "observed_at_utc": "2026-10-06T01:51:51.379Z",
+      "url": "http://127.0.0.1:4188/",
+      "screenshot": "/Users/youngi/.codex/worktrees/io-ui-closure/workbench/docs/reports/evidence/io-ui-closure/screenshots/final/browser-frozen-p11-media-1440.jpg",
+      "details": {
+        "page": "P11",
+        "width": 1440,
+        "height": 900,
+        "scope": "populated default media layout after MIME fix; basic DOM geometry and screenshot",
+        "observation": {
+          "cards": 123,
+          "centerWidth": 924,
+          "decoded": 120,
+          "documentWidth": 1440,
+          "errorItems": [
+            "Boundary fixture: missing file · 图片 预览失败\n素材文件不可读或路径无效。\n重试预览\nBoundary fixture: missing file\n图片\n37 B\n尚未引用\n插入\n⋯",
+            "Boundary fixture: exceeds preview cap · 图片 预览失败\n素材超过单文件预览上限（8 MiB）。\n重试预览\nBoundary fixture: exceeds preview cap\n图片\n8.0 MB\n尚未引用\n插入\n⋯",
+            "Boundary fixture: mismatched MIME · 图片 预览失败\n素材类型与声明的 MIME 不匹配。\n重试预览\nBoundary fixture: mismatched MIME\n图片\n1 KB\n尚未引用\n插入\n⋯"
+          ],
+          "h1": "媒体库 123",
+          "loading": 0,
+          "viewport": 1440
+        },
+        "status": "OBSERVED"
+      }
+    },
+    {
+      "name": "browser-frozen-p11-media-1728",
+      "source_commit": "dab26b7b09dcde37eba2f59b018b9ac11e7f73e0",
+      "source_state": "frozen production source; server restarted and browser freshly loaded",
+      "observed_at_utc": "2026-10-06T01:51:51.885Z",
+      "url": "http://127.0.0.1:4188/",
+      "screenshot": "/Users/youngi/.codex/worktrees/io-ui-closure/workbench/docs/reports/evidence/io-ui-closure/screenshots/final/browser-frozen-p11-media-1728.jpg",
+      "details": {
+        "page": "P11",
+        "width": 1728,
+        "height": 900,
+        "scope": "populated default media layout after MIME fix; basic DOM geometry and screenshot",
+        "observation": {
+          "cards": 123,
+          "centerWidth": 1188,
+          "decoded": 120,
+          "documentWidth": 1728,
+          "errorItems": [
+            "Boundary fixture: missing file · 图片 预览失败\n素材文件不可读或路径无效。\n重试预览\nBoundary fixture: missing file\n图片\n37 B\n尚未引用\n插入\n⋯",
+            "Boundary fixture: exceeds preview cap · 图片 预览失败\n素材超过单文件预览上限（8 MiB）。\n重试预览\nBoundary fixture: exceeds preview cap\n图片\n8.0 MB\n尚未引用\n插入\n⋯",
+            "Boundary fixture: mismatched MIME · 图片 预览失败\n素材类型与声明的 MIME 不匹配。\n重试预览\nBoundary fixture: mismatched MIME\n图片\n1 KB\n尚未引用\n插入\n⋯"
+          ],
+          "h1": "媒体库 123",
+          "loading": 0,
+          "viewport": 1728
+        },
+        "status": "OBSERVED"
+      }
+    },
+    {
+      "name": "browser-frozen-recovery-pending",
+      "source_commit": "dab26b7b09dcde37eba2f59b018b9ac11e7f73e0",
+      "source_state": "frozen production source; server restarted and browser freshly loaded",
+      "observed_at_utc": "2026-10-06T01:52:49.203Z",
+      "url": "http://127.0.0.1:4191/",
+      "screenshot": "/Users/youngi/.codex/worktrees/io-ui-closure/workbench/docs/reports/evidence/io-ui-closure/screenshots/final/browser-frozen-recovery-pending.jpg",
+      "details": {
+        "sourceFixture": "F-history",
+        "savedAtVisible": "2026/10/6 09:43:56",
+        "blockCountVisible": 16,
+        "escape": {
+          "choiceStillPending": true,
+          "dialogs": 1,
+          "focus": "保留磁盘版本"
+        },
+        "status": "observed_explicit_choice_required"
+      }
+    },
+    {
+      "name": "browser-frozen-recovery-kept-disk",
+      "source_commit": "dab26b7b09dcde37eba2f59b018b9ac11e7f73e0",
+      "source_state": "frozen production source; server restarted and browser freshly loaded",
+      "observed_at_utc": "2026-10-06T01:52:49.801Z",
+      "url": "http://127.0.0.1:4191/",
+      "screenshot": "/Users/youngi/.codex/worktrees/io-ui-closure/workbench/docs/reports/evidence/io-ui-closure/screenshots/final/browser-frozen-recovery-kept-disk.jpg",
+      "details": {
+        "action": "保留磁盘版本",
+        "status": "observed_dismissed_without_implicit_restore"
+      }
+    },
+    {
+      "name": "browser-dab26-recovery-kept-disk-red",
+      "source_commit": "dab26b7b09dcde37eba2f59b018b9ac11e7f73e0",
+      "source_state": "frozen production source; server restarted and browser freshly loaded",
+      "observed_at_utc": "2026-10-06T01:55:28.794Z",
+      "url": "http://127.0.0.1:4191/",
+      "screenshot": "/Users/youngi/.codex/worktrees/io-ui-closure/workbench/docs/reports/evidence/io-ui-closure/screenshots/final/browser-dab26-recovery-kept-disk-red.jpg",
+      "details": {
+        "priorAction": "保留磁盘版本",
+        "readOnlyDiskProof": "Canonical unchanged; recovery.json remains",
+        "reloadedPrompt": true,
+        "status": "RED_browser_clear_journal_noop_source_fix_pending"
+      }
+    },
+    {
+      "name": "browser-dab26-p15-history-1024",
+      "source_commit": "dab26b7b09dcde37eba2f59b018b9ac11e7f73e0",
+      "source_state": "frozen production source; server restarted and browser freshly loaded",
+      "observed_at_utc": "2026-10-06T01:59:48.051Z",
+      "url": "http://127.0.0.1:4191/",
+      "screenshot": "/Users/youngi/.codex/worktrees/io-ui-closure/workbench/docs/reports/evidence/io-ui-closure/screenshots/final/browser-dab26-p15-history-1024.jpg",
+      "details": {
+        "page": "P15",
+        "width": 1024,
+        "height": 900,
+        "scope": "P15 populated row geometry and bad-entry isolation; independent of pending recovery-clear fix",
+        "observation": {
+          "documentWidth": 1024,
+          "h1": "版本历史",
+          "rows": [
+            {
+              "disabled": false,
+              "mainWidth": 297.34375,
+              "text": "◷\n恢复前备份\n已保存\n\n恢复旧版本前自动保存当前项目\n\n2026/10/6 09:07:45\n恢复此版本"
+            },
+            {
+              "disabled": false,
+              "mainWidth": 297.34375,
+              "text": "◷\nFinal UI checkpoint\n已保存\n\nCreated through the real browser UI for closure acceptance.\n\n2026/10/6 09:07:17\n恢复此版本"
+            },
+            {
+              "disabled": false,
+              "mainWidth": 297.34375,
+              "text": "◷\nhistory_unindexed_20261006\n已保存\n\n没有备注\n\n2026/10/6 08:59:03\n恢复此版本"
+            },
+            {
+              "disabled": false,
+              "mainWidth": 297.34375,
+              "text": "◷\nNamed history checkpoint\n已保存\n\nPersisted through the real snapshot.create service command for owned UI QA.\n\n2026/10/6 08:59:03\n恢复此版本"
+            },
+            {
+              "disabled": true,
+              "mainWidth": 297.34375,
+              "text": "◷\nhistory_corrupt_20261006\n无法读取\n\n历史版本文件或索引已损坏。\n\n保存时间未知\n恢复此版本"
+            },
+            {
+              "disabled": true,
+              "mainWidth": 297.34375,
+              "text": "◷\nhistory_incomplete_20261006\n无法读取\n\n历史版本文件或索引已损坏。\n\n保存时间未知\n恢复此版本"
+            }
+          ],
+          "scrollTop": 0,
+          "viewport": 1024
+        },
+        "status": "OBSERVED"
+      }
+    },
+    {
+      "name": "browser-dab26-p15-history-1280",
+      "source_commit": "dab26b7b09dcde37eba2f59b018b9ac11e7f73e0",
+      "source_state": "frozen production source; server restarted and browser freshly loaded",
+      "observed_at_utc": "2026-10-06T01:59:48.422Z",
+      "url": "http://127.0.0.1:4191/",
+      "screenshot": "/Users/youngi/.codex/worktrees/io-ui-closure/workbench/docs/reports/evidence/io-ui-closure/screenshots/final/browser-dab26-p15-history-1280.jpg",
+      "details": {
+        "page": "P15",
+        "width": 1280,
+        "height": 900,
+        "scope": "P15 populated row geometry and bad-entry isolation; independent of pending recovery-clear fix",
+        "observation": {
+          "documentWidth": 1280,
+          "h1": "版本历史",
+          "rows": [
+            {
+              "disabled": false,
+              "mainWidth": 424.15625,
+              "text": "◷\n恢复前备份\n已保存\n\n恢复旧版本前自动保存当前项目\n\n2026/10/6 09:07:45\n恢复此版本"
+            },
+            {
+              "disabled": false,
+              "mainWidth": 424.15625,
+              "text": "◷\nFinal UI checkpoint\n已保存\n\nCreated through the real browser UI for closure acceptance.\n\n2026/10/6 09:07:17\n恢复此版本"
+            },
+            {
+              "disabled": false,
+              "mainWidth": 424.15625,
+              "text": "◷\nhistory_unindexed_20261006\n已保存\n\n没有备注\n\n2026/10/6 08:59:03\n恢复此版本"
+            },
+            {
+              "disabled": false,
+              "mainWidth": 424.15625,
+              "text": "◷\nNamed history checkpoint\n已保存\n\nPersisted through the real snapshot.create service command for owned UI QA.\n\n2026/10/6 08:59:03\n恢复此版本"
+            },
+            {
+              "disabled": true,
+              "mainWidth": 424.15625,
+              "text": "◷\nhistory_corrupt_20261006\n无法读取\n\n历史版本文件或索引已损坏。\n\n保存时间未知\n恢复此版本"
+            },
+            {
+              "disabled": true,
+              "mainWidth": 424.15625,
+              "text": "◷\nhistory_incomplete_20261006\n无法读取\n\n历史版本文件或索引已损坏。\n\n保存时间未知\n恢复此版本"
+            }
+          ],
+          "scrollTop": 0,
+          "viewport": 1280
+        },
+        "status": "OBSERVED"
+      }
+    },
+    {
+      "name": "browser-dab26-p15-history-1440",
+      "source_commit": "dab26b7b09dcde37eba2f59b018b9ac11e7f73e0",
+      "source_state": "frozen production source; server restarted and browser freshly loaded",
+      "observed_at_utc": "2026-10-06T01:59:48.573Z",
+      "url": "http://127.0.0.1:4191/",
+      "screenshot": "/Users/youngi/.codex/worktrees/io-ui-closure/workbench/docs/reports/evidence/io-ui-closure/screenshots/final/browser-dab26-p15-history-1440.jpg",
+      "details": {
+        "page": "P15",
+        "width": 1440,
+        "height": 900,
+        "scope": "P15 populated row geometry and bad-entry isolation; independent of pending recovery-clear fix",
+        "observation": {
+          "documentWidth": 1440,
+          "h1": "版本历史",
+          "rows": [
+            {
+              "disabled": false,
+              "mainWidth": 577.75,
+              "text": "◷\n恢复前备份\n已保存\n\n恢复旧版本前自动保存当前项目\n\n2026/10/6 09:07:45\n恢复此版本"
+            },
+            {
+              "disabled": false,
+              "mainWidth": 577.75,
+              "text": "◷\nFinal UI checkpoint\n已保存\n\nCreated through the real browser UI for closure acceptance.\n\n2026/10/6 09:07:17\n恢复此版本"
+            },
+            {
+              "disabled": false,
+              "mainWidth": 577.75,
+              "text": "◷\nhistory_unindexed_20261006\n已保存\n\n没有备注\n\n2026/10/6 08:59:03\n恢复此版本"
+            },
+            {
+              "disabled": false,
+              "mainWidth": 577.75,
+              "text": "◷\nNamed history checkpoint\n已保存\n\nPersisted through the real snapshot.create service command for owned UI QA.\n\n2026/10/6 08:59:03\n恢复此版本"
+            },
+            {
+              "disabled": true,
+              "mainWidth": 577.75,
+              "text": "◷\nhistory_corrupt_20261006\n无法读取\n\n历史版本文件或索引已损坏。\n\n保存时间未知\n恢复此版本"
+            },
+            {
+              "disabled": true,
+              "mainWidth": 577.75,
+              "text": "◷\nhistory_incomplete_20261006\n无法读取\n\n历史版本文件或索引已损坏。\n\n保存时间未知\n恢复此版本"
+            }
+          ],
+          "scrollTop": 0,
+          "viewport": 1440
+        },
+        "status": "OBSERVED"
+      }
+    },
+    {
+      "name": "browser-dab26-p15-history-1728",
+      "source_commit": "dab26b7b09dcde37eba2f59b018b9ac11e7f73e0",
+      "source_state": "frozen production source; server restarted and browser freshly loaded",
+      "observed_at_utc": "2026-10-06T01:59:48.731Z",
+      "url": "http://127.0.0.1:4191/",
+      "screenshot": "/Users/youngi/.codex/worktrees/io-ui-closure/workbench/docs/reports/evidence/io-ui-closure/screenshots/final/browser-dab26-p15-history-1728.jpg",
+      "details": {
+        "page": "P15",
+        "width": 1728,
+        "height": 900,
+        "scope": "P15 populated row geometry and bad-entry isolation; independent of pending recovery-clear fix",
+        "observation": {
+          "documentWidth": 1728,
+          "h1": "版本历史",
+          "rows": [
+            {
+              "disabled": false,
+              "mainWidth": 835.34375,
+              "text": "◷\n恢复前备份\n已保存\n\n恢复旧版本前自动保存当前项目\n\n2026/10/6 09:07:45\n恢复此版本"
+            },
+            {
+              "disabled": false,
+              "mainWidth": 835.34375,
+              "text": "◷\nFinal UI checkpoint\n已保存\n\nCreated through the real browser UI for closure acceptance.\n\n2026/10/6 09:07:17\n恢复此版本"
+            },
+            {
+              "disabled": false,
+              "mainWidth": 835.34375,
+              "text": "◷\nhistory_unindexed_20261006\n已保存\n\n没有备注\n\n2026/10/6 08:59:03\n恢复此版本"
+            },
+            {
+              "disabled": false,
+              "mainWidth": 835.34375,
+              "text": "◷\nNamed history checkpoint\n已保存\n\nPersisted through the real snapshot.create service command for owned UI QA.\n\n2026/10/6 08:59:03\n恢复此版本"
+            },
+            {
+              "disabled": true,
+              "mainWidth": 835.34375,
+              "text": "◷\nhistory_corrupt_20261006\n无法读取\n\n历史版本文件或索引已损坏。\n\n保存时间未知\n恢复此版本"
+            },
+            {
+              "disabled": true,
+              "mainWidth": 835.34375,
+              "text": "◷\nhistory_incomplete_20261006\n无法读取\n\n历史版本文件或索引已损坏。\n\n保存时间未知\n恢复此版本"
+            }
+          ],
+          "scrollTop": 0,
+          "viewport": 1728
+        },
+        "status": "OBSERVED"
+      }
+    },
+    {
+      "name": "browser-final-source-recovery-pending",
+      "source_commit": "04e9fdf4276fe37b79d7a1ee87656c28865d0fac",
+      "source_state": "frozen production source; server restarted and browser freshly loaded",
+      "observed_at_utc": "2026-10-06T02:43:40.574Z",
+      "url": "http://127.0.0.1:4191/",
+      "screenshot": "/Users/youngi/.codex/worktrees/io-ui-closure/workbench/docs/reports/evidence/io-ui-closure/screenshots/final/browser-final-source-recovery-pending.jpg",
+      "details": {
+        "operation": "fresh final-source boot with existing valid recovery journal",
+        "expected_transaction_id": "f-history-recovery-final-20261006",
+        "canonical_before_sha256": "64b9b83fdbbea3eb2da223c2b368aef031ba644096719a09c9e10643898267be"
+      }
+    },
+    {
+      "name": "browser-final-source-recovery-kept-disk",
+      "source_commit": "04e9fdf4276fe37b79d7a1ee87656c28865d0fac",
+      "source_state": "frozen production source; server restarted and browser freshly loaded",
+      "observed_at_utc": "2026-10-06T02:44:10.339Z",
+      "url": "http://127.0.0.1:4191/",
+      "screenshot": "/Users/youngi/.codex/worktrees/io-ui-closure/workbench/docs/reports/evidence/io-ui-closure/screenshots/final/browser-final-source-recovery-kept-disk.jpg",
+      "details": {
+        "operation": "explicit Keep disk completed in UI",
+        "dialog_count": 0,
+        "canonical_before_sha256": "64b9b83fdbbea3eb2da223c2b368aef031ba644096719a09c9e10643898267be",
+        "physical_clear_verification": "PASS: Canonical 69270B SHA64b9b83fdbbea3eb2da223c2b368aef031ba644096719a09c9e10643898267be unchanged; sidecar absent; Domain0",
+        "physical_proof": "runs/deno-fhistory-keepdisk-physical-proof.log"
+      }
+    },
+    {
+      "name": "browser-final-source-keep-disk-reloaded-clean",
+      "source_commit": "04e9fdf4276fe37b79d7a1ee87656c28865d0fac",
+      "source_state": "frozen production source; server restarted and browser freshly loaded",
+      "observed_at_utc": "2026-10-06T02:44:53.287Z",
+      "url": "http://127.0.0.1:4191/",
+      "screenshot": "/Users/youngi/.codex/worktrees/io-ui-closure/workbench/docs/reports/evidence/io-ui-closure/screenshots/final/browser-final-source-keep-disk-reloaded-clean.jpg",
+      "details": {
+        "operation": "fresh reload after Keep disk restores Versions page",
+        "recovery_dialog_count": 0,
+        "save_status": "✓ 已保存",
+        "page": "版本历史",
+        "expected_canonical_title": "F-history unindexed prior snapshot"
+      }
+    },
+    {
+      "name": "browser-final-source-p15-history-1024",
+      "source_commit": "04e9fdf4276fe37b79d7a1ee87656c28865d0fac",
+      "source_state": "frozen production source; server restarted and browser freshly loaded",
+      "observed_at_utc": "2026-10-06T02:46:10.696Z",
+      "url": "http://127.0.0.1:4191/",
+      "screenshot": "/Users/youngi/.codex/worktrees/io-ui-closure/workbench/docs/reports/evidence/io-ui-closure/screenshots/final/browser-final-source-p15-history-1024.jpg",
+      "details": {
+        "viewport": {
+          "width": 1024,
+          "height": 900
+        },
+        "document_width": 1024,
+        "restore_enabled": 4,
+        "corrupt_disabled": 2,
+        "scope": "P15 layout and bad-row isolation after final recovery clear; full new Native matrix remains pending"
+      }
+    },
+    {
+      "name": "browser-final-source-p15-history-1280",
+      "source_commit": "04e9fdf4276fe37b79d7a1ee87656c28865d0fac",
+      "source_state": "frozen production source; server restarted and browser freshly loaded",
+      "observed_at_utc": "2026-10-06T02:46:20.064Z",
+      "url": "http://127.0.0.1:4191/",
+      "screenshot": "/Users/youngi/.codex/worktrees/io-ui-closure/workbench/docs/reports/evidence/io-ui-closure/screenshots/final/browser-final-source-p15-history-1280.jpg",
+      "details": {
+        "viewport": {
+          "width": 1280,
+          "height": 900
+        },
+        "geometry": {
+          "document_width": 1280,
+          "viewport_width": 1280
+        },
+        "restore_enabled": 4,
+        "corrupt_disabled": 2,
+        "scope": "P15 observed geometry; snapshot data unchanged"
+      }
+    },
+    {
+      "name": "browser-final-source-p15-history-1440",
+      "source_commit": "04e9fdf4276fe37b79d7a1ee87656c28865d0fac",
+      "source_state": "frozen production source; server restarted and browser freshly loaded",
+      "observed_at_utc": "2026-10-06T02:46:29.037Z",
+      "url": "http://127.0.0.1:4191/",
+      "screenshot": "/Users/youngi/.codex/worktrees/io-ui-closure/workbench/docs/reports/evidence/io-ui-closure/screenshots/final/browser-final-source-p15-history-1440.jpg",
+      "details": {
+        "viewport": {
+          "width": 1440,
+          "height": 900
+        },
+        "geometry": {
+          "document_width": 1440,
+          "viewport_width": 1440
+        },
+        "restore_enabled": 4,
+        "corrupt_disabled": 2,
+        "scope": "P15 observed geometry; snapshot data unchanged"
+      }
+    },
+    {
+      "name": "browser-final-source-p15-history-1728",
+      "source_commit": "04e9fdf4276fe37b79d7a1ee87656c28865d0fac",
+      "source_state": "frozen production source; server restarted and browser freshly loaded",
+      "observed_at_utc": "2026-10-06T02:46:37.061Z",
+      "url": "http://127.0.0.1:4191/",
+      "screenshot": "/Users/youngi/.codex/worktrees/io-ui-closure/workbench/docs/reports/evidence/io-ui-closure/screenshots/final/browser-final-source-p15-history-1728.jpg",
+      "details": {
+        "viewport": {
+          "width": 1728,
+          "height": 900
+        },
+        "geometry": {
+          "document_width": 1728,
+          "viewport_width": 1728
+        },
+        "restore_enabled": 4,
+        "corrupt_disabled": 2,
+        "scope": "P15 observed geometry; snapshot data unchanged"
+      }
+    },
+    {
+      "name": "browser-final-source-second-recovery-pending",
+      "source_commit": "04e9fdf4276fe37b79d7a1ee87656c28865d0fac",
+      "source_state": "frozen production source; server restarted and browser freshly loaded",
+      "observed_at_utc": "2026-10-06T02:48:41.813Z",
+      "url": "http://127.0.0.1:4191/",
+      "screenshot": "/Users/youngi/.codex/worktrees/io-ui-closure/workbench/docs/reports/evidence/io-ui-closure/screenshots/final/browser-final-source-second-recovery-pending.jpg",
+      "details": {
+        "expected_transaction_id": "f-history-recovery-restore-20261006",
+        "candidate_title": "F-history recovery restored final",
+        "canonical_before_sha256": "64b9b83fdbbea3eb2da223c2b368aef031ba644096719a09c9e10643898267be",
+        "scope": "Fresh UI boot on second independent valid sidecar; Canonical remains original until explicit decision"
+      }
+    },
+    {
+      "name": "browser-final-source-recovery-restored",
+      "source_commit": "04e9fdf4276fe37b79d7a1ee87656c28865d0fac",
+      "source_state": "frozen production source; server restarted and browser freshly loaded",
+      "observed_at_utc": "2026-10-06T02:49:03.330Z",
+      "url": "http://127.0.0.1:4191/",
+      "screenshot": "/Users/youngi/.codex/worktrees/io-ui-closure/workbench/docs/reports/evidence/io-ui-closure/screenshots/final/browser-final-source-recovery-restored.jpg",
+      "details": {
+        "operation": "explicit Restore then Continue",
+        "expected_title": "F-history recovery restored final",
+        "recovery_dialog_count": 0,
+        "backup_and_canonical_verification": "PASS: Canonical restored title, Domain0, sidecar absent; new snapshot preserves old Canonical exact bytes",
+        "canonical_after_sha256": "5d62bca04afef614c1d0b5652eda6f68c8408922932534a5835bc16529050a3a",
+        "backup_id": "72f09912-cd6e-4048-bd8d-e8fa3e1d1124",
+        "backup_sha256": "64b9b83fdbbea3eb2da223c2b368aef031ba644096719a09c9e10643898267be",
+        "physical_proof": "runs/deno-fhistory-restore-physical-proof.log"
+      }
+    },
+    {
+      "name": "browser-final-source-recovery-restored-reloaded-clean",
+      "source_commit": "04e9fdf4276fe37b79d7a1ee87656c28865d0fac",
+      "source_state": "frozen production source; server restarted and browser freshly loaded",
+      "observed_at_utc": "2026-10-06T02:49:43.513Z",
+      "url": "http://127.0.0.1:4191/",
+      "screenshot": "/Users/youngi/.codex/worktrees/io-ui-closure/workbench/docs/reports/evidence/io-ui-closure/screenshots/final/browser-final-source-recovery-restored-reloaded-clean.jpg",
+      "details": {
+        "operation": "fresh reload after explicit Restore; Versions refreshed",
+        "save_status": "✓ 已保存",
+        "recovery_dialog_count": 0,
+        "visible_durable_backup_note": "恢复自动保存前自动创建",
+        "valid_history_count": 5,
+        "corrupt_disabled": 2,
+        "scope": "UI restored title, clean baseline, durable backup row and no recurring recovery prompt; physical proof separate"
+      }
+    },
+    {
+      "name": "browser-final-source-ai-settings-escape-focus",
+      "source_commit": "04e9fdf4276fe37b79d7a1ee87656c28865d0fac",
+      "source_state": "frozen production source; server restarted and browser freshly loaded",
+      "observed_at_utc": "2026-10-06T02:52:09.159Z",
+      "url": "http://127.0.0.1:4191/",
+      "screenshot": "/Users/youngi/.codex/worktrees/io-ui-closure/workbench/docs/reports/evidence/io-ui-closure/screenshots/final/browser-final-source-ai-settings-escape-focus.jpg",
+      "details": {
+        "forward_tab_focus": "×",
+        "backward_tab_focus": "完成",
+        "escape_dialog_count": 0,
+        "escape_return_focus": "管理连接",
+        "credentials_entered": false,
+        "network_connection_attempted": false
+      }
+    },
+    {
+      "name": "browser-final-source-media-boundary",
+      "source_commit": "04e9fdf4276fe37b79d7a1ee87656c28865d0fac",
+      "source_state": "frozen production source; server restarted and browser freshly loaded",
+      "observed_at_utc": "2026-10-06T02:55:51.736Z",
+      "url": "http://127.0.0.1:4188/",
+      "screenshot": "/Users/youngi/.codex/worktrees/io-ui-closure/workbench/docs/reports/evidence/io-ui-closure/screenshots/final/browser-final-source-media-boundary.jpg",
+      "details": {
+        "scope": "Targeted latest-source media regression after full dab26 three-trip/20-cycle proof; not a repeated 120-item traversal",
+        "visible_errors": [
+          "素材文件不可读或路径无效。",
+          "素材超过单文件预览上限（8 MiB）。",
+          "素材类型与声明的 MIME 不匹配。"
+        ],
+        "video_count": 0
+      }
+    },
+    {
+      "name": "browser-final-source-video-close-focus",
+      "source_commit": "04e9fdf4276fe37b79d7a1ee87656c28865d0fac",
+      "source_state": "frozen production source; server restarted and browser freshly loaded",
+      "observed_at_utc": "2026-10-06T02:56:26.456Z",
+      "url": "http://127.0.0.1:4188/",
+      "screenshot": "/Users/youngi/.codex/worktrees/io-ui-closure/workbench/docs/reports/evidence/io-ui-closure/screenshots/final/browser-final-source-video-close-focus.jpg",
+      "details": {
+        "scope": "One latest-source targeted MP4 cycle",
+        "default_state": [
+          {
+            "duration": null,
+            "error": null,
+            "paused": true,
+            "readyState": 0,
+            "time": 0
+          }
+        ],
+        "playing_state": [
+          {
+            "duration": 2,
+            "error": null,
+            "paused": false,
+            "readyState": 4,
+            "time": 0.56649
+          }
+        ],
+        "closed_video_count": 0,
+        "closed_dialog_count": 0,
+        "return_focus": "放大查看 Fixture MP4 2"
+      }
+    },
+    {
+      "name": "browser-a4-media-session-reloaded",
+      "source_commit": "a4cea54e140a7b2c35fd02d3c5b6bb2605d0c3af",
+      "source_state": "Deno production batch at a4 freshly loaded; subsequent Native-only availability fix is pending",
+      "observed_at_utc": "2026-10-06T04:02:12.282Z",
+      "url": "http://127.0.0.1:4188/",
+      "screenshot": "/Users/youngi/.codex/worktrees/io-ui-closure/workbench/docs/reports/evidence/io-ui-closure/screenshots/final/browser-a4-media-session-reloaded.jpg",
+      "details": {
+        "fixture": "/tmp/workbench-io-ui-F-media-ui-final",
+        "serverSource": "a4cea54e140a7b2c35fd02d3c5b6bb2605d0c3af",
+        "serverRestarted": true,
+        "restoredProject": true,
+        "mediaCount": 123,
+        "scope": "targeted fresh bootstrap and navigation only; full media 93-frame result retains dab26 provenance; Native-only overview import labels require actual Native check"
+      }
+    }
+  ]
+}

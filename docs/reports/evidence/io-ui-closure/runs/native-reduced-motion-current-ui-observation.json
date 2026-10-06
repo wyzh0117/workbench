@@ -1,0 +1,8 @@
+{
+  "observed_at_utc": "2026-10-06T05:43:31.350Z",
+  "scope": "Read-only System Settings Accessibility Motion UI observation; no preference changed",
+  "reduce_motion": "off",
+  "auto_play_animated_images": "on",
+  "native_reduced_motion_behavior": "NOT_RUN",
+  "reason": "Actual OS preference is off; no global preference changed during read-only inspection"
+}

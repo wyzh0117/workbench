@@ -1,0 +1,68 @@
+{
+  "captured_at_utc": "2026-10-06T10:52:02.403164+00:00",
+  "source": "Final9 / b09718c0823f170836a223bab79b750722e83c73",
+  "project_dir": "/private/tmp/workbench-io-ui-F-external-conflict-final7",
+  "project_id": "fb45a2d4-fbcb-4095-9d10-76f18fa98a14",
+  "ui_evidence": {
+    "summary_path": "/Users/youngi/.codex/worktrees/io-ui-closure/workbench/docs/reports/evidence/io-ui-closure/runs/native-final9/n05-final9-nonconflict-merged.json",
+    "summary_sha256": "ded092c4819fbb0533a36d4676f2c14d3867cbb445dcc4e33e5b91263f52d48f",
+    "summary": {
+      "source": "Final9 / b09718c0823f170836a223bab79b750722e83c73",
+      "project_id": "fb45a2d4-fbcb-4095-9d10-76f18fa98a14",
+      "disk_change_count": 1,
+      "local_change_count": 2,
+      "conflict_count": 0,
+      "action": "Preview and auto-merge",
+      "ui_result": "✓ 已保存; 已按无冲突内容自动合并",
+      "local_title": "External canonical title QA — Native local title",
+      "external_field": "project.description changed under strict guarded helper; awaiting physical confirmation"
+    },
+    "ax": {
+      "path": "/Users/youngi/.codex/worktrees/io-ui-closure/workbench/docs/reports/evidence/io-ui-closure/runs/native-final9/n05-final9-nonconflict-merged.ax.txt",
+      "bytes": 4404,
+      "sha256": "0d99cc1610ab206da676ddaea1fb644ebd54e2e7820e86ab4ed8b204fb84975e",
+      "mtime_ns": 1791283878303843330
+    },
+    "screenshot": {
+      "path": "/Users/youngi/.codex/worktrees/io-ui-closure/workbench/docs/reports/evidence/io-ui-closure/runs/native-final9/n05-final9-nonconflict-merged.jpg",
+      "bytes": 462510,
+      "sha256": "db0987eb5dd8b77dec5e3ad652258479bb2d4bc2549d968b4e37a4ad46f420d5",
+      "mtime_ns": 1791283878304026285
+    },
+    "summary_stage": "pre_preview_summary",
+    "summary_scope_note": "The conflict_count=0 belongs to the UI summary captured before the user clicked Preview and auto-merge; it is not an independently observed project_merge result conflicts[] length."
+  },
+  "canonical": {
+    "path": "/private/tmp/workbench-io-ui-F-external-conflict-final7/project.json",
+    "bytes": 74967,
+    "sha256": "a74e8d175ec7408b510f61c9ab4c50aca1d241007dbec4a6585582782b64df55",
+    "mtime_ns": 1791283840550191979,
+    "project_id": "fb45a2d4-fbcb-4095-9d10-76f18fa98a14",
+    "title": "External canonical title QA — Native local title",
+    "description": "N05 external description 2026-10-06",
+    "updated_at": "2026-10-06T10:50:22.844Z",
+    "target_block_id": "00000000-0000-4000-8000-00000000000d",
+    "target_block": "Local conflict draft retained for local resolution\\. N05\\-LOCAL\\-20261006\\-A N05\\-LOCAL\\-CONTINUED\\-20261006\\-C N05\\-LOCAL\\-20261006\\-D N05\\-EXTERNAL\\-20261006\\-B"
+  },
+  "pre_merge_external_canonical": {
+    "bytes": 74944,
+    "sha256": "6f91930ca86a030b1b52c6dcf9e79819db491f9ce9df0a68c2a4e5609c9d7a8e",
+    "description": "N05 external description 2026-10-06",
+    "title": "External canonical title QA"
+  },
+  "backup": {
+    "path": "/private/tmp/workbench-io-ui-F-external-conflict-final7/project.bak",
+    "bytes": 74944,
+    "sha256": "6f91930ca86a030b1b52c6dcf9e79819db491f9ce9df0a68c2a4e5609c9d7a8e",
+    "mtime_ns": 1791283803845016751,
+    "project_id": "fb45a2d4-fbcb-4095-9d10-76f18fa98a14",
+    "title": "External canonical title QA",
+    "description": "N05 external description 2026-10-06",
+    "updated_at": "2026-10-06T10:17:32.765Z",
+    "target_block_id": "00000000-0000-4000-8000-00000000000d",
+    "target_block": "Local conflict draft retained for local resolution\\. N05\\-LOCAL\\-20261006\\-A N05\\-LOCAL\\-CONTINUED\\-20261006\\-C N05\\-LOCAL\\-20261006\\-D N05\\-EXTERNAL\\-20261006\\-B",
+    "matches_external_premerge_bytes": true
+  },
+  "domain_issue_count": 0,
+  "interpretation": "Actual UI summary before Preview reported 1 disk change, 2 local changes, 0 conflicts; after Preview and auto-merge, UI returned saved success. Physical Canonical contains the local title and external description together; project id is unchanged. project.bak exactly preserves the pre-merge external version. This demonstrates a non-conflicting merge for distinct fields. The pre-preview conflict_count is not treated as project_merge conflicts[] length. UI AX does not expose mutation_ack payload/bindings."
+}

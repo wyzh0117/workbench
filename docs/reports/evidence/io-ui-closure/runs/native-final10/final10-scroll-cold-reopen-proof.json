@@ -1,0 +1,63 @@
+{
+  "kind": "native_final10_scroll_cold_reopen_proof",
+  "captured_at": "2026-10-06T12:24:36.789053+00:00",
+  "source_pin": "9bbc8cf3067b6117be8de41e1bd5bef3960a671a",
+  "before_quit": {
+    "app_pid": 77781,
+    "session_sha256": "7d43ef80fa5622c7f0cc6746a22d094270a44d215a170e5dacc8b411e3b35c88",
+    "scroll_top": 836,
+    "canonical_bytes": 71730,
+    "canonical_sha256": "b8c14b03388a1c5f06a85296723b464e552896113f77d57324a3e75855e4602c",
+    "project_id": "dddddddd-dddd-4ddd-8ddd-dddddddddddd"
+  },
+  "after_reopen": {
+    "app_pid": 78414,
+    "process_present": true,
+    "session_path": "/Users/youngi/Library/Application Support/io.github.wyzh0117.ai-course-workbench.qa.io-ui-closure.final10/.workspace/session.json",
+    "session_bytes": 1327,
+    "session_sha256": "7d43ef80fa5622c7f0cc6746a22d094270a44d215a170e5dacc8b411e3b35c88",
+    "project_id": "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
+    "project_dir": "/private/tmp/workbench-io-ui-native-final/history-restore",
+    "route": "editor",
+    "mode": "writing",
+    "active_content_item_id": "00000000-0000-4000-8000-000000000004",
+    "selected_block_id": null,
+    "tabs": [
+      {
+        "content_item_id": "00000000-0000-4000-8000-000000000004",
+        "mode": "writing",
+        "pinned": false,
+        "scroll_top": 836
+      }
+    ],
+    "project_lock": {
+      "app_instance_id": "app-p78414-1791289364106-0-71aa6c14cb79326d8bde5afbe8c0e033f3552402d8988e14",
+      "heartbeat": "2026-10-06T12:24:34.335Z",
+      "host": "localhost",
+      "opened_at": "2026-10-06T12:22:44.106Z",
+      "pid": 78414
+    },
+    "canonical_path": "/tmp/workbench-io-ui-native-final/history-restore/project.json",
+    "canonical_bytes": 71730,
+    "canonical_sha256": "b8c14b03388a1c5f06a85296723b464e552896113f77d57324a3e75855e4602c",
+    "canonical_mtime_ns": 1791279131885451098
+  },
+  "comparison": {
+    "session_sha256_unchanged": true,
+    "scroll_top_preserved": true,
+    "canonical_sha256_unchanged": true,
+    "new_pid": true
+  },
+  "captures": {
+    "center-scroll-after-relaunch.jpg": {
+      "path": "/Users/youngi/.codex/worktrees/io-ui-closure/workbench/docs/reports/evidence/io-ui-closure/runs/native-final10/center-scroll-after-relaunch.jpg",
+      "bytes": 973176,
+      "sha256": "370febd7b60f3a4131f71453d1905d6f46d16291947985940c1cc8dcbfaea96a"
+    },
+    "center-scroll-after-relaunch.ax.txt": {
+      "path": "/Users/youngi/.codex/worktrees/io-ui-closure/workbench/docs/reports/evidence/io-ui-closure/runs/native-final10/center-scroll-after-relaunch.ax.txt",
+      "bytes": 17732,
+      "sha256": "ba0ad0d11b894caece1c1c674fdcce46cdb903ab4e468ba594a029595a87d752"
+    }
+  }
+}

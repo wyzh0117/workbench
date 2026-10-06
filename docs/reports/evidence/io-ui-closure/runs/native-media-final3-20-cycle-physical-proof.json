@@ -1,0 +1,105 @@
+{
+  "captured_at_utc": "2026-10-06T05:17:38.053826+00:00",
+  "purpose": "Read-only verification that the Native 20-cycle media interaction left the isolated project clone byte-identical to its pre-launch clone manifest.",
+  "native_app_source_pin_for_cycles": "7555f02fdbdad1c3aa558b2b85e3cfe6fb8fa3be",
+  "candidate_app": "/tmp/io-ui-closure-native-qa-final3/AI Course Workbench QA Preview Final3.app",
+  "cycle_evidence": {
+    "path": "docs/reports/evidence/io-ui-closure/native-media-final3-cycles.json",
+    "sha256": "24a09130108e9230bbc2b3aaa7095f4ce5ed9f400332ba4146ff5a4900b43fd5",
+    "total_actual_open_cycles": 20,
+    "scope": "5video5gif5menus5renamecancel; actualPlayobserved once, GIFanimation/static toggle unverified; RSSunknown"
+  },
+  "fixture_definition": {
+    "path": "docs/reports/evidence/io-ui-closure/fixture-manifest.json",
+    "source_commit": "b990d49029333d4bacc46a2f92361779a554545c",
+    "id": "F-media-ui",
+    "shape": {
+      "stages": 1,
+      "lessons": 1,
+      "blocks": 12,
+      "valid_assets": 120,
+      "boundary_assets": 3,
+      "total_assets": 123,
+      "physical_media_files": 122
+    },
+    "validation": "domain-valid; all 120 valid entries kept; 3 distinct boundary records/files; generator hashes bytes before writing; GIF 64x64/2s, MP4 H.264 64x64/2s ffprobe PASS"
+  },
+  "clone_baseline": {
+    "path": "/tmp/workbench-io-ui-native-final/manifest.json",
+    "sha256": "4d85f72b9207dfbc55957f22f22fa70ef1fb46979d3dbffa78a3e30b0b08d5be",
+    "source_root": "/tmp/workbench-io-ui-F-media-ui-final",
+    "native_root": "/tmp/workbench-io-ui-native-final/media",
+    "canonical_bytes": 108465,
+    "canonical_sha256": "2fe9dcb4c448a1ba87f4d6ec8b0c58d1a9204298e0303b606119ec8b32cd05f4",
+    "baseline_asset_file_count": 122,
+    "expected_preserved_path_count": 124
+  },
+  "current_canonical": {
+    "path": "/tmp/workbench-io-ui-native-final/media/project.json",
+    "bytes": 108465,
+    "sha256": "2fe9dcb4c448a1ba87f4d6ec8b0c58d1a9204298e0303b606119ec8b32cd05f4",
+    "project_id": "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+    "title": "File I/O media-ui QA fixture",
+    "counts": {
+      "stages": 1,
+      "documents": 1,
+      "blocks": 12,
+      "assets": 123,
+      "asset_usages": 0
+    },
+    "asset_type_counts": {
+      "gif": 3,
+      "image": 117,
+      "video": 3
+    }
+  },
+  "physical_integrity": {
+    "verified_preserved_path_count": 124,
+    "preserved_path_mismatches": [],
+    "canonical_asset_row_count": 123,
+    "unique_asset_storage_path_count": 123,
+    "physical_asset_files_matching_rows": 122,
+    "physical_asset_bytes": 8609322,
+    "intentionally_missing_boundary_rows": [
+      {
+        "id": "00000000-0000-4000-8000-000000000089",
+        "path": "assets/fixture-edge-missing.png",
+        "expected": "intentional missing-asset boundary row; no physical file by fixture design"
+      }
+    ],
+    "other_asset_mismatches": [],
+    "boundary_rows": [
+      {
+        "id": "00000000-0000-4000-8000-000000000089",
+        "filename": "fixture-edge-missing.png",
+        "path": "assets/fixture-edge-missing.png",
+        "type": "image",
+        "mime_type": "image/png",
+        "file_size": 37,
+        "checksum": "d323e239449b1d9fe0150d22f3b7b8961c68683f911071b2f7c992369a2b57f1",
+        "exists": false
+      },
+      {
+        "id": "00000000-0000-4000-8000-00000000008a",
+        "filename": "fixture-edge-oversize.png",
+        "path": "assets/fixture-edge-oversize.png",
+        "type": "image",
+        "mime_type": "image/png",
+        "file_size": 8388609,
+        "checksum": "5fbf3eb7e47b345223fa63a25958ad8abf635da5361a859addbb1daac3154e67",
+        "exists": true
+      },
+      {
+        "id": "00000000-0000-4000-8000-00000000008b",
+        "filename": "fixture-edge-wrong-mime.png",
+        "path": "assets/fixture-edge-wrong-mime.png",
+        "type": "image",
+        "mime_type": "text/plain",
+        "file_size": 1478,
+        "checksum": "2aaf0d36f2fc64bfe9df8e4ba4c7e7a331208b68d9643d3ca2623c5392829f88",
+        "exists": true
+      }
+    ]
+  },
+  "result": "PASS"
+}

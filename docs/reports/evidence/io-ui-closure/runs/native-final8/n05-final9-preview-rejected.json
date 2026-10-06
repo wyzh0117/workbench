@@ -1,0 +1,9 @@
+{
+  "captured_at": "2026-10-06T10:18:15.664Z",
+  "source_commit": "b09718c0823f170836a223bab79b750722e83c73",
+  "project_id": "fb45a2d4-fbcb-4095-9d10-76f18fa98a14",
+  "disk_sha256": "57f4b9a5d549634068e404a217d18a000d9ab73dfb497c4e911e6b60566fc9a8",
+  "action": "clicked Preview and auto-merge",
+  "ui_ax": "Window: \"AI Course Workbench\", App: AI Course Workbench QA Preview Final9.\n0 standard window AI Course Workbench, Secondary Actions: Raise\n\t1 scroll area\n\t\t2 HTML content Description: AI Course Workbench, URL: tauri://localhost\n\t\t\t3 container 课程文件与当前编辑内容存在差异\n\t\t\t\t4 text 保存已暂停\n\t\t\t\t5 heading 课程文件与当前编辑内容存在差异, Value: 2\n\t\t\t\t\t6 text 课程文件与当前编辑内容存在差异\n\t\t\t\t7 text 为避免覆盖，手动保存和自动保存都已暂停。你可以继续查看；下一步请选择重新载入、自动合并，或在确认后保留本地版本。\n\t\t\t\t8 text 磁盘变化 \n\t\t\t\t9 text 2\n\t\t\t\t10 text 本地变化 \n\t\t\t\t11 text 2\n\t\t\t\t12 text 合并冲突 \n\t\t\t\t13 text 1\n\t\t\t\t14 text blocks\n\t\t\t\t15 text 本地与外部都修改了此处\n\t\t\t\t16 button 重新载入磁盘版本\n\t\t\t\t17 button 预览并自动合并\n\t\t\t\t18 button 明确保留本地版本\n\t\t\t19 container\n\t\t\t\t20 text 还有无法自动合并的内容，请选择重新载入或明确保留本地版本\n\t\t\t\t21 button 关闭提示\n\t22 close button\n\t23 full screen button Help: this button also has an action to zoom the window, Secondary Actions: zoom the window\n\t24 minimize button\n\t25 text AI Course Workbench\n26 menu bar\n\t27 AI Course Workbench QA Preview Final9\n\t28 File\n\t29 Edit\n\t30 View\n\t31 Window\n\t32 Help\n\nThe focused UI element is 16 button 重新载入磁盘版本",
+  "jpeg_bytes": 298384
+}

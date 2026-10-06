@@ -1,0 +1,28 @@
+READ-ONLY NATIVE LAYOUT/PPTX PHYSICAL PROOF
+Capture: 2026-10-06; no UI or filesystem mutations performed by verifier.
+
+Canonical: /tmp/workbench-io-ui-native-final/layout/project.json bytes=73780 sha256=4957c6e748fa03fe23c495ccb245f85aca012d837f0efb7ec7bb1b46bdfeaf90 project_id=bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb title=File I/O layout-final QA fixture updated_at=2026-10-06T03:39:34.732Z
+validateProjectData issues=0.
+Counts: stages=2 lessons=4 documents=4 blocks=17 assets=6 usages=1 layout_pages=3 placements=5
+
+Current placements (page/title, slot row_start,column_start -> row_end,column_end, block):
+第 1 页 / 00000000-0000-4000-8000-000000000059 slot=0,0->1,1 type=heading block=00000000-0000-4000-8000-00000000000c content='Fixture heading 1'
+第 1 页 / 00000000-0000-4000-8000-000000000059 slot=0,1->1,2 type=image block=00000000-0000-4000-8000-00000000001c content='renamed-second-qa.png'
+跨页文本与图片 / 00000000-0000-4000-8000-00000000005a slot=0,0->1,1 type=paragraph block=00000000-0000-4000-8000-00000000000d content='Fixture lesson 1, paragraph 1. The quick brown fox measures canonical project I/O while preserving v'
+跨页文本与图片 / 00000000-0000-4000-8000-00000000005a slot=0,1->1,2 type=paragraph block=00000000-0000-4000-8000-00000000000e content='Fixture long body 1. The quick brown fox measures canonical project I/O while preserving valid domai'
+第 1 页 / 00000000-0000-4000-8000-000000000059 slot=1,0->2,2 type=paragraph block=00000000-0000-4000-8000-00000000000f content='Fixture lesson 1, paragraph 3. The quick brown fox measures canonical project I/O while preserving v'
+Asset 00000000-0000-4000-8000-00000000001d renamed-second-qa.png: bytes=1488; sha256=0c479466fd0ea052ca693290293b423068552c091e37922de3944ce7eefdf0d3; canonical_checksum=0c479466fd0ea052ca693290293b423068552c091e37922de3944ce7eefdf0d3; match=True
+Asset 00000000-0000-4000-8000-00000000001e fixture-001.png: bytes=1482; sha256=3cced520167601a8cde0af73da82fa6a035f11e14976d3a19733701546d8078e; canonical_checksum=3cced520167601a8cde0af73da82fa6a035f11e14976d3a19733701546d8078e; match=True
+Asset 00000000-0000-4000-8000-00000000001f fixture-002.png: bytes=1503; sha256=e4943822009bebf60c212569ecad21c1fd176fbfb26552974c3e565a931b35aa; canonical_checksum=e4943822009bebf60c212569ecad21c1fd176fbfb26552974c3e565a931b35aa; match=True
+Asset 00000000-0000-4000-8000-000000000020 fixture-003.png: bytes=1519; sha256=96530624979bf1be2732b5a9b2da93536da71ee9f0cdd99abded5346600dbd80; canonical_checksum=96530624979bf1be2732b5a9b2da93536da71ee9f0cdd99abded5346600dbd80; match=True
+Asset 00000000-0000-4000-8000-000000000021 fixture-00.gif: bytes=7493; sha256=eacfdc6858d34f7c3c299ed7fa75a2a9145981098c24b3900986957b9e94c0d2; canonical_checksum=eacfdc6858d34f7c3c299ed7fa75a2a9145981098c24b3900986957b9e94c0d2; match=True
+Asset 00000000-0000-4000-8000-000000000022 fixture-00.mp4: bytes=8748; sha256=697f1b863079014da64bc345296d4671197a4d921341bf11ef71c26dc21cf7c6; canonical_checksum=697f1b863079014da64bc345296d4671197a4d921341bf11ef71c26dc21cf7c6; match=True
+
+UI returned: /tmp/workbench-io-ui-native-final/layout/native-layout-final2.pptx; bytes=27617; sha256=7e21ccd6069614ed28a375ae0adf946df0394a861bd3606064e7885be8cbb20e.
+ZIP integrity testzip=None; slides=3; media_files=1.
+PPTX media ppt/media/image-1.png: bytes=1488; sha256=0c479466fd0ea052ca693290293b423068552c091e37922de3944ce7eefdf0d3
+Slide ppt/slides/slide1.xml: pictures=1; text=Fixture heading 1 | renamed-second-qa.png
+Slide ppt/slides/slide2.xml: pictures=0; text=Fixture lesson 1, paragraph 1. The quick brown fox measures canonical project I/O while preserving valid domain structure. The quick brown fox measures canonical project I/O while preserving valid dom
+Slide ppt/slides/slide3.xml: pictures=0; text=Fixture lesson 1, paragraph 3. The quick brown fox measures canonical project I/O while preserving valid domain structure. The quick brown fox measures canonical project I/O while preserving valid dom
+
+Timing limitation: the current Canonical has the later saved cross-page move/resize (paragraph 3 now on page 1 spanning columns 0–2); the actual UI PPTX was emitted earlier and therefore is verified as a valid 3-slide / 1-image package from the earlier layout state, not as a rendering of that final later edit.

@@ -1,0 +1,39 @@
+{
+  "kind": "native_final10_scroll_prequit_physical_proof",
+  "captured_at": "2026-10-06T12:19:31Z",
+  "app_pid": 77781,
+  "bundle_id": "io.github.wyzh0117.ai-course-workbench.qa.io-ui-closure.final10",
+  "session_path": "/Users/youngi/Library/Application Support/io.github.wyzh0117.ai-course-workbench.qa.io-ui-closure.final10/.workspace/session.json",
+  "session_bytes": 1327,
+  "session_sha256": "7d43ef80fa5622c7f0cc6746a22d094270a44d215a170e5dacc8b411e3b35c88",
+  "project_id": "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
+  "project_dir_session": "/private/tmp/workbench-io-ui-native-final/history-restore",
+  "reader": {
+    "active_content_item_id": "00000000-0000-4000-8000-000000000004",
+    "mode": "writing",
+    "route": "editor",
+    "selected_block_id": null,
+    "tabs": [
+      {
+        "content_item_id": "00000000-0000-4000-8000-000000000004",
+        "mode": "writing",
+        "pinned": false,
+        "scroll_top": 836
+      }
+    ],
+    "project_sessions_entry_matches_top_level": true
+  },
+  "lease": {
+    "path": "/tmp/workbench-io-ui-native-final/history-restore/.workspace/project.lock",
+    "pid": 77781,
+    "heartbeat": "2026-10-06T12:18:35.871Z",
+    "lock_sha256": "49a6c9e3b28ec74ee23fb91b635a5cd8fb8a3f9fad790d5203c015632d480ac0"
+  },
+  "canonical": {
+    "path": "/tmp/workbench-io-ui-native-final/history-restore/project.json",
+    "bytes": 71730,
+    "sha256": "b8c14b03388a1c5f06a85296723b464e552896113f77d57324a3e75855e4602c",
+    "mtime_ns": 1791279131885451098
+  },
+  "cold_reopen_status": "pending; this is only the real pre-quit positive scroll value"
+}

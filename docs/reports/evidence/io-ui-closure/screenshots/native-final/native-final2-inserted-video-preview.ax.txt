@@ -1,0 +1,57 @@
+Window: "AI Course Workbench", App: AI Course Workbench QA Preview.
+0 standard window AI Course Workbench, Secondary Actions: Raise
+	1 scroll area
+		2 HTML content Description: AI Course Workbench, URL: tauri://localhost
+			3 container
+				4 button 返回项目选择；当前项目不会关闭
+				5 text AI Course Workbench
+				6 button workbench-io-ui-F-mapping-native-final ⌄, Help: 点击修改课程标题
+				7 button 打开上一课
+				8 button S02-01｜03 视频 Lesson, Help: 点击修改当前课程标题
+				9 button (disabled) 打开下一课
+				10 text ✓ 已保存
+				11 button 撤销上一次编辑
+				12 button 恢复上一次编辑
+				13 pop up button 设置
+				14 button 保存
+				15 button 保存版本
+				16 button 预览
+				17 button 导出
+				18 button 项目概览
+				19 button 打开课程：S01-01 01 图文 与 跨目录链接 Lesson
+				20 button 关闭课程标签：S01-01 01 图文 与 跨目录链接 Lesson, Help: 关闭课程标签
+				21 button 打开课程：S02-01 03 视频 Lesson
+				22 button 关闭课程标签：S02-01 03 视频 Lesson, Help: 关闭课程标签
+				23 text 工作台 · S02-01
+				24 heading 03 视频 Lesson, Value: 1
+					25 text 03 视频 Lesson
+				26 tab group (selectable) 工作台视图
+					27 tab (selectable) 01 正文
+					28 tab (selectable) 02 Flow
+					29 tab (selected) 03 Preview
+				30 text 预览只读取同一份正文与素材引用，编辑时实时更新。
+				31 container
+					32 checkbox 显示待补与空段落, Value: 1
+					33 text 显示待补与空段落
+				34 button 导出前检查
+				35 container 第三课：视频演示
+					36 heading 第三课：视频演示, Value: 1
+						37 text 第三课：视频演示
+					38 text 演示视频素材
+					39 container
+						40 button 放大查看 演示 clip.mp4, Help: 点击查看大图
+						41 text 演示 clip.mp4
+				42 text 本课引用的素材（1 个已在正文中显示） 演示 clip.mp4 · 视频 S02-01｜03 视频 Lesson 正文：待研究 待补：已齐 排版：未开始 完成度：80% 本地优先 · 自动保存
+	43 close button
+	44 full screen button Help: this button also has an action to zoom the window, Secondary Actions: zoom the window
+	45 minimize button
+	46 text AI Course Workbench
+47 menu bar
+	48 AI Course Workbench QA Preview
+	49 File
+	50 Edit
+	51 View
+	52 Window
+	53 Help
+
+The focused UI element is 2 HTML content Description: AI Course Workbench, URL: tauri://localhost

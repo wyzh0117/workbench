@@ -1,0 +1,35 @@
+{
+  "recorded_at_utc": "2026-10-06T10:59:46.111088+00:00",
+  "project_dir": "/private/tmp/workbench-io-ui-F-external-conflict-final7",
+  "project_id": "fb45a2d4-fbcb-4095-9d10-76f18fa98a14",
+  "source": "Final9 / b09718c0823f170836a223bab79b750722e83c73",
+  "ui_reopen_evidence": {
+    "ax": {
+      "path": "/Users/youngi/.codex/worktrees/io-ui-closure/workbench/docs/reports/evidence/io-ui-closure/runs/native-final9/n05-final9-nonconflict-before.ax.txt",
+      "bytes": 18231,
+      "sha256": "71fb742d2213445596a9f227351a6c12afc8a403b60f5b702cc234048ad7b474",
+      "mtime_ns": 1791283504396645612
+    },
+    "screenshot": {
+      "path": "/Users/youngi/.codex/worktrees/io-ui-closure/workbench/docs/reports/evidence/io-ui-closure/runs/native-final9/n05-final9-nonconflict-before.jpg",
+      "bytes": 456850,
+      "sha256": "bc6b1376adcf45751de2896b7beb32b0fac2fcec9f5dd4a0720170610ba7d7d5",
+      "mtime_ns": 1791283504396848567
+    },
+    "visible_title": "External canonical title QA",
+    "saved_indicator": "✓ 已保存",
+    "body_text": "Local conflict draft retained for local resolution. N05-LOCAL-20261006-A N05-LOCAL-CONTINUED-20261006-C N05-LOCAL-20261006-D N05-EXTERNAL-20261006-B"
+  },
+  "canonical_reopen_prewrite_guard": {
+    "path": "/private/tmp/workbench-io-ui-F-external-conflict-final7/project.json",
+    "sha256": "61f672228eca14cde9282d66f5e4b3f61024ed53c9f7e64e2e7d19ff59b122a7",
+    "bytes": 74933,
+    "project_id": "fb45a2d4-fbcb-4095-9d10-76f18fa98a14",
+    "title": "External canonical title QA",
+    "description": "Canonical domain fixture",
+    "domain_issue_count": 0,
+    "guard_event_utc": "2026-10-06T10:50:03.849735Z",
+    "guard_event": "The later strict external-description writer re-read and verified this exact SHA, project ID, title, and description twice before atomic replacement; this was the exact disk baseline after the reopen evidence and immediately before the external mutation."
+  },
+  "interpretation": "This is a scoped same-fixture reopen proof assembled from the fresh Final9 AX/screenshot and the subsequent exact prewrite SHA guard. These artifacts are at different times; no lease-at-capture or simultaneous UI/filesystem snapshot is claimed. The older `n05-final9-n05-keep-local-physical-proof.json` reopen_same_uuid_verified=false remains unchanged and describes its earlier checkpoint."
+}

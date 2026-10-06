@@ -1,0 +1,66 @@
+Window: "AI Course Workbench", App: AI Course Workbench QA Preview Final6.
+0 standard window AI Course Workbench, Secondary Actions: Raise
+	1 scroll area
+		2 HTML content Description: AI Course Workbench, URL: tauri://localhost
+			3 container
+				4 button 返回项目选择；当前项目不会关闭
+				5 text AI Course Workbench
+				6 button F-history recovery candidate restore final ⌄, Help: 点击修改课程标题
+				7 button (disabled) 打开上一课
+				8 button S01-01｜Fixture lesson 1, Help: 点击修改当前课程标题
+				9 button 打开下一课
+				10 text ✓ 已保存
+				11 button 撤销上一次编辑
+				12 button 恢复上一次编辑
+				13 pop up button 设置
+				14 button 保存
+				15 button 保存版本
+				16 button 预览
+				17 button 导出
+				18 button 项目概览
+				19 button 打开课程：S01-01 Fixture lesson 1
+				20 button 关闭课程标签：S01-01 Fixture lesson 1, Help: 关闭课程标签
+				21 button 展开左栏
+				22 text 课程维护
+				23 heading 待补总览, Value: 1
+					24 text 待补总览
+				25 text 所有需要补充的内容都会按课次集中在这里。
+				26 heading 目前没有待补内容, Value: 2
+					27 text 目前没有待补内容
+				28 text 课程可以继续写作、检查排版或准备发布。
+				29 container
+					30 button 打开课程地图
+					31 button 准备发布
+				32 button 媒体
+				33 button 待补
+				34 button 状态
+				35 button AI 助手
+				36 button 属性
+				37 button 版本
+				38 button 收起右栏
+				39 container
+					40 text 作用对象： S01-01｜Fixture lesson 1
+				41 text 完成这一课
+				42 heading 待补 0, Value: 2
+					43 text 待补 
+					44 text 0
+				45 button 新增待补占位符
+				46 text 0 内容待补 0 排版待补 0 缺素材
+				47 button ＋ 文字待补
+				48 button ＋ 图片待补
+				49 text 这一课没有未完成的待补内容，可以继续写正文或查看预览。
+				50 text 待补会一直保存，重开项目后仍然可以定位到这里。
+				51 text S01-01｜Fixture lesson 1 正文：待研究 待补：已齐 排版：未开始 完成度：83% 本地优先 · 自动保存
+	52 close button
+	53 full screen button Help: this button also has an action to zoom the window, Secondary Actions: zoom the window
+	54 minimize button
+	55 text AI Course Workbench
+56 menu bar
+	57 AI Course Workbench QA Preview Final6
+	58 File
+	59 Edit
+	60 View
+	61 Window
+	62 Help
+
+The focused UI element is 2 HTML content Description: AI Course Workbench, URL: tauri://localhost

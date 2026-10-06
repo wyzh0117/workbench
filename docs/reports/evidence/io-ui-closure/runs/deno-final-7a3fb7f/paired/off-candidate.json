@@ -1,0 +1,100 @@
+{
+  "mode": "candidate",
+  "api": "bound project.save",
+  "measurement_mode": "unprobed_latency_only",
+  "instrumentation": {
+    "file_io_probe": false,
+    "storage_service_diagnostics": false,
+    "counters_when_disabled": null
+  },
+  "source": {
+    "repo_root": "/Users/youngi/.codex/worktrees/io-ui-closure/workbench",
+    "declared_commit": "7a3fb7f2a68765093191e38c0e48dfa1a44e9e27",
+    "git_head": "7a3fb7f2a68765093191e38c0e48dfa1a44e9e27",
+    "modules": {
+      "desktop": {
+        "path": "/Users/youngi/.codex/worktrees/io-ui-closure/workbench/src/service/desktop.ts",
+        "bytes": 132992,
+        "sha256": "eaa33f9b2f65f6edcc7f422f76cbbc62590e222c79c740ef093e9f5661944945"
+      },
+      "storage": {
+        "path": "/Users/youngi/.codex/worktrees/io-ui-closure/workbench/src/service/storage.ts",
+        "bytes": 111352,
+        "sha256": "7dad482b3dbbe95f2ea9daf712bda7fd988a404d60c2f181b869da505decdbf0"
+      },
+      "import_export": {
+        "path": "/Users/youngi/.codex/worktrees/io-ui-closure/workbench/src/service/import_export.ts",
+        "bytes": 112547,
+        "sha256": "02d8dc8f78c0de89f44b24c9d41b1349c78297305862bf1bd0a7d31fcf30a8f3"
+      },
+      "search": {
+        "path": "/Users/youngi/.codex/worktrees/io-ui-closure/workbench/src/service/search.ts",
+        "bytes": 15865,
+        "sha256": "4b89133372b549fa5eb30370e1006c2833ae5fcbe9836c556ccfaca80a4f10d2"
+      }
+    },
+    "instrumentation_runner": {
+      "path": "/Users/youngi/.codex/worktrees/io-ui-closure/workbench/scripts/io_benchmark.ts",
+      "bytes": 16671,
+      "sha256": "38529c5ffc60507d02005b736f05ffff30a8ea2f6bc399b727c57826f534ff11"
+    },
+    "instrumentation_patch_scope": "runner is separate from candidate production modules; runtime module paths and hashes above identify the measured sources"
+  },
+  "fixture": {
+    "path": "/tmp/workbench-large-canonical-fixture.json",
+    "bytes": 7469246,
+    "sha256": "14991258eb33336582280c093d97cc3fc61ba6dab166c1a8970ce542f05509a4",
+    "project_id": "00000000-0000-4000-8000-000000000001"
+  },
+  "unmeasured_warmup_saves": 3,
+  "iterations_per_case": 10,
+  "setup_directory": "/var/folders/fb/x3zpt1kj2_j8jbr0xg6wxft00000gn/T/io-benchmark-candidate-9c923c0a400fe6bc",
+  "no_op": {
+    "median_ms": 194.05112499999996,
+    "median_conventional_ms": 193.01670849999994,
+    "p95_nearest_rank_ms": 207.71479099999988,
+    "min_ms": 179.1165420000002,
+    "max_ms": 207.71479099999988,
+    "samples_ms": [
+      189.05395799999997,
+      191.98229199999992,
+      198.798041,
+      207.71479099999988,
+      179.1165420000002,
+      183.3622909999999,
+      194.05112499999996,
+      202.74995900000022,
+      194.15495899999996,
+      180.79300000000012
+    ],
+    "file_io": null,
+    "service_metrics": null
+  },
+  "changed": {
+    "median_ms": 456.0233330000001,
+    "median_conventional_ms": 447.83479149999994,
+    "p95_nearest_rank_ms": 531.7767920000001,
+    "min_ms": 420.1481250000006,
+    "max_ms": 531.7767920000001,
+    "samples_ms": [
+      437.7118330000003,
+      531.7767920000001,
+      456.0233330000001,
+      476.5354159999997,
+      465.41220799999974,
+      426.31933300000037,
+      439.6462499999998,
+      530.9041669999997,
+      421.23570800000016,
+      420.1481250000006
+    ],
+    "file_io": null,
+    "service_metrics": null
+  },
+  "limitations": {
+    "process_rss": "not measured",
+    "device_physical_write_amplification": "not measured",
+    "browser_session_io": "measured separately by browser_session_generation_test",
+    "in_process_buffer_peak": "not measured by this save runner"
+  }
+}

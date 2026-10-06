@@ -1,0 +1,45 @@
+/tmp/io-ui-closure-native-qa-final10/AI Course Workbench QA Preview Final10.app: valid on disk
+/tmp/io-ui-closure-native-qa-final10/AI Course Workbench QA Preview Final10.app: satisfies its Designated Requirement
+Executable=/private/tmp/io-ui-closure-native-qa-final10/AI Course Workbench QA Preview Final10.app/Contents/MacOS/ai-course-workbench
+Identifier=io.github.wyzh0117.ai-course-workbench.qa.io-ui-closure.final10
+Format=app bundle with Mach-O thin (arm64)
+CodeDirectory v=20400 size=38744 flags=0x2(adhoc) hashes=1203+3 location=embedded
+VersionPlatform=1
+VersionMin=720896
+VersionSDK=918528
+Hash type=sha256 size=32
+CandidateCDHash sha256=453a31b44cbc5b1407c04888766e40431d627970
+CandidateCDHashFull sha256=453a31b44cbc5b1407c04888766e40431d627970f6893dc7d0946d64e99bede0
+Hash choices=sha256
+CMSDigest=453a31b44cbc5b1407c04888766e40431d627970f6893dc7d0946d64e99bede0
+CMSDigestType=2
+Executable Segment base=0
+Executable Segment limit=13647872
+Executable Segment flags=0x1
+Page size=16384
+CDHash=453a31b44cbc5b1407c04888766e40431d627970
+Signature=adhoc
+Info.plist entries=16
+TeamIdentifier=not set
+Sealed Resources version=2 rules=13 files=1
+Internal requirements count=0 size=12
+{
+  "CFBundleDevelopmentRegion" => "English"
+  "CFBundleDisplayName" => "AI Course Workbench QA Preview Final10"
+  "CFBundleExecutable" => "ai-course-workbench"
+  "CFBundleIconFile" => "icon.icns"
+  "CFBundleIdentifier" => "io.github.wyzh0117.ai-course-workbench.qa.io-ui-closure.final10"
+  "CFBundleInfoDictionaryVersion" => "6.0"
+  "CFBundleName" => "AI Course Workbench QA Preview Final10"
+  "CFBundlePackageType" => "APPL"
+  "CFBundleShortVersionString" => "0.2.7"
+  "CFBundleVersion" => "0.2.7"
+  "CSResourcesFileMapped" => true
+  "LSApplicationCategoryType" => "public.app-category.education"
+  "LSMinimumSystemVersion" => "11.0"
+  "LSRequiresCarbon" => true
+  "NSHighResolutionCapable" => true
+  "NSHumanReadableCopyright" => "AI Course Workbench"
+}
+/tmp/io-ui-closure-native-qa-final10/AI Course Workbench QA Preview Final10.app/Contents/MacOS/ai-course-workbench: Mach-O 64-bit executable arm64
+b145b9407898559e0da5d55c2a0f7364b2ff691f4305e8efe67dce7e74a08824  /tmp/io-ui-closure-native-qa-final10/AI Course Workbench QA Preview Final10.app/Contents/MacOS/ai-course-workbench

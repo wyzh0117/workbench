@@ -1,0 +1,113 @@
+Window: "AI Course Workbench", App: AI Course Workbench QA Preview Final3.
+0 standard window AI Course Workbench, Secondary Actions: Raise
+	1 scroll area
+		2 HTML content Description: AI Course Workbench, URL: tauri://localhost
+			3 container
+				4 button 返回项目选择；当前项目不会关闭
+				5 text AI Course Workbench
+				6 button File I/O media-ui QA fixture ⌄, Help: 点击修改课程标题
+				7 button (disabled) 打开上一课
+				8 button S01-01｜Large canonical lesson, Help: 点击修改当前课程标题
+				9 button (disabled) 打开下一课
+				10 text ✓ 已保存
+				11 button 撤销上一次编辑
+				12 button 恢复上一次编辑
+				13 pop up button 设置
+				14 button 保存
+				15 button 保存版本
+				16 button 预览
+				17 button 导出
+				18 button 项目概览
+				19 button 打开课程：S01-01 Large canonical lesson
+				20 button 关闭课程标签：S01-01 Large canonical lesson, Help: 关闭课程标签
+				21 button 展开左栏
+				22 text 项目偏好与账户
+				23 heading 项目设置, Value: 1
+					24 text 项目设置
+				25 text 在一个页面查看常用配置；密钥仍由现有连接管理器安全保存。
+				26 button 项目属性
+				27 container 设置分类
+					28 link 常规, Value: tauri://localhost#settings-general
+					29 link AI 连接, Value: tauri://localhost#settings-ai
+					30 link 模型, Value: tauri://localhost#settings-models
+					31 link 账户, Value: tauri://localhost#settings-accounts
+					32 link 项目, Value: tauri://localhost#settings-project
+				33 text 01
+				34 heading 常规, Value: 2
+					35 text 常规
+				36 text 保存行为与当前工作环境
+				37 container
+					38 text 保存方式 本地优先 · 自动保存 课程数据保存在当前项目中。顶部保存状态会显示写入结果。
+				39 container
+					40 text 当前界面 桌面应用 应用布局会适配窗口宽度和系统缩放。
+				41 text 02
+				42 heading AI 连接, Value: 2
+					43 text AI 连接
+				44 text 管理服务商、连接状态和凭据
+				45 container
+					46 text 当前选择 尚未选择服务商 模型：未选择 · 连接尚未配置
+					47 pop up button 管理连接
+					48 button 打开 AI 助手
+				49 text 03
+				50 heading 模型, Value: 2
+					51 text 模型
+				52 text 当前连接提供的可用模型
+				53 pop up button 发现或选择模型
+				54 text 尚未读取模型列表。连接服务商后可以在 AI 设置中发现并选择模型。
+				55 text 04
+				56 heading 账户, Value: 2
+					57 text 账户
+				58 text 订阅授权与 API Key 彼此独立
+				59 container
+					60 text ChatGPT 订阅登录 OpenAI SIWC · 独立于 API Key 首次登录会为 Workbench 动态注册独立客户端身份。Workbench 不读取其他应用的会话，也不会用环境 API Key 代替订阅授权。
+					61 button Continue with ChatGPT
+					62 text 授权由你在系统浏览器中完成；Access/Refresh Token 只保存在本机系统钥匙串。 尚未添加 ChatGPT 订阅账户。
+				63 text Access Token 与 Refresh Token 只保存在本机系统钥匙串；API Key 仅通过已配置的连接管理器保存，页面不会显示密钥。
+				64 text 05
+				65 heading 项目, Value: 2
+					66 text 项目
+				67 text 当前课程项目的本地身份
+				68 container
+					69 description list
+						70 text 项目名称
+						71 text File I/O media-ui QA fixture
+						72 text 项目编号
+						73 text cccccccc-cccc-4ccc-8ccc-cccccccccccc
+						74 text 数据格式
+						75 text 1.0.0
+						76 text 课程语言
+						77 text en-US
+					78 button 在课程地图编辑项目名称
+				79 button 媒体
+				80 button 待补
+				81 button 状态
+				82 button AI 助手
+				83 button 属性
+				84 button 版本
+				85 button 收起右栏
+				86 container
+					87 text 作用对象： S01-01｜Large canonical lesson
+				88 text 完成这一课
+				89 heading 待补 0, Value: 2
+					90 text 待补 
+					91 text 0
+				92 button 新增待补占位符
+				93 text 0 内容待补 0 排版待补 0 缺素材
+				94 button ＋ 文字待补
+				95 button ＋ 图片待补
+				96 text 这一课没有未完成的待补内容，可以继续写正文或查看预览。
+				97 text 待补会一直保存，重开项目后仍然可以定位到这里。
+				98 text S01-01｜Large canonical lesson 正文：待研究 待补：已齐 排版：未开始 完成度：93% 本地优先 · 自动保存
+	99 close button
+	100 full screen button Help: this button also has an action to zoom the window, Secondary Actions: zoom the window
+	101 minimize button
+	102 text AI Course Workbench
+103 menu bar
+	104 AI Course Workbench QA Preview Final3
+	105 File
+	106 Edit
+	107 View
+	108 Window
+	109 Help
+
+The focused UI element is 2 HTML content Description: AI Course Workbench, URL: tauri://localhost

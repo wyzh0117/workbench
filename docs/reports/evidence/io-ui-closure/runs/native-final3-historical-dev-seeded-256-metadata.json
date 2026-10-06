@@ -1,0 +1,45 @@
+{
+  "kind": "historical_native_final3_dev_seeded_capture",
+  "captured_at_utc": "2026-10-06T14:23:46.680338+00:00",
+  "source_pin": null,
+  "source_pin_unknown_reason": "The captured logs contain no invocation-level source commit; do not infer a source pin from the filename.",
+  "test_run": {
+    "running_tests": 256,
+    "passed": 255,
+    "failed": 0,
+    "ignored": 1,
+    "harness_elapsed": "2.90s",
+    "profile": "Rust test/dev profile",
+    "target_directory": "/tmp/io-ui-closure-candidate-seeded",
+    "does_not_prove_final_258_test_gate": true
+  },
+  "build_run": {
+    "profile": "dev",
+    "reported_elapsed": "2.12s",
+    "target_directory": "/tmp/io-ui-closure-candidate-seeded",
+    "exit_status_recorded_in_stdout": false
+  },
+  "does_not_prove_final258": true,
+  "logs": {
+    "cargo_test": {
+      "origin_path": "docs/reports/evidence/io-ui-closure/runs/native-final3-cargo-test.log",
+      "historical_copy_path": "docs/reports/evidence/io-ui-closure/runs/native-final3-historical-dev-seeded-256-cargo-test.log",
+      "bytes": 23166,
+      "sha256": "9731f6acfa3b8ac0801b26b6dd6c34ec48ae665a2b79b1237352cb29b6fc3f9e",
+      "observed_mtime_epoch_ns": 1791258743554575648,
+      "observed_mtime_local": "2026-10-06T11:52:23.554576+08:00",
+      "eof_provenance": "unknown; preserved working bytes exactly, including one extra terminal LF relative to committed historical file",
+      "committed_head_sha256": "f9bcffbe2b541d4c8a028927976fe6864f4c1e414fed9c537e29eba6264dc366",
+      "extra_terminal_lf_vs_head": true
+    },
+    "cargo_build": {
+      "origin_path": "docs/reports/evidence/io-ui-closure/runs/native-final3-cargo-build.log",
+      "historical_copy_path": "docs/reports/evidence/io-ui-closure/runs/native-final3-historical-dev-seeded-256-cargo-build.log",
+      "bytes": 1216,
+      "sha256": "0b6b041ff8c9c0b43e09ab6f826a822ea449307dfe6a3b07f5bc0fdbef53ae44",
+      "observed_mtime_epoch_ns": 1791258745713141574,
+      "observed_mtime_local": "2026-10-06T11:52:25.713142+08:00",
+      "eof_provenance": "unknown"
+    }
+  }
+}

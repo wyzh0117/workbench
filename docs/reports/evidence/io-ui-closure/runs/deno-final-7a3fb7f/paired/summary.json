@@ -1,0 +1,576 @@
+{
+  "title": "Final Deno save benchmark after validated canonical text reuse",
+  "source_pin": "7a3fb7f2a68765093191e38c0e48dfa1a44e9e27",
+  "baseline_pin": "dfcb23e88b08b246e03b1576eb9471627e510548",
+  "runner_sha256": "38529c5ffc60507d02005b736f05ffff30a8ea2f6bc399b727c57826f534ff11",
+  "fixture": {
+    "path": "/tmp/workbench-large-canonical-fixture.json",
+    "bytes": 7469246,
+    "sha256": "14991258eb33336582280c093d97cc3fc61ba6dab166c1a8970ce542f05509a4"
+  },
+  "method": {
+    "run_order": [
+      "off-baseline",
+      "off-candidate",
+      "on-baseline",
+      "on-candidate"
+    ],
+    "warmups_excluded_per_run": 3,
+    "iterations_per_case": 10,
+    "statistics": "conventional median (mean of two middle samples for n=10); nearest-rank p95",
+    "instrumentation": "off runs have null counters; on runs capture Deno file I/O and storage service diagnostics separately",
+    "baseline_source_verification": {
+      "desktop": {
+        "path": "/private/tmp/wb-deno-baseline.tG8YqI/src/service/desktop.ts",
+        "bytes": 70593,
+        "sha256": "7037b83d684d059db22d6ac414a6f91a2d7177d8619392061715c92c06d76867"
+      },
+      "storage": {
+        "path": "/private/tmp/wb-deno-baseline.tG8YqI/src/service/storage.ts",
+        "bytes": 60056,
+        "sha256": "b707f68760e49f4d461c2f1d8fa0d7a583fef8e50683175086ca1fe88c7b15ee"
+      },
+      "import_export": {
+        "path": "/private/tmp/wb-deno-baseline.tG8YqI/src/service/import_export.ts",
+        "bytes": 73818,
+        "sha256": "f4076777743c9b9dea9a053e510808c9ca543b638314d331e99e10d362d8a307"
+      },
+      "search": {
+        "path": "/private/tmp/wb-deno-baseline.tG8YqI/src/service/search.ts",
+        "bytes": 15865,
+        "sha256": "4b89133372b549fa5eb30370e1006c2833ae5fcbe9836c556ccfaca80a4f10d2"
+      }
+    },
+    "candidate_source_verification": {
+      "desktop": {
+        "path": "/Users/youngi/.codex/worktrees/io-ui-closure/workbench/src/service/desktop.ts",
+        "bytes": 132992,
+        "sha256": "eaa33f9b2f65f6edcc7f422f76cbbc62590e222c79c740ef093e9f5661944945"
+      },
+      "storage": {
+        "path": "/Users/youngi/.codex/worktrees/io-ui-closure/workbench/src/service/storage.ts",
+        "bytes": 111352,
+        "sha256": "7dad482b3dbbe95f2ea9daf712bda7fd988a404d60c2f181b869da505decdbf0"
+      },
+      "import_export": {
+        "path": "/Users/youngi/.codex/worktrees/io-ui-closure/workbench/src/service/import_export.ts",
+        "bytes": 112547,
+        "sha256": "02d8dc8f78c0de89f44b24c9d41b1349c78297305862bf1bd0a7d31fcf30a8f3"
+      },
+      "search": {
+        "path": "/Users/youngi/.codex/worktrees/io-ui-closure/workbench/src/service/search.ts",
+        "bytes": 15865,
+        "sha256": "4b89133372b549fa5eb30370e1006c2833ae5fcbe9836c556ccfaca80a4f10d2"
+      }
+    },
+    "invalid_unplanned_attempt": "runs/deno-final-7a3fb7f/invalid_unplanned_default_output.json (excluded; --help ran default candidate/on mode; prior top-level artifact bytes unknown)"
+  },
+  "raw_artifacts": {
+    "off-baseline": {
+      "path": "docs/reports/evidence/io-ui-closure/runs/deno-final-7a3fb7f/paired/off-baseline.json",
+      "bytes": 3448,
+      "sha256": "e0ce520f6220f258ce8605d0a0804cf898f8b8ba0998aa91e9c00261581af42c"
+    },
+    "off-candidate": {
+      "path": "docs/reports/evidence/io-ui-closure/runs/deno-final-7a3fb7f/paired/off-candidate.json",
+      "bytes": 3600,
+      "sha256": "a3e602c290b9401c40f40dec41a71ed6d2c43622af9446c74af95acccac8d74c"
+    },
+    "on-baseline": {
+      "path": "docs/reports/evidence/io-ui-closure/runs/deno-final-7a3fb7f/paired/on-baseline.json",
+      "bytes": 7432,
+      "sha256": "365cd96c98aa1c93d1fc98494f3db379aaa822ac57d93b66e3f3556efa019e0b"
+    },
+    "on-candidate": {
+      "path": "docs/reports/evidence/io-ui-closure/runs/deno-final-7a3fb7f/paired/on-candidate.json",
+      "bytes": 9329,
+      "sha256": "d950e41deccc274fa0cc6df4ecbb4f140d66fe931f1820d269e81b347bfce14c"
+    }
+  },
+  "comparisons": {
+    "changed": {
+      "off": {
+        "baseline": {
+          "median_conventional_ms": 414.02652050000006,
+          "p95_nearest_rank_ms": 485.05233299999963,
+          "samples_ms": [
+            415.3272910000005,
+            421.40700000000015,
+            485.05233299999963,
+            402.0747080000001,
+            412.7257499999996,
+            442.56533300000046,
+            387.72258299999885,
+            409.73254199999974,
+            435.16612499999974,
+            399.94266699999935
+          ]
+        },
+        "candidate": {
+          "median_conventional_ms": 447.83479149999994,
+          "p95_nearest_rank_ms": 531.7767920000001,
+          "samples_ms": [
+            437.7118330000003,
+            531.7767920000001,
+            456.0233330000001,
+            476.5354159999997,
+            465.41220799999974,
+            426.31933300000037,
+            439.6462499999998,
+            530.9041669999997,
+            421.23570800000016,
+            420.1481250000006
+          ]
+        },
+        "median_change_percent": 8.17,
+        "p95_change_percent": 9.63
+      },
+      "on": {
+        "baseline": {
+          "median_conventional_ms": 442.8154795000005,
+          "p95_nearest_rank_ms": 469.15154099999927,
+          "samples_ms": [
+            455.1063329999997,
+            441.3440420000006,
+            431.4834579999997,
+            444.28691700000036,
+            449.8853330000002,
+            423.13587499999994,
+            469.15154099999927,
+            467.65920899999946,
+            402.0079579999983,
+            406.46970800000054
+          ]
+        },
+        "candidate": {
+          "median_conventional_ms": 448.34004150000055,
+          "p95_nearest_rank_ms": 494.9716669999998,
+          "samples_ms": [
+            459.2637500000001,
+            455.28662499999973,
+            436.00475000000006,
+            448.0933750000004,
+            427.09000000000015,
+            494.9716669999998,
+            458.5641249999999,
+            448.5867080000007,
+            446.99854099999993,
+            443.97441699999945
+          ]
+        },
+        "median_change_percent": 1.25,
+        "p95_change_percent": 5.5
+      }
+    },
+    "noop": {
+      "off": {
+        "baseline": {
+          "median_conventional_ms": 409.71214599999985,
+          "p95_nearest_rank_ms": 450.9530420000001,
+          "samples_ms": [
+            411.2645419999999,
+            408.1597499999998,
+            400.281708,
+            444.0398329999998,
+            407.93525,
+            415.5154580000003,
+            450.9530420000001,
+            392.89566599999944,
+            407.83487499999956,
+            442.7776670000003
+          ]
+        },
+        "candidate": {
+          "median_conventional_ms": 193.01670849999994,
+          "p95_nearest_rank_ms": 207.71479099999988,
+          "samples_ms": [
+            189.05395799999997,
+            191.98229199999992,
+            198.798041,
+            207.71479099999988,
+            179.1165420000002,
+            183.3622909999999,
+            194.05112499999996,
+            202.74995900000022,
+            194.15495899999996,
+            180.79300000000012
+          ]
+        },
+        "median_change_percent": -52.89,
+        "p95_change_percent": -53.94
+      },
+      "on": {
+        "baseline": {
+          "median_conventional_ms": 448.6347920000002,
+          "p95_nearest_rank_ms": 526.1795420000003,
+          "samples_ms": [
+            444.72050000000013,
+            440.4422919999997,
+            438.7220830000001,
+            526.1795420000003,
+            452.5490840000002,
+            484.011125,
+            490.39450000000033,
+            429.7168750000001,
+            438.6192920000003,
+            460.23562500000025
+          ]
+        },
+        "candidate": {
+          "median_conventional_ms": 186.04791650000016,
+          "p95_nearest_rank_ms": 207.11895800000002,
+          "samples_ms": [
+            207.11895800000002,
+            180.73699999999985,
+            185.21129199999996,
+            188.99895800000013,
+            193.98745800000006,
+            204.81520799999998,
+            179.46891700000015,
+            183.2697089999997,
+            183.38954200000035,
+            186.88454100000035
+          ]
+        },
+        "median_change_percent": -58.53,
+        "p95_change_percent": -60.64
+      }
+    }
+  },
+  "instrumented_counters": {
+    "baseline_changed_file_io": {
+      "by_target": {
+        "workspace_sidecar": {
+          "read_operations": 11,
+          "read_bytes": 2255,
+          "write_operations": 1,
+          "write_bytes": 205,
+          "sync_attempts": 1,
+          "sync_successes": 1,
+          "rename_in": 0,
+          "rename_out": 0,
+          "removes": 0
+        },
+        "canonical_project": {
+          "read_operations": 30,
+          "read_bytes": 224077380,
+          "write_operations": 0,
+          "write_bytes": 0,
+          "sync_attempts": 0,
+          "sync_successes": 0,
+          "rename_in": 10,
+          "rename_out": 0,
+          "removes": 0
+        },
+        "owned_temp": {
+          "read_operations": 0,
+          "read_bytes": 0,
+          "write_operations": 30,
+          "write_bytes": 244853840,
+          "sync_attempts": 20,
+          "sync_successes": 20,
+          "rename_in": 0,
+          "rename_out": 30,
+          "removes": 0
+        },
+        "recovery_journal": {
+          "read_operations": 0,
+          "read_bytes": 0,
+          "write_operations": 0,
+          "write_bytes": 0,
+          "sync_attempts": 0,
+          "sync_successes": 0,
+          "rename_in": 10,
+          "rename_out": 0,
+          "removes": 10
+        },
+        "search_index": {
+          "read_operations": 0,
+          "read_bytes": 0,
+          "write_operations": 0,
+          "write_bytes": 0,
+          "sync_attempts": 0,
+          "sync_successes": 0,
+          "rename_in": 10,
+          "rename_out": 0,
+          "removes": 0
+        }
+      },
+      "open_operations": 32,
+      "close_operations": 32,
+      "peak_open_handles": 2,
+      "read_file_operations": 30,
+      "read_file_bytes": 224077380,
+      "read_text_file_operations": 10,
+      "read_text_file_bytes": 2050,
+      "write_file_operations": 0,
+      "write_file_bytes": 0,
+      "write_text_file_operations": 10,
+      "write_text_file_bytes": 101130750,
+      "rename_operations": 30,
+      "remove_operations": 10
+    },
+    "baseline_noop_file_io": {
+      "by_target": {
+        "workspace_sidecar": {
+          "read_operations": 11,
+          "read_bytes": 2255,
+          "write_operations": 1,
+          "write_bytes": 205,
+          "sync_attempts": 1,
+          "sync_successes": 1,
+          "rename_in": 0,
+          "rename_out": 0,
+          "removes": 0
+        },
+        "canonical_project": {
+          "read_operations": 30,
+          "read_bytes": 224077380,
+          "write_operations": 0,
+          "write_bytes": 0,
+          "sync_attempts": 0,
+          "sync_successes": 0,
+          "rename_in": 10,
+          "rename_out": 0,
+          "removes": 0
+        },
+        "owned_temp": {
+          "read_operations": 0,
+          "read_bytes": 0,
+          "write_operations": 30,
+          "write_bytes": 244853700,
+          "sync_attempts": 20,
+          "sync_successes": 20,
+          "rename_in": 0,
+          "rename_out": 30,
+          "removes": 0
+        },
+        "recovery_journal": {
+          "read_operations": 0,
+          "read_bytes": 0,
+          "write_operations": 0,
+          "write_bytes": 0,
+          "sync_attempts": 0,
+          "sync_successes": 0,
+          "rename_in": 10,
+          "rename_out": 0,
+          "removes": 10
+        },
+        "search_index": {
+          "read_operations": 0,
+          "read_bytes": 0,
+          "write_operations": 0,
+          "write_bytes": 0,
+          "sync_attempts": 0,
+          "sync_successes": 0,
+          "rename_in": 10,
+          "rename_out": 0,
+          "removes": 0
+        }
+      },
+      "open_operations": 32,
+      "close_operations": 32,
+      "peak_open_handles": 2,
+      "read_file_operations": 30,
+      "read_file_bytes": 224077380,
+      "read_text_file_operations": 10,
+      "read_text_file_bytes": 2050,
+      "write_file_operations": 0,
+      "write_file_bytes": 0,
+      "write_text_file_operations": 10,
+      "write_text_file_bytes": 101130610,
+      "rename_operations": 30,
+      "remove_operations": 10
+    },
+    "candidate_changed_service_metrics": {
+      "project_full_read_operations": 20,
+      "project_full_read_bytes": 149384920,
+      "project_hash_passes": 20,
+      "project_hash_bytes": 149384920,
+      "project_temp_files_created": 10,
+      "project_temp_write_bytes": 74692460,
+      "project_backup_copy_operations": 10,
+      "project_backup_copy_read_bytes": 74692460,
+      "project_backup_copy_write_bytes": 74692460,
+      "project_file_sync_attempts": 20,
+      "project_file_sync_successes": 20,
+      "project_backup_renames": 10,
+      "project_promotions": 10,
+      "project_directory_sync_attempts": 10,
+      "project_directory_sync_successes": 10,
+      "recovery_journal_temp_files_created": 10,
+      "recovery_journal_temp_write_bytes": 69030460,
+      "recovery_journal_file_sync_attempts": 10,
+      "recovery_journal_file_sync_successes": 10,
+      "recovery_journal_promotions": 10,
+      "recovery_journal_removal_attempts": 10,
+      "recovery_journal_removal_successes": 10,
+      "recovery_directory_sync_attempts": 20,
+      "recovery_directory_sync_successes": 20
+    },
+    "candidate_noop_service_metrics": {
+      "project_full_read_operations": 10,
+      "project_full_read_bytes": 74692460,
+      "project_hash_passes": 10,
+      "project_hash_bytes": 74692460,
+      "project_temp_files_created": 0,
+      "project_temp_write_bytes": 0,
+      "project_backup_copy_operations": 0,
+      "project_backup_copy_read_bytes": 0,
+      "project_backup_copy_write_bytes": 0,
+      "project_file_sync_attempts": 0,
+      "project_file_sync_successes": 0,
+      "project_backup_renames": 0,
+      "project_promotions": 0,
+      "project_directory_sync_attempts": 0,
+      "project_directory_sync_successes": 0,
+      "recovery_journal_temp_files_created": 0,
+      "recovery_journal_temp_write_bytes": 0,
+      "recovery_journal_file_sync_attempts": 0,
+      "recovery_journal_file_sync_successes": 0,
+      "recovery_journal_promotions": 0,
+      "recovery_journal_removal_attempts": 0,
+      "recovery_journal_removal_successes": 0,
+      "recovery_directory_sync_attempts": 0,
+      "recovery_directory_sync_successes": 0
+    },
+    "candidate_changed_file_io": {
+      "by_target": {
+        "workspace_sidecar": {
+          "read_operations": 11,
+          "read_bytes": 2838,
+          "write_operations": 1,
+          "write_bytes": 258,
+          "sync_attempts": 1,
+          "sync_successes": 1,
+          "rename_in": 0,
+          "rename_out": 0,
+          "removes": 0
+        },
+        "canonical_project": {
+          "read_operations": 3450,
+          "read_bytes": 224077380,
+          "write_operations": 0,
+          "write_bytes": 0,
+          "sync_attempts": 0,
+          "sync_successes": 0,
+          "rename_in": 10,
+          "rename_out": 0,
+          "removes": 0
+        },
+        "owned_temp": {
+          "read_operations": 0,
+          "read_bytes": 0,
+          "write_operations": 1170,
+          "write_bytes": 319546130,
+          "sync_attempts": 30,
+          "sync_successes": 30,
+          "rename_in": 0,
+          "rename_out": 40,
+          "removes": 0
+        },
+        "recovery_journal": {
+          "read_operations": 0,
+          "read_bytes": 0,
+          "write_operations": 0,
+          "write_bytes": 0,
+          "sync_attempts": 0,
+          "sync_successes": 0,
+          "rename_in": 10,
+          "rename_out": 0,
+          "removes": 10
+        },
+        "other": {
+          "read_operations": 0,
+          "read_bytes": 0,
+          "write_operations": 0,
+          "write_bytes": 0,
+          "sync_attempts": 30,
+          "sync_successes": 30,
+          "rename_in": 0,
+          "rename_out": 0,
+          "removes": 0
+        },
+        "canonical_backup": {
+          "read_operations": 0,
+          "read_bytes": 0,
+          "write_operations": 0,
+          "write_bytes": 0,
+          "sync_attempts": 0,
+          "sync_successes": 0,
+          "rename_in": 10,
+          "rename_out": 0,
+          "removes": 0
+        },
+        "search_index": {
+          "read_operations": 0,
+          "read_bytes": 0,
+          "write_operations": 0,
+          "write_bytes": 0,
+          "sync_attempts": 0,
+          "sync_successes": 0,
+          "rename_in": 10,
+          "rename_out": 0,
+          "removes": 0
+        }
+      },
+      "open_operations": 102,
+      "close_operations": 102,
+      "peak_open_handles": 4,
+      "read_file_operations": 0,
+      "read_file_bytes": 0,
+      "read_text_file_operations": 10,
+      "read_text_file_bytes": 2580,
+      "write_file_operations": 0,
+      "write_file_bytes": 0,
+      "write_text_file_operations": 10,
+      "write_text_file_bytes": 101130750,
+      "rename_operations": 40,
+      "remove_operations": 10
+    },
+    "candidate_noop_file_io": {
+      "by_target": {
+        "workspace_sidecar": {
+          "read_operations": 10,
+          "read_bytes": 2580,
+          "write_operations": 0,
+          "write_bytes": 0,
+          "sync_attempts": 0,
+          "sync_successes": 0,
+          "rename_in": 0,
+          "rename_out": 0,
+          "removes": 0
+        },
+        "canonical_project": {
+          "read_operations": 1150,
+          "read_bytes": 74692460,
+          "write_operations": 0,
+          "write_bytes": 0,
+          "sync_attempts": 0,
+          "sync_successes": 0,
+          "rename_in": 0,
+          "rename_out": 0,
+          "removes": 0
+        }
+      },
+      "open_operations": 20,
+      "close_operations": 20,
+      "peak_open_handles": 2,
+      "read_file_operations": 0,
+      "read_file_bytes": 0,
+      "read_text_file_operations": 10,
+      "read_text_file_bytes": 2580,
+      "write_file_operations": 0,
+      "write_file_bytes": 0,
+      "write_text_file_operations": 0,
+      "write_text_file_bytes": 0,
+      "rename_operations": 0,
+      "remove_operations": 0
+    }
+  },
+  "limitations": {
+    "process_rss": "not measured",
+    "physical_device_write_amplification": "not measured",
+    "in_process_buffer_peak": "not measured"
+  }
+}

@@ -1,0 +1,100 @@
+Window: "AI Course Workbench", App: AI Course Workbench QA Preview Final6.
+0 standard window AI Course Workbench, Secondary Actions: Raise
+	1 scroll area
+		2 HTML content Description: AI Course Workbench, URL: tauri://localhost
+			3 container
+				4 button 返回项目选择；当前项目不会关闭
+				5 text AI Course Workbench
+				6 button F-history recovery candidate restore final ⌄, Help: 点击修改课程标题
+				7 button (disabled) 打开上一课
+				8 button S01-01｜Fixture lesson 1, Help: 点击修改当前课程标题
+				9 button 打开下一课
+				10 text ✓ 已保存
+				11 button 撤销上一次编辑
+				12 button 恢复上一次编辑
+				13 pop up button 设置
+				14 button 保存
+				15 button 保存版本
+				16 button 预览
+				17 button 导出
+				18 button 项目概览
+				19 button 打开课程：S01-01 Fixture lesson 1
+				20 button 关闭课程标签：S01-01 Fixture lesson 1, Help: 关闭课程标签
+				21 text 项目导航
+				22 button 收起左栏
+				23 container 项目页面
+					24 button ⌂ 项目概览
+					25 button ▦ 课程地图
+					26 button ✎ 工作台
+					27 button ▧ 自由排版
+					28 button 📂 文件
+					29 button ↓ 收件箱
+					30 button ▤ 制作看板
+					31 button ◈ 媒体库
+					32 button != 待补总览
+					33 button ✦ 更新中心
+					34 button ↗ 发布中心
+					35 button ◷ 版本历史
+					36 button ⚙ 项目设置
+				37 text 本课程 0/4 课完成 S01 FIXTURE STAGE
+				38 button S01-01 Fixture lesson 1, Help: Fixture lesson 1
+				39 button S01-02 Fixture lesson 2, Help: Fixture lesson 2
+				40 text S02 FIXTURE STAGE 2
+				41 button S02-01 Fixture lesson 3, Help: Fixture lesson 3
+				42 button S02-02 Fixture lesson 4, Help: Fixture lesson 4
+				43 button ＋ 快速收集 ⌘⇧空格
+				44 button ⌕ 搜索与命令 ⌘K
+				45 text 交付课程内容
+				46 heading 发布中心, Value: 1
+					47 text 发布中心
+				48 text 确认输出范围、页面适配和格式兼容性，再检查并导出课程内容。
+				49 button 运行导出前检查
+				50 container 当前发布设置
+					51 text 输出范围 当前课 · S01-01 输出格式 Markdown 兼容性 格式可用
+				52 container 1. 选择输出范围
+					53 text 01
+					54 heading 1. 选择输出范围, Value: 2
+						55 text 1. 选择输出范围
+					56 text 决定导出当前课，还是整门课程。
+					57 container 选择发布范围
+						58 toggle button 当前课 · S01-01, Value: on
+						59 toggle button 整门课程, Value: off
+					60 text Fixture lesson 1 · 完成 83% · 待补 0 项
+				61 container 3. 选择格式
+					62 text 03
+					63 heading 3. 选择格式, Value: 2
+						64 text 3. 选择格式
+					65 text 每种格式都会说明可用性和布局处理方式。
+					66 toggle button Markdown 可编辑文本与稳定相对素材引用 可用, Value: on
+					67 toggle button Semantic HTML 无需 Workbench 即可独立阅读 页面布局保留, Value: off
+					68 toggle button Static Web Package index.html + 实际使用的素材 页面布局保留, Value: off
+					69 toggle button PDF 交付、阅读与留档 页面布局保留, Value: off
+					70 toggle button (disabled) PowerPoint 按页面尺寸生成演示文稿 当前排版不支持, Value: off
+					71 toggle button 微信 / 富文本 保守样式与媒体迁移提示 可用, Value: off
+					72 toggle button Project JSON 去除私有会话的结构化备份 可用, Value: off
+					73 toggle button 素材包 素材文件与 manifest 可用, Value: off
+					74 toggle button 完整项目包 可恢复课程数据、正文与素材 可用, Value: off
+					75 button 运行导出前检查
+				76 container 发布记录
+					77 heading 发布记录, Value: 2
+						78 text 发布记录
+					79 text 只记录你确认过的发布节点，不会改变课程内容。
+					80 button 记录已发布
+					81 heading 还没有发布记录, Value: 3
+						82 text 还没有发布记录
+					83 text 导出并实际迁移后，可以记录这个发布节点；课程内容不会因此改变。
+				84 button 展开右栏
+				85 text S01-01｜Fixture lesson 1 正文：待研究 待补：已齐 排版：未开始 完成度：83% 本地优先 · 自动保存
+	86 close button
+	87 full screen button Help: this button also has an action to zoom the window, Secondary Actions: zoom the window
+	88 minimize button
+	89 text AI Course Workbench
+90 menu bar
+	91 AI Course Workbench QA Preview Final6
+	92 File
+	93 Edit
+	94 View
+	95 Window
+	96 Help
+
+The focused UI element is 2 HTML content Description: AI Course Workbench, URL: tauri://localhost

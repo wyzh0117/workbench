@@ -1,0 +1,52 @@
+{
+  "schema": "io-ui-closure.native_n05_keep_local_physical_proof.v1",
+  "observed_at": "2026-10-06T10:21:50Z",
+  "source_pin": "b09718c0823f170836a223bab79b750722e83c73",
+  "fixture": "/private/tmp/workbench-io-ui-F-external-conflict-final7",
+  "action": "Native9 explicit Keep Local after same-field external conflict; read-only physical verification",
+  "canonical": {
+    "path": "/private/tmp/workbench-io-ui-F-external-conflict-final7/project.json",
+    "bytes": 74933,
+    "sha256": "61f672228eca14cde9282d66f5e4b3f61024ed53c9f7e64e2e7d19ff59b122a7",
+    "mtime_utc": "2026-10-06T10:18:32.529577Z",
+    "project_id": "fb45a2d4-fbcb-4095-9d10-76f18fa98a14",
+    "title": "External canonical title QA",
+    "updated_at": "2026-10-06T10:17:32.765Z",
+    "target_block_id": "00000000-0000-4000-8000-00000000000d",
+    "target_block_content_serialized": "Local conflict draft retained for local resolution\\. N05\\-LOCAL\\-20261006\\-A N05\\-LOCAL\\-CONTINUED\\-20261006\\-C N05\\-LOCAL\\-20261006\\-D N05\\-EXTERNAL\\-20261006\\-B",
+    "interpretation": "Local G value committed. The already-present external B suffix remains; because F changed only the resolution word plus updated_at, this physical result alone does not establish that this write independently merged a new external field."
+  },
+  "external_f_backup": {
+    "path": "/private/tmp/workbench-io-ui-F-external-conflict-final7/project.bak",
+    "bytes": 74934,
+    "sha256": "57f4b9a5d549634068e404a217d18a000d9ab73dfb497c4e911e6b60566fc9a8",
+    "mtime_utc": "2026-10-06T10:16:22.722409Z",
+    "target_block_content_serialized": "Local conflict draft retained for remote resolution\\. N05\\-LOCAL\\-20261006\\-A N05\\-LOCAL\\-CONTINUED\\-20261006\\-C N05\\-LOCAL\\-20261006\\-D N05\\-EXTERNAL\\-20261006\\-B"
+  },
+  "validation": {
+    "deno_validateProjectData_issue_count": 0,
+    "recovery_or_snapshot_sidecars_found": false,
+    "workspace_entries": [
+      {
+        "path": ".workspace/project.lock",
+        "bytes": 206,
+        "sha256": "4f2d2e914b14548b94f7659424b5b67c04c31e29a70ed658dd289373ae811a50",
+        "pid": 63103,
+        "heartbeat": "2026-10-06T10:20:53.417Z"
+      },
+      {
+        "path": ".workspace/project.lock.guard",
+        "bytes": 0,
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      }
+    ]
+  },
+  "ui_evidence": {
+    "ax": "docs/reports/evidence/io-ui-closure/runs/native-final8/n05-final9-explicit-keep-local-result.ax.txt",
+    "screenshot": "docs/reports/evidence/io-ui-closure/runs/native-final8/n05-final9-explicit-keep-local-result.jpg",
+    "ack_visible": "已明确保留本地版本; ✓已保存",
+    "ack_payload_bindings_observed": false,
+    "note": "Native UI does not expose mutation_ack fields. This proof confirms visible success plus physical UUID/path/content/backup/domain result; strict ACK payload fields were not independently observed here."
+  },
+  "reopen_same_uuid_verified": false
+}

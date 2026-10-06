@@ -1,0 +1,74 @@
+Window: "AI Course Workbench", App: AI Course Workbench QA Preview Final6.
+0 standard window AI Course Workbench, Secondary Actions: Raise
+	1 scroll area
+		2 HTML content Description: AI Course Workbench, URL: tauri://localhost
+			3 container
+				4 button 返回项目选择；当前项目不会关闭
+				5 text AI Course Workbench
+				6 button F-history recovery candidate restore final ⌄, Help: 点击修改课程标题
+				7 button (disabled) 打开上一课
+				8 button S01-01｜Fixture lesson 1, Help: 点击修改当前课程标题
+				9 button 打开下一课
+				10 text ✓ 已保存
+				11 button 撤销上一次编辑
+				12 button 恢复上一次编辑
+				13 pop up button 设置
+				14 button 保存
+				15 button 保存版本
+				16 button 预览
+				17 button 导出
+				18 button 项目概览
+				19 button 打开课程：S01-01 Fixture lesson 1
+				20 button 关闭课程标签：S01-01 Fixture lesson 1, Help: 关闭课程标签
+				21 button 展开左栏
+				22 text 项目概览
+				23 heading F-history recovery candidate restore final, Value: 1
+					24 text F-history recovery candidate restore final
+				25 text 从想法到发布，今天继续完成一小步。
+				26 button 打开课程地图 →
+				27 button 导入文件
+				28 button 导入文件夹
+				29 text 课程内容
+				30 text 4
+				31 text 已完成 0 课 待补内容
+				32 text 0
+				33 text 0 课涉及 收件箱
+				34 text 0
+				35 text 条待处理输入 媒体
+				36 text 6
+				37 text 个项目素材
+				38 heading 继续工作, Value: 2
+					39 text 继续工作
+				40 button 打开 →
+				41 text S01-01 Fixture lesson 1
+				42 text Fixture heading 1
+				43 text 还没有排版版本；正文仍是「待研究」
+				44 heading 待处理, Value: 2
+					45 text 待处理
+				46 button 查看全部 →
+				47 container
+					48 text 收件箱 0 待补内容 0 缺素材 0
+				49 text 最近修改
+				50 heading 最近编辑的课时, Value: 2
+					51 text 最近编辑的课时
+				52 button 查看课程地图 →
+				53 container
+					54 button 打开S01-01 Fixture lesson 1
+					55 button 打开S01-02 Fixture lesson 2
+					56 button 打开S02-01 Fixture lesson 3
+					57 button 打开S02-02 Fixture lesson 4
+				58 button 展开右栏
+				59 text S01-01｜Fixture lesson 1 正文：待研究 待补：已齐 排版：未开始 完成度：83% 本地优先 · 自动保存
+	60 close button
+	61 full screen button Help: this button also has an action to zoom the window, Secondary Actions: zoom the window
+	62 minimize button
+	63 text AI Course Workbench
+64 menu bar
+	65 AI Course Workbench QA Preview Final6
+	66 File
+	67 Edit
+	68 View
+	69 Window
+	70 Help
+
+The focused UI element is 2 HTML content Description: AI Course Workbench, URL: tauri://localhost

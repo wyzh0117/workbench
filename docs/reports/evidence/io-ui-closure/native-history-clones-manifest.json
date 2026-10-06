@@ -1,0 +1,298 @@
+{
+  "base": "/tmp/workbench-io-ui-native-final/history",
+  "source_project_id": "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
+  "source_canonical": {
+    "bytes": 69270,
+    "sha256": "64b9b83fdbbea3eb2da223c2b368aef031ba644096719a09c9e10643898267be"
+  },
+  "source_snapshot_files": [
+    {
+      "name": "1fd63b8f-6f70-4c57-a614-1652ac2591fa.json",
+      "bytes": 69584,
+      "sha256": "ae2559e8e66fd65757ed0f1004a343ad461a2b09001de590306b13da83148808"
+    },
+    {
+      "name": "1fd63b8f-6f70-4c57-a614-1652ac2591fa.meta.json",
+      "bytes": 265,
+      "sha256": "930a7e2559b1118d61a9bebc28535c07e053afe9deaf1aba865c497afb1ab399"
+    },
+    {
+      "name": "e5b8bafa-6e52-4754-bd0f-69cecafc0ba3.json",
+      "bytes": 68969,
+      "sha256": "ee46a931ad6172928032ae8cf9dbb3c7fa60cb365f46b9e0a16b1203b54ae1be"
+    },
+    {
+      "name": "e5b8bafa-6e52-4754-bd0f-69cecafc0ba3.meta.json",
+      "bytes": 286,
+      "sha256": "e9e23f3fd8107c762ff04888bb1437668bea06f22cd932fe430ee0c405b1bb79"
+    },
+    {
+      "name": "history_corrupt_20261006.json",
+      "bytes": 30,
+      "sha256": "0b2cc6cac164a6170248e19b780455299bc2617a744bbfe4c6b283fe6f4dc51a"
+    },
+    {
+      "name": "history_incomplete_20261006.json",
+      "bytes": 68972,
+      "sha256": "cd31885f33812bc0c9d35464e54c866721457bd2666752af43246506bc6409c3"
+    },
+    {
+      "name": "history_incomplete_20261006.meta.json",
+      "bytes": 174,
+      "sha256": "53a2dac98b14e50bda6bdf55edc21b084bbd3b208817c67e0813f9c8412963f3"
+    },
+    {
+      "name": "history_named_20261006.json",
+      "bytes": 68973,
+      "sha256": "078415fead41496736f495068d35daabd5740c5dc3ca08302acca2919d828396"
+    },
+    {
+      "name": "history_named_20261006.meta.json",
+      "bytes": 293,
+      "sha256": "ae606c19570820c05501ddc33fc2bfa5b7a64c3356bfaaeddac56d1d086d9dc1"
+    },
+    {
+      "name": "history_unindexed_20261006.json",
+      "bytes": 68972,
+      "sha256": "1669e0c858a1d63aeda8be4431a7af1cdfb00859824dc319f521cb6896732a1d"
+    }
+  ],
+  "clones": [
+    {
+      "name": "restore",
+      "root": "/tmp/workbench-io-ui-native-final/history-restore",
+      "project_id": "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
+      "canonical_sha256": "64b9b83fdbbea3eb2da223c2b368aef031ba644096719a09c9e10643898267be",
+      "snapshot_file_count": 10,
+      "files": [
+        {
+          "path": ".workspace/index.json",
+          "bytes": 63110,
+          "sha256": "27261247b315e5ab689652b41c50da72acb030e2002b5c32eba7e2216bd8366f"
+        },
+        {
+          "path": ".workspace/snapshots/1fd63b8f-6f70-4c57-a614-1652ac2591fa.json",
+          "bytes": 69584,
+          "sha256": "ae2559e8e66fd65757ed0f1004a343ad461a2b09001de590306b13da83148808"
+        },
+        {
+          "path": ".workspace/snapshots/1fd63b8f-6f70-4c57-a614-1652ac2591fa.meta.json",
+          "bytes": 265,
+          "sha256": "930a7e2559b1118d61a9bebc28535c07e053afe9deaf1aba865c497afb1ab399"
+        },
+        {
+          "path": ".workspace/snapshots/e5b8bafa-6e52-4754-bd0f-69cecafc0ba3.json",
+          "bytes": 68969,
+          "sha256": "ee46a931ad6172928032ae8cf9dbb3c7fa60cb365f46b9e0a16b1203b54ae1be"
+        },
+        {
+          "path": ".workspace/snapshots/e5b8bafa-6e52-4754-bd0f-69cecafc0ba3.meta.json",
+          "bytes": 286,
+          "sha256": "e9e23f3fd8107c762ff04888bb1437668bea06f22cd932fe430ee0c405b1bb79"
+        },
+        {
+          "path": ".workspace/snapshots/history_corrupt_20261006.json",
+          "bytes": 30,
+          "sha256": "0b2cc6cac164a6170248e19b780455299bc2617a744bbfe4c6b283fe6f4dc51a"
+        },
+        {
+          "path": ".workspace/snapshots/history_incomplete_20261006.json",
+          "bytes": 68972,
+          "sha256": "cd31885f33812bc0c9d35464e54c866721457bd2666752af43246506bc6409c3"
+        },
+        {
+          "path": ".workspace/snapshots/history_incomplete_20261006.meta.json",
+          "bytes": 174,
+          "sha256": "53a2dac98b14e50bda6bdf55edc21b084bbd3b208817c67e0813f9c8412963f3"
+        },
+        {
+          "path": ".workspace/snapshots/history_named_20261006.json",
+          "bytes": 68973,
+          "sha256": "078415fead41496736f495068d35daabd5740c5dc3ca08302acca2919d828396"
+        },
+        {
+          "path": ".workspace/snapshots/history_named_20261006.meta.json",
+          "bytes": 293,
+          "sha256": "ae606c19570820c05501ddc33fc2bfa5b7a64c3356bfaaeddac56d1d086d9dc1"
+        },
+        {
+          "path": ".workspace/snapshots/history_unindexed_20261006.json",
+          "bytes": 68972,
+          "sha256": "1669e0c858a1d63aeda8be4431a7af1cdfb00859824dc319f521cb6896732a1d"
+        },
+        {
+          "path": "assets/fixture-00.gif",
+          "bytes": 7493,
+          "sha256": "eacfdc6858d34f7c3c299ed7fa75a2a9145981098c24b3900986957b9e94c0d2"
+        },
+        {
+          "path": "assets/fixture-00.mp4",
+          "bytes": 8748,
+          "sha256": "697f1b863079014da64bc345296d4671197a4d921341bf11ef71c26dc21cf7c6"
+        },
+        {
+          "path": "assets/fixture-000.png",
+          "bytes": 1488,
+          "sha256": "0c479466fd0ea052ca693290293b423068552c091e37922de3944ce7eefdf0d3"
+        },
+        {
+          "path": "assets/fixture-001.png",
+          "bytes": 1482,
+          "sha256": "3cced520167601a8cde0af73da82fa6a035f11e14976d3a19733701546d8078e"
+        },
+        {
+          "path": "assets/fixture-002.png",
+          "bytes": 1503,
+          "sha256": "e4943822009bebf60c212569ecad21c1fd176fbfb26552974c3e565a931b35aa"
+        },
+        {
+          "path": "assets/fixture-003.png",
+          "bytes": 1519,
+          "sha256": "96530624979bf1be2732b5a9b2da93536da71ee9f0cdd99abded5346600dbd80"
+        },
+        {
+          "path": "project.json",
+          "bytes": 69270,
+          "sha256": "64b9b83fdbbea3eb2da223c2b368aef031ba644096719a09c9e10643898267be"
+        }
+      ]
+    },
+    {
+      "name": "fault",
+      "root": "/tmp/workbench-io-ui-native-final/history-fault",
+      "project_id": "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
+      "canonical_sha256": "64b9b83fdbbea3eb2da223c2b368aef031ba644096719a09c9e10643898267be",
+      "snapshot_file_count": 10,
+      "files": [
+        {
+          "path": ".workspace/index.json",
+          "bytes": 63110,
+          "sha256": "27261247b315e5ab689652b41c50da72acb030e2002b5c32eba7e2216bd8366f"
+        },
+        {
+          "path": ".workspace/snapshots/1fd63b8f-6f70-4c57-a614-1652ac2591fa.json",
+          "bytes": 69584,
+          "sha256": "ae2559e8e66fd65757ed0f1004a343ad461a2b09001de590306b13da83148808"
+        },
+        {
+          "path": ".workspace/snapshots/1fd63b8f-6f70-4c57-a614-1652ac2591fa.meta.json",
+          "bytes": 265,
+          "sha256": "930a7e2559b1118d61a9bebc28535c07e053afe9deaf1aba865c497afb1ab399"
+        },
+        {
+          "path": ".workspace/snapshots/e5b8bafa-6e52-4754-bd0f-69cecafc0ba3.json",
+          "bytes": 68969,
+          "sha256": "ee46a931ad6172928032ae8cf9dbb3c7fa60cb365f46b9e0a16b1203b54ae1be"
+        },
+        {
+          "path": ".workspace/snapshots/e5b8bafa-6e52-4754-bd0f-69cecafc0ba3.meta.json",
+          "bytes": 286,
+          "sha256": "e9e23f3fd8107c762ff04888bb1437668bea06f22cd932fe430ee0c405b1bb79"
+        },
+        {
+          "path": ".workspace/snapshots/history_corrupt_20261006.json",
+          "bytes": 30,
+          "sha256": "0b2cc6cac164a6170248e19b780455299bc2617a744bbfe4c6b283fe6f4dc51a"
+        },
+        {
+          "path": ".workspace/snapshots/history_incomplete_20261006.json",
+          "bytes": 68972,
+          "sha256": "cd31885f33812bc0c9d35464e54c866721457bd2666752af43246506bc6409c3"
+        },
+        {
+          "path": ".workspace/snapshots/history_incomplete_20261006.meta.json",
+          "bytes": 174,
+          "sha256": "53a2dac98b14e50bda6bdf55edc21b084bbd3b208817c67e0813f9c8412963f3"
+        },
+        {
+          "path": ".workspace/snapshots/history_named_20261006.json",
+          "bytes": 68973,
+          "sha256": "078415fead41496736f495068d35daabd5740c5dc3ca08302acca2919d828396"
+        },
+        {
+          "path": ".workspace/snapshots/history_named_20261006.meta.json",
+          "bytes": 293,
+          "sha256": "ae606c19570820c05501ddc33fc2bfa5b7a64c3356bfaaeddac56d1d086d9dc1"
+        },
+        {
+          "path": ".workspace/snapshots/history_unindexed_20261006.json",
+          "bytes": 68972,
+          "sha256": "1669e0c858a1d63aeda8be4431a7af1cdfb00859824dc319f521cb6896732a1d"
+        },
+        {
+          "path": "assets/fixture-00.gif",
+          "bytes": 7493,
+          "sha256": "eacfdc6858d34f7c3c299ed7fa75a2a9145981098c24b3900986957b9e94c0d2"
+        },
+        {
+          "path": "assets/fixture-00.mp4",
+          "bytes": 8748,
+          "sha256": "697f1b863079014da64bc345296d4671197a4d921341bf11ef71c26dc21cf7c6"
+        },
+        {
+          "path": "assets/fixture-000.png",
+          "bytes": 1488,
+          "sha256": "0c479466fd0ea052ca693290293b423068552c091e37922de3944ce7eefdf0d3"
+        },
+        {
+          "path": "assets/fixture-001.png",
+          "bytes": 1482,
+          "sha256": "3cced520167601a8cde0af73da82fa6a035f11e14976d3a19733701546d8078e"
+        },
+        {
+          "path": "assets/fixture-002.png",
+          "bytes": 1503,
+          "sha256": "e4943822009bebf60c212569ecad21c1fd176fbfb26552974c3e565a931b35aa"
+        },
+        {
+          "path": "assets/fixture-003.png",
+          "bytes": 1519,
+          "sha256": "96530624979bf1be2732b5a9b2da93536da71ee9f0cdd99abded5346600dbd80"
+        },
+        {
+          "path": "project.json",
+          "bytes": 69270,
+          "sha256": "64b9b83fdbbea3eb2da223c2b368aef031ba644096719a09c9e10643898267be"
+        }
+      ]
+    }
+  ],
+  "recovery_seeds": [
+    {
+      "name": "restore",
+      "root": "/tmp/workbench-io-ui-native-final/history-restore",
+      "project_id": "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
+      "canonical_bytes": 69270,
+      "canonical_sha256": "64b9b83fdbbea3eb2da223c2b368aef031ba644096719a09c9e10643898267be",
+      "canonical_revision": "2026-08-15T12:00:00.000Z",
+      "pending_candidate_title": "F-history recovery candidate restore final",
+      "pending_candidate_revision": "2026-10-06T04:21:14.477Z",
+      "candidate_domain_issues": 0,
+      "transaction_id": "155a152b-0f7e-4d43-a19b-78e1f3ba89ad",
+      "journal_bytes": 63332,
+      "journal_sha256": "610cd93b906bbb0556ac4f6f66fbabc71fe77ca9c8b1817e733d3c6c3219ed9c",
+      "pending_visible_on_read": true
+    },
+    {
+      "name": "fault",
+      "root": "/tmp/workbench-io-ui-native-final/history-fault",
+      "project_id": "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
+      "canonical_bytes": 69270,
+      "canonical_sha256": "64b9b83fdbbea3eb2da223c2b368aef031ba644096719a09c9e10643898267be",
+      "canonical_revision": "2026-08-15T12:00:00.000Z",
+      "pending_candidate_title": "F-history recovery candidate fault final",
+      "pending_candidate_revision": "2026-10-06T04:21:14.538Z",
+      "candidate_domain_issues": 0,
+      "transaction_id": "add3f113-f78e-437a-9a30-02dfa186e387",
+      "journal_bytes": 63330,
+      "journal_sha256": "9450c0a19537aa7005a0db89d140c141857ec3945f84c89bd46ace1f328575dc",
+      "pending_visible_on_read": true
+    }
+  ],
+  "fault_snapshot_directory": {
+    "path": "/tmp/workbench-io-ui-native-final/history-fault/.workspace/snapshots",
+    "mode": "40555",
+    "write_probe": "failed_as_expected",
+    "intent": "Owned UI fault fixture: backup snapshot creation should fail before Canonical restore; restore mode to 0755 only after root reports the UI probe complete."
+  }
+}

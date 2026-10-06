@@ -1,0 +1,77 @@
+{
+  "root": "/tmp/workbench-io-ui-F-history-denoio-20261006",
+  "canonical": {
+    "size": 69556,
+    "sha256": "5d62bca04afef614c1d0b5652eda6f68c8408922932534a5835bc16529050a3a",
+    "project_id": "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
+    "title": "F-history recovery restored final",
+    "updated_at": "2026-10-06T02:48:42.290Z",
+    "validation_issues": 0,
+    "stages": 2,
+    "lessons": 0,
+    "blocks": 16,
+    "assets": 6,
+    "snapshot_ids": [
+      "72f09912-cd6e-4048-bd8d-e8fa3e1d1124",
+      "1fd63b8f-6f70-4c57-a614-1652ac2591fa"
+    ]
+  },
+  "recovery_journal_present": false,
+  "recovery_before_backups": [
+    {
+      "id": "72f09912-cd6e-4048-bd8d-e8fa3e1d1124",
+      "name": "恢复前备份",
+      "note": "恢复自动保存前自动创建",
+      "created_at": "2026-10-06T02:48:42.258Z",
+      "file": {
+        "path": "/tmp/workbench-io-ui-F-history-denoio-20261006/.workspace/snapshots/72f09912-cd6e-4048-bd8d-e8fa3e1d1124.json",
+        "size": 69270,
+        "sha256": "64b9b83fdbbea3eb2da223c2b368aef031ba644096719a09c9e10643898267be"
+      },
+      "content_hash": "64b9b83fdbbea3eb2da223c2b368aef031ba644096719a09c9e10643898267be",
+      "metadata": {
+        "created_at": "2026-10-06T02:48:42.258Z"
+      },
+      "snapshot_project": {
+        "project_id": "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
+        "title": "F-history unindexed prior snapshot",
+        "updated_at": "2026-08-15T12:00:00.000Z",
+        "validation_issues": 0,
+        "stages": 2,
+        "lessons": 0,
+        "blocks": 16,
+        "assets": 6
+      }
+    },
+    {
+      "id": "1fd63b8f-6f70-4c57-a614-1652ac2591fa",
+      "name": "恢复前备份",
+      "note": "恢复旧版本前自动保存当前项目",
+      "created_at": "2026-10-06T01:07:45.671Z",
+      "file": {
+        "path": "/tmp/workbench-io-ui-F-history-denoio-20261006/.workspace/snapshots/1fd63b8f-6f70-4c57-a614-1652ac2591fa.json",
+        "size": 69584,
+        "sha256": "ae2559e8e66fd65757ed0f1004a343ad461a2b09001de590306b13da83148808"
+      },
+      "content_hash": "ae2559e8e66fd65757ed0f1004a343ad461a2b09001de590306b13da83148808",
+      "metadata": {
+        "created_at": "2026-10-06T01:07:45.671Z"
+      },
+      "snapshot_project": {
+        "project_id": "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
+        "title": "File I/O small-final QA fixture",
+        "updated_at": "2026-10-06T01:07:45.671Z",
+        "validation_issues": 0,
+        "stages": 2,
+        "lessons": 0,
+        "blocks": 16,
+        "assets": 6
+      }
+    }
+  ],
+  "previous_canonical": {
+    "size": 69270,
+    "sha256": "64b9b83fdbbea3eb2da223c2b368aef031ba644096719a09c9e10643898267be",
+    "title": "F-history unindexed prior snapshot"
+  }
+}

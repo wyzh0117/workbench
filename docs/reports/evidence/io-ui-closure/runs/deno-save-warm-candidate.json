@@ -1,0 +1,271 @@
+{
+  "mode": "candidate",
+  "api": "bound project.save",
+  "source": {
+    "repo_root": "/Users/youngi/.codex/worktrees/io-ui-closure/workbench",
+    "declared_commit": "b990d49029333d4bacc46a2f92361779a554545c",
+    "git_head": "b990d49029333d4bacc46a2f92361779a554545c",
+    "modules": {
+      "desktop": {
+        "path": "/Users/youngi/.codex/worktrees/io-ui-closure/workbench/src/service/desktop.ts",
+        "bytes": 130691,
+        "sha256": "c27ff22fcf3b927ffc54b0362147951ef3658c94009fe971595d8a3ae72624d4"
+      },
+      "storage": {
+        "path": "/Users/youngi/.codex/worktrees/io-ui-closure/workbench/src/service/storage.ts",
+        "bytes": 109632,
+        "sha256": "da690fed0fbe02d0f8b0f1c7d98a006dc61f845c6c0d33f5b03ada41f0cf83a3"
+      },
+      "import_export": {
+        "path": "/Users/youngi/.codex/worktrees/io-ui-closure/workbench/src/service/import_export.ts",
+        "bytes": 112547,
+        "sha256": "02d8dc8f78c0de89f44b24c9d41b1349c78297305862bf1bd0a7d31fcf30a8f3"
+      },
+      "search": {
+        "path": "/Users/youngi/.codex/worktrees/io-ui-closure/workbench/src/service/search.ts",
+        "bytes": 15865,
+        "sha256": "4b89133372b549fa5eb30370e1006c2833ae5fcbe9836c556ccfaca80a4f10d2"
+      }
+    },
+    "instrumentation_runner": {
+      "path": "/Users/youngi/.codex/worktrees/io-ui-closure/workbench/scripts/io_benchmark.ts",
+      "bytes": 15547,
+      "sha256": "4891f02829cb90be595292ec3f715d705b9ef68369ba5793b4f19ab2cb4bdf6b"
+    },
+    "instrumentation_patch_scope": "runner is separate from candidate production modules; runtime module paths and hashes above identify the measured sources"
+  },
+  "fixture": {
+    "path": "/tmp/workbench-large-canonical-fixture.json",
+    "bytes": 7469246,
+    "sha256": "14991258eb33336582280c093d97cc3fc61ba6dab166c1a8970ce542f05509a4",
+    "project_id": "00000000-0000-4000-8000-000000000001"
+  },
+  "unmeasured_warmup_saves": 3,
+  "iterations_per_case": 10,
+  "setup_directory": "/var/folders/fb/x3zpt1kj2_j8jbr0xg6wxft00000gn/T/io-benchmark-candidate-3e8bdf72824ec915",
+  "no_op": {
+    "median_ms": 250.40554099999963,
+    "min_ms": 234.17487500000016,
+    "max_ms": 295.806417,
+    "samples_ms": [
+      295.806417,
+      255.76754200000005,
+      283.25945800000045,
+      250.40554099999963,
+      243.20024999999987,
+      250.82037499999979,
+      236.78399999999965,
+      234.17487500000016,
+      237.92362500000036,
+      241.96120799999971
+    ],
+    "file_io": {
+      "by_target": {
+        "workspace_sidecar": {
+          "read_operations": 10,
+          "read_bytes": 2580,
+          "write_operations": 0,
+          "write_bytes": 0,
+          "sync_attempts": 0,
+          "sync_successes": 0,
+          "rename_in": 0,
+          "rename_out": 0,
+          "removes": 0
+        },
+        "canonical_project": {
+          "read_operations": 1150,
+          "read_bytes": 74692460,
+          "write_operations": 0,
+          "write_bytes": 0,
+          "sync_attempts": 0,
+          "sync_successes": 0,
+          "rename_in": 0,
+          "rename_out": 0,
+          "removes": 0
+        }
+      },
+      "open_operations": 20,
+      "close_operations": 20,
+      "peak_open_handles": 2,
+      "read_file_operations": 0,
+      "read_file_bytes": 0,
+      "read_text_file_operations": 10,
+      "read_text_file_bytes": 2580,
+      "write_file_operations": 0,
+      "write_file_bytes": 0,
+      "write_text_file_operations": 0,
+      "write_text_file_bytes": 0,
+      "rename_operations": 0,
+      "remove_operations": 0
+    },
+    "service_metrics": {
+      "project_full_read_operations": 10,
+      "project_full_read_bytes": 74692460,
+      "project_hash_passes": 10,
+      "project_hash_bytes": 74692460,
+      "project_temp_files_created": 0,
+      "project_temp_write_bytes": 0,
+      "project_backup_copy_operations": 0,
+      "project_backup_copy_read_bytes": 0,
+      "project_backup_copy_write_bytes": 0,
+      "project_file_sync_attempts": 0,
+      "project_file_sync_successes": 0,
+      "project_backup_renames": 0,
+      "project_promotions": 0,
+      "project_directory_sync_attempts": 0,
+      "project_directory_sync_successes": 0,
+      "recovery_journal_temp_files_created": 0,
+      "recovery_journal_temp_write_bytes": 0,
+      "recovery_journal_file_sync_attempts": 0,
+      "recovery_journal_file_sync_successes": 0,
+      "recovery_journal_promotions": 0,
+      "recovery_journal_removal_attempts": 0,
+      "recovery_journal_removal_successes": 0,
+      "recovery_directory_sync_attempts": 0,
+      "recovery_directory_sync_successes": 0
+    }
+  },
+  "changed": {
+    "median_ms": 556.4717079999991,
+    "min_ms": 534.1052920000002,
+    "max_ms": 598.1054589999994,
+    "samples_ms": [
+      540.9812500000007,
+      558.6417499999998,
+      582.2221250000002,
+      598.1054589999994,
+      534.1052920000002,
+      544.718417,
+      538.2027499999995,
+      555.4995419999996,
+      556.4717079999991,
+      563.4977920000001
+    ],
+    "file_io": {
+      "by_target": {
+        "workspace_sidecar": {
+          "read_operations": 11,
+          "read_bytes": 2838,
+          "write_operations": 1,
+          "write_bytes": 258,
+          "sync_attempts": 1,
+          "sync_successes": 1,
+          "rename_in": 0,
+          "rename_out": 0,
+          "removes": 0
+        },
+        "canonical_project": {
+          "read_operations": 3450,
+          "read_bytes": 224077380,
+          "write_operations": 0,
+          "write_bytes": 0,
+          "sync_attempts": 0,
+          "sync_successes": 0,
+          "rename_in": 10,
+          "rename_out": 0,
+          "removes": 0
+        },
+        "owned_temp": {
+          "read_operations": 0,
+          "read_bytes": 0,
+          "write_operations": 1170,
+          "write_bytes": 319546130,
+          "sync_attempts": 30,
+          "sync_successes": 30,
+          "rename_in": 0,
+          "rename_out": 40,
+          "removes": 0
+        },
+        "recovery_journal": {
+          "read_operations": 0,
+          "read_bytes": 0,
+          "write_operations": 0,
+          "write_bytes": 0,
+          "sync_attempts": 0,
+          "sync_successes": 0,
+          "rename_in": 10,
+          "rename_out": 0,
+          "removes": 10
+        },
+        "other": {
+          "read_operations": 0,
+          "read_bytes": 0,
+          "write_operations": 0,
+          "write_bytes": 0,
+          "sync_attempts": 30,
+          "sync_successes": 30,
+          "rename_in": 0,
+          "rename_out": 0,
+          "removes": 0
+        },
+        "canonical_backup": {
+          "read_operations": 0,
+          "read_bytes": 0,
+          "write_operations": 0,
+          "write_bytes": 0,
+          "sync_attempts": 0,
+          "sync_successes": 0,
+          "rename_in": 10,
+          "rename_out": 0,
+          "removes": 0
+        },
+        "search_index": {
+          "read_operations": 0,
+          "read_bytes": 0,
+          "write_operations": 0,
+          "write_bytes": 0,
+          "sync_attempts": 0,
+          "sync_successes": 0,
+          "rename_in": 10,
+          "rename_out": 0,
+          "removes": 0
+        }
+      },
+      "open_operations": 102,
+      "close_operations": 102,
+      "peak_open_handles": 4,
+      "read_file_operations": 0,
+      "read_file_bytes": 0,
+      "read_text_file_operations": 10,
+      "read_text_file_bytes": 2580,
+      "write_file_operations": 0,
+      "write_file_bytes": 0,
+      "write_text_file_operations": 10,
+      "write_text_file_bytes": 101130750,
+      "rename_operations": 40,
+      "remove_operations": 10
+    },
+    "service_metrics": {
+      "project_full_read_operations": 20,
+      "project_full_read_bytes": 149384920,
+      "project_hash_passes": 20,
+      "project_hash_bytes": 149384920,
+      "project_temp_files_created": 10,
+      "project_temp_write_bytes": 74692460,
+      "project_backup_copy_operations": 10,
+      "project_backup_copy_read_bytes": 74692460,
+      "project_backup_copy_write_bytes": 74692460,
+      "project_file_sync_attempts": 20,
+      "project_file_sync_successes": 20,
+      "project_backup_renames": 10,
+      "project_promotions": 10,
+      "project_directory_sync_attempts": 10,
+      "project_directory_sync_successes": 10,
+      "recovery_journal_temp_files_created": 10,
+      "recovery_journal_temp_write_bytes": 69030460,
+      "recovery_journal_file_sync_attempts": 10,
+      "recovery_journal_file_sync_successes": 10,
+      "recovery_journal_promotions": 10,
+      "recovery_journal_removal_attempts": 10,
+      "recovery_journal_removal_successes": 10,
+      "recovery_directory_sync_attempts": 20,
+      "recovery_directory_sync_successes": 20
+    }
+  },
+  "limitations": {
+    "process_rss": "not measured",
+    "device_physical_write_amplification": "not measured",
+    "browser_session_io": "measured separately by browser_session_generation_test",
+    "in_process_buffer_peak": "not measured by this save runner"
+  }
+}

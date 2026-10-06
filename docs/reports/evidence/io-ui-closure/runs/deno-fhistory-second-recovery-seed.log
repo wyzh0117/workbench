@@ -1,0 +1,27 @@
+{
+  "root": "/tmp/workbench-io-ui-F-history-denoio-20261006",
+  "canonical_before": {
+    "size": 69270,
+    "sha256": "64b9b83fdbbea3eb2da223c2b368aef031ba644096719a09c9e10643898267be",
+    "title": "F-history unindexed prior snapshot",
+    "revision": "2026-08-15T12:00:00.000Z"
+  },
+  "canonical_after": {
+    "size": 69270,
+    "sha256": "64b9b83fdbbea3eb2da223c2b368aef031ba644096719a09c9e10643898267be",
+    "title": "F-history unindexed prior snapshot"
+  },
+  "canonical_unchanged": true,
+  "domain_validation_issues": 0,
+  "journal": {
+    "path": "/tmp/workbench-io-ui-F-history-denoio-20261006/.workspace/recovery.json",
+    "size": 71211,
+    "sha256": "e83833c7ad1faf0dd245722febd735281ee88f4fcf8be804ec088e0c9dd66717",
+    "transaction_id": "f-history-recovery-restore-20261006",
+    "project_id": "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
+    "canonical_revision": "2026-08-15T12:00:00.000Z",
+    "saved_at": "2026-10-06T02:48:09.851Z",
+    "candidate_title": "F-history recovery restored final",
+    "candidate_updated_at": "2026-10-06T02:48:09.851Z"
+  }
+}

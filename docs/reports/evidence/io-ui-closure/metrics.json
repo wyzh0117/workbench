@@ -1,0 +1,589 @@
+{
+  "schema_version": 1,
+  "baseline_commit": "dfcb23e88b08b246e03b1576eb9471627e510548",
+  "candidate_commit": "50aaea7268164b9fa066425ce4a5ac158ca87352",
+  "status": "PARTIAL",
+  "fixture_id": "F-large:7469246-byte-valid-Canonical",
+  "operation_sequence": "Two fresh paired modes (diagnostics off and on); each baseline/candidate run excludes 3 warmups and records 10 changed + 10 unchanged saves on the same valid Canonical fixture. Standard even-sample median and nearest-rank p95 (n=10, maximum) are reported.",
+  "sample_count": {
+    "baseline_changed": 10,
+    "baseline_unchanged": 10,
+    "candidate_changed": 10,
+    "candidate_unchanged": 10
+  },
+  "environment": {
+    "os": "macOS arm64",
+    "deno": "2.9.5",
+    "rustc": "1.98.1",
+    "cargo": "1.98.1",
+    "node": "22.23.2",
+    "npm": "10.9.8",
+    "git": "2.39.3",
+    "xcodebuild": "unavailable: active developer directory is CommandLineTools, not Xcode"
+  },
+  "metrics": {
+    "heartbeat_workers_active": {
+      "baseline": 0,
+      "candidate": 0,
+      "unit": "worker registrations during benchmark",
+      "status": "PASS",
+      "detail": "No worker registered across backend samples; not a full GUI heartbeat run."
+    },
+    "post_save_open_calls": {
+      "baseline": null,
+      "candidate": null,
+      "unit": "calls per save",
+      "status": "NOT_MEASURED",
+      "detail": "Native benchmark invokes save directly; no Tauri/UI open-count measurement."
+    },
+    "canonical_full_validation_reads": {
+      "baseline": {
+        "changed": 5,
+        "unchanged": 5
+      },
+      "candidate": {
+        "changed": 2,
+        "unchanged": 1
+      },
+      "unit": "full canonical reads per save",
+      "status": "PASS_TARGETED_BACKEND_PAIR",
+      "detail": "Native debug Rust backend pair; current candidate per-operation counts. Deno save pair counts are separate in deno_service_save_io."
+    },
+    "canonical_full_validation_read_bytes": {
+      "baseline": {
+        "changed_total_10": 373461942,
+        "unchanged_total_10": 373461950
+      },
+      "candidate": {
+        "changed_total_10": 149384776,
+        "unchanged_total_10": 74692390
+      },
+      "unit": "logical bytes read over 10 operations",
+      "status": "PASS_TARGETED_BACKEND_PAIR",
+      "detail": "Native logical API counters, not physical device bytes."
+    },
+    "canonical_writes": {
+      "baseline": {
+        "changed": 2,
+        "unchanged": 2
+      },
+      "candidate": {
+        "changed": 2,
+        "unchanged": 0
+      },
+      "unit": "file write operations per save (project + recovery)",
+      "status": "PASS_TARGETED_BACKEND_PAIR",
+      "detail": "Native candidate unchanged path has no canonical, recovery, or backup target writes."
+    },
+    "canonical_write_bytes": {
+      "baseline": {
+        "changed_total_10": 143722840,
+        "unchanged_total_10": 143722820
+      },
+      "candidate": {
+        "changed_total_10": 143722840,
+        "unchanged_total_10": 0
+      },
+      "unit": "logical bytes written over 10 operations",
+      "status": "PASS_TARGETED_BACKEND_PAIR",
+      "detail": "Native test-profile logical counters; not physical device write amplification."
+    },
+    "backup_copy_bytes": {
+      "baseline": {
+        "changed_total_10": 74692388,
+        "unchanged_total_10": 74692390
+      },
+      "candidate": {
+        "changed_total_10": 74692388,
+        "unchanged_total_10": 0
+      },
+      "unit": "logical bytes copied over 10 operations",
+      "status": "PASS_TARGETED_BACKEND_PAIR",
+      "detail": "Native project.bak/recovery target counters; full per-target JSON retained in the Native warm metrics artifact."
+    },
+    "save_queue_coalesced": {
+      "baseline": null,
+      "candidate": {
+        "status": "PASS",
+        "scope": "fake-clock scheduler tests",
+        "timing": "simulated only"
+      },
+      "unit": "queued requests",
+      "status": "PARTIAL",
+      "detail": "Do not treat fake-clock wait as real median/p95."
+    },
+    "save_latency_ms": {
+      "baseline": {
+        "changed": {
+          "median": 3030.287,
+          "p95_nearest_rank": 3062.217
+        },
+        "unchanged": {
+          "median": 3036.862,
+          "p95_nearest_rank": 3322.058
+        }
+      },
+      "candidate": {
+        "changed": {
+          "median": 2809.134,
+          "p95_nearest_rank": 2825.63
+        },
+        "unchanged": {
+          "median": 859.863,
+          "p95_nearest_rank": 868.051
+        }
+      },
+      "unit": "ms per save",
+      "status": "PASS_TARGETED_BACKEND_PAIR",
+      "detail": "Native debug Rust test-backend pair dfcb23e88b08b246e03b1576eb9471627e510548→fcefcb106c2cf4e957d54a1ee7e112e2aa83cac0; 10 valid samples/case. Changed median/p95 −7.30%/−7.73%; no-op −71.69%/−73.87%. Not Tauri IPC, release GUI, or physical-disk throughput. Candidate no-op: one Canonical read/hash, zero writes/copies/syncs/renames across targets."
+    },
+    "deno_service_save_latency_ms": {
+      "baseline": {
+        "changed": {
+          "median": 401.143,
+          "p95_nearest_rank": 451.094
+        },
+        "unchanged": {
+          "median": 425.333,
+          "p95_nearest_rank": 509.098
+        }
+      },
+      "candidate": {
+        "changed": {
+          "median": 406.783,
+          "p95_nearest_rank": 416.349
+        },
+        "unchanged": {
+          "median": 158.031,
+          "p95_nearest_rank": 185.614
+        }
+      },
+      "unit": "ms per save",
+      "status": "BLOCKED_CHANGED_SAVE_DIAGNOSTIC_ON_TAIL_REGRESSION",
+      "diagnostics_on": {
+        "baseline": {
+          "changed": {
+            "median": 406.852,
+            "p95_nearest_rank": 490.279
+          },
+          "unchanged": {
+            "median": 403.04,
+            "p95_nearest_rank": 449.382
+          }
+        },
+        "candidate": {
+          "changed": {
+            "median": 419.491,
+            "p95_nearest_rank": 593.814
+          },
+          "unchanged": {
+            "median": 155.905,
+            "p95_nearest_rank": 174.332
+          }
+        }
+      },
+      "summary_path": "runs/deno-final-50aaea7f/summary.json",
+      "summary_sha256": "3ad9be205efbacd30e4807d78291468b07b48e322d2c6c0c0c5398fa6c486a5f",
+      "detail": "Final 50aa fresh four-run Deno DesktopService pair; same fixture, 3 warmups excluded, 10 valid samples/case. Off changed +1.41% median/−7.70% p95; off no-op −62.85%/−63.54%. On changed +3.11%/＋21.12%; on no-op −61.32%/−61.21%. Changed on p95 is the maximum of the 10 samples and its cause is not isolated. No cross-mode average or significance claim."
+    },
+    "deno_service_save_io": {
+      "candidate_noop_per_save": {
+        "canonical_full_reads": 1,
+        "canonical_hash_bytes": 7469246,
+        "project_file_writes": 0,
+        "backup_copy_operations": 0,
+        "project_file_syncs": 0,
+        "recovery_journal_file_syncs": 0,
+        "project_directory_syncs": 0,
+        "recovery_directory_syncs": 0,
+        "promotions_or_renames": 0
+      },
+      "candidate_changed_per_save": {
+        "canonical_full_reads": 2,
+        "canonical_full_read_bytes": 14938492,
+        "project_stage_write_bytes": 7469246,
+        "backup_copy_operations": 1,
+        "backup_copy_read_bytes": 7469246,
+        "backup_copy_write_bytes": 7469246,
+        "project_file_syncs": 2,
+        "recovery_journal_file_syncs": 1,
+        "project_directory_syncs": 1,
+        "recovery_directory_syncs": 2,
+        "project_backup_and_promotion_renames": 2,
+        "recovery_journal_temp_write_bytes": 6903046
+      },
+      "baseline_per_save": null,
+      "unit": "logical service/API operations and bytes per operation",
+      "status": "MEASURED_CURRENT_50AA_DIAGNOSTICS_ON",
+      "detail": "Only candidate logical/service counters are summarized here, from the diagnostics-on run. Baseline raw file-probe details remain in the four-run summary. These are not physical-throughput counters and must not be added to probe totals.",
+      "measurement_note": "On-candidate totals over 10 samples; full raw summary: runs/deno-final-50aaea7f/summary.json. Diagnostics-off has null counters by design.",
+      "candidate_noop_sample_totals": {
+        "canonical_full_reads": 10,
+        "canonical_hash_bytes": 74692460,
+        "canonical_and_backup_writes": 0,
+        "backup_copies": 0,
+        "file_syncs": 0,
+        "directory_syncs": 0,
+        "promotions_renames_and_removals": 0
+      },
+      "candidate_changed_sample_totals": {
+        "canonical_full_reads": 20,
+        "canonical_full_read_bytes": 149384920,
+        "canonical_temp_write_operations": 10,
+        "canonical_temp_write_bytes": 74692460,
+        "backup_copy_operations": 10,
+        "backup_copy_read_bytes": 74692460,
+        "backup_copy_write_bytes": 74692460,
+        "project_file_syncs": 20,
+        "project_directory_syncs": 10,
+        "recovery_journal_temp_write_bytes": 69030460,
+        "recovery_journal_file_syncs": 10,
+        "recovery_directory_syncs": 20
+      }
+    },
+    "session_write_count": {
+      "baseline": null,
+      "candidate": {
+        "same_value_data_file_writes": 0,
+        "changed_payload_writes": 1,
+        "scope": "Deno sidecar store tests"
+      },
+      "unit": "data-file writes",
+      "status": "PARTIAL",
+      "detail": "Generation cursor and same-serialization no-op integration tests; not GUI process RSS."
+    },
+    "preview_manifest_reads": {
+      "baseline": null,
+      "candidate": {
+        "full_canonical_snapshot_reads_per_batch": 1,
+        "asset_file_opens": 4,
+        "peak_open_handles": 1
+      },
+      "unit": "per batch",
+      "status": "PASS",
+      "detail": "Deno preview batch test with 16 MiB raw returned data."
+    },
+    "preview_response_bytes": {
+      "baseline": null,
+      "candidate": {
+        "raw_bytes": 16777216,
+        "base64_expansion": true
+      },
+      "unit": "bytes",
+      "status": "PASS",
+      "detail": "Raw budget and encoded bridge payload are distinct measurements."
+    },
+    "import_preview_cache_entries": {
+      "baseline": null,
+      "candidate": {
+        "maximum": 8,
+        "ttl_minutes": 15
+      },
+      "unit": "entries / minutes",
+      "status": "PASS",
+      "detail": "Lifecycle tests assert caps, TTL, cancellation and close cleanup."
+    },
+    "import_preview_summary_bytes": {
+      "baseline": null,
+      "candidate": {
+        "maximum": 524288
+      },
+      "unit": "bytes",
+      "status": "PASS",
+      "detail": "Summary is partial preview only; confirm re-reads full source."
+    },
+    "export_payload_buffer_high_water_bytes": {
+      "baseline": null,
+      "candidate": {
+        "total_owned_buffer_max": 2097152,
+        "concurrent_streams_max": 2,
+        "chunk_bytes": 1048576
+      },
+      "unit": "bytes",
+      "status": "PASS",
+      "detail": "Deno measured a total owned-buffer high-water mark of at most 2 MiB across concurrent streams; each stream is delivered in 1 MiB chunks. Browser engine retained bytes/RSS not measured."
+    },
+    "process_rss_bytes": {
+      "baseline": null,
+      "candidate": null,
+      "unit": "bytes",
+      "status": "NOT_MEASURED",
+      "detail": "WebKit/decoded-media aggregate is not measured or attributable; one Native Main-process point sample (29,536 KB) is not a stable or total UI memory measurement."
+    }
+  },
+  "notes": [
+    "Null means not measured, never zero.",
+    "Native and Deno backend pairs use the same 7,469,246-byte valid Canonical fixture; each source records ten changed and ten unchanged samples. Their scopes are separate.",
+    "Final Deno 50aa four-run pair shows an unresolved diagnostics-on changed-save tail regression: +3.11% median and +21.12% nearest-rank p95; diagnostics-off changed median +1.41% and p95 −7.70%. Keep modes separate; do not claim cause or significance. No-op improves in both.",
+    "The final Deno candidate on-run logical counters show no-op has one full read/hash and zero target writes/copies/syncs/renames; changed-save has two full reads/hash, stage+backup writes, and the separately listed project/journal syncs. Service and probe observations are not additive.",
+    "Native measurements are debug Rust test-backend values, not Tauri IPC, release GUI, or physical disk throughput.",
+    "F-large-io 256 MiB streaming proof is separate from the F-large Canonical save benchmark.",
+    "The private writer reuses the same-call validated canonical serialization only; no cross-request cache or raw external-byte shortcut is used."
+  ],
+  "observations": {
+    "native_metrics_file": "native-save-warm-final10-metrics.json (Final10 debug Rust test-backend pair; source-specific and not GUI/IPC)",
+    "deno_save_metrics_file": "runs/deno-final-50aaea7f/summary.json (source 50aaea7268164b9fa066425ce4a5ac158ca87352; four fresh off/on runs; conventional median and nearest-rank p95; 3 warmups excluded, 10 samples/case)",
+    "deno_export_test": "runs/deno-export-metrics-green.log (29/29; 256 MiB source and staged output hash/size parity)",
+    "deno_preview": "runs/deno-preview-session-metrics-green.log (batch: one Canonical read/hash, 4 opens, one peak handle, 16 MiB raw)",
+    "session": "runs/deno-session-generation-metrics-green.log",
+    "limitations": [
+      "No physical disk throughput or fsync latency split.",
+      "No UI/Tauri IPC timing.",
+      "No Native app or WebKit RSS/decoded media memory measurement.",
+      "Fake-clock save queue timings are simulated."
+    ],
+    "frontend_targeted_ui": {
+      "status": "PASS",
+      "tests": "tests/ui_test.ts + tests/media_preview_stability_test.ts",
+      "passed": 19,
+      "failed": 0,
+      "source_head": "8dba0b214c4fbdfcb93603b07bfd81bb4b7647cb",
+      "log": "runs/frontend-media-history-fix-green.log",
+      "log_sha256": "de07946c674db415ce6136e9b05375827e581cb198b8ca60d7a785b491195beb",
+      "scope": "Focused automated UI/CSS and media-cache tests only; final browser MIME-boundary and P15 four-width geometry retest pending."
+    },
+    "final_deno_gate": {
+      "check_log": "runs/deno-final-direct-parse/check.log",
+      "check_sha256": "fc4dcbfccf13b1c71c6fb5c3f14485d7c00ce823ce7003ac20a949ae6d28257b",
+      "test_log": "runs/deno-final-direct-parse/test.log",
+      "test_sha256": "eb2130b14c07238cbd67796cfb08b67f9b485c0c5c5b0eb3f49057f58043038c",
+      "focused_log": "runs/deno-final-direct-parse/focused-17.log",
+      "focused_sha256": "efbcc766dbd55255f737ec53b3afb0b27ecfd2cfb26494dc65e0140f8fa2318",
+      "check_exit_code": 0,
+      "passed": 716,
+      "failed": 0,
+      "focused_passed": 17,
+      "focused_failed": 0,
+      "product_source_commit": "50aaea7268164b9fa066425ce4a5ac158ca87352",
+      "verification_commit": "50aaea7268164b9fa066425ce4a5ac158ca87352",
+      "scope": "Final check, full test, and focused writer suite on exact combined source 50aa."
+    },
+    "final_native_automation": {
+      "test_log": "runs/native-legacy-raw-snapshot-timestamp-cargo-test-green.log",
+      "format_log": "runs/native-legacy-raw-snapshot-timestamp-rustfmt-green.log",
+      "passed": 258,
+      "failed": 0,
+      "ignored": 1,
+      "rust_source_commit": "fcefcb106c2cf4e957d54a1ee7e112e2aa83cac0",
+      "build_status": "PASS_RUST_FMT_AND_DEV_BUILD",
+      "scope": "Rust gate at unchanged source fcefcb1. Native Final10 package/UI evidence is separately pinned to app UI 9bbc8cf + Rust fcefcb1; QA-only and not published."
+    },
+    "browser_matrix": {
+      "basic_rows": 64,
+      "basic_status": "OBSERVED_HISTORICAL_GEOMETRY",
+      "basic_source_commit": "b990d49029333d4bacc46a2f92361779a554545c",
+      "sidebar_rows": 42,
+      "sidebar_status": "OBSERVED_HISTORICAL_GEOMETRY",
+      "sidebar_source_commit": "b990d49029333d4bacc46a2f92361779a554545c",
+      "behavior_status": "PARTIAL",
+      "note": "64 page/width and 42 applicable sidebar rows are historical b990d49 geometry, not full behavior PASS or current-source sweep. Historical P13×1280 image mismatch is retained; a separate source11232 current-target pair matched 1280×900. Media loops are dab26b7; recovery/P15 supplement 04e9fdf."
+    },
+    "native_gui": {
+      "status": "PARTIAL_NATIVE_FINAL10_TARGETED",
+      "candidate_source_commit": "9bbc8cf3067b6117be8de41e1bd5bef3960a671a",
+      "rust_source_commit": "fcefcb106c2cf4e957d54a1ee7e112e2aa83cac0",
+      "candidate_bundle": "native-qa-candidate-final10-aarch64-0.2.7.zip",
+      "candidate_bundle_sha256": "bb3413a4f4f8d7658e69f5e523da514aca034e32f241e2bdc09fe425fadd3822",
+      "candidate_bundle_bytes": 7082849,
+      "candidate_bundle_audit": "runs/native-final10/final10-independent-package-audit.json",
+      "candidate_bundle_audit_sha256": "9104581a0aac9df8e33e486172640d54329ff37a3d8ddd0b5cd9f4081f6e16de",
+      "note": "Final10 package independent audit, nonzero reader-scroll cold reopen, and physical N06 rename→Undo→Redo→Undo are targeted passes. Final9 N04/N05 and Recovery results are separate source-pinned scoped results. Full current Native P/O matrix and compound N06 remain partial; QA-only, not installed or published.",
+      "current_source_evidence": [
+        "native-ui-behaviors.json",
+        "ui-audit.md",
+        "runs/native-final10"
+      ]
+    },
+    "non_measured_items": [
+      "Full current-source Native P01–P16/O01–O11 width/sidebar/interaction matrix; historical Browser and Native matrices remain separately pinned.",
+      "N06 click-time snapshot immutability while continued editing and a naturally observed A→B→A delayed reply.",
+      "Actual 150% and 200% text scaling by browser zoom, app scale, or OS setting; enabled IAB had no PageZoom control and Native View showed fullscreen only. Resize is not text zoom.",
+      "Reduced-motion behavior with the OS preference enabled; current preference was observed OFF and not changed.",
+      "Attributed WebKit RSS, decoded media bytes, object-URL retention and sustained resource stability.",
+      "Large browser download completion and sustained client memory."
+    ],
+    "native_final6": {
+      "candidate": "native-qa-candidate-final6.json",
+      "product_source_commit": "52862b4ab0fe8386cc1dd6ac937d46721e9cca4d",
+      "verification_commit": "1dd1449feb030d8731a5f537940ecad6ddbd3a18",
+      "ui_rows": [
+        "native-final6-versions-epoch-date",
+        "native-final6-restored-project-reopen-no-recovery"
+      ],
+      "physical_proof": "runs/native-final6-history-after-reopen-metadata.json",
+      "status": "PASS_TARGETED",
+      "scope": "Historical Final6 targeted evidence: epoch-ms date and restored-project reopen without prompt; N01 found all 62 body markers after same-process Close Window/launcher Continue; a completed keyboard name/confirm flow created a matching single JSON snapshot envelope/Canonical row with Domain 0. The note field was blank. This named-snapshot subcheck does not prove N06 click-time freeze during continued editing or the full rename/switch/reopen sequence. Recovery Restore recovery.bak is a historical backup, not active recovery.json.",
+      "n01_n06_physical_proof": "runs/native-final6-n06-snapshot-physical-green.json",
+      "n01_n06_physical_proof_sha256": "10e390cd6b2e0216627a4e6ecc3b4a78771c0122a95c86964ae558eeb03f4b26"
+    },
+    "native_final5_recovery_physical": {
+      "source_commit": "77993519e31cb3c780a77af319ce3033acecccf2",
+      "keep_disk": "runs/native-final5-history-keepdisk-physical-proof.json",
+      "restore": "runs/native-final5-history-restore-physical-proof.json",
+      "status": "PASS_TARGETED",
+      "scope": "Keep Disk preserved original Canonical bytes; successful Recovery Restore was Domain 0 and had a durable pre-restore backup deep-equal to prior Canonical. Active recovery.json was removed. recovery.bak remains as historical atomic-writer backup and is not required to be deleted."
+    },
+    "native_ui_remaining": {
+      "status": "PARTIAL",
+      "scope": "Final10 targeted cold reader scroll and physical rename→Undo→Redo→Undo pass. Final9 N04 four-format one-fixture export, two N05 merge outcomes, recovery and other scenarios remain scoped to their source pins. Compound N06 is partial: in-flight click-time snapshot while editing and natural A→B→A stale response were not observed. Full current P/O matrix, 150/200 text zoom, reduced-motion ON, and attributed WebKit/decoded-memory measures remain unrun."
+    },
+    "zoom_and_motion": {
+      "text_scale_150_200": "NOT_RUN. Plan §8.3 allows real browser page zoom, app text zoom, or OS setting, each labeled by method. Enabled IAB had no PageZoom control; Native View showed Toggle Full Screen only. No CSS simulation or resize-as-zoom.",
+      "reduced_motion": "NOT_RUN. Current macOS preference observed OFF; not changed."
+    },
+    "native9_n05_keep_local": {
+      "status": "PASS_TARGETED_UI_PHYSICAL_AND_REOPEN",
+      "source": "b09718c0823f170836a223bab79b750722e83c73",
+      "ui_paths": [
+        "runs/native-final8/n05-final9-preview-rejected.ax.txt",
+        "runs/native-final8/n05-final9-explicit-keep-local-result.ax.txt",
+        "runs/native-final9/n05-final9-after-reopen.ax.txt",
+        "native-ui-behaviors.json"
+      ],
+      "physical_path": "runs/native-final9-n05-keep-local-physical-proof.json",
+      "physical_sha256": "2bd23f39ab1e14c07d11cac0add011613a147a2d427b9e297fa4147a8a882dde",
+      "reopen_physical_path": "runs/native-final9/n05-final9-after-reopen-physical-proof.json",
+      "reopen_physical_sha256": "975926b9a95f01b4629e82ae18479b6cc9091881fc2a5dd924f1e019c7732a75",
+      "canonical_sha256": "61f672228eca14cde9282d66f5e4b3f61024ed53c9f7e64e2e7d19ff59b122a7",
+      "backup_sha256": "57f4b9a5d549634068e404a217d18a000d9ab73dfb497c4e911e6b60566fc9a8",
+      "note": "Same-field conflict: Preview exposed Keep Local; committed Canonical and project.bak are Domain 0. A fresh same-project UI reopen showed local resolution and saved status; a later read-only proof confirms the same project UUID/Canonical SHA and Domain 0. UI and physical read are distinct timepoints; no lease-at-capture assertion. The loaded baseline already contained external B; this is not the distinct-field merge proof."
+    },
+    "native9_n05_nonconflict_merge": {
+      "status": "PASS_TARGETED_UI_AND_PHYSICAL",
+      "source": "b09718c0823f170836a223bab79b750722e83c73",
+      "ui_path": "runs/native-final9/n05-final9-nonconflict-merged.ax.txt",
+      "physical_path": "runs/native-final9/n05-final9-nonconflict-physical-proof.json",
+      "physical_sha256": "95b09b828ada4be2c21474cd3712bdee49c7af1c9c0e09d388ffc68bf14227a2",
+      "canonical_sha256": "a74e8d175ec7408b510f61c9ab4c50aca1d241007dbec4a6585582782b64df55",
+      "backup_sha256": "6f91930ca86a030b1b52c6dcf9e79819db491f9ce9df0a68c2a4e5609c9d7a8e",
+      "project_id": "fb45a2d4-fbcb-4095-9d10-76f18fa98a14",
+      "domain_issues": 0,
+      "note": "UI showed the successful Preview/auto-merge acknowledgment. Physical Canonical has the local title and external description; project.bak equals the pre-merge external Canonical; Domain 0. The pre-preview summary conflict_count 0 is not an observed merge API response. Targeted branch only."
+    },
+    "native9_n04_four_format_exports": {
+      "status": "PASS_TARGETED_FOUR_FORMATS",
+      "source": "b09718c0823f170836a223bab79b750722e83c73",
+      "fixture_project_id": "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+      "fixture_canonical_sha256": "4957c6e748fa03fe23c495ccb245f85aca012d837f0efb7ec7bb1b46bdfeaf90",
+      "scope": "S01-01/all-pages",
+      "proofs": {
+        "semantic_html": "runs/native-final9/n04-semantic-html-export-physical-proof.json",
+        "static_web": "runs/native-final9/n04-static-web-export-physical-proof.json",
+        "pdf": "runs/native-final9/n04-pdf-export-physical-proof.json",
+        "pptx": "runs/native-final9/n04-pptx-export-physical-proof.json",
+        "portable_manifest": "exports/native-final9/portable-output-manifest.json"
+      },
+      "portable_manifest_sha256": "9dad7893ce414d6ae9d300b8a0a9e58d3543f5625f69d93ac293edee60de4844",
+      "note": "All four outputs are physically verified for this fixture/scope, Domain 0; copied 7 payload files match originals. Not a blanket claim for other course data or arbitrary-format fidelity."
+    },
+    "n06_native9_named_snapshot": {
+      "status": "PASS_TARGETED_SNAPSHOT_CREATE_ONLY",
+      "source": "b09718c0823f170836a223bab79b750722e83c73",
+      "physical_path": "runs/native-final9-n06-snapshot-click-content-physical-proof.json",
+      "physical_sha256": "a67896fd6ecc9e31e823ca8fce23ac83c7eb6e88063ff76b166445377f2d5c62",
+      "note": "Named Save Version UI acknowledgment and persisted snapshot envelope/Canonical row are present; captured target block equals Canonical. No natural pending edit was observed, and the reported 98 ms is CUA action-return interval, not backend latency. Controlled hold attempts did not overlap the click. Does not close N06 click-time freeze while continuing to edit."
+    },
+    "native_final10": {
+      "package_audit": "runs/native-final10/final10-independent-package-audit.json",
+      "package_audit_sha256": "9104581a0aac9df8e33e486172640d54329ff37a3d8ddd0b5cd9f4081f6e16de",
+      "scroll": "runs/native-final10/final10-scroll-cold-reopen-proof.json",
+      "scroll_sha256": "f3c65583ff2c83252b4241b49f6c799e8ec1e65ce59d8abad8b6b12ebeb33c80",
+      "n06_rename_final_state": "runs/native-final10/native-final10-n06-rename-state-4-final-undo.json",
+      "n06_rename_sha256": "c09e6826be347cac56ec6a631e810d565fe90bac535d9c1ee833fbd30b2453a8",
+      "scope": "Cold reopen preserves saved center scroll_top=836 and session/Canonical bytes; selected_block_id=null. Rename/Undo/Redo/Undo preserves asset ID/hash/usage/path. Neither closes compound N06."
+    }
+  },
+  "report_source_commit": "50aaea7268164b9fa066425ce4a5ac158ca87352",
+  "measurement_source_pins": {
+    "native_backend_pair": {
+      "baseline": "dfcb23e88b08b246e03b1576eb9471627e510548",
+      "candidate": "fcefcb106c2cf4e957d54a1ee7e112e2aa83cac0"
+    },
+    "deno_desktopservice_pair": {
+      "baseline": "dfcb23e88b08b246e03b1576eb9471627e510548",
+      "candidate": "50aaea7268164b9fa066425ce4a5ac158ca87352",
+      "diagnostics_off_and_on": "Four fresh runs; do not average modes."
+    },
+    "native_embedded_ui_source": "9bbc8cf3067b6117be8de41e1bd5bef3960a671a",
+    "native_rust_source": "fcefcb106c2cf4e957d54a1ee7e112e2aa83cac0",
+    "combined_source_at_report_update": "50aaea7268164b9fa066425ce4a5ac158ca87352",
+    "benchmark_candidates_are_historical": false,
+    "measurement_method": "Final fresh four-run sequence: diagnostics-off baseline→candidate, then diagnostics-on baseline→candidate. Same runner/fixture; 3 warmups excluded, 10 changed + 10 unchanged samples per run. Reported median is conventional even-sample median; p95 is nearest-rank (n=10 maximum). Raw runner upper-middle median is retained only in raw artifacts.",
+    "summary_path": "runs/deno-final-50aaea7f/summary.json",
+    "summary_sha256": "3ad9be205efbacd30e4807d78291468b07b48e322d2c6c0c0c5398fa6c486a5f",
+    "runner_sha256": "38529c5ffc60507d02005b736f05ffff30a8ea2f6bc399b727c57826f534ff11",
+    "fixture_sha256": "14991258eb33336582280c093d97cc3fc61ba6dab166c1a8970ce542f05509a4",
+    "candidate_changed_regression": "Diagnostics-on changed median +3.11%, p95 +21.12%; cause not isolated. Do not infer significance or average with diagnostics-off."
+  },
+  "production_source_state": "Current combined source 50aaea7268164b9fa066425ce4a5ac158ca87352. Deno check 0, full tests 716/0, focused writer 17/0. Rust fcefcb106c2cf4e957d54a1ee7e112e2aa83cac0: 258/0/1 ignored, fmt and dev build pass. Native Final10 embeds UI 9bbc8cf3067b6117be8de41e1bd5bef3960a671a and Rust fcefcb106c2cf4e957d54a1ee7e112e2aa83cac0; independently audited package, targeted cold-scroll restore and four-state rename evidence pass. Overall remains PARTIAL: diagnostics-on changed-save p95 regresses +21.12%; the cause is not isolated. Native matrix and compound N06 remain partial.",
+  "source_role_note": "Combined runtime source 50aaea7268164b9fa066425ce4a5ac158ca87352; Deno check 0, tests 716/0, focused 17/0. Native Final10 embeds UI 9bbc8cf3067b6117be8de41e1bd5bef3960a671a and Rust fcefcb106c2cf4e957d54a1ee7e112e2aa83cac0. Final Deno diagnostics-off/on results are separate fresh pairs. Off changed median +1.41% / p95 −7.70%; on changed median +3.11% / p95 +21.12%. No-op improves in both conditions. The on changed-save tail is an unresolved measured regression and remains BLOCKED/PARTIAL; do not average modes or claim cause/significance.",
+  "current_production_source_commit": "50aaea7268164b9fa066425ce4a5ac158ca87352",
+  "current_verification_commit": "50aaea7268164b9fa066425ce4a5ac158ca87352",
+  "latest_validation": {
+    "combined_repository_pin": "50aaea7268164b9fa066425ce4a5ac158ca87352",
+    "production_ui_source": "9bbc8cf3067b6117be8de41e1bd5bef3960a671a",
+    "deno_check": {
+      "status": "PASS",
+      "exit_code": 0,
+      "path": "runs/deno-final-direct-parse/check.log",
+      "sha256": "fc4dcbfccf13b1c71c6fb5c3f14485d7c00ce823ce7003ac20a949ae6d28257b"
+    },
+    "deno_test": {
+      "status": "PASS",
+      "passed": 716,
+      "failed": 0,
+      "path": "runs/deno-final-direct-parse/test.log",
+      "sha256": "eb2130b14c07238cbd67796cfb08b67f9b485c0c5c5b0eb3f49057f58043038c"
+    },
+    "deno_focused_writer": {
+      "status": "PASS",
+      "passed": 17,
+      "failed": 0,
+      "path": "runs/deno-final-direct-parse/focused-17.log",
+      "sha256": "efbcc766dbd55255f737ec53b3afb0b27ecfd2cfb26494dc65e0140f8fa2318"
+    },
+    "deno_performance": {
+      "status": "PARTIAL_BLOCKED_CHANGED_SAVE_TAIL",
+      "summary_path": "runs/deno-final-50aaea7f/summary.json",
+      "summary_sha256": "3ad9be205efbacd30e4807d78291468b07b48e322d2c6c0c0c5398fa6c486a5f",
+      "off_changed_delta": "median +1.41%; p95 −7.70%",
+      "on_changed_delta": "median +3.11%; p95 +21.12%",
+      "on_noop_delta": "median −61.32%; p95 −61.21%"
+    },
+    "rust_source": "fcefcb106c2cf4e957d54a1ee7e112e2aa83cac0",
+    "rust_tests": {
+      "passed": 258,
+      "failed": 0,
+      "ignored": 1,
+      "fmt": "PASS",
+      "dev_build": "PASS"
+    },
+    "native_final10_package": {
+      "status": "PASS_INDEPENDENT_AUDIT",
+      "source_ui": "9bbc8cf3067b6117be8de41e1bd5bef3960a671a",
+      "source_rust": "fcefcb106c2cf4e957d54a1ee7e112e2aa83cac0",
+      "independent_audit_path": "runs/native-final10/final10-independent-package-audit.json",
+      "independent_audit_sha256": "9104581a0aac9df8e33e486172640d54329ff37a3d8ddd0b5cd9f4081f6e16de",
+      "zip_bytes": 7082849,
+      "zip_sha256": "bb3413a4f4f8d7658e69f5e523da514aca034e32f241e2bdc09fe425fadd3822",
+      "note": "18 embedded resources decoded; 17 raw exact plus normalized index; strict signature pass. QA-only, ad-hoc signed, not notarized/publicly released."
+    },
+    "native_final10_scroll": {
+      "status": "PASS_TARGETED_COLD_REOPEN",
+      "path": "runs/native-final10/final10-scroll-cold-reopen-proof.json",
+      "sha256": "f3c65583ff2c83252b4241b49f6c799e8ec1e65ce59d8abad8b6b12ebeb33c80",
+      "scope": "Saved center scroll_top=836 restored after true process relaunch with same session and Canonical bytes; selected_block_id=null, no caret claim."
+    },
+    "native_final10_n06_rename": {
+      "status": "PASS_TARGETED_RENAME_UNDO_REDO_UNDO",
+      "evidence_paths": [
+        "runs/native-final10/native-final10-n06-rename-state-1.json",
+        "runs/native-final10/native-final10-n06-rename-state-2-undo.json",
+        "runs/native-final10/native-final10-n06-rename-state-3-redo.json",
+        "runs/native-final10/native-final10-n06-rename-state-4-final-undo.json"
+      ],
+      "final_state_sha256": "c09e6826be347cac56ec6a631e810d565fe90bac535d9c1ee833fbd30b2453a8",
+      "scope": "Asset ID, bytes/hash, single usage reference and exactly one physical path matched through all four states; compound N06 remains partial."
+    }
+  }
+}

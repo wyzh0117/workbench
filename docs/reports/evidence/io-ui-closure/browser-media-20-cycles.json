@@ -1,0 +1,508 @@
+{
+  "environment": "Codex IAB 1440x900; actual browser UI, not native",
+  "fixture": "/tmp/workbench-io-ui-F-media-ui",
+  "assetId": "00000000-0000-4000-8000-000000000084",
+  "uniqueSourceCount": 20,
+  "rows": [
+    {
+      "cycle": 1,
+      "video": {
+        "currentTime": 0.607255,
+        "duration": 2,
+        "error": null,
+        "height": 64,
+        "paused": false,
+        "readyState": 4,
+        "width": 64
+      },
+      "viewerClose": {
+        "dialogs": 0,
+        "key": "asset-card-view-00000000-0000-4000-8000-000000000084",
+        "label": "放大查看 Fixture MP4 1",
+        "tag": "BUTTON",
+        "videos": 0
+      },
+      "renameClose": {
+        "dialogs": 0,
+        "key": "asset-menu-00000000-0000-4000-8000-000000000084",
+        "label": "更多素材操作：Fixture MP4 1",
+        "tag": "SUMMARY"
+      }
+    },
+    {
+      "cycle": 2,
+      "video": {
+        "currentTime": 0.641283,
+        "duration": 2,
+        "error": null,
+        "height": 64,
+        "paused": false,
+        "readyState": 4,
+        "width": 64
+      },
+      "viewerClose": {
+        "dialogs": 0,
+        "key": "asset-card-view-00000000-0000-4000-8000-000000000084",
+        "label": "放大查看 Fixture MP4 1",
+        "tag": "BUTTON",
+        "videos": 0
+      },
+      "renameClose": {
+        "dialogs": 0,
+        "key": "asset-menu-00000000-0000-4000-8000-000000000084",
+        "label": "更多素材操作：Fixture MP4 1",
+        "tag": "SUMMARY"
+      }
+    },
+    {
+      "cycle": 3,
+      "video": {
+        "currentTime": 0.561672,
+        "duration": 2,
+        "error": null,
+        "height": 64,
+        "paused": false,
+        "readyState": 4,
+        "width": 64
+      },
+      "viewerClose": {
+        "dialogs": 0,
+        "key": "asset-card-view-00000000-0000-4000-8000-000000000084",
+        "label": "放大查看 Fixture MP4 1",
+        "tag": "BUTTON",
+        "videos": 0
+      },
+      "renameClose": {
+        "dialogs": 0,
+        "key": "asset-menu-00000000-0000-4000-8000-000000000084",
+        "label": "更多素材操作：Fixture MP4 1",
+        "tag": "SUMMARY"
+      }
+    },
+    {
+      "cycle": 4,
+      "video": {
+        "currentTime": 0.569392,
+        "duration": 2,
+        "error": null,
+        "height": 64,
+        "paused": false,
+        "readyState": 4,
+        "width": 64
+      },
+      "viewerClose": {
+        "dialogs": 0,
+        "key": "asset-card-view-00000000-0000-4000-8000-000000000084",
+        "label": "放大查看 Fixture MP4 1",
+        "tag": "BUTTON",
+        "videos": 0
+      },
+      "renameClose": {
+        "dialogs": 0,
+        "key": "asset-menu-00000000-0000-4000-8000-000000000084",
+        "label": "更多素材操作：Fixture MP4 1",
+        "tag": "SUMMARY"
+      }
+    },
+    {
+      "cycle": 5,
+      "video": {
+        "currentTime": 0.523708,
+        "duration": 2,
+        "error": null,
+        "height": 64,
+        "paused": false,
+        "readyState": 4,
+        "width": 64
+      },
+      "viewerClose": {
+        "dialogs": 0,
+        "key": "asset-card-view-00000000-0000-4000-8000-000000000084",
+        "label": "放大查看 Fixture MP4 1",
+        "tag": "BUTTON",
+        "videos": 0
+      },
+      "renameClose": {
+        "dialogs": 0,
+        "key": "asset-menu-00000000-0000-4000-8000-000000000084",
+        "label": "更多素材操作：Fixture MP4 1",
+        "tag": "SUMMARY"
+      }
+    },
+    {
+      "cycle": 6,
+      "video": {
+        "currentTime": 0.527325,
+        "duration": 2,
+        "error": null,
+        "height": 64,
+        "paused": false,
+        "readyState": 4,
+        "width": 64
+      },
+      "viewerClose": {
+        "dialogs": 0,
+        "key": "asset-card-view-00000000-0000-4000-8000-000000000084",
+        "label": "放大查看 Fixture MP4 1",
+        "tag": "BUTTON",
+        "videos": 0
+      },
+      "renameClose": {
+        "dialogs": 0,
+        "key": "asset-menu-00000000-0000-4000-8000-000000000084",
+        "label": "更多素材操作：Fixture MP4 1",
+        "tag": "SUMMARY"
+      }
+    },
+    {
+      "cycle": 7,
+      "video": {
+        "currentTime": 0.534323,
+        "duration": 2,
+        "error": null,
+        "height": 64,
+        "paused": false,
+        "readyState": 4,
+        "width": 64
+      },
+      "viewerClose": {
+        "dialogs": 0,
+        "key": "asset-card-view-00000000-0000-4000-8000-000000000084",
+        "label": "放大查看 Fixture MP4 1",
+        "tag": "BUTTON",
+        "videos": 0
+      },
+      "renameClose": {
+        "dialogs": 0,
+        "key": "asset-menu-00000000-0000-4000-8000-000000000084",
+        "label": "更多素材操作：Fixture MP4 1",
+        "tag": "SUMMARY"
+      }
+    },
+    {
+      "cycle": 8,
+      "video": {
+        "currentTime": 0.543313,
+        "duration": 2,
+        "error": null,
+        "height": 64,
+        "paused": false,
+        "readyState": 4,
+        "width": 64
+      },
+      "viewerClose": {
+        "dialogs": 0,
+        "key": "asset-card-view-00000000-0000-4000-8000-000000000084",
+        "label": "放大查看 Fixture MP4 1",
+        "tag": "BUTTON",
+        "videos": 0
+      },
+      "renameClose": {
+        "dialogs": 0,
+        "key": "asset-menu-00000000-0000-4000-8000-000000000084",
+        "label": "更多素材操作：Fixture MP4 1",
+        "tag": "SUMMARY"
+      }
+    },
+    {
+      "cycle": 9,
+      "video": {
+        "currentTime": 0.551193,
+        "duration": 2,
+        "error": null,
+        "height": 64,
+        "paused": false,
+        "readyState": 4,
+        "width": 64
+      },
+      "viewerClose": {
+        "dialogs": 0,
+        "key": "asset-card-view-00000000-0000-4000-8000-000000000084",
+        "label": "放大查看 Fixture MP4 1",
+        "tag": "BUTTON",
+        "videos": 0
+      },
+      "renameClose": {
+        "dialogs": 0,
+        "key": "asset-menu-00000000-0000-4000-8000-000000000084",
+        "label": "更多素材操作：Fixture MP4 1",
+        "tag": "SUMMARY"
+      }
+    },
+    {
+      "cycle": 10,
+      "video": {
+        "currentTime": 0.605421,
+        "duration": 2,
+        "error": null,
+        "height": 64,
+        "paused": false,
+        "readyState": 4,
+        "width": 64
+      },
+      "viewerClose": {
+        "dialogs": 0,
+        "key": "asset-card-view-00000000-0000-4000-8000-000000000084",
+        "label": "放大查看 Fixture MP4 1",
+        "tag": "BUTTON",
+        "videos": 0
+      },
+      "renameClose": {
+        "dialogs": 0,
+        "key": "asset-menu-00000000-0000-4000-8000-000000000084",
+        "label": "更多素材操作：Fixture MP4 1",
+        "tag": "SUMMARY"
+      }
+    },
+    {
+      "cycle": 11,
+      "video": {
+        "currentTime": 0.487336,
+        "duration": 2,
+        "error": null,
+        "height": 64,
+        "paused": false,
+        "readyState": 4,
+        "width": 64
+      },
+      "viewerClose": {
+        "dialogs": 0,
+        "key": "asset-card-view-00000000-0000-4000-8000-000000000084",
+        "label": "放大查看 Fixture MP4 1",
+        "tag": "BUTTON",
+        "videos": 0
+      },
+      "renameClose": {
+        "dialogs": 0,
+        "key": "asset-menu-00000000-0000-4000-8000-000000000084",
+        "label": "更多素材操作：Fixture MP4 1",
+        "tag": "SUMMARY"
+      }
+    },
+    {
+      "cycle": 12,
+      "video": {
+        "currentTime": 0.529287,
+        "duration": 2,
+        "error": null,
+        "height": 64,
+        "paused": false,
+        "readyState": 4,
+        "width": 64
+      },
+      "viewerClose": {
+        "dialogs": 0,
+        "key": "asset-card-view-00000000-0000-4000-8000-000000000084",
+        "label": "放大查看 Fixture MP4 1",
+        "tag": "BUTTON",
+        "videos": 0
+      },
+      "renameClose": {
+        "dialogs": 0,
+        "key": "asset-menu-00000000-0000-4000-8000-000000000084",
+        "label": "更多素材操作：Fixture MP4 1",
+        "tag": "SUMMARY"
+      }
+    },
+    {
+      "cycle": 13,
+      "video": {
+        "currentTime": 0.498882,
+        "duration": 2,
+        "error": null,
+        "height": 64,
+        "paused": false,
+        "readyState": 4,
+        "width": 64
+      },
+      "viewerClose": {
+        "dialogs": 0,
+        "key": "asset-card-view-00000000-0000-4000-8000-000000000084",
+        "label": "放大查看 Fixture MP4 1",
+        "tag": "BUTTON",
+        "videos": 0
+      },
+      "renameClose": {
+        "dialogs": 0,
+        "key": "asset-menu-00000000-0000-4000-8000-000000000084",
+        "label": "更多素材操作：Fixture MP4 1",
+        "tag": "SUMMARY"
+      }
+    },
+    {
+      "cycle": 14,
+      "video": {
+        "currentTime": 0.581722,
+        "duration": 2,
+        "error": null,
+        "height": 64,
+        "paused": false,
+        "readyState": 4,
+        "width": 64
+      },
+      "viewerClose": {
+        "dialogs": 0,
+        "key": "asset-card-view-00000000-0000-4000-8000-000000000084",
+        "label": "放大查看 Fixture MP4 1",
+        "tag": "BUTTON",
+        "videos": 0
+      },
+      "renameClose": {
+        "dialogs": 0,
+        "key": "asset-menu-00000000-0000-4000-8000-000000000084",
+        "label": "更多素材操作：Fixture MP4 1",
+        "tag": "SUMMARY"
+      }
+    },
+    {
+      "cycle": 15,
+      "video": {
+        "currentTime": 0.537168,
+        "duration": 2,
+        "error": null,
+        "height": 64,
+        "paused": false,
+        "readyState": 4,
+        "width": 64
+      },
+      "viewerClose": {
+        "dialogs": 0,
+        "key": "asset-card-view-00000000-0000-4000-8000-000000000084",
+        "label": "放大查看 Fixture MP4 1",
+        "tag": "BUTTON",
+        "videos": 0
+      },
+      "renameClose": {
+        "dialogs": 0,
+        "key": "asset-menu-00000000-0000-4000-8000-000000000084",
+        "label": "更多素材操作：Fixture MP4 1",
+        "tag": "SUMMARY"
+      }
+    },
+    {
+      "cycle": 16,
+      "video": {
+        "currentTime": 0.553561,
+        "duration": 2,
+        "error": null,
+        "height": 64,
+        "paused": false,
+        "readyState": 4,
+        "width": 64
+      },
+      "viewerClose": {
+        "dialogs": 0,
+        "key": "asset-card-view-00000000-0000-4000-8000-000000000084",
+        "label": "放大查看 Fixture MP4 1",
+        "tag": "BUTTON",
+        "videos": 0
+      },
+      "renameClose": {
+        "dialogs": 0,
+        "key": "asset-menu-00000000-0000-4000-8000-000000000084",
+        "label": "更多素材操作：Fixture MP4 1",
+        "tag": "SUMMARY"
+      }
+    },
+    {
+      "cycle": 17,
+      "video": {
+        "currentTime": 0.58402,
+        "duration": 2,
+        "error": null,
+        "height": 64,
+        "paused": false,
+        "readyState": 4,
+        "width": 64
+      },
+      "viewerClose": {
+        "dialogs": 0,
+        "key": "asset-card-view-00000000-0000-4000-8000-000000000084",
+        "label": "放大查看 Fixture MP4 1",
+        "tag": "BUTTON",
+        "videos": 0
+      },
+      "renameClose": {
+        "dialogs": 0,
+        "key": "asset-menu-00000000-0000-4000-8000-000000000084",
+        "label": "更多素材操作：Fixture MP4 1",
+        "tag": "SUMMARY"
+      }
+    },
+    {
+      "cycle": 18,
+      "video": {
+        "currentTime": 0.554509,
+        "duration": 2,
+        "error": null,
+        "height": 64,
+        "paused": false,
+        "readyState": 4,
+        "width": 64
+      },
+      "viewerClose": {
+        "dialogs": 0,
+        "key": "asset-card-view-00000000-0000-4000-8000-000000000084",
+        "label": "放大查看 Fixture MP4 1",
+        "tag": "BUTTON",
+        "videos": 0
+      },
+      "renameClose": {
+        "dialogs": 0,
+        "key": "asset-menu-00000000-0000-4000-8000-000000000084",
+        "label": "更多素材操作：Fixture MP4 1",
+        "tag": "SUMMARY"
+      }
+    },
+    {
+      "cycle": 19,
+      "video": {
+        "currentTime": 0.499965,
+        "duration": 2,
+        "error": null,
+        "height": 64,
+        "paused": false,
+        "readyState": 4,
+        "width": 64
+      },
+      "viewerClose": {
+        "dialogs": 0,
+        "key": "asset-card-view-00000000-0000-4000-8000-000000000084",
+        "label": "放大查看 Fixture MP4 1",
+        "tag": "BUTTON",
+        "videos": 0
+      },
+      "renameClose": {
+        "dialogs": 0,
+        "key": "asset-menu-00000000-0000-4000-8000-000000000084",
+        "label": "更多素材操作：Fixture MP4 1",
+        "tag": "SUMMARY"
+      }
+    },
+    {
+      "cycle": 20,
+      "video": {
+        "currentTime": 0.533014,
+        "duration": 2,
+        "error": null,
+        "height": 64,
+        "paused": false,
+        "readyState": 4,
+        "width": 64
+      },
+      "viewerClose": {
+        "dialogs": 0,
+        "key": "asset-card-view-00000000-0000-4000-8000-000000000084",
+        "label": "放大查看 Fixture MP4 1",
+        "tag": "BUTTON",
+        "videos": 0
+      },
+      "renameClose": {
+        "dialogs": 0,
+        "key": "asset-menu-00000000-0000-4000-8000-000000000084",
+        "label": "更多素材操作：Fixture MP4 1",
+        "tag": "SUMMARY"
+      }
+    }
+  ]
+}

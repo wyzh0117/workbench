@@ -1,0 +1,100 @@
+Window: "AI Course Workbench", App: AI Course Workbench QA Preview Final6.
+0 standard window AI Course Workbench, Secondary Actions: Raise
+	1 scroll area
+		2 HTML content Description: AI Course Workbench, URL: tauri://localhost
+			3 container
+				4 button 返回项目选择；当前项目不会关闭
+				5 text AI Course Workbench
+				6 button F-history recovery candidate restore final ⌄, Help: 点击修改课程标题
+				7 button (disabled) 打开上一课
+				8 button S01-01｜Fixture lesson 1, Help: 点击修改当前课程标题
+				9 button 打开下一课
+				10 text ✓ 已保存
+				11 button 撤销上一次编辑
+				12 button 恢复上一次编辑
+				13 pop up button 设置
+				14 button 保存
+				15 button 保存版本
+				16 button 预览
+				17 button 导出
+				18 button 项目概览
+				19 button 打开课程：S01-01 Fixture lesson 1
+				20 button 关闭课程标签：S01-01 Fixture lesson 1, Help: 关闭课程标签
+				21 button 展开左栏
+				22 text 项目资料 · 0 个已引用
+				23 heading 媒体库 6, Value: 1
+					24 text 媒体库 
+					25 text 6
+				26 text 预览素材、查看引用位置；选中一课后可直接插入，插入会建立真实引用。
+				27 button ＋ 添加素材
+				28 text 添加项目素材 拖入文件，或用上方按钮选择图片、GIF、视频、音频、Markdown 与附件。 素材状态
+				29 text 未引用素材仍保留在媒体库；删除会从课程项目中移除这项素材。
+				30 container
+					31 button 放大查看 fixture-000, Help: 点击查看大图
+					32 text fixture-000 图片 1 KB 尚未引用
+					33 button 插入素材：fixture-000, Help: 插入到当前位置
+					34 summary 更多素材操作：fixture-000, Help: 更多素材操作, Value: off
+						35 text ⋯
+				36 container
+					37 button 放大查看 Fixture image 1, Help: 点击查看大图
+					38 text Fixture image 1 图片 1 KB 尚未引用
+					39 button 插入素材：Fixture image 1, Help: 插入到当前位置
+					40 summary 更多素材操作：Fixture image 1, Help: 更多素材操作, Value: off
+						41 text ⋯
+				42 container
+					43 button 放大查看 Fixture image 2, Help: 点击查看大图
+					44 text Fixture image 2 图片 1 KB 尚未引用
+					45 button 插入素材：Fixture image 2, Help: 插入到当前位置
+					46 summary 更多素材操作：Fixture image 2, Help: 更多素材操作, Value: off
+						47 text ⋯
+				48 container
+					49 button 放大查看 Fixture image 3, Help: 点击查看大图
+					50 text Fixture image 3 图片 1 KB 尚未引用
+					51 button 插入素材：Fixture image 3, Help: 插入到当前位置
+					52 summary 更多素材操作：Fixture image 3, Help: 更多素材操作, Value: off
+						53 text ⋯
+				54 container
+					55 button 放大查看 Fixture GIF 1, Help: 点击查看大图
+					56 text Fixture GIF 1 GIF 7 KB 尚未引用
+					57 button 插入素材：Fixture GIF 1, Help: 插入到当前位置
+					58 summary 更多素材操作：Fixture GIF 1, Help: 更多素材操作, Value: off
+						59 text ⋯
+				60 container
+					61 button 放大查看 Fixture MP4 1, Help: 点击查看大图
+					62 text 0:02 Fixture MP4 1 视频 9 KB 尚未引用
+					63 button 插入素材：Fixture MP4 1, Help: 插入到当前位置
+					64 summary 更多素材操作：Fixture MP4 1, Help: 更多素材操作, Value: off
+						65 text ⋯
+				66 button 媒体
+				67 button 待补
+				68 button 状态
+				69 button AI 助手
+				70 button 属性
+				71 button 版本
+				72 button 收起右栏
+				73 container
+					74 text 作用对象： S01-01｜Fixture lesson 1
+				75 text 完成这一课
+				76 heading 待补 0, Value: 2
+					77 text 待补 
+					78 text 0
+				79 button 新增待补占位符
+				80 text 0 内容待补 0 排版待补 0 缺素材
+				81 button ＋ 文字待补
+				82 button ＋ 图片待补
+				83 text 这一课没有未完成的待补内容，可以继续写正文或查看预览。
+				84 text 待补会一直保存，重开项目后仍然可以定位到这里。
+				85 text S01-01｜Fixture lesson 1 正文：待研究 待补：已齐 排版：未开始 完成度：83% 本地优先 · 自动保存
+	86 close button
+	87 full screen button Help: this button also has an action to zoom the window, Secondary Actions: zoom the window
+	88 minimize button
+	89 text AI Course Workbench
+90 menu bar
+	91 AI Course Workbench QA Preview Final6
+	92 File
+	93 Edit
+	94 View
+	95 Window
+	96 Help
+
+The focused UI element is 2 HTML content Description: AI Course Workbench, URL: tauri://localhost

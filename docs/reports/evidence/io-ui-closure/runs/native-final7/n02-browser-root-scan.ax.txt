@@ -1,0 +1,60 @@
+Window: "AI Course Workbench", App: AI Course Workbench QA Preview Final7.
+0 standard window AI Course Workbench, Secondary Actions: Raise
+	1 scroll area
+		2 HTML content Description: AI Course Workbench, URL: tauri://localhost
+			3 container
+				4 button 返回项目选择；当前项目不会关闭
+				5 text AI Course Workbench
+				6 button F-history recovery candidate restore final ⌄, Help: 点击修改课程标题
+				7 button (disabled) 打开上一课
+				8 button S01-01｜Fixture lesson 1, Help: 点击修改当前课程标题
+				9 button 打开下一课
+				10 text ✓ 已保存
+				11 button 撤销上一次编辑
+				12 button 恢复上一次编辑
+				13 pop up button 设置
+				14 button 保存
+				15 button 保存版本
+				16 button 预览
+				17 button 导出
+				18 button 项目概览
+				19 button 打开课程：S01-01 Fixture lesson 1
+				20 button 关闭课程标签：S01-01 Fixture lesson 1, Help: 关闭课程标签
+				21 button 展开左栏
+				22 text 项目资料
+				23 heading 文件浏览, Value: 1
+					24 text 文件浏览
+				25 text 只读浏览本机资料；选择文件即可预览，再进入映射预览决定导入内容。
+				26 button 更换资料文件夹
+				27 button 继续：预览导入
+				28 text 资料位置 /private/tmp/workbench-io-ui-F-mapping-native-final3 3  个文件夹 0  个文件 资料列表 浏览文件与文件夹
+				29 container
+					30 text 筛选
+					31 text field (settable) 筛选, Placeholder: 查找文件名
+				32 text 名称 格式 识别与大小
+				33 container 扫描到的资料
+					34 button (expanded) 折叠文件夹：01 基础 Stage, Help: 折叠, Secondary Actions: Collapse
+					35 toggle button 预览文件夹：01 基础 Stage, Value: off
+					36 button (expanded) 折叠文件夹：02 进阶 Stage, Help: 折叠, Secondary Actions: Collapse
+					37 toggle button 预览文件夹：02 进阶 Stage, Value: off
+					38 button (expanded) 折叠文件夹：assets, Help: 折叠, Secondary Actions: Collapse
+					39 toggle button 预览文件夹：assets, Value: off
+				40 text 只读预览
+				41 heading 从资料列表选择一项, Value: 2
+					42 text 从资料列表选择一项
+				43 text 支持 Markdown、TXT、图片、视频、音频与 PDF 预览；DOCX 显示文件信息。浏览不会导入素材或改写项目。
+				44 button 展开右栏
+				45 text S01-01｜Fixture lesson 1 正文：待研究 待补：已齐 排版：未开始 完成度：83% 本地优先 · 自动保存
+	46 close button
+	47 full screen button Help: this button also has an action to zoom the window, Secondary Actions: zoom the window
+	48 minimize button
+	49 text AI Course Workbench
+50 menu bar
+	51 AI Course Workbench QA Preview Final7
+	52 File
+	53 Edit
+	54 View
+	55 Window
+	56 Help
+
+The focused UI element is 2 HTML content Description: AI Course Workbench, URL: tauri://localhost

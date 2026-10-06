@@ -1,0 +1,106 @@
+{
+  "captured_at_utc": "2026-10-06T11:12:59.946172Z",
+  "proof": "read-only post-cold-relaunch Native app session position and active lease",
+  "source_app": {
+    "bundle_id": "io.github.wyzh0117.ai-course-workbench.qa.io-ui-closure.final9",
+    "app_path_prefix": "/private/tmp/io-ui-closure-native-qa-final9/AI Course Workbench QA Preview Final9.app",
+    "prior_reported_pid": 63103,
+    "current_pid": 66924,
+    "current_process_command": "66924 /private/tmp/io-ui-closure-native-qa-final9/AI Course Workbench QA Preview Final9.app/Contents/MacOS/ai-course-workbench",
+    "pid_matches_active_lease": true
+  },
+  "canonical": {
+    "path": "/tmp/workbench-io-ui-native-final/history-restore/project.json",
+    "realpath": "/private/tmp/workbench-io-ui-native-final/history-restore/project.json",
+    "bytes": 71730,
+    "sha256": "b8c14b03388a1c5f06a85296723b464e552896113f77d57324a3e75855e4602c",
+    "mtime_utc": "2026-10-06T09:32:11.885451Z",
+    "project_id": "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
+    "title": "F-history recovery candidate restore final",
+    "n01_markers_present": 62,
+    "n01_total": 62,
+    "n06_final8_end_marker_present": true,
+    "selected_block_id": "00000000-0000-4000-8000-00000000000d",
+    "selected_block_document_id": "00000000-0000-4000-8000-000000000008",
+    "selected_block_type": "paragraph",
+    "selected_block_text_tail": "er 2026-10-06 N06 strict retry marker2 2026-10-06 N06 strict immediate marker3 2026-10-06 N06 Final7 FirstClick marker 2026-10-06 N06 Final7 Pointer FirstClick marker 2026-10 N06 Final8 FirstPointer marker 2026-10-06-END",
+    "active_content_item": {
+      "id": "00000000-0000-4000-8000-000000000004",
+      "code": "S01-01",
+      "title": "Fixture lesson 1",
+      "type": "lesson"
+    },
+    "domain_validation": {
+      "issues": [],
+      "validation_tool": "validateProjectData in src/domain/store.ts",
+      "verified_at_utc": "2026-10-06T11:11:39.322358Z"
+    }
+  },
+  "app_local_session": {
+    "path": "/Users/youngi/Library/Application Support/io.github.wyzh0117.ai-course-workbench.qa.io-ui-closure.final9/.workspace/session.json",
+    "realpath": "/Users/youngi/Library/Application Support/io.github.wyzh0117.ai-course-workbench.qa.io-ui-closure.final9/.workspace/session.json",
+    "bytes": 3491,
+    "sha256": "6e85b2cb9fcdd2805de3f4e3673c89867c3f5b7c731f3d69dccd0d0fb0034968",
+    "mtime_utc": "2026-10-06T11:03:28.527135Z",
+    "top_project_id": "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
+    "top_project_dir": "/private/tmp/workbench-io-ui-native-final/history-restore",
+    "project_slot": {
+      "active_content_item_id": "00000000-0000-4000-8000-000000000004",
+      "ai_model": "",
+      "ai_provider_id": "fake",
+      "ai_scope": "lesson",
+      "collapsed_stage_ids": [],
+      "explorer_expanded": [],
+      "explorer_filter": "",
+      "explorer_recent": [],
+      "layout_page_id": null,
+      "layout_zoom": "fit",
+      "left_collapsed": false,
+      "mode": "writing",
+      "project_dir": "/private/tmp/workbench-io-ui-native-final/history-restore",
+      "project_id": "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
+      "right_collapsed": false,
+      "right_panel": "requirements",
+      "route": "editor",
+      "selected_block_id": "00000000-0000-4000-8000-00000000000d",
+      "tabs": [
+        {
+          "content_item_id": "00000000-0000-4000-8000-000000000004",
+          "mode": "writing",
+          "pinned": false,
+          "scroll_top": 0
+        }
+      ]
+    },
+    "fields_interpreted": {
+      "active_lesson_code": "S01-01",
+      "active_lesson_title": "Fixture lesson 1",
+      "mode": "writing",
+      "route": "editor",
+      "selected_block_id": "00000000-0000-4000-8000-00000000000d",
+      "tabs": [
+        {
+          "content_item_id": "00000000-0000-4000-8000-000000000004",
+          "mode": "writing",
+          "pinned": false,
+          "scroll_top": 0
+        }
+      ],
+      "layout_page_id": null
+    },
+    "caret_offset_persisted": false
+  },
+  "active_lease": {
+    "path": "/tmp/workbench-io-ui-native-final/history-restore/.workspace/project.lock",
+    "bytes": 206,
+    "sha256": "47936d3db4af701710ecdbb9bf465032ab5a0286c02a715ee7f55b9e6fdd3eb9",
+    "mtime_utc": "2026-10-06T11:12:59.379212Z",
+    "pid": 66924,
+    "opened_at": "2026-10-06T11:10:04.029Z",
+    "heartbeat": "2026-10-06T11:12:59.378Z",
+    "app_instance_id": "app-p66924-1791285004028-0-2f1682b0b03df667b2dd7576de142a1e8377d2acb42d0cd3",
+    "host": "localhost",
+    "guard_file_persistent": true
+  },
+  "interpretation": "The current app-local session persists project identity/path, editor route/mode, S01-01, selected N01/N06 marker block, and tab scroll_top=0. It does not persist a caret offset; layout_page_id is null. Current active lease PID matches the relaunched Final9 process. Canonical is byte-identical to the recorded Final8 post-ACK marker state."
+}

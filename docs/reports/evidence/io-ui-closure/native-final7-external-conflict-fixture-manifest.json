@@ -1,0 +1,79 @@
+{
+  "fixture": "N05 isolated Native external-conflict clone",
+  "status": "ready_for_root_external_conflict_UI",
+  "source_path": "/tmp/workbench-io-ui-F-small-final",
+  "source_project_id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+  "source_project_sha256_before": "7e0dbf219386d1ea23a6e1e46a97c2dc4c2fc33a51ff86b10cb0baecfe0e1384",
+  "source_project_sha256_after": "7e0dbf219386d1ea23a6e1e46a97c2dc4c2fc33a51ff86b10cb0baecfe0e1384",
+  "target_path": "/tmp/workbench-io-ui-F-external-conflict-final7",
+  "target_project_id": "fb45a2d4-fbcb-4095-9d10-76f18fa98a14",
+  "target_project_sha256": "a2c10277525bd6b1aab9a224764a8e2dc894759a54c35e5c74876352c3199ced",
+  "target_project_bytes": 74813,
+  "assets": [
+    {
+      "id": "00000000-0000-4000-8000-00000000001c",
+      "type": "image",
+      "relative_path": "assets/fixture-000.png",
+      "size_bytes": 1488,
+      "sha256": "0c479466fd0ea052ca693290293b423068552c091e37922de3944ce7eefdf0d3"
+    },
+    {
+      "id": "00000000-0000-4000-8000-00000000001d",
+      "type": "image",
+      "relative_path": "assets/fixture-001.png",
+      "size_bytes": 1482,
+      "sha256": "3cced520167601a8cde0af73da82fa6a035f11e14976d3a19733701546d8078e"
+    },
+    {
+      "id": "00000000-0000-4000-8000-00000000001e",
+      "type": "image",
+      "relative_path": "assets/fixture-002.png",
+      "size_bytes": 1503,
+      "sha256": "e4943822009bebf60c212569ecad21c1fd176fbfb26552974c3e565a931b35aa"
+    },
+    {
+      "id": "00000000-0000-4000-8000-00000000001f",
+      "type": "image",
+      "relative_path": "assets/fixture-003.png",
+      "size_bytes": 1519,
+      "sha256": "96530624979bf1be2732b5a9b2da93536da71ee9f0cdd99abded5346600dbd80"
+    },
+    {
+      "id": "00000000-0000-4000-8000-000000000020",
+      "type": "gif",
+      "relative_path": "assets/fixture-00.gif",
+      "size_bytes": 7493,
+      "sha256": "eacfdc6858d34f7c3c299ed7fa75a2a9145981098c24b3900986957b9e94c0d2"
+    },
+    {
+      "id": "00000000-0000-4000-8000-000000000021",
+      "type": "video",
+      "relative_path": "assets/fixture-00.mp4",
+      "size_bytes": 8748,
+      "sha256": "697f1b863079014da64bc345296d4671197a4d921341bf11ef71c26dc21cf7c6"
+    },
+    {
+      "id": "c58ea591-c559-46a7-bc1f-51a0a469396d",
+      "type": "document",
+      "relative_path": "assets/e7e4ed03-300c-4145-9d97-c3f8b9066fc7-workbench-io-ui-markdown-final.md",
+      "size_bytes": 122,
+      "sha256": "bb42001daa09abdc0e81897d5f3abc8c1b512c71f81777ecdb482f7aae419fe6"
+    },
+    {
+      "id": "d5849787-a165-4c39-ba3b-b401bc4945f5",
+      "type": "document",
+      "relative_path": "assets/7cd8406e-81ab-4270-acc8-ceb54649c601-QA inbox triage item: retain thi.txt",
+      "size_bytes": 49,
+      "sha256": "e54c217894764ab188d0ddd0b25b2374617abc0b9bb46748fecf92b614f2c164"
+    }
+  ],
+  "sidecars_copied": false,
+  "created_at_local": "2026-10-06T15:52:19.948290+08:00",
+  "domain_validation": {
+    "validator": "validateProjectData at source 11232c28515e2e8708ee4f586757606ce1bdf8f8",
+    "result": "PASS",
+    "issue_count": 0,
+    "project_id_reference_mismatches": 0,
+    "workspace_sidecar_copied": false
+  }
+}

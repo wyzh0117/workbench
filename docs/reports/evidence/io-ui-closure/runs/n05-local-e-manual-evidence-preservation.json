@@ -1,0 +1,17 @@
+{
+  "kind": "manual_ui_evidence_preservation",
+  "not_auto_recovery": true,
+  "source_ax": "/Users/youngi/.codex/worktrees/io-ui-closure/workbench/docs/reports/evidence/io-ui-closure/runs/native-final8/n05-local-E-after-external-write.ax.txt",
+  "source_ax_sha256": "21fafc52771a6bbf74a8a922aff6cce8d019fbcf49e9d18536f58c688423f355",
+  "source_event_record": "/Users/youngi/.codex/worktrees/io-ui-closure/workbench/docs/reports/evidence/io-ui-closure/runs/native-final8/n05-local-E-after-external-write.json",
+  "source_event_record_sha256": "1dbe824b861edd6df6a907edcfc115b603d4bd5bea48fe79693d9279a772576a",
+  "captured_ui_time_utc": "2026-10-06T09:49:10.378Z",
+  "project_dir": "/tmp/workbench-io-ui-F-external-conflict-final7",
+  "project_id": "fb45a2d4-fbcb-4095-9d10-76f18fa98a14",
+  "canonical_sha256_at_capture": "83e5bd95f3ee69c98bb752f51e5cc3aaee9c37186791e03cfb5fcbf2000d19df",
+  "canonical_contains_external_marker_in_ui": false,
+  "save_indicator_at_capture": "正在保存…",
+  "local_draft_text_exactly_as_visible_in_ax": "Local conflict draft retained for explicit resolution. N05-LOCAL-20261006-A N05-LOCAL-CONTINUED-20261006-C N05-LOCAL-20261006-D N05-LOCAL-20261006-E",
+  "draft_sha256_utf8": "11398e377523595373eee57653167ce17983d8cc511bab537e584f8d531b6883",
+  "preserved_at_utc": "2026-10-06T10:07:54.768492+00:00"
+}

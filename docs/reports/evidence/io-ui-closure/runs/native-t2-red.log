@@ -1,0 +1,127 @@
+   Compiling ai-course-workbench v0.2.6 (/private/tmp/io-ui-closure-rust-baseline.Bugvel/source/src-tauri)
+warning: unused import: `super::*`
+ --> src/documents/docx/tests.rs:5:5
+  |
+5 | use super::*;
+  |     ^^^^^^^^
+  |
+  = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: function `xml_text` is never used
+  --> src/documents/fixtures.rs:54:15
+   |
+54 | pub(crate) fn xml_text(value: &str) -> String {
+   |               ^^^^^^^^
+   |
+   = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: function `pdf_literal` is never used
+  --> src/documents/fixtures.rs:62:15
+   |
+62 | pub(crate) fn pdf_literal(value: &str) -> String {
+   |               ^^^^^^^^^^^
+
+warning: `ai-course-workbench` (lib test) generated 3 warnings (run `cargo fix --lib -p ai-course-workbench --tests` to apply 1 suggestion)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 9.66s
+     Running unittests src/lib.rs (/tmp/io-ui-closure-rust-baseline.Bugvel/cargo-target/debug/deps/ai_course_workbench_lib-cc28423643d1bb57)
+
+running 1 test
+
+thread 'tests::snapshot_ids_never_overwrite_different_content' (617516) panicked at src/lib.rs:15792:9:
+a stable snapshot id must never replace other content
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+test tests::snapshot_ids_never_overwrite_different_content ... FAILED
+
+failures:
+
+failures:
+    tests::snapshot_ids_never_overwrite_different_content
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 225 filtered out; finished in 0.03s
+
+error: test failed, to rerun pass `--lib`
+baseline_t2_no_overwrite_exit_code=101
+warning: unused import: `super::*`
+ --> src/documents/docx/tests.rs:5:5
+  |
+5 | use super::*;
+  |     ^^^^^^^^
+  |
+  = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: function `xml_text` is never used
+  --> src/documents/fixtures.rs:54:15
+   |
+54 | pub(crate) fn xml_text(value: &str) -> String {
+   |               ^^^^^^^^
+   |
+   = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: function `pdf_literal` is never used
+  --> src/documents/fixtures.rs:62:15
+   |
+62 | pub(crate) fn pdf_literal(value: &str) -> String {
+   |               ^^^^^^^^^^^
+
+warning: `ai-course-workbench` (lib test) generated 3 warnings (run `cargo fix --lib -p ai-course-workbench --tests` to apply 1 suggestion)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.68s
+     Running unittests src/lib.rs (/tmp/io-ui-closure-rust-baseline.Bugvel/cargo-target/debug/deps/ai_course_workbench_lib-cc28423643d1bb57)
+
+running 1 test
+
+thread 'tests::snapshot_listing_does_not_create_workspace' (619021) panicked at src/lib.rs:15804:9:
+listing must be read-only
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+test tests::snapshot_listing_does_not_create_workspace ... FAILED
+
+failures:
+
+failures:
+    tests::snapshot_listing_does_not_create_workspace
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 225 filtered out; finished in 0.01s
+
+error: test failed, to rerun pass `--lib`
+baseline_t2_snapshot_listing_does_not_create_workspace_exit_code=101
+warning: unused import: `super::*`
+ --> src/documents/docx/tests.rs:5:5
+  |
+5 | use super::*;
+  |     ^^^^^^^^
+  |
+  = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: function `xml_text` is never used
+  --> src/documents/fixtures.rs:54:15
+   |
+54 | pub(crate) fn xml_text(value: &str) -> String {
+   |               ^^^^^^^^
+   |
+   = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: function `pdf_literal` is never used
+  --> src/documents/fixtures.rs:62:15
+   |
+62 | pub(crate) fn pdf_literal(value: &str) -> String {
+   |               ^^^^^^^^^^^
+
+warning: `ai-course-workbench` (lib test) generated 3 warnings (run `cargo fix --lib -p ai-course-workbench --tests` to apply 1 suggestion)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.21s
+     Running unittests src/lib.rs (/tmp/io-ui-closure-rust-baseline.Bugvel/cargo-target/debug/deps/ai_course_workbench_lib-cc28423643d1bb57)
+
+running 1 test
+
+thread 'tests::snapshot_listing_keeps_valid_rows_when_one_file_is_corrupt' (619042) panicked at src/lib.rs:15824:59:
+one bad row should be isolated: "项目 JSON 无效: key must be a string at line 1 column 2"
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+test tests::snapshot_listing_keeps_valid_rows_when_one_file_is_corrupt ... FAILED
+
+failures:
+
+failures:
+    tests::snapshot_listing_keeps_valid_rows_when_one_file_is_corrupt
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 225 filtered out; finished in 0.04s
+
+error: test failed, to rerun pass `--lib`
+baseline_t2_snapshot_listing_keeps_valid_rows_when_one_file_is_corrupt_exit_code=101

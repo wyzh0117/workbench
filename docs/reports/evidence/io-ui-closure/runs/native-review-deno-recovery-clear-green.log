@@ -1,0 +1,6 @@
+running 1 test from ./tests/io_failure_recovery_test.ts
+bound recovery clear removes only the visible journal and leaves Canonical unchanged ... ok (99ms)
+
+ok | 1 passed | 0 failed | 11 filtered out (103ms)
+
+{"changed_transaction_rejected":true,"changed_journal_preserved":true,"clear_ack_transaction_id":"21750d97-7cbb-4a7d-8400-bbbc5a085ae9","absent_retry_cleared":false,"canonical_bytes_unchanged":true}

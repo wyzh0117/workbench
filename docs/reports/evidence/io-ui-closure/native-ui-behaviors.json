@@ -1,0 +1,1047 @@
+{
+  "scope": "Actual Native CUA observations. Configured size does not by itself prove runtime CSS viewport. Each row records limited observed scope.",
+  "rows": [
+    {
+      "name": "native-final2-launcher",
+      "source_commit": "04e9fdf4276fe37b79d7a1ee87656c28865d0fac",
+      "candidate_app": "/tmp/io-ui-closure-native-qa-final2/AI Course Workbench QA Preview.app",
+      "observed_at_utc": "2026-10-06T02:57:26.948Z",
+      "screenshot": "/Users/youngi/.codex/worktrees/io-ui-closure/workbench/docs/reports/evidence/io-ui-closure/screenshots/native-final/native-final2-launcher.png",
+      "ax_path": "/Users/youngi/.codex/worktrees/io-ui-closure/workbench/docs/reports/evidence/io-ui-closure/screenshots/native-final/native-final2-launcher.ax.txt",
+      "details": {
+        "operation": "cold launch independent ad-hoc verified QA app",
+        "configured_initial_size": {
+          "width": 1440,
+          "height": 900
+        },
+        "runtime_css_viewport": "not measured",
+        "recent_projects": 0,
+        "private_application_untouched": true
+      }
+    },
+    {
+      "name": "native-final2-cold-window-close-blocked",
+      "source_commit": "04e9fdf4276fe37b79d7a1ee87656c28865d0fac",
+      "candidate_app": "/tmp/io-ui-closure-native-qa-final2/AI Course Workbench QA Preview.app",
+      "observed_at_utc": "2026-10-06T02:57:52.662Z",
+      "screenshot": "/Users/youngi/.codex/worktrees/io-ui-closure/workbench/docs/reports/evidence/io-ui-closure/screenshots/native-final/native-final2-cold-window-close-blocked.png",
+      "ax_path": "/Users/youngi/.codex/worktrees/io-ui-closure/workbench/docs/reports/evidence/io-ui-closure/screenshots/native-final/native-final2-cold-window-close-blocked.ax.txt",
+      "details": {
+        "operation": "Window Close on clean Native cold start with no active project",
+        "observed_error": "当前编辑器的项目身份已变化，请重新打开项目后保存。",
+        "window_close_succeeded": false,
+        "canonical_mutation_attempted": false,
+        "correction": "Initial UI action used a pre-reindex target. Fresh AX showed it was window Close. Select project folder then successfully opened an OS chooser using fresh index33.",
+        "scope": "Actual empty-project close blocker; selector opening is separately observed. Screenshot was captured after short toast disappeared."
+      }
+    },
+    {
+      "name": "native-final2-small-opened",
+      "source_commit": "04e9fdf4276fe37b79d7a1ee87656c28865d0fac",
+      "candidate_app": "/tmp/io-ui-closure-native-qa-final2/AI Course Workbench QA Preview.app",
+      "observed_at_utc": "2026-10-06T03:02:45.448Z",
+      "screenshot": "/Users/youngi/.codex/worktrees/io-ui-closure/workbench/docs/reports/evidence/io-ui-closure/screenshots/native-final/native-final2-small-opened.png",
+      "ax_path": "/Users/youngi/.codex/worktrees/io-ui-closure/workbench/docs/reports/evidence/io-ui-closure/screenshots/native-final/native-final2-small-opened.ax.txt",
+      "details": {
+        "operation": "OS chooser selected /private/tmp/workbench-io-ui-native-final/small and loaded real Canonical",
+        "expected_project_id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+        "observed_title": "External canonical title QA",
+        "lessons": 4,
+        "assets": 8,
+        "save_status": "✓ 已保存"
+      }
+    },
+    {
+      "name": "native-final2-body-autosave-50",
+      "source_commit": "04e9fdf4276fe37b79d7a1ee87656c28865d0fac",
+      "candidate_app": "/tmp/io-ui-closure-native-qa-final2/AI Course Workbench QA Preview.app",
+      "observed_at_utc": "2026-10-06T03:09:45.185Z",
+      "screenshot": "/Users/youngi/.codex/worktrees/io-ui-closure/workbench/docs/reports/evidence/io-ui-closure/screenshots/native-final/native-final2-body-autosave-50.png",
+      "ax_path": "/Users/youngi/.codex/worktrees/io-ui-closure/workbench/docs/reports/evidence/io-ui-closure/screenshots/native-final/native-final2-body-autosave-50.ax.txt",
+      "details": {
+        "operation": "50 actual Native Body edits with AX observation after each input",
+        "elapsed_seconds": 159.761,
+        "final_text": "Local conflict draft retained for explicit resolution. Native autosave QA 50.",
+        "strict_90s_every_1_2s": false,
+        "reason": "includes orchestration gaps and one CUA interruption",
+        "saved_state_observed": true,
+        "sequence_evidence": "native-edit-sequence.json"
+      }
+    },
+    {
+      "name": "native-final2-static-web-exported",
+      "source_commit": "04e9fdf4276fe37b79d7a1ee87656c28865d0fac",
+      "candidate_app": "/tmp/io-ui-closure-native-qa-final2/AI Course Workbench QA Preview.app",
+      "observed_at_utc": "2026-10-06T03:13:21.400Z",
+      "screenshot": "/Users/youngi/.codex/worktrees/io-ui-closure/workbench/docs/reports/evidence/io-ui-closure/screenshots/native-final/native-final2-static-web-exported.png",
+      "ax_path": "/Users/youngi/.codex/worktrees/io-ui-closure/workbench/docs/reports/evidence/io-ui-closure/screenshots/native-final/native-final2-static-web-exported.ax.txt",
+      "details": {
+        "operation": "Native actual export UI Static Web Package",
+        "output": "/private/tmp/workbench-io-ui-native-final/native-static-web-final2.zip",
+        "ui_file_count": 3,
+        "physical_verification": "pending separate read-only proof",
+        "warning": "root clicked Start export after fresh check; no browser download handoff"
+      }
+    },
+    {
+      "name": "native-final2-pdf-exported",
+      "source_commit": "04e9fdf4276fe37b79d7a1ee87656c28865d0fac",
+      "candidate_app": "/tmp/io-ui-closure-native-qa-final2/AI Course Workbench QA Preview.app",
+      "observed_at_utc": "2026-10-06T03:15:35.372Z",
+      "screenshot": "/Users/youngi/.codex/worktrees/io-ui-closure/workbench/docs/reports/evidence/io-ui-closure/screenshots/native-final/native-final2-pdf-exported.png",
+      "ax_path": "/Users/youngi/.codex/worktrees/io-ui-closure/workbench/docs/reports/evidence/io-ui-closure/screenshots/native-final/native-final2-pdf-exported.ax.txt",
+      "details": {
+        "operation": "actual Native PDF export UI",
+        "output": "/private/tmp/workbench-io-ui-native-final/native-pdf-final2.pdf",
+        "ui_file_count": 1,
+        "physical_verification": "pending read-only hash/PDF parse proof",
+        "transient_observation": "save caused one noWindowsAvailable; subsequent AX confirmed original main window and success"
+      }
+    },
+    {
+      "name": "native-final2-folder-picker-cancelled",
+      "source_commit": "04e9fdf4276fe37b79d7a1ee87656c28865d0fac",
+      "candidate_app": "/tmp/io-ui-closure-native-qa-final2/AI Course Workbench QA Preview.app",
+      "observed_at_utc": "2026-10-06T03:16:41.816Z",
+      "screenshot": "/Users/youngi/.codex/worktrees/io-ui-closure/workbench/docs/reports/evidence/io-ui-closure/screenshots/native-final/native-final2-folder-picker-cancelled.png",
+      "ax_path": "/Users/youngi/.codex/worktrees/io-ui-closure/workbench/docs/reports/evidence/io-ui-closure/screenshots/native-final/native-final2-folder-picker-cancelled.ax.txt",
+      "details": {
+        "operation": "actual OS folder picker Cancel",
+        "current_project": "External canonical title QA",
+        "ui_result": "No folder selected; current project remains resumable",
+        "canonical_verification": "same project hash via independent read-only proof pending"
+      }
+    },
+    {
+      "name": "native-final2-mapping-preview-20-selection",
+      "source_commit": "04e9fdf4276fe37b79d7a1ee87656c28865d0fac",
+      "candidate_app": "/tmp/io-ui-closure-native-qa-final2/AI Course Workbench QA Preview.app",
+      "observed_at_utc": "2026-10-06T03:19:33.437Z",
+      "screenshot": "/Users/youngi/.codex/worktrees/io-ui-closure/workbench/docs/reports/evidence/io-ui-closure/screenshots/native-final/native-final2-mapping-preview-20-selection.png",
+      "ax_path": "/Users/youngi/.codex/worktrees/io-ui-closure/workbench/docs/reports/evidence/io-ui-closure/screenshots/native-final/native-final2-mapping-preview-20-selection.ax.txt",
+      "details": {
+        "operation": "actual folder scan, mapping target Stage→Lesson→Stage and 20 first-row selection changes",
+        "source_folder": "/private/tmp/workbench-io-ui-F-mapping-native-final",
+        "root_objects": 2,
+        "selected": 2,
+        "canonical_write_requested": false,
+        "sequence_evidence": "native-mapping-selection-sequence.json"
+      }
+    },
+    {
+      "name": "native-final2-mapping-document-picker",
+      "source_commit": "04e9fdf4276fe37b79d7a1ee87656c28865d0fac",
+      "candidate_app": "/tmp/io-ui-closure-native-qa-final2/AI Course Workbench QA Preview.app",
+      "observed_at_utc": "2026-10-06T03:20:50.037Z",
+      "screenshot": "/Users/youngi/.codex/worktrees/io-ui-closure/workbench/docs/reports/evidence/io-ui-closure/screenshots/native-final/native-final2-mapping-document-picker.png",
+      "ax_path": "/Users/youngi/.codex/worktrees/io-ui-closure/workbench/docs/reports/evidence/io-ui-closure/screenshots/native-final/native-final2-mapping-document-picker.ax.txt",
+      "details": {
+        "operation": "actual confirmed Mapping plan opens document picker",
+        "source_folder": "/private/tmp/workbench-io-ui-F-mapping-native-final",
+        "documents": 3,
+        "default_selected": 3,
+        "canonical_write_requested": false
+      }
+    },
+    {
+      "name": "native-final2-folder-adopted-two-lessons",
+      "source_commit": "04e9fdf4276fe37b79d7a1ee87656c28865d0fac",
+      "candidate_app": "/tmp/io-ui-closure-native-qa-final2/AI Course Workbench QA Preview.app",
+      "observed_at_utc": "2026-10-06T03:22:12.674Z",
+      "screenshot": "/Users/youngi/.codex/worktrees/io-ui-closure/workbench/docs/reports/evidence/io-ui-closure/screenshots/native-final/native-final2-folder-adopted-two-lessons.png",
+      "ax_path": "/Users/youngi/.codex/worktrees/io-ui-closure/workbench/docs/reports/evidence/io-ui-closure/screenshots/native-final/native-final2-folder-adopted-two-lessons.ax.txt",
+      "details": {
+        "operation": "actual Mapping adoption after dialog cancel/reopen and 2/3 document selection",
+        "new_project_root": "/private/tmp/workbench-io-ui-F-mapping-native-final",
+        "ui_stages": 2,
+        "ui_lessons": 2,
+        "ui_assets": 5,
+        "ui_checksum_reused": 2,
+        "ui_skipped_document": "02 动图 Lesson.md",
+        "physical_verification": "pending independent Canonical/asset/source hash proof"
+      }
+    },
+    {
+      "name": "native-final2-mapped-markdown-body",
+      "source_commit": "04e9fdf4276fe37b79d7a1ee87656c28865d0fac",
+      "candidate_app": "/tmp/io-ui-closure-native-qa-final2/AI Course Workbench QA Preview.app",
+      "observed_at_utc": "2026-10-06T03:22:48.952Z",
+      "screenshot": "/Users/youngi/.codex/worktrees/io-ui-closure/workbench/docs/reports/evidence/io-ui-closure/screenshots/native-final/native-final2-mapped-markdown-body.png",
+      "ax_path": "/Users/youngi/.codex/worktrees/io-ui-closure/workbench/docs/reports/evidence/io-ui-closure/screenshots/native-final/native-final2-mapped-markdown-body.ax.txt",
+      "details": {
+        "operation": "actual mapped first lesson Body",
+        "rendered_heading": "第一课：跨目录图片与 GIF",
+        "png_and_gif_ax_images": true,
+        "markdown_link": "打开进阶视频课",
+        "physical_dependency_check": "pending independent proof"
+      }
+    },
+    {
+      "name": "native-final2-mapped-media-preview",
+      "source_commit": "04e9fdf4276fe37b79d7a1ee87656c28865d0fac",
+      "candidate_app": "/tmp/io-ui-closure-native-qa-final2/AI Course Workbench QA Preview.app",
+      "observed_at_utc": "2026-10-06T03:24:13.460Z",
+      "screenshot": "/Users/youngi/.codex/worktrees/io-ui-closure/workbench/docs/reports/evidence/io-ui-closure/screenshots/native-final/native-final2-mapped-media-preview.png",
+      "ax_path": "/Users/youngi/.codex/worktrees/io-ui-closure/workbench/docs/reports/evidence/io-ui-closure/screenshots/native-final/native-final2-mapped-media-preview.ax.txt",
+      "details": {
+        "operation": "Native Preview after folder adoption",
+        "png_image": "跨目录 PNG",
+        "gif_image": "跨目录 GIF",
+        "rendered_media": true,
+        "source_hashes_preserved": true,
+        "raw_domain_validation": "pending investigation of missing current-schema fields; do not claim Domain0"
+      }
+    },
+    {
+      "name": "native-final2-gif-viewer",
+      "source_commit": "04e9fdf4276fe37b79d7a1ee87656c28865d0fac",
+      "candidate_app": "/tmp/io-ui-closure-native-qa-final2/AI Course Workbench QA Preview.app",
+      "observed_at_utc": "2026-10-06T03:26:00.548Z",
+      "screenshot": "/Users/youngi/.codex/worktrees/io-ui-closure/workbench/docs/reports/evidence/io-ui-closure/screenshots/native-final/native-final2-gif-viewer.png",
+      "ax_path": "/Users/youngi/.codex/worktrees/io-ui-closure/workbench/docs/reports/evidence/io-ui-closure/screenshots/native-final/native-final2-gif-viewer.ax.txt",
+      "details": {
+        "operation": "Native GIF viewer opened from actual mapped media library",
+        "image": "动画 参考.gif",
+        "dimensions": "64 × 64",
+        "animation_state": "not measured by Native AX; do not infer static playback state"
+      }
+    },
+    {
+      "name": "native-final2-video-explicit-play",
+      "source_commit": "04e9fdf4276fe37b79d7a1ee87656c28865d0fac",
+      "candidate_app": "/tmp/io-ui-closure-native-qa-final2/AI Course Workbench QA Preview.app",
+      "observed_at_utc": "2026-10-06T03:26:40.981Z",
+      "screenshot": "/Users/youngi/.codex/worktrees/io-ui-closure/workbench/docs/reports/evidence/io-ui-closure/screenshots/native-final/native-final2-video-explicit-play.png",
+      "ax_path": "/Users/youngi/.codex/worktrees/io-ui-closure/workbench/docs/reports/evidence/io-ui-closure/screenshots/native-final/native-final2-video-explicit-play.ax.txt",
+      "details": {
+        "operation": "actual Native mapped MP4 viewer explicit Play click",
+        "default_control_before_play": "Play",
+        "control_after_click": "Pause",
+        "asset_protocol_url": "asset://localhost/.../assets/11b5d32b-466e-4be5-8875-cb4353a9e210-演示 clip.mp4",
+        "duration_seconds_from_library": 2,
+        "playback_time": "not available in AX observation"
+      }
+    },
+    {
+      "name": "native-final2-inserted-video-preview",
+      "source_commit": "04e9fdf4276fe37b79d7a1ee87656c28865d0fac",
+      "candidate_app": "/tmp/io-ui-closure-native-qa-final2/AI Course Workbench QA Preview.app",
+      "observed_at_utc": "2026-10-06T03:27:32.411Z",
+      "screenshot": "/Users/youngi/.codex/worktrees/io-ui-closure/workbench/docs/reports/evidence/io-ui-closure/screenshots/native-final/native-final2-inserted-video-preview.png",
+      "ax_path": "/Users/youngi/.codex/worktrees/io-ui-closure/workbench/docs/reports/evidence/io-ui-closure/screenshots/native-final/native-final2-inserted-video-preview.ax.txt",
+      "details": {
+        "operation": "actual Native media insert in selected second lesson, then Preview",
+        "asset": "演示 clip.mp4",
+        "reference_count_before": 0,
+        "reference_count_after": 1,
+        "default_media_load": "paused until user activates viewer",
+        "source": "existing managed media asset; no re-import"
+      }
+    },
+    {
+      "name": "native-final2-flow-before-move",
+      "source_commit": "04e9fdf4276fe37b79d7a1ee87656c28865d0fac",
+      "candidate_app": "/tmp/io-ui-closure-native-qa-final2/AI Course Workbench QA Preview.app",
+      "observed_at_utc": "2026-10-06T03:28:08.478Z",
+      "screenshot": "/Users/youngi/.codex/worktrees/io-ui-closure/workbench/docs/reports/evidence/io-ui-closure/screenshots/native-final/native-final2-flow-before-move.png",
+      "ax_path": "/Users/youngi/.codex/worktrees/io-ui-closure/workbench/docs/reports/evidence/io-ui-closure/screenshots/native-final/native-final2-flow-before-move.ax.txt",
+      "details": {
+        "operation": "Native Flow initial order after actual two-lesson folder import",
+        "fourth_block": "跨目录 GIF",
+        "third_block": "跨目录 PNG"
+      }
+    },
+    {
+      "name": "native-final2-flow-move-undo-redo",
+      "source_commit": "04e9fdf4276fe37b79d7a1ee87656c28865d0fac",
+      "candidate_app": "/tmp/io-ui-closure-native-qa-final2/AI Course Workbench QA Preview.app",
+      "observed_at_utc": "2026-10-06T03:29:44.571Z",
+      "screenshot": "/Users/youngi/.codex/worktrees/io-ui-closure/workbench/docs/reports/evidence/io-ui-closure/screenshots/native-final/native-final2-flow-move-undo-redo.png",
+      "ax_path": "/Users/youngi/.codex/worktrees/io-ui-closure/workbench/docs/reports/evidence/io-ui-closure/screenshots/native-final/native-final2-flow-move-undo-redo.ax.txt",
+      "details": {
+        "operation": "Native Flow fourth GIF paragraph moved third, Undo restores PNG third, Redo restores GIF third",
+        "order_before": [
+          "heading",
+          "text",
+          "PNG",
+          "GIF",
+          "link"
+        ],
+        "order_after": [
+          "heading",
+          "text",
+          "GIF",
+          "PNG",
+          "link"
+        ],
+        "trace": "native-flow-undo-redo.ax.txt"
+      }
+    },
+    {
+      "name": "native-final2-flow-redone-preview",
+      "source_commit": "04e9fdf4276fe37b79d7a1ee87656c28865d0fac",
+      "candidate_app": "/tmp/io-ui-closure-native-qa-final2/AI Course Workbench QA Preview.app",
+      "observed_at_utc": "2026-10-06T03:31:07.462Z",
+      "screenshot": "/Users/youngi/.codex/worktrees/io-ui-closure/workbench/docs/reports/evidence/io-ui-closure/screenshots/native-final/native-final2-flow-redone-preview.png",
+      "ax_path": "/Users/youngi/.codex/worktrees/io-ui-closure/workbench/docs/reports/evidence/io-ui-closure/screenshots/native-final/native-final2-flow-redone-preview.ax.txt",
+      "details": {
+        "operation": "Native Preview after actual Flow move and Undo/Redo",
+        "media_order": [
+          "GIF",
+          "PNG"
+        ],
+        "trace": "native-flow-undo-redo.ax.txt"
+      }
+    },
+    {
+      "name": "native-final2-layout-delete-undo-redo",
+      "source_commit": "04e9fdf4276fe37b79d7a1ee87656c28865d0fac",
+      "candidate_app": "/tmp/io-ui-closure-native-qa-final2/AI Course Workbench QA Preview.app",
+      "observed_at_utc": "2026-10-06T03:37:31.522Z",
+      "screenshot": "/Users/youngi/.codex/worktrees/io-ui-closure/workbench/docs/reports/evidence/io-ui-closure/screenshots/native-final/native-final2-layout-delete-undo-redo.png",
+      "ax_path": "/Users/youngi/.codex/worktrees/io-ui-closure/workbench/docs/reports/evidence/io-ui-closure/screenshots/native-final/native-final2-layout-delete-undo-redo.ax.txt",
+      "details": {
+        "fixture": "/tmp/workbench-io-ui-native-final/layout",
+        "source": "04e9fdf4276fe37b79d7a1ee87656c28865d0fac",
+        "steps": [
+          "nonempty first page Delete → Escape",
+          "Delete → Confirm",
+          "Undo → 3 pages",
+          "Redo → 2 pages",
+          "Undo → 3 pages retained"
+        ],
+        "focus": {
+          "escape": "Delete page button",
+          "confirm": "next page selected"
+        },
+        "deletedContentRetained": true,
+        "pagesFinal": 3,
+        "scope": "Native actual dialog and Undo/Redo; no cross-page drag or resize claim"
+      }
+    },
+    {
+      "name": "native-final2-layout-pptx-exported",
+      "source_commit": "04e9fdf4276fe37b79d7a1ee87656c28865d0fac",
+      "candidate_app": "/tmp/io-ui-closure-native-qa-final2/AI Course Workbench QA Preview.app",
+      "observed_at_utc": "2026-10-06T03:38:22.734Z",
+      "screenshot": "/Users/youngi/.codex/worktrees/io-ui-closure/workbench/docs/reports/evidence/io-ui-closure/screenshots/native-final/native-final2-layout-pptx-exported.png",
+      "ax_path": "/Users/youngi/.codex/worktrees/io-ui-closure/workbench/docs/reports/evidence/io-ui-closure/screenshots/native-final/native-final2-layout-pptx-exported.ax.txt",
+      "details": {
+        "fixture": "/tmp/workbench-io-ui-native-final/layout",
+        "layoutPages": 3,
+        "format": "pptx",
+        "actualUiPath": "/private/tmp/workbench-io-ui-native-final/layout/native-layout-final2.pptx",
+        "uiFileCount": 1,
+        "physicalVerification": "pending agent",
+        "capability": "enabled for paginated Grid; small Body unsupported was correctly disabled"
+      }
+    },
+    {
+      "name": "native-final2-layout-resize-cross-page-move",
+      "source_commit": "04e9fdf4276fe37b79d7a1ee87656c28865d0fac",
+      "candidate_app": "/tmp/io-ui-closure-native-qa-final2/AI Course Workbench QA Preview.app",
+      "observed_at_utc": "2026-10-06T03:39:36.193Z",
+      "screenshot": "/Users/youngi/.codex/worktrees/io-ui-closure/workbench/docs/reports/evidence/io-ui-closure/screenshots/native-final/native-final2-layout-resize-cross-page-move.png",
+      "ax_path": "/Users/youngi/.codex/worktrees/io-ui-closure/workbench/docs/reports/evidence/io-ui-closure/screenshots/native-final/native-final2-layout-resize-cross-page-move.ax.txt",
+      "details": {
+        "fixture": "/tmp/workbench-io-ui-native-final/layout",
+        "actions": [
+          "third page paragraph3 selected",
+          "＋宽 once: available cells four→two",
+          "move to first page",
+          "R2 C1 selected"
+        ],
+        "target": {
+          "page": 1,
+          "row": 2,
+          "column": 1,
+          "row_span": 1,
+          "col_span": 2
+        },
+        "scope": "actual Native button resize and cross-page move; no drag claim"
+      }
+    },
+    {
+      "name": "native-final2-layout-cross-page-undo-redo",
+      "source_commit": "04e9fdf4276fe37b79d7a1ee87656c28865d0fac",
+      "candidate_app": "/tmp/io-ui-closure-native-qa-final2/AI Course Workbench QA Preview.app",
+      "observed_at_utc": "2026-10-06T03:40:04.659Z",
+      "screenshot": "/Users/youngi/.codex/worktrees/io-ui-closure/workbench/docs/reports/evidence/io-ui-closure/screenshots/native-final/native-final2-layout-cross-page-undo-redo.png",
+      "ax_path": "/Users/youngi/.codex/worktrees/io-ui-closure/workbench/docs/reports/evidence/io-ui-closure/screenshots/native-final/native-final2-layout-cross-page-undo-redo.ax.txt",
+      "details": {
+        "fixture": "/tmp/workbench-io-ui-native-final/layout",
+        "actions": [
+          "Undo cross-page move returns paragraph3 to third page",
+          "Redo returns paragraph3 to first page R2C1"
+        ],
+        "widthSpan": 2,
+        "finalSaveObserved": true,
+        "scope": "Native actual cross-page Undo/Redo; physical proof pending"
+      }
+    },
+    {
+      "name": "native-final3-cold-launcher",
+      "source_commit": "7555f02fdbdad1c3aa558b2b85e3cfe6fb8fa3be",
+      "candidate_app": "/tmp/io-ui-closure-native-qa-final3/AI Course Workbench QA Preview Final3.app",
+      "observed_at_utc": "2026-10-06T04:24:47.488Z",
+      "screenshot": "/Users/youngi/.codex/worktrees/io-ui-closure/workbench/docs/reports/evidence/io-ui-closure/screenshots/native-final/native-final3-cold-launcher.png",
+      "ax_path": "/Users/youngi/.codex/worktrees/io-ui-closure/workbench/docs/reports/evidence/io-ui-closure/screenshots/native-final/native-final3-cold-launcher.ax.txt",
+      "details": {
+        "source_commit": "7555f02fdbdad1c3aa558b2b85e3cfe6fb8fa3be",
+        "candidate_app": "/tmp/io-ui-closure-native-qa-final3/AI Course Workbench QA Preview Final3.app",
+        "scope": "first launch with fresh compile-time QA appdata; no canonical project opened"
+      }
+    },
+    {
+      "name": "native-final3-small-overview",
+      "source_commit": "7555f02fdbdad1c3aa558b2b85e3cfe6fb8fa3be",
+      "candidate_app": "/tmp/io-ui-closure-native-qa-final3/AI Course Workbench QA Preview Final3.app",
+      "observed_at_utc": "2026-10-06T04:29:26.527Z",
+      "screenshot": "/Users/youngi/.codex/worktrees/io-ui-closure/workbench/docs/reports/evidence/io-ui-closure/screenshots/native-final/native-final3-small-overview.png",
+      "ax_path": "/Users/youngi/.codex/worktrees/io-ui-closure/workbench/docs/reports/evidence/io-ui-closure/screenshots/native-final/native-final3-small-overview.ax.txt",
+      "details": {
+        "source_commit": "7555f02fdbdad1c3aa558b2b85e3cfe6fb8fa3be",
+        "candidate_app": "/tmp/io-ui-closure-native-qa-final3/AI Course Workbench QA Preview Final3.app",
+        "test": "Overview secondary labels",
+        "observed": "Actual Overview loaded; secondary white button labels visible dark; 4 lessons and 8 assets"
+      }
+    },
+    {
+      "name": "native-final3-second-instance-lock",
+      "source_commit": "7555f02fdbdad1c3aa558b2b85e3cfe6fb8fa3be",
+      "candidate_app": "/tmp/io-ui-closure-native-qa-final3-second/AI Course Workbench QA Preview Final3 Second.app",
+      "observed_at_utc": "2026-10-06T04:34:20.924Z",
+      "screenshot": "/Users/youngi/.codex/worktrees/io-ui-closure/workbench/docs/reports/evidence/io-ui-closure/screenshots/native-final/native-final3-second-instance-lock.png",
+      "ax_path": "/Users/youngi/.codex/worktrees/io-ui-closure/workbench/docs/reports/evidence/io-ui-closure/screenshots/native-final/native-final3-second-instance-lock.ax.txt",
+      "details": {
+        "source_commit": "7555f02fdbdad1c3aa558b2b85e3cfe6fb8fa3be",
+        "candidate_app": "/tmp/io-ui-closure-native-qa-final3-second/AI Course Workbench QA Preview Final3 Second.app",
+        "test": "N05 second instance lease reject/Retry",
+        "observed": "Actual second process opened recent small while primary holds lease; rejected with 项目正在使用; 重试打开 remains same recoverable message; 返回 focused"
+      }
+    },
+    {
+      "name": "native-final3-small-autosave-settled",
+      "source_commit": "7555f02fdbdad1c3aa558b2b85e3cfe6fb8fa3be",
+      "candidate_app": "/tmp/io-ui-closure-native-qa-final3/AI Course Workbench QA Preview Final3.app",
+      "observed_at_utc": "2026-10-06T04:34:59.047Z",
+      "screenshot": "/Users/youngi/.codex/worktrees/io-ui-closure/workbench/docs/reports/evidence/io-ui-closure/screenshots/native-final/native-final3-small-autosave-settled.png",
+      "ax_path": "/Users/youngi/.codex/worktrees/io-ui-closure/workbench/docs/reports/evidence/io-ui-closure/screenshots/native-final/native-final3-small-autosave-settled.ax.txt",
+      "details": {
+        "source_commit": "7555f02fdbdad1c3aa558b2b85e3cfe6fb8fa3be",
+        "candidate_app": "/tmp/io-ui-closure-native-qa-final3/AI Course Workbench QA Preview Final3.app",
+        "test": "N01 real edits and no-op CmdS",
+        "observed": "74 real changes over121827ms; final text74 retained and settled CmdS; physical no-op before/after same Canonical hash/mtime; tool-boundary gaps prevent strict cadence PASS"
+      }
+    },
+    {
+      "name": "native-final3-small-reopened",
+      "source_commit": "7555f02fdbdad1c3aa558b2b85e3cfe6fb8fa3be",
+      "candidate_app": "/tmp/io-ui-closure-native-qa-final3/AI Course Workbench QA Preview Final3.app",
+      "observed_at_utc": "2026-10-06T04:35:54.642Z",
+      "screenshot": "/Users/youngi/.codex/worktrees/io-ui-closure/workbench/docs/reports/evidence/io-ui-closure/screenshots/native-final/native-final3-small-reopened.png",
+      "ax_path": "/Users/youngi/.codex/worktrees/io-ui-closure/workbench/docs/reports/evidence/io-ui-closure/screenshots/native-final/native-final3-small-reopened.ax.txt",
+      "details": {
+        "source_commit": "7555f02fdbdad1c3aa558b2b85e3cfe6fb8fa3be",
+        "candidate_app": "/tmp/io-ui-closure-native-qa-final3/AI Course Workbench QA Preview Final3.app",
+        "test": "N01 close/reopen and recent registry",
+        "observed": "Close quit; fresh launcher showed recentsmall without missingfolder; Continue reopened Body firstlesson text74 ✓saved"
+      }
+    },
+    {
+      "name": "native-final3-mapping-escape-focus",
+      "source_commit": "7555f02fdbdad1c3aa558b2b85e3cfe6fb8fa3be",
+      "candidate_app": "/tmp/io-ui-closure-native-qa-final3/AI Course Workbench QA Preview Final3.app",
+      "observed_at_utc": "2026-10-06T04:38:05.657Z",
+      "screenshot": "/Users/youngi/.codex/worktrees/io-ui-closure/workbench/docs/reports/evidence/io-ui-closure/screenshots/native-final/native-final3-mapping-escape-focus.png",
+      "ax_path": "/Users/youngi/.codex/worktrees/io-ui-closure/workbench/docs/reports/evidence/io-ui-closure/screenshots/native-final/native-final3-mapping-escape-focus.ax.txt",
+      "details": {
+        "source_commit": "7555f02fdbdad1c3aa558b2b85e3cfe6fb8fa3be",
+        "candidate_app": "/tmp/io-ui-closure-native-qa-final3/AI Course Workbench QA Preview Final3.app",
+        "test": "O08 mapping document picker Escape",
+        "observed": "3docpicker opens focusedCancel; Escape returns actualasyncopener 确认导入计划并打开; canceledstatusnoCanonicalwrite; StageLessonStagechange restored"
+      }
+    },
+    {
+      "name": "native-final3-mapping-adopted",
+      "source_commit": "7555f02fdbdad1c3aa558b2b85e3cfe6fb8fa3be",
+      "candidate_app": "/tmp/io-ui-closure-native-qa-final3/AI Course Workbench QA Preview Final3.app",
+      "observed_at_utc": "2026-10-06T04:38:48.268Z",
+      "screenshot": "/Users/youngi/.codex/worktrees/io-ui-closure/workbench/docs/reports/evidence/io-ui-closure/screenshots/native-final/native-final3-mapping-adopted.png",
+      "ax_path": "/Users/youngi/.codex/worktrees/io-ui-closure/workbench/docs/reports/evidence/io-ui-closure/screenshots/native-final/native-final3-mapping-adopted.ax.txt",
+      "details": {
+        "source_commit": "7555f02fdbdad1c3aa558b2b85e3cfe6fb8fa3be",
+        "candidate_app": "/tmp/io-ui-closure-native-qa-final3/AI Course Workbench QA Preview Final3.app",
+        "test": "N02 two selecteddocs adoption and dedup ACK",
+        "observed": "Selected2of3documents; actualadopt2stages2lessons3createdassets2reusedevents; screenshottoastnew truthfulcount; physicaldomain pendingownerproof"
+      }
+    },
+    {
+      "name": "native-final3-static-web-directory",
+      "source_commit": "7555f02fdbdad1c3aa558b2b85e3cfe6fb8fa3be",
+      "candidate_app": "/tmp/io-ui-closure-native-qa-final3/AI Course Workbench QA Preview Final3.app",
+      "observed_at_utc": "2026-10-06T04:40:05.857Z",
+      "screenshot": "/Users/youngi/.codex/worktrees/io-ui-closure/workbench/docs/reports/evidence/io-ui-closure/screenshots/native-final/native-final3-static-web-directory.png",
+      "ax_path": "/Users/youngi/.codex/worktrees/io-ui-closure/workbench/docs/reports/evidence/io-ui-closure/screenshots/native-final/native-final3-static-web-directory.ax.txt",
+      "details": {
+        "source_commit": "7555f02fdbdad1c3aa558b2b85e3cfe6fb8fa3be",
+        "candidate_app": "/tmp/io-ui-closure-native-qa-final3/AI Course Workbench QA Preview Final3.app",
+        "test": "NativeStaticWebactualdirectoryACK",
+        "observed": "OS Save defaultdirectoryname has no.zip; confirmedexplicitQApath; UI4filesandactualdirectory提示; physicalownerverificationpending"
+      }
+    },
+    {
+      "name": "native-final3-append-duplicate-basename-failed",
+      "source_commit": "7555f02fdbdad1c3aa558b2b85e3cfe6fb8fa3be",
+      "candidate_app": "/tmp/io-ui-closure-native-qa-final3/AI Course Workbench QA Preview Final3.app",
+      "observed_at_utc": "2026-10-06T04:42:13.946Z",
+      "screenshot": "/Users/youngi/.codex/worktrees/io-ui-closure/workbench/docs/reports/evidence/io-ui-closure/screenshots/native-final/native-final3-append-duplicate-basename-failed.png",
+      "ax_path": "/Users/youngi/.codex/worktrees/io-ui-closure/workbench/docs/reports/evidence/io-ui-closure/screenshots/native-final/native-final3-append-duplicate-basename-failed.ax.txt",
+      "details": {
+        "source_commit": "7555f02fdbdad1c3aa558b2b85e3cfe6fb8fa3be",
+        "candidate_app": "/tmp/io-ui-closure-native-qa-final3/AI Course Workbench QA Preview Final3.app",
+        "test": "N02 duplicatebasenameappend",
+        "result": "EXPECTED_CONTENT_DEDUP",
+        "observed": "Actual2/2selected documents differentrelativepaths samebasename; explicitconfirmproduces1success1skip, total3lessonsandemptyS04; expected4lessons. Fix delegated Native/Deno.",
+        "review_result": "EXPECTED_CONTENT_DEDUP_FIXTURE_COLLISION",
+        "review_evidence": "Second doc SHA183f7b9c94e8ca4c59bc34e270761eeb06cf7ba187f394992154363619b3b26f equals prior03视频Lesson body; documentedchecksumskip expected; cleanNativefocusedtest distinctSHA relativepaths passed; uniqueSHAactualUIrerunpending"
+      }
+    },
+    {
+      "name": "native-final3-restore-backup-permission-failed",
+      "source_commit": "7555f02fdbdad1c3aa558b2b85e3cfe6fb8fa3be",
+      "candidate_app": "/tmp/io-ui-closure-native-qa-final3/AI Course Workbench QA Preview Final3.app",
+      "observed_at_utc": "2026-10-06T04:43:22.000Z",
+      "screenshot": "/Users/youngi/.codex/worktrees/io-ui-closure/workbench/docs/reports/evidence/io-ui-closure/screenshots/native-final/native-final3-restore-backup-permission-failed.png",
+      "ax_path": "/Users/youngi/.codex/worktrees/io-ui-closure/workbench/docs/reports/evidence/io-ui-closure/screenshots/native-final/native-final3-restore-backup-permission-failed.ax.txt",
+      "details": {
+        "source_commit": "7555f02fdbdad1c3aa558b2b85e3cfe6fb8fa3be",
+        "candidate_app": "/tmp/io-ui-closure-native-qa-final3/AI Course Workbench QA Preview Final3.app",
+        "test": "T5 N05 snapshotrestorebackupfailure",
+        "result": "OBSERVED_FAILURE_HANDLED",
+        "observed": "history-fault snapshots0555; actualvalidsnapshot恢复此版本 shows权限失败课程内容没有改变; no recoverydialogobserved onopen;5valid5invalidrows disabled"
+      }
+    },
+    {
+      "name": "native-final3-restore-after-permission-retry",
+      "source_commit": "7555f02fdbdad1c3aa558b2b85e3cfe6fb8fa3be",
+      "candidate_app": "/tmp/io-ui-closure-native-qa-final3/AI Course Workbench QA Preview Final3.app",
+      "observed_at_utc": "2026-10-06T04:45:55.577Z",
+      "screenshot": "/Users/youngi/.codex/worktrees/io-ui-closure/workbench/docs/reports/evidence/io-ui-closure/screenshots/native-final/native-final3-restore-after-permission-retry.png",
+      "ax_path": "/Users/youngi/.codex/worktrees/io-ui-closure/workbench/docs/reports/evidence/io-ui-closure/screenshots/native-final/native-final3-restore-after-permission-retry.ax.txt",
+      "details": {
+        "source_commit": "7555f02fdbdad1c3aa558b2b85e3cfe6fb8fa3be",
+        "candidate_app": "/tmp/io-ui-closure-native-qa-final3/AI Course Workbench QA Preview Final3.app",
+        "test": "N05 snapshotrestorepermissionretry",
+        "observed": "Afterowned0555→0755, samevalidRestore succeeds; title F-history incomplete metadata body; toast durablebackup. PhysicaloldCanon/journalbeforefailverified unchanged byowner; afterbackupverificationpending"
+      }
+    },
+    {
+      "name": "native-final3-media-boundaries",
+      "source_commit": "7555f02fdbdad1c3aa558b2b85e3cfe6fb8fa3be",
+      "candidate_app": "/tmp/io-ui-closure-native-qa-final3/AI Course Workbench QA Preview Final3.app",
+      "observed_at_utc": "2026-10-06T04:47:22.023Z",
+      "screenshot": "/Users/youngi/.codex/worktrees/io-ui-closure/workbench/docs/reports/evidence/io-ui-closure/screenshots/native-final/native-final3-media-boundaries.png",
+      "ax_path": "/Users/youngi/.codex/worktrees/io-ui-closure/workbench/docs/reports/evidence/io-ui-closure/screenshots/native-final/native-final3-media-boundaries.ax.txt",
+      "details": {
+        "source_commit": "7555f02fdbdad1c3aa558b2b85e3cfe6fb8fa3be",
+        "candidate_app": "/tmp/io-ui-closure-native-qa-final3/AI Course Workbench QA Preview Final3.app",
+        "test": "N07media120real and boundaryfallback",
+        "observed": "Actual123media; traversed8×2pages fromtop tobottom; bottomGIF/MP4postersloaded, missingfile8MiBcapwrongMIMEthreeerrors visible; RSSunmeasured"
+      }
+    },
+    {
+      "name": "native-final3-gif-viewer",
+      "source_commit": "7555f02fdbdad1c3aa558b2b85e3cfe6fb8fa3be",
+      "candidate_app": "/tmp/io-ui-closure-native-qa-final3/AI Course Workbench QA Preview Final3.app",
+      "observed_at_utc": "2026-10-06T04:52:02.329Z",
+      "screenshot": "/Users/youngi/.codex/worktrees/io-ui-closure/workbench/docs/reports/evidence/io-ui-closure/screenshots/native-final/native-final3-gif-viewer.png",
+      "ax_path": "/Users/youngi/.codex/worktrees/io-ui-closure/workbench/docs/reports/evidence/io-ui-closure/screenshots/native-final/native-final3-gif-viewer.ax.txt",
+      "details": {
+        "source_commit": "7555f02fdbdad1c3aa558b2b85e3cfe6fb8fa3be",
+        "candidate_app": "/tmp/io-ui-closure-native-qa-final3/AI Course Workbench QA Preview Final3.app",
+        "test": "N07GIFpreview",
+        "observed": "ActualGIF3viewerimage64x64 loadedclosefocused; animationtimingnotmeasured"
+      }
+    },
+    {
+      "name": "native-final3-inbox",
+      "source_commit": "7555f02fdbdad1c3aa558b2b85e3cfe6fb8fa3be",
+      "candidate_app": "/tmp/io-ui-closure-native-qa-final3/AI Course Workbench QA Preview Final3.app",
+      "observed_at_utc": "2026-10-06T04:57:02.524Z",
+      "screenshot": "/Users/youngi/.codex/worktrees/io-ui-closure/workbench/docs/reports/evidence/io-ui-closure/screenshots/native-final/native-final3-inbox.png",
+      "ax_path": "/Users/youngi/.codex/worktrees/io-ui-closure/workbench/docs/reports/evidence/io-ui-closure/screenshots/native-final/native-final3-inbox.ax.txt",
+      "details": {
+        "source_commit": "7555f02fdbdad1c3aa558b2b85e3cfe6fb8fa3be",
+        "candidate_app": "/tmp/io-ui-closure-native-qa-final3/AI Course Workbench QA Preview Final3.app",
+        "test": "N08actualNativepagevisualsubset",
+        "observed": "Actualnav ↓ 收件箱 screenshot/AX; currentNativewindowonly; nofourwidth/textscale/fullbehaviorPASS"
+      }
+    },
+    {
+      "name": "native-final3-board",
+      "source_commit": "7555f02fdbdad1c3aa558b2b85e3cfe6fb8fa3be",
+      "candidate_app": "/tmp/io-ui-closure-native-qa-final3/AI Course Workbench QA Preview Final3.app",
+      "observed_at_utc": "2026-10-06T04:57:03.681Z",
+      "screenshot": "/Users/youngi/.codex/worktrees/io-ui-closure/workbench/docs/reports/evidence/io-ui-closure/screenshots/native-final/native-final3-board.png",
+      "ax_path": "/Users/youngi/.codex/worktrees/io-ui-closure/workbench/docs/reports/evidence/io-ui-closure/screenshots/native-final/native-final3-board.ax.txt",
+      "details": {
+        "source_commit": "7555f02fdbdad1c3aa558b2b85e3cfe6fb8fa3be",
+        "candidate_app": "/tmp/io-ui-closure-native-qa-final3/AI Course Workbench QA Preview Final3.app",
+        "test": "N08actualNativepagevisualsubset",
+        "observed": "Actualnav ▤ 制作看板 screenshot/AX; currentNativewindowonly; nofourwidth/textscale/fullbehaviorPASS"
+      }
+    },
+    {
+      "name": "native-final3-requirements",
+      "source_commit": "7555f02fdbdad1c3aa558b2b85e3cfe6fb8fa3be",
+      "candidate_app": "/tmp/io-ui-closure-native-qa-final3/AI Course Workbench QA Preview Final3.app",
+      "observed_at_utc": "2026-10-06T04:57:05.332Z",
+      "screenshot": "/Users/youngi/.codex/worktrees/io-ui-closure/workbench/docs/reports/evidence/io-ui-closure/screenshots/native-final/native-final3-requirements.png",
+      "ax_path": "/Users/youngi/.codex/worktrees/io-ui-closure/workbench/docs/reports/evidence/io-ui-closure/screenshots/native-final/native-final3-requirements.ax.txt",
+      "details": {
+        "source_commit": "7555f02fdbdad1c3aa558b2b85e3cfe6fb8fa3be",
+        "candidate_app": "/tmp/io-ui-closure-native-qa-final3/AI Course Workbench QA Preview Final3.app",
+        "test": "N08actualNativepagevisualsubset",
+        "observed": "Actualnav != 待补总览 screenshot/AX; currentNativewindowonly; nofourwidth/textscale/fullbehaviorPASS"
+      }
+    },
+    {
+      "name": "native-final3-updates",
+      "source_commit": "7555f02fdbdad1c3aa558b2b85e3cfe6fb8fa3be",
+      "candidate_app": "/tmp/io-ui-closure-native-qa-final3/AI Course Workbench QA Preview Final3.app",
+      "observed_at_utc": "2026-10-06T04:57:06.601Z",
+      "screenshot": "/Users/youngi/.codex/worktrees/io-ui-closure/workbench/docs/reports/evidence/io-ui-closure/screenshots/native-final/native-final3-updates.png",
+      "ax_path": "/Users/youngi/.codex/worktrees/io-ui-closure/workbench/docs/reports/evidence/io-ui-closure/screenshots/native-final/native-final3-updates.ax.txt",
+      "details": {
+        "source_commit": "7555f02fdbdad1c3aa558b2b85e3cfe6fb8fa3be",
+        "candidate_app": "/tmp/io-ui-closure-native-qa-final3/AI Course Workbench QA Preview Final3.app",
+        "test": "N08actualNativepagevisualsubset",
+        "observed": "Actualnav ✦ 更新中心 screenshot/AX; currentNativewindowonly; nofourwidth/textscale/fullbehaviorPASS"
+      }
+    },
+    {
+      "name": "native-final3-settings",
+      "source_commit": "7555f02fdbdad1c3aa558b2b85e3cfe6fb8fa3be",
+      "candidate_app": "/tmp/io-ui-closure-native-qa-final3/AI Course Workbench QA Preview Final3.app",
+      "observed_at_utc": "2026-10-06T04:57:08.640Z",
+      "screenshot": "/Users/youngi/.codex/worktrees/io-ui-closure/workbench/docs/reports/evidence/io-ui-closure/screenshots/native-final/native-final3-settings.png",
+      "ax_path": "/Users/youngi/.codex/worktrees/io-ui-closure/workbench/docs/reports/evidence/io-ui-closure/screenshots/native-final/native-final3-settings.ax.txt",
+      "details": {
+        "source_commit": "7555f02fdbdad1c3aa558b2b85e3cfe6fb8fa3be",
+        "candidate_app": "/tmp/io-ui-closure-native-qa-final3/AI Course Workbench QA Preview Final3.app",
+        "test": "N08actualNativepagevisualsubset",
+        "observed": "Actualnav ⚙ 项目设置 screenshot/AX; currentNativewindowonly; nofourwidth/textscale/fullbehaviorPASS"
+      }
+    },
+    {
+      "name": "native-final3-settings-narrow-native",
+      "source_commit": "7555f02fdbdad1c3aa558b2b85e3cfe6fb8fa3be",
+      "candidate_app": "/tmp/io-ui-closure-native-qa-final3/AI Course Workbench QA Preview Final3.app",
+      "observed_at_utc": "2026-10-06T05:00:19.725Z",
+      "screenshot": "/Users/youngi/.codex/worktrees/io-ui-closure/workbench/docs/reports/evidence/io-ui-closure/screenshots/native-final/native-final3-settings-narrow-native.png",
+      "ax_path": "/Users/youngi/.codex/worktrees/io-ui-closure/workbench/docs/reports/evidence/io-ui-closure/screenshots/native-final/native-final3-settings-narrow-native.ax.txt",
+      "details": {
+        "source_commit": "7555f02fdbdad1c3aa558b2b85e3cfe6fb8fa3be",
+        "candidate_app": "/tmp/io-ui-closure-native-qa-final3/AI Course Workbench QA Preview Final3.app",
+        "test": "N08nativewidthsubset",
+        "observed": "ActualNativewindowedge resized from1440 toapproximately1024 outerpoints; screenshotdimensionsownerverificationpending; CSSwidth/scale notassumed; bothsidebarsshownSettingsheaderbuttonsusable"
+      }
+    },
+    {
+      "name": "native-final3-settings-narrow-right-collapsed",
+      "source_commit": "7555f02fdbdad1c3aa558b2b85e3cfe6fb8fa3be",
+      "candidate_app": "/tmp/io-ui-closure-native-qa-final3/AI Course Workbench QA Preview Final3.app",
+      "observed_at_utc": "2026-10-06T05:01:00.207Z",
+      "screenshot": "/Users/youngi/.codex/worktrees/io-ui-closure/workbench/docs/reports/evidence/io-ui-closure/screenshots/native-final/native-final3-settings-narrow-right-collapsed.png",
+      "ax_path": "/Users/youngi/.codex/worktrees/io-ui-closure/workbench/docs/reports/evidence/io-ui-closure/screenshots/native-final/native-final3-settings-narrow-right-collapsed.ax.txt",
+      "details": {
+        "source_commit": "7555f02fdbdad1c3aa558b2b85e3cfe6fb8fa3be",
+        "candidate_app": "/tmp/io-ui-closure-native-qa-final3/AI Course Workbench QA Preview Final3.app",
+        "test": "N08nativeapprox1024sidebarvisualsubset",
+        "observed": "Actual right-collapsed via 收起右栏; currentwindowapprox1024outerpoints; source755targetedonly"
+      }
+    },
+    {
+      "name": "native-final3-settings-narrow-both-collapsed",
+      "source_commit": "7555f02fdbdad1c3aa558b2b85e3cfe6fb8fa3be",
+      "candidate_app": "/tmp/io-ui-closure-native-qa-final3/AI Course Workbench QA Preview Final3.app",
+      "observed_at_utc": "2026-10-06T05:01:01.923Z",
+      "screenshot": "/Users/youngi/.codex/worktrees/io-ui-closure/workbench/docs/reports/evidence/io-ui-closure/screenshots/native-final/native-final3-settings-narrow-both-collapsed.png",
+      "ax_path": "/Users/youngi/.codex/worktrees/io-ui-closure/workbench/docs/reports/evidence/io-ui-closure/screenshots/native-final/native-final3-settings-narrow-both-collapsed.ax.txt",
+      "details": {
+        "source_commit": "7555f02fdbdad1c3aa558b2b85e3cfe6fb8fa3be",
+        "candidate_app": "/tmp/io-ui-closure-native-qa-final3/AI Course Workbench QA Preview Final3.app",
+        "test": "N08nativeapprox1024sidebarvisualsubset",
+        "observed": "Actual both-collapsed via 收起左栏; currentwindowapprox1024outerpoints; source755targetedonly"
+      }
+    },
+    {
+      "name": "native-final3-settings-narrow-left-collapsed",
+      "source_commit": "7555f02fdbdad1c3aa558b2b85e3cfe6fb8fa3be",
+      "candidate_app": "/tmp/io-ui-closure-native-qa-final3/AI Course Workbench QA Preview Final3.app",
+      "observed_at_utc": "2026-10-06T05:01:03.650Z",
+      "screenshot": "/Users/youngi/.codex/worktrees/io-ui-closure/workbench/docs/reports/evidence/io-ui-closure/screenshots/native-final/native-final3-settings-narrow-left-collapsed.png",
+      "ax_path": "/Users/youngi/.codex/worktrees/io-ui-closure/workbench/docs/reports/evidence/io-ui-closure/screenshots/native-final/native-final3-settings-narrow-left-collapsed.ax.txt",
+      "details": {
+        "source_commit": "7555f02fdbdad1c3aa558b2b85e3cfe6fb8fa3be",
+        "candidate_app": "/tmp/io-ui-closure-native-qa-final3/AI Course Workbench QA Preview Final3.app",
+        "test": "N08nativeapprox1024sidebarvisualsubset",
+        "observed": "Actual left-collapsed via 展开右栏; currentwindowapprox1024outerpoints; source755targetedonly"
+      }
+    },
+    {
+      "name": "native-final3-board-narrow-horizontal",
+      "source_commit": "7555f02fdbdad1c3aa558b2b85e3cfe6fb8fa3be",
+      "candidate_app": "/tmp/io-ui-closure-native-qa-final3/AI Course Workbench QA Preview Final3.app",
+      "observed_at_utc": "2026-10-06T05:01:40.205Z",
+      "screenshot": "/Users/youngi/.codex/worktrees/io-ui-closure/workbench/docs/reports/evidence/io-ui-closure/screenshots/native-final/native-final3-board-narrow-horizontal.png",
+      "ax_path": "/Users/youngi/.codex/worktrees/io-ui-closure/workbench/docs/reports/evidence/io-ui-closure/screenshots/native-final/native-final3-board-narrow-horizontal.ax.txt",
+      "details": {
+        "source_commit": "7555f02fdbdad1c3aa558b2b85e3cfe6fb8fa3be",
+        "candidate_app": "/tmp/io-ui-closure-native-qa-final3/AI Course Workbench QA Preview Final3.app",
+        "test": "N08NativeBoardhorizontalScroll",
+        "observed": "Actualnative≈1024windowboardlayoutcontained; attemptedhorizontalScroll producedunchangedleftcolumns; rightcolumnreachabilityNOT_VERIFIED; keyboardscrollNOT_VERIFIED",
+        "result": "PARTIAL"
+      }
+    },
+    {
+      "name": "native-final3-board-narrow-keyboard",
+      "source_commit": "7555f02fdbdad1c3aa558b2b85e3cfe6fb8fa3be",
+      "candidate_app": "/tmp/io-ui-closure-native-qa-final3/AI Course Workbench QA Preview Final3.app",
+      "observed_at_utc": "2026-10-06T05:03:52.193Z",
+      "screenshot": "/Users/youngi/.codex/worktrees/io-ui-closure/workbench/docs/reports/evidence/io-ui-closure/screenshots/native-final/native-final3-board-narrow-keyboard.png",
+      "ax_path": "/Users/youngi/.codex/worktrees/io-ui-closure/workbench/docs/reports/evidence/io-ui-closure/screenshots/native-final/native-final3-board-narrow-keyboard.ax.txt",
+      "details": {
+        "source_commit": "7555f02fdbdad1c3aa558b2b85e3cfe6fb8fa3be",
+        "candidate_app": "/tmp/io-ui-closure-native-qa-final3/AI Course Workbench QA Preview Final3.app",
+        "test": "N08NativeBoardkeyboardreachablehorizontalregion",
+        "observed": "Clickemptyboardregion focusedcontainer; Rightkeys separatedbyAXobservations reachedfullrightmost已定稿columninsideBoardviewport; sidebarsfixed; scopedkeyboardbehaviorPASS",
+        "result": "OBSERVED_PASS"
+      }
+    },
+    {
+      "name": "native-final3-append-distinct-basename-pass",
+      "source_commit": "7555f02fdbdad1c3aa558b2b85e3cfe6fb8fa3be",
+      "candidate_app": "/tmp/io-ui-closure-native-qa-final3/AI Course Workbench QA Preview Final3.app",
+      "observed_at_utc": "2026-10-06T05:06:38.277Z",
+      "screenshot": "/Users/youngi/.codex/worktrees/io-ui-closure/workbench/docs/reports/evidence/io-ui-closure/screenshots/native-final/native-final3-append-distinct-basename-pass.png",
+      "ax_path": "/Users/youngi/.codex/worktrees/io-ui-closure/workbench/docs/reports/evidence/io-ui-closure/screenshots/native-final/native-final3-append-distinct-basename-pass.ax.txt",
+      "details": {
+        "source_commit": "7555f02fdbdad1c3aa558b2b85e3cfe6fb8fa3be",
+        "candidate_app": "/tmp/io-ui-closure-native-qa-final3/AI Course Workbench QA Preview Final3.app",
+        "test": "N02samebasenameuniquecontentappend",
+        "result": "OBSERVED_PASS",
+        "observed": "DistinctSHA548/220B docpaths samebasename selected2/2; explicitsuccess2skip0; total5lessonsand6stages; 0newassets5reuseevents; previousduplicatecontentcaseexpectedskip"
+      }
+    },
+    {
+      "name": "native-final3-valid-recovery-open",
+      "source_commit": "7555f02fdbdad1c3aa558b2b85e3cfe6fb8fa3be",
+      "candidate_app": "/tmp/io-ui-closure-native-qa-final3/AI Course Workbench QA Preview Final3.app",
+      "observed_at_utc": "2026-10-06T05:11:44.818Z",
+      "screenshot": "/Users/youngi/.codex/worktrees/io-ui-closure/workbench/docs/reports/evidence/io-ui-closure/screenshots/native-final/native-final3-valid-recovery-open.png",
+      "ax_path": "/Users/youngi/.codex/worktrees/io-ui-closure/workbench/docs/reports/evidence/io-ui-closure/screenshots/native-final/native-final3-valid-recovery-open.ax.txt",
+      "details": {
+        "source_commit": "7555f02fdbdad1c3aa558b2b85e3cfe6fb8fa3be",
+        "candidate_app": "/tmp/io-ui-closure-native-qa-final3/AI Course Workbench QA Preview Final3.app",
+        "fixture": "/tmp/workbench-io-ui-native-final/history-restore",
+        "purpose": "Native reader Some fixture opened through OS project selector; observe pending recovery UI"
+      }
+    },
+    {
+      "name": "native-final3-valid-recovery-not-present",
+      "source_commit": "7555f02fdbdad1c3aa558b2b85e3cfe6fb8fa3be",
+      "candidate_app": "/tmp/io-ui-closure-native-qa-final3/AI Course Workbench QA Preview Final3.app",
+      "observed_at_utc": "2026-10-06T05:12:09.991Z",
+      "screenshot": "/Users/youngi/.codex/worktrees/io-ui-closure/workbench/docs/reports/evidence/io-ui-closure/screenshots/native-final/native-final3-valid-recovery-not-present.png",
+      "ax_path": "/Users/youngi/.codex/worktrees/io-ui-closure/workbench/docs/reports/evidence/io-ui-closure/screenshots/native-final/native-final3-valid-recovery-not-present.ax.txt",
+      "details": {
+        "source_commit": "7555f02fdbdad1c3aa558b2b85e3cfe6fb8fa3be",
+        "candidate_app": "/tmp/io-ui-closure-native-qa-final3/AI Course Workbench QA Preview Final3.app",
+        "fixture": "/tmp/workbench-io-ui-native-final/history-restore",
+        "result": "OBSERVED_FAIL",
+        "observation": "Native reader probe Some tx155a152b but actual folder-open then keep-two registry identity choice reaches Overview with no recovery prompt/banner. No edits or snapshot/recovery choice performed."
+      }
+    },
+    {
+      "name": "native-final5-recovery-present",
+      "source_commit": "77993519e31cb3c780a77af319ce3033acecccf2",
+      "candidate_app": "/tmp/io-ui-closure-native-qa-final5/AI Course Workbench QA Preview Final5.app",
+      "observed_at_utc": "2026-10-06T05:47:06.494Z",
+      "screenshot": "/Users/youngi/.codex/worktrees/io-ui-closure/workbench/docs/reports/evidence/io-ui-closure/screenshots/native-final/native-final5-recovery-present.png",
+      "ax_path": "/Users/youngi/.codex/worktrees/io-ui-closure/workbench/docs/reports/evidence/io-ui-closure/screenshots/native-final/native-final5-recovery-present.ax.txt",
+      "details": {
+        "source_commit": "77993519e31cb3c780a77af319ce3033acecccf2",
+        "candidate_app": "/tmp/io-ui-closure-native-qa-final5/AI Course Workbench QA Preview Final5.app",
+        "fixture": "/tmp/workbench-io-ui-native-final/history-restore",
+        "result": "OBSERVED_PASS",
+        "purpose": "Actual explicit folder open consumes recovery journal; backups directory0555 before recovery restore"
+      }
+    },
+    {
+      "name": "native-final5-recovery-backup-failure",
+      "source_commit": "77993519e31cb3c780a77af319ce3033acecccf2",
+      "candidate_app": "/tmp/io-ui-closure-native-qa-final5/AI Course Workbench QA Preview Final5.app",
+      "observed_at_utc": "2026-10-06T05:47:15.824Z",
+      "screenshot": "/Users/youngi/.codex/worktrees/io-ui-closure/workbench/docs/reports/evidence/io-ui-closure/screenshots/native-final/native-final5-recovery-backup-failure.png",
+      "ax_path": "/Users/youngi/.codex/worktrees/io-ui-closure/workbench/docs/reports/evidence/io-ui-closure/screenshots/native-final/native-final5-recovery-backup-failure.ax.txt",
+      "details": {
+        "source_commit": "77993519e31cb3c780a77af319ce3033acecccf2",
+        "candidate_app": "/tmp/io-ui-closure-native-qa-final5/AI Course Workbench QA Preview Final5.app",
+        "fixture": "/tmp/workbench-io-ui-native-final/history-restore",
+        "snapshots_directory_mode": "0555",
+        "result": "OBSERVED_SAFE_FAILURE",
+        "observation": "Actual Recovery Restore with unwritable backup directory; pending choice must remain; Canonical and journal physical proof requested"
+      }
+    },
+    {
+      "name": "native-final5-recovery-restored",
+      "source_commit": "77993519e31cb3c780a77af319ce3033acecccf2",
+      "candidate_app": "/tmp/io-ui-closure-native-qa-final5/AI Course Workbench QA Preview Final5.app",
+      "observed_at_utc": "2026-10-06T05:50:21.146Z",
+      "screenshot": "/Users/youngi/.codex/worktrees/io-ui-closure/workbench/docs/reports/evidence/io-ui-closure/screenshots/native-final/native-final5-recovery-restored.png",
+      "ax_path": "/Users/youngi/.codex/worktrees/io-ui-closure/workbench/docs/reports/evidence/io-ui-closure/screenshots/native-final/native-final5-recovery-restored.ax.txt",
+      "details": {
+        "source_commit": "77993519e31cb3c780a77af319ce3033acecccf2",
+        "candidate_app": "/tmp/io-ui-closure-native-qa-final5/AI Course Workbench QA Preview Final5.app",
+        "fixture": "/tmp/workbench-io-ui-native-final/history-restore",
+        "snapshots_directory_mode": "0755",
+        "purpose": "Retry same pending recovery after owner restored exact directory mode; physical backup/canonical/domain/clear verification follows"
+      }
+    },
+    {
+      "name": "native-final5-recovery-duplicate-open",
+      "source_commit": "77993519e31cb3c780a77af319ce3033acecccf2",
+      "candidate_app": "/tmp/io-ui-closure-native-qa-final5/AI Course Workbench QA Preview Final5.app",
+      "observed_at_utc": "2026-10-06T05:50:53.006Z",
+      "screenshot": "/Users/youngi/.codex/worktrees/io-ui-closure/workbench/docs/reports/evidence/io-ui-closure/screenshots/native-final/native-final5-recovery-duplicate-open.png",
+      "ax_path": "/Users/youngi/.codex/worktrees/io-ui-closure/workbench/docs/reports/evidence/io-ui-closure/screenshots/native-final/native-final5-recovery-duplicate-open.ax.txt",
+      "details": {
+        "source_commit": "77993519e31cb3c780a77af319ce3033acecccf2",
+        "candidate_app": "/tmp/io-ui-closure-native-qa-final5/AI Course Workbench QA Preview Final5.app",
+        "fixture": "/tmp/workbench-io-ui-native-final/history",
+        "purpose": "Open second same-project-id clone with intact pending recovery and observe duplicate registry/recovery ordering"
+      }
+    },
+    {
+      "name": "native-final5-duplicate-preserves-recovery",
+      "source_commit": "77993519e31cb3c780a77af319ce3033acecccf2",
+      "candidate_app": "/tmp/io-ui-closure-native-qa-final5/AI Course Workbench QA Preview Final5.app",
+      "observed_at_utc": "2026-10-06T05:51:01.299Z",
+      "screenshot": "/Users/youngi/.codex/worktrees/io-ui-closure/workbench/docs/reports/evidence/io-ui-closure/screenshots/native-final/native-final5-duplicate-preserves-recovery.png",
+      "ax_path": "/Users/youngi/.codex/worktrees/io-ui-closure/workbench/docs/reports/evidence/io-ui-closure/screenshots/native-final/native-final5-duplicate-preserves-recovery.ax.txt",
+      "details": {
+        "source_commit": "77993519e31cb3c780a77af319ce3033acecccf2",
+        "candidate_app": "/tmp/io-ui-closure-native-qa-final5/AI Course Workbench QA Preview Final5.app",
+        "fixture": "/tmp/workbench-io-ui-native-final/history",
+        "result": "OBSERVED_PASS",
+        "purpose": "Actual keep-two registry choice leaves pending recovery modal available"
+      }
+    },
+    {
+      "name": "native-final5-recovery-keep-disk",
+      "source_commit": "77993519e31cb3c780a77af319ce3033acecccf2",
+      "candidate_app": "/tmp/io-ui-closure-native-qa-final5/AI Course Workbench QA Preview Final5.app",
+      "observed_at_utc": "2026-10-06T05:51:11.902Z",
+      "screenshot": "/Users/youngi/.codex/worktrees/io-ui-closure/workbench/docs/reports/evidence/io-ui-closure/screenshots/native-final/native-final5-recovery-keep-disk.png",
+      "ax_path": "/Users/youngi/.codex/worktrees/io-ui-closure/workbench/docs/reports/evidence/io-ui-closure/screenshots/native-final/native-final5-recovery-keep-disk.ax.txt",
+      "details": {
+        "source_commit": "77993519e31cb3c780a77af319ce3033acecccf2",
+        "candidate_app": "/tmp/io-ui-closure-native-qa-final5/AI Course Workbench QA Preview Final5.app",
+        "fixture": "/tmp/workbench-io-ui-native-final/history",
+        "purpose": "Actual keep disk recovery choice; physical Canonical unchanged/exact journal clear follows"
+      }
+    },
+    {
+      "name": "native-final5-versions-valid-invalid",
+      "source_commit": "77993519e31cb3c780a77af319ce3033acecccf2",
+      "candidate_app": "/tmp/io-ui-closure-native-qa-final5/AI Course Workbench QA Preview Final5.app",
+      "observed_at_utc": "2026-10-06T05:51:30.977Z",
+      "screenshot": "/Users/youngi/.codex/worktrees/io-ui-closure/workbench/docs/reports/evidence/io-ui-closure/screenshots/native-final/native-final5-versions-valid-invalid.png",
+      "ax_path": "/Users/youngi/.codex/worktrees/io-ui-closure/workbench/docs/reports/evidence/io-ui-closure/screenshots/native-final/native-final5-versions-valid-invalid.ax.txt",
+      "details": {
+        "source_commit": "77993519e31cb3c780a77af319ce3033acecccf2",
+        "candidate_app": "/tmp/io-ui-closure-native-qa-final5/AI Course Workbench QA Preview Final5.app",
+        "fixture": "/tmp/workbench-io-ui-native-final/history",
+        "purpose": "Actual loaded snapshot catalog includes valid selectable and invalid disabled rows; no restore before keep-disk physical proof"
+      }
+    },
+    {
+      "name": "native-final5-snapshot-restored",
+      "source_commit": "77993519e31cb3c780a77af319ce3033acecccf2",
+      "candidate_app": "/tmp/io-ui-closure-native-qa-final5/AI Course Workbench QA Preview Final5.app",
+      "observed_at_utc": "2026-10-06T05:55:03.622Z",
+      "screenshot": "/Users/youngi/.codex/worktrees/io-ui-closure/workbench/docs/reports/evidence/io-ui-closure/screenshots/native-final/native-final5-snapshot-restored.png",
+      "ax_path": "/Users/youngi/.codex/worktrees/io-ui-closure/workbench/docs/reports/evidence/io-ui-closure/screenshots/native-final/native-final5-snapshot-restored.ax.txt",
+      "details": {
+        "source_commit": "77993519e31cb3c780a77af319ce3033acecccf2",
+        "candidate_app": "/tmp/io-ui-closure-native-qa-final5/AI Course Workbench QA Preview Final5.app",
+        "fixture": "/tmp/workbench-io-ui-native-final/history",
+        "purpose": "Actual restore valid first snapshot after keep-disk Canonical physical baseline64b9; confirm restored backup row project_id/Domain0 follows"
+      }
+    },
+    {
+      "name": "native-final6-versions-epoch-date",
+      "source_commit": "52862b4ab0fe8386cc1dd6ac937d46721e9cca4d",
+      "candidate_app": "/tmp/io-ui-closure-native-qa-final6/AI Course Workbench QA Preview Final6.app",
+      "observed_at_utc": "2026-10-06T06:16:12.867Z",
+      "screenshot": "/Users/youngi/.codex/worktrees/io-ui-closure/workbench/docs/reports/evidence/io-ui-closure/screenshots/native-final/native-final6-versions-epoch-date.png",
+      "ax_path": "/Users/youngi/.codex/worktrees/io-ui-closure/workbench/docs/reports/evidence/io-ui-closure/screenshots/native-final/native-final6-versions-epoch-date.ax.txt",
+      "details": {
+        "source_commit": "52862b4ab0fe8386cc1dd6ac937d46721e9cca4d",
+        "candidate_app": "/tmp/io-ui-closure-native-qa-final6/AI Course Workbench QA Preview Final6.app",
+        "verification_commit": "1dd1449feb030d8731a5f537940ecad6ddbd3a18",
+        "fixture": "/tmp/workbench-io-ui-native-final/history",
+        "status": "PASS",
+        "observation": "Visible 恢复前备份 date 2026/10/6 13:55:02 replaces Final5 保存时间未知. Six readable rows enabled and five invalid rows disabled, as full AX records; no restore/edit performed."
+      }
+    },
+    {
+      "name": "native-final6-restored-project-reopen-no-recovery",
+      "source_commit": "52862b4ab0fe8386cc1dd6ac937d46721e9cca4d",
+      "candidate_app": "/tmp/io-ui-closure-native-qa-final6/AI Course Workbench QA Preview Final6.app",
+      "observed_at_utc": "2026-10-06T06:17:07.817Z",
+      "screenshot": "/Users/youngi/.codex/worktrees/io-ui-closure/workbench/docs/reports/evidence/io-ui-closure/screenshots/native-final/native-final6-restored-project-reopen-no-recovery.png",
+      "ax_path": "/Users/youngi/.codex/worktrees/io-ui-closure/workbench/docs/reports/evidence/io-ui-closure/screenshots/native-final/native-final6-restored-project-reopen-no-recovery.ax.txt",
+      "details": {
+        "source_commit": "52862b4ab0fe8386cc1dd6ac937d46721e9cca4d",
+        "candidate_app": "/tmp/io-ui-closure-native-qa-final6/AI Course Workbench QA Preview Final6.app",
+        "verification_commit": "1dd1449feb030d8731a5f537940ecad6ddbd3a18",
+        "fixture": "/tmp/workbench-io-ui-native-final/history-restore",
+        "status": "PASS",
+        "observation": "Explicit OS folder open → duplicate-project modal → 保留两条记录 → Overview title F-history recovery candidate restore final. No recovery prompt or recovery choices. Active journal absent, historical .bak retained from successful Final5 restore; read-only metadata proof captured separately."
+      }
+    },
+    {
+      "name": "native-final7-legacy-snapshot-date-unknown",
+      "source_commit": "11232c28515e2e8708ee4f586757606ce1bdf8f8",
+      "candidate_app": "/tmp/io-ui-closure-native-qa-final7/AI Course Workbench QA Preview Final7.app",
+      "observed_at_utc": "2026-10-06T08:24:01.383Z",
+      "screenshot": "/Users/youngi/.codex/worktrees/io-ui-closure/workbench/docs/reports/evidence/io-ui-closure/screenshots/native-final/native-final7-legacy-snapshot-date-unknown.png",
+      "ax_path": "/Users/youngi/.codex/worktrees/io-ui-closure/workbench/docs/reports/evidence/io-ui-closure/screenshots/native-final/native-final7-legacy-snapshot-date-unknown.ax.txt",
+      "details": {
+        "source_commit": "11232c28515e2e8708ee4f586757606ce1bdf8f8",
+        "verification_commit": "11232c28515e2e8708ee4f586757606ce1bdf8f8",
+        "candidate_app": "/tmp/io-ui-closure-native-qa-final7/AI Course Workbench QA Preview Final7.app",
+        "candidate_app_id": "io.github.wyzh0117.ai-course-workbench.qa.io-ui-closure.final7",
+        "project_path": "/tmp/workbench-io-ui-native-final/history-restore",
+        "screenshot_mime": "image/jpeg",
+        "observations": "After open and explicit refresh: five valid legacy raw snapshots show 保存时间未知, five invalid rows remain disabled, four actual named/restore-before snapshots retain real dates.",
+        "restore_before_display": "2026/10/6 13:50:20",
+        "result": "PASS_TARGETED_LEGACY_DATE_REFRESH"
+      }
+    },
+    {
+      "name": "native-final7-legacy-snapshot-date-visible",
+      "source_commit": "11232c28515e2e8708ee4f586757606ce1bdf8f8",
+      "candidate_app": "/tmp/io-ui-closure-native-qa-final7/AI Course Workbench QA Preview Final7.app",
+      "observed_at_utc": "2026-10-06T08:26:16.128Z",
+      "screenshot": "/Users/youngi/.codex/worktrees/io-ui-closure/workbench/docs/reports/evidence/io-ui-closure/screenshots/native-final/native-final7-legacy-snapshot-date-visible.png",
+      "ax_path": "/Users/youngi/.codex/worktrees/io-ui-closure/workbench/docs/reports/evidence/io-ui-closure/screenshots/native-final/native-final7-legacy-snapshot-date-visible.ax.txt",
+      "details": {
+        "source_commit": "11232c28515e2e8708ee4f586757606ce1bdf8f8",
+        "candidate_app": "/tmp/io-ui-closure-native-qa-final7/AI Course Workbench QA Preview Final7.app",
+        "project_path": "/tmp/workbench-io-ui-native-final/history-restore",
+        "screenshot_mime": "image/jpeg",
+        "result": "PASS_TARGETED_UNKNOWN_DATE_VISIBLE",
+        "observations": "Version list scrolled to actual legacy rows with 保存时间未知. Public AX captured independently of screenshot geometry."
+      }
+    },
+    {
+      "name": "native-final7-first-save-version-ax-no-modal",
+      "source_commit": "11232c28515e2e8708ee4f586757606ce1bdf8f8",
+      "candidate_app": "/tmp/io-ui-closure-native-qa-final7/AI Course Workbench QA Preview Final7.app",
+      "observed_at_utc": "2026-10-06T08:32:44.906Z",
+      "screenshot": "/Users/youngi/.codex/worktrees/io-ui-closure/workbench/docs/reports/evidence/io-ui-closure/screenshots/native-final/native-final7-first-save-version-ax-no-modal.png",
+      "ax_path": "/Users/youngi/.codex/worktrees/io-ui-closure/workbench/docs/reports/evidence/io-ui-closure/screenshots/native-final/native-final7-first-save-version-ax-no-modal.ax.txt",
+      "details": {
+        "source_commit": "11232c28515e2e8708ee4f586757606ce1bdf8f8",
+        "candidate_app": "/tmp/io-ui-closure-native-qa-final7/AI Course Workbench QA Preview Final7.app",
+        "project_path": "/tmp/workbench-io-ui-native-final/history-restore",
+        "screenshot_mime": "image/jpeg",
+        "timing": {
+          "method": "native AX click",
+          "source_commit": "11232c28515e2e8708ee4f586757606ce1bdf8f8",
+          "marker": "N06 Final7 FirstClick marker 2026-10-06",
+          "input_call_start_utc": "2026-10-06T08:31:11.975Z",
+          "input_call_return_utc": "2026-10-06T08:31:12.238Z",
+          "click_call_start_utc": "2026-10-06T08:31:12.238Z",
+          "click_call_return_utc": "2026-10-06T08:31:12.915Z"
+        },
+        "result": "ATTEMPT_NO_MODAL_AX_METHOD_POINTER_CHECK_PENDING",
+        "observations": "One immediate AX activation after editing preserved the new body marker but did not show the Save Version dialog; no retry was made for this marker."
+      }
+    },
+    {
+      "name": "native-final7-first-save-version-pointer-no-modal",
+      "source_commit": "11232c28515e2e8708ee4f586757606ce1bdf8f8",
+      "candidate_app": "/tmp/io-ui-closure-native-qa-final7/AI Course Workbench QA Preview Final7.app",
+      "observed_at_utc": "2026-10-06T08:35:39.183Z",
+      "screenshot": "/Users/youngi/.codex/worktrees/io-ui-closure/workbench/docs/reports/evidence/io-ui-closure/screenshots/native-final/native-final7-first-save-version-pointer-no-modal.png",
+      "ax_path": "/Users/youngi/.codex/worktrees/io-ui-closure/workbench/docs/reports/evidence/io-ui-closure/screenshots/native-final/native-final7-first-save-version-pointer-no-modal.ax.txt",
+      "details": {
+        "source_commit": "11232c28515e2e8708ee4f586757606ce1bdf8f8",
+        "candidate_app": "/tmp/io-ui-closure-native-qa-final7/AI Course Workbench QA Preview Final7.app",
+        "project_path": "/tmp/workbench-io-ui-native-final/history-restore",
+        "screenshot_mime": "image/jpeg",
+        "timing": {
+          "source_commit": "11232c28515e2e8708ee4f586757606ce1bdf8f8",
+          "method": "native pointer at observed screenshot coordinate [2514,111]",
+          "marker": "N06 Final7 Pointer FirstClick marker 2026-10-06",
+          "input_call_start_utc": "2026-10-06T08:34:41.569Z",
+          "input_call_return_utc": "2026-10-06T08:34:41.783Z",
+          "click_call_start_utc": "2026-10-06T08:34:41.783Z",
+          "click_call_return_utc": "2026-10-06T08:34:43.803Z"
+        },
+        "result": "FAIL_TARGETED_FIRST_POINTER_CLICK",
+        "observations": "The calibrated screenshot coordinate opens the Save Version dialog when already saved. With a new body input immediately followed by one click at the same coordinate, the editor blurs and saves but no dialog opens. No retry performed for this marker."
+      }
+    },
+    {
+      "name": "native-final8-first-save-version-pointer-modal",
+      "source_commit": "f9fc398f8dcb009228a0cc8c5cc6e86aa290e0d6",
+      "candidate_app": "/tmp/io-ui-closure-native-qa-final8/AI Course Workbench QA Preview Final8.app",
+      "observed_at_utc": "2026-10-06T09:31:38.420Z",
+      "screenshot": "/Users/youngi/.codex/worktrees/io-ui-closure/workbench/docs/reports/evidence/io-ui-closure/screenshots/native-final/native-final8-first-save-version-pointer-modal.png",
+      "ax_path": "/Users/youngi/.codex/worktrees/io-ui-closure/workbench/docs/reports/evidence/io-ui-closure/screenshots/native-final/native-final8-first-save-version-pointer-modal.ax.txt",
+      "details": {
+        "source_commit": "f9fc398f8dcb009228a0cc8c5cc6e86aa290e0d6",
+        "candidate_app": "/tmp/io-ui-closure-native-qa-final8/AI Course Workbench QA Preview Final8.app",
+        "status": "PASS_FIRST_POINTER_MODAL_ONLY_PENDING_PHYSICAL_FULL_MARKER",
+        "typed_value": " N06 Final8 FirstPointer marker 2026-10-06-END",
+        "pointer_coordinate_capture_px": [
+          1257,
+          55
+        ],
+        "capture_geometry": "1440x900 JPEG confirmed; fresh Saved-state click calibration opened same dialog and was cancelled before dirty-input test",
+        "timing": {
+          "input_start": "2026-10-06T09:31:20.844Z",
+          "input_return": "2026-10-06T09:31:21.038Z",
+          "click_start": "2026-10-06T09:31:21.038Z",
+          "click_return": "2026-10-06T09:31:22.073Z"
+        },
+        "method": "one typeText return immediately followed by one calibrated pointer click; no intervening observation, sleep or retry"
+      }
+    },
+    {
+      "name": "native-final8-first-save-version-ack-list",
+      "source_commit": "f9fc398f8dcb009228a0cc8c5cc6e86aa290e0d6",
+      "candidate_app": "/tmp/io-ui-closure-native-qa-final8/AI Course Workbench QA Preview Final8.app",
+      "observed_at_utc": "2026-10-06T09:33:05.137Z",
+      "screenshot": "/Users/youngi/.codex/worktrees/io-ui-closure/workbench/docs/reports/evidence/io-ui-closure/screenshots/native-final/native-final8-first-save-version-ack-list.png",
+      "ax_path": "/Users/youngi/.codex/worktrees/io-ui-closure/workbench/docs/reports/evidence/io-ui-closure/screenshots/native-final/native-final8-first-save-version-ack-list.ax.txt",
+      "details": {
+        "source_commit": "f9fc398f8dcb009228a0cc8c5cc6e86aa290e0d6",
+        "candidate_app": "/tmp/io-ui-closure-native-qa-final8/AI Course Workbench QA Preview Final8.app",
+        "status": "PASS_GUI_FIRST_POINTER_AND_NEW_VERSION_ACK_PENDING_PHYSICAL_CHECK",
+        "typed_marker": "N06 Final8 FirstPointer marker 2026-10-06-END",
+        "snapshot_name": "N06Final8FirstPointer20261006",
+        "snapshot_date_visible_ax": "2026/10/6 17:32:11",
+        "legacy_date_ax": "保存时间未知",
+        "old_final7_truncated_marker": "preserved; not repaired or rewritten by Root",
+        "scope": "one immediate dirty-input pointer click opened dialog; confirm returned saved history version; named row observed, full N06 pending-edit/switch not yet covered"
+      }
+    }
+  ]
+}

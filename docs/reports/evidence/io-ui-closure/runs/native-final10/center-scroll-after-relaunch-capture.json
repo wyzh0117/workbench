@@ -1,0 +1,13 @@
+{
+  "captured_at": "2026-10-06T12:23:34.343Z",
+  "source": "Final10 CUA getAXStateAndScreenshot after process relaunch and Continue; no additional scroll",
+  "app": "io.github.wyzh0117.ai-course-workbench.qa.io-ui-closure.final10",
+  "fixture": "/tmp/workbench-io-ui-native-final/history-restore",
+  "prior_scroll_top": 836,
+  "screenshot_bytes": 973176,
+  "jpeg_signature": [
+    255,
+    216,
+    255
+  ]
+}

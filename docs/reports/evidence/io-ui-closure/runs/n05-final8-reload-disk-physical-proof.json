@@ -1,0 +1,29 @@
+{
+  "captured_at_utc": "2026-10-06T10:12:05.302156Z",
+  "action": "Native UI explicit Reload Disk after conflict; read-only verification",
+  "project_path": "/private/tmp/workbench-io-ui-F-external-conflict-final7/project.json",
+  "project_id": "fb45a2d4-fbcb-4095-9d10-76f18fa98a14",
+  "project_size": 74936,
+  "project_sha256": "83e5bd95f3ee69c98bb752f51e5cc3aaee9c37186791e03cfb5fcbf2000d19df",
+  "project_updated_at": "2026-10-06T09:48:18.856Z",
+  "target_block_id": "00000000-0000-4000-8000-00000000000d",
+  "visible_markers": {
+    "N05-LOCAL-20261006-A": true,
+    "N05-LOCAL-CONTINUED-20261006-C": true,
+    "N05-LOCAL-20261006-D": true,
+    "N05-EXTERNAL-20261006-B": true,
+    "N05-LOCAL-20261006-E": false
+  },
+  "domain_validation_issue_count": 0,
+  "recovery_journal_present": false,
+  "recovery_backup_variants_present": false,
+  "lease_at_read": {
+    "pid": 59640,
+    "app_instance_id": "app-p59640-1791278894961-0-c58b4da1af8ba894452ca45d1d5bf74c2ea58a59752dd10d",
+    "opened_at": "2026-10-06T09:37:34.329Z",
+    "heartbeat": "2026-10-06T10:12:03.737Z"
+  },
+  "limitations": [
+    "The local E existed only in the manual UI evidence copy before reload; it was not in Canonical or an automatic recovery journal."
+  ]
+}

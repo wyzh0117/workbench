@@ -1,0 +1,5 @@
+running 1 test from ./tests/dogfooding_test.ts
+mapping confirmation restores focus after its async document scan is escaped ... ok (36ms)
+
+ok | 1 passed | 0 failed | 23 filtered out (44ms)
+

@@ -1,0 +1,107 @@
+{
+  "kind": "local_native_qa_candidate",
+  "status": "READY_FOR_ROOT_NATIVE_CUA; NOT_YET_UI_VALIDATED",
+  "source_commit": "b09718c0823f170836a223bab79b750722e83c73",
+  "application_payload_source_pin": "b09718c0823f170836a223bab79b750722e83c73",
+  "rust_source_commit": "fcefcb106c2cf4e957d54a1ee7e112e2aa83cac0",
+  "version": "0.2.7",
+  "build": {
+    "command": "CARGO_TARGET_DIR=/tmp/io-ui-closure-native-qa-prewarm-target CARGO_BUILD_JOBS=2 cargo tauri build --target aarch64-apple-darwin --bundles app --no-sign --config /tmp/io-ui-closure-native-qa-final9-overlay.json",
+    "profile": "release",
+    "target": "aarch64-apple-darwin",
+    "exit_code": 0,
+    "target_cache": "/tmp/io-ui-closure-native-qa-prewarm-target",
+    "overlay": {
+      "path": "/tmp/io-ui-closure-native-qa-final9-overlay.json",
+      "productName": "AI Course Workbench QA Preview Final9",
+      "identifier": "io.github.wyzh0117.ai-course-workbench.qa.io-ui-closure.final9",
+      "version": "0.2.7"
+    },
+    "log": {
+      "path": "runs/native-b09718c-final9-cargo-tauri-build.log",
+      "sha256": "faed84605dec9109660b71b8891f940330f044d86cc70dacb99bd039723a03a9",
+      "bytes": 1874
+    },
+    "warnings": [
+      "unused assignment to total_bytes",
+      "write_project_value_with_warning is unused",
+      "write_project_value is unused"
+    ]
+  },
+  "app": {
+    "path": "/tmp/io-ui-closure-native-qa-final9/AI Course Workbench QA Preview Final9.app",
+    "product_name": "AI Course Workbench QA Preview Final9",
+    "bundle_identifier": "io.github.wyzh0117.ai-course-workbench.qa.io-ui-closure.final9",
+    "short_version": "0.2.7",
+    "bundle_version": "0.2.7",
+    "architecture": "arm64",
+    "signature": "ad-hoc; no Developer ID; not notarized",
+    "codesign_verify_deep_strict": "passed",
+    "executable_sha256": "a7511217e44f9c8c28653ea91a1d58310124307787d323da18d9412014696f96",
+    "app_tree_sha256": "c5efc420a07504921af22492fa4633821110a37c29ffdb493d8927b92423dd24",
+    "app_tree_algorithm": "sorted relative path + NUL + file SHA-256 hex + LF",
+    "files": 4,
+    "bytes": 20247529,
+    "file_manifest": [
+      {
+        "path": "Contents/Info.plist",
+        "bytes": 1237,
+        "sha256": "b0412550434e76b315f69ccd3dbeb82af8d6e8cde377df0c203ee14079e78847"
+      },
+      {
+        "path": "Contents/MacOS/ai-course-workbench",
+        "bytes": 19758832,
+        "sha256": "a7511217e44f9c8c28653ea91a1d58310124307787d323da18d9412014696f96"
+      },
+      {
+        "path": "Contents/Resources/icon.icns",
+        "bytes": 485020,
+        "sha256": "bd08622082555dced600f28e682429eda68eda3e9145a1012fe76816354a75cc"
+      },
+      {
+        "path": "Contents/_CodeSignature/CodeResources",
+        "bytes": 2440,
+        "sha256": "c91f2e976b7fda4651a3cc0170c7b33d9657997fcf47fb2bff0a4145cb95e39d"
+      }
+    ],
+    "sign_log": {
+      "path": "runs/native-b09718c-final9-sign-verify.log",
+      "sha256": "db5fd4cc37c8898a8272b1ce07f795cbb00a105bdf5ca1798e5503a17d293644",
+      "bytes": 1689
+    }
+  },
+  "zip": {
+    "path": "native-qa-candidate-final9-aarch64-0.2.7.zip",
+    "absolute_path": "/Users/youngi/.codex/worktrees/io-ui-closure/workbench/docs/reports/evidence/io-ui-closure/native-qa-candidate-final9-aarch64-0.2.7.zip",
+    "bytes": 7082150,
+    "sha256": "bd9fb785bc1adaafaca74cdec34b69bbf75da36a665945e1b5100250713f21aa",
+    "integrity": "unzip -t passed",
+    "verification_log": {
+      "path": "runs/native-b09718c-final9-package-verify.log",
+      "sha256": "2f0c0782f79563946ce24bd025b11f34c97da35a331da2c581474ee0855559a2",
+      "bytes": 1113
+    }
+  },
+  "embedded_frontend": {
+    "verification_json": "native-b09718c-final9-embedded-assets.json",
+    "verification_json_sha256": "a6e48253faf11d84f4b4abf5f2ec36467bb3dc8f797f60ff84f328982aa7ae3d",
+    "source_file_count": 18,
+    "exact_source_byte_matches": 17,
+    "transformed_index_dom_events_equal": true,
+    "all_matched_payloads_found_in_signed_executable": true,
+    "verification_exit_code": 0
+  },
+  "runtime_data_scope": "Final9 has a distinct compile-time bundle identifier; it has not been launched, so its runtime app-local path/contents have not been inspected.",
+  "launched_by_builder": false,
+  "installed": false,
+  "published": false,
+  "native_gui_qa": {
+    "status": "pending Root CUA on this exact Final9 path",
+    "app_path": "/tmp/io-ui-closure-native-qa-final9/AI Course Workbench QA Preview Final9.app"
+  },
+  "limitations": [
+    "Ad-hoc signing only; no Developer ID signing or notarization.",
+    "Final9 Native UI validation is pending on the exact Final9 path.",
+    "Current Final8 has an open N05 conflict modal with local E held only in memory; this build did not interact with that process or fixture."
+  ]
+}

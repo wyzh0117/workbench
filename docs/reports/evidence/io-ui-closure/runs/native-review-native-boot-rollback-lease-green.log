@@ -1,0 +1,6 @@
+Check tests/native_boot_test.ts
+running 1 test from ./tests/native_boot_test.ts
+failed A-to-B switch restores A's opened lease before the next save ... ok (24ms)
+
+ok | 1 passed | 0 failed | 15 filtered out (28ms)
+

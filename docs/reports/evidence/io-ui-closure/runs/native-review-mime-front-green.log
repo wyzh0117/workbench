@@ -1,0 +1,5 @@
+running 1 test from ./tests/media_preview_stability_test.ts
+batched media errors settle visibly and typed images never decode as text ... ok (2ms)
+
+ok | 1 passed | 0 failed | 12 filtered out (4ms)
+

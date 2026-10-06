@@ -1,0 +1,23 @@
+{
+  "captured_at": "2026-10-06T09:49:44.592Z",
+  "source_pin": "f9fc398f8dcb009228a0cc8c5cc6e86aa290e0d6",
+  "app_id": "io.github.wyzh0117.ai-course-workbench.qa.io-ui-closure.final8",
+  "project_dir": "/tmp/workbench-io-ui-F-external-conflict-final7",
+  "external_write_completed_at": "2026-10-06T09:48:18.858871Z",
+  "external_marker": "N05-EXTERNAL-20261006-B",
+  "external_sha256": "83e5bd95f3ee69c98bb752f51e5cc3aaee9c37186791e03cfb5fcbf2000d19df",
+  "local_markers": [
+    "N05-LOCAL-20261006-A",
+    "N05-LOCAL-CONTINUED-20261006-C",
+    "N05-LOCAL-20261006-D",
+    "N05-LOCAL-20261006-E"
+  ],
+  "type_start_utc": "2026-10-06T09:49:09.750Z",
+  "type_return_utc": "2026-10-06T09:49:09.831Z",
+  "visible_prompt": "课程文件与当前编辑内容存在差异",
+  "visible_choices": [
+    "重新载入磁盘版本",
+    "预览并自动合并"
+  ],
+  "conflict_count": "0; changed fields include blocks[1].content and project.updated_at"
+}

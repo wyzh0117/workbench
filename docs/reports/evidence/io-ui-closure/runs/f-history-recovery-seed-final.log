@@ -1,0 +1,13 @@
+fixture_root=/tmp/workbench-io-ui-F-history-denoio-20261006
+canonical_path=/tmp/workbench-io-ui-F-history-denoio-20261006/project.json bytes=69270 sha256=64b9b83fdbbea3eb2da223c2b368aef031ba644096719a09c9e10643898267be
+canonical_project_id=dddddddd-dddd-4ddd-8ddd-dddddddddddd canonical_revision=2026-08-15T12:00:00.000Z
+journal_path=/tmp/workbench-io-ui-F-history-denoio-20261006/.workspace/recovery.json bytes=63322 sha256=63bc39557a5b82a5e49e8ad4c9ff1888e031611bef3f0c10085f1ceb861ba5f5
+journal_project_id=dddddddd-dddd-4ddd-8ddd-dddddddddddd journal_revision=2026-08-15T12:00:00.000Z saved_at=2026-10-06T01:43:56.959Z
+candidate_title=F-history recovery candidate final candidate_updated_at=2026-10-06T01:43:56.959Z
+journal_binding_matches=true
+saved_at_newer=true
+canonical_is_unmodified=true
+snapshot_index_path=/tmp/workbench-io-ui-F-history-denoio-20261006/.workspace/index.json bytes=63110 sha256=27261247b315e5ab689652b41c50da72acb030e2002b5c32eba7e2216bd8366f
+snapshot_files=1fd63b8f-6f70-4c57-a614-1652ac2591fa.json,1fd63b8f-6f70-4c57-a614-1652ac2591fa.meta.json,e5b8bafa-6e52-4754-bd0f-69cecafc0ba3.json,e5b8bafa-6e52-4754-bd0f-69cecafc0ba3.meta.json,history_corrupt_20261006.json,history_incomplete_20261006.json,history_incomplete_20261006.meta.json,history_named_20261006.json,history_named_20261006.meta.json,history_unindexed_20261006.json
+product_service_open_state_probe=HTTP 403 (no mutation; browser fresh boot is required for visible UI check)
+canonical_and_candidate_validation={"canonical_issues":0,"candidate_issues":0}

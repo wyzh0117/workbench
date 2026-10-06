@@ -1,0 +1,22 @@
+{
+  "environment": "actual Codex IAB 1440x900; not native",
+  "fixture": "/tmp/workbench-io-ui-F-small",
+  "action": "clicked observed 媒体库 button, read rendered h1, immediately reloaded within same UI call",
+  "before": {
+    "headings": [
+      "媒体库 3"
+    ]
+  },
+  "after": {
+    "headings": [
+      "项目设置",
+      "常规",
+      "AI 连接",
+      "模型",
+      "账户",
+      "项目",
+      "待补 0"
+    ]
+  },
+  "result": "FAIL: displayed media route reverted to prior settings route"
+}

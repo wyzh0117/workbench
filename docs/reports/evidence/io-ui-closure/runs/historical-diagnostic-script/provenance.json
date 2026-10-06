@@ -1,0 +1,12 @@
+{
+  "schema_version": 1,
+  "role": "historical_diagnostic_script",
+  "source_path_before_move": "scripts/io_benchmark_phase.ts",
+  "archived_path": "runs/historical-diagnostic-script/io_benchmark_phase.ts",
+  "bytes": 24124,
+  "sha256": "10b9ea674467aed98c53b3313e3db18390fb5be66cbe93c5251ee928c96f286e",
+  "purpose": "Task-owned temporary symmetric phase-profiling helper created to investigate the earlier Deno save-latency regression. It is retained for provenance only; it is not production source and is not part of the final timed benchmark samples.",
+  "measurement_status": "historical_diagnostic_only_not_final_metric",
+  "active_process_at_move": false,
+  "move_method": "same-worktree rename; bytes preserved exactly"
+}

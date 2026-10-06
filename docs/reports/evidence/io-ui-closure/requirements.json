@@ -1,0 +1,2779 @@
+{
+  "schema_version": 1,
+  "baseline_commit": "dfcb23e88b08b246e03b1576eb9471627e510548",
+  "candidate_commit": "50aaea7268164b9fa066425ce4a5ac158ca87352",
+  "generated_for": "50aaea7268164b9fa066425ce4a5ac158ca87352",
+  "requirements": [
+    {
+      "id": "IO-01",
+      "owner": [
+        "native_io",
+        "frontend"
+      ],
+      "implementation": "IMPLEMENTED",
+      "automation": "PASS",
+      "browser": "PARTIAL",
+      "native": "PARTIAL",
+      "evidence": "PARTIAL",
+      "evidence_paths": [
+        "runs/deno-final-f9fc398-check.log",
+        "runs/deno-final-f9fc398-fullgate.log",
+        "runs/native-legacy-raw-snapshot-timestamp-rustfmt-green.log",
+        "runs/native-legacy-raw-snapshot-timestamp-cargo-test-green.log",
+        "runs/native-t1-green.log",
+        "runs/deno-final-direct-parse/check.log",
+        "runs/deno-final-direct-parse/test.log"
+      ],
+      "notes": "Lease/open/read/save bindings and lock lifecycle pass automation. Native Final10 cold reopen restores reader center scroll_top=836 with session and Canonical bytes unchanged; selected block/caret is not claimed. Full Native width/surface matrix remains partial."
+    },
+    {
+      "id": "IO-02",
+      "owner": [
+        "native_io",
+        "deno_io",
+        "frontend"
+      ],
+      "implementation": "IMPLEMENTED",
+      "automation": "PASS",
+      "browser": "PARTIAL",
+      "native": "PARTIAL",
+      "evidence": "PARTIAL",
+      "evidence_paths": [
+        "runs/deno-final-f9fc398-check.log",
+        "runs/deno-final-f9fc398-fullgate.log",
+        "runs/native-legacy-raw-snapshot-timestamp-rustfmt-green.log",
+        "runs/native-legacy-raw-snapshot-timestamp-cargo-test-green.log",
+        "runs/deno-t2-test-green.log",
+        "runs/native-t2-green.log",
+        "browser-session-instant-reload-green.json",
+        "runs/deno-final-direct-parse/check.log",
+        "runs/deno-final-direct-parse/test.log"
+      ],
+      "notes": "Snapshot create/list/restore persistence and failure handling pass automation. Final5/Final6 Keep Disk and Restore physical checks pass, with active journal absent and historical recovery.bak retained after Recovery Restore; named snapshot proof is a single JSON envelope, not a .meta pair."
+    },
+    {
+      "id": "IO-03",
+      "owner": [
+        "native_io",
+        "deno_io",
+        "frontend"
+      ],
+      "implementation": "IMPLEMENTED",
+      "automation": "PASS",
+      "browser": "PARTIAL",
+      "native": "PARTIAL",
+      "evidence": "PARTIAL",
+      "evidence_paths": [
+        "runs/deno-final-f9fc398-check.log",
+        "runs/deno-final-f9fc398-fullgate.log",
+        "runs/native-legacy-raw-snapshot-timestamp-rustfmt-green.log",
+        "runs/native-legacy-raw-snapshot-timestamp-cargo-test-green.log",
+        "native-save-warm-metrics.json",
+        "runs/deno-final-direct-parse/check.log",
+        "runs/deno-final-direct-parse/test.log"
+      ],
+      "notes": "Bounded save transaction, truthful acknowledgements and no-op write checks pass automation. Native debug test-backend no-op has zero target writes. Final Deno pair no-op improves, but diagnostics-on changed-save p95 regresses +21.12%; performance stays PARTIAL/BLOCKED pending a diagnosed result."
+    },
+    {
+      "id": "IO-04",
+      "owner": [
+        "frontend",
+        "native_io"
+      ],
+      "implementation": "IMPLEMENTED",
+      "automation": "PASS",
+      "browser": "PARTIAL",
+      "native": "PARTIAL",
+      "evidence": "PARTIAL",
+      "evidence_paths": [
+        "runs/deno-final-f9fc398-check.log",
+        "runs/deno-final-f9fc398-fullgate.log",
+        "runs/native-legacy-raw-snapshot-timestamp-rustfmt-green.log",
+        "runs/native-legacy-raw-snapshot-timestamp-cargo-test-green.log",
+        "runs/frontend-persistence-red.log",
+        "runs/deno-full-test-final2.log",
+        "runs/deno-final-direct-parse/check.log",
+        "runs/deno-final-direct-parse/test.log"
+      ],
+      "notes": "Latest-request scheduler and stale-ack handling pass automated tests; fake-clock intervals are simulated. Native Final10 cold reader center position is preserved at scroll_top=836; full session interaction sweep remains partial."
+    },
+    {
+      "id": "IO-05",
+      "owner": [
+        "native_io",
+        "deno_io",
+        "frontend"
+      ],
+      "implementation": "IMPLEMENTED",
+      "automation": "PASS",
+      "browser": "PARTIAL",
+      "native": "PARTIAL",
+      "evidence": "PARTIAL",
+      "evidence_paths": [
+        "runs/deno-final-f9fc398-check.log",
+        "runs/deno-final-f9fc398-fullgate.log",
+        "runs/native-legacy-raw-snapshot-timestamp-rustfmt-green.log",
+        "runs/native-legacy-raw-snapshot-timestamp-cargo-test-green.log",
+        "runs/deno-session-generation-metrics-green.log",
+        "browser-session-instant-reload-green.json",
+        "runs/deno-final-direct-parse/check.log",
+        "runs/deno-final-direct-parse/test.log"
+      ],
+      "notes": "Browser reload and Native Final10 cold reopen preserve reader viewport for the tested tab/mode; session scroll_top=836, selected_block_id=null. This is not a caret-restoration claim. Full route/session matrix remains partial."
+    },
+    {
+      "id": "IO-06",
+      "owner": [
+        "native_io",
+        "deno_io"
+      ],
+      "implementation": "IMPLEMENTED",
+      "automation": "PASS",
+      "browser": "NOT_RUN",
+      "native": "PARTIAL",
+      "evidence": "PARTIAL",
+      "evidence_paths": [
+        "runs/deno-final-f9fc398-check.log",
+        "runs/deno-final-f9fc398-fullgate.log",
+        "runs/native-legacy-raw-snapshot-timestamp-rustfmt-green.log",
+        "runs/native-legacy-raw-snapshot-timestamp-cargo-test-green.log",
+        "runs/native-t1-green.log",
+        "runs/native-t5-green.log",
+        "runs/deno-final-direct-parse/check.log",
+        "runs/deno-final-direct-parse/test.log"
+      ],
+      "notes": "Failure envelopes, pause/reconcile behavior and recovery paths pass automated contract tests. Browser and Native targeted Keep Disk/Restore flows are physically verified; full recovery/error surface matrix remains partial."
+    },
+    {
+      "id": "IO-07",
+      "owner": [
+        "native_io",
+        "deno_io"
+      ],
+      "implementation": "IMPLEMENTED",
+      "automation": "PASS",
+      "browser": "PARTIAL",
+      "native": "PARTIAL",
+      "evidence": "PARTIAL",
+      "evidence_paths": [
+        "runs/deno-final-f9fc398-check.log",
+        "runs/deno-final-f9fc398-fullgate.log",
+        "runs/native-legacy-raw-snapshot-timestamp-rustfmt-green.log",
+        "runs/native-legacy-raw-snapshot-timestamp-cargo-test-green.log",
+        "runs/deno-io-failure-recovery-green.log",
+        "runs/deno-final-direct-parse/check.log",
+        "runs/deno-final-direct-parse/test.log"
+      ],
+      "notes": "Import/export atomicity and failure recovery pass current automated gates. Native N04 verifies four physical formats on one three-page S01-01 fixture; Browser downloads and Native directory/PDF/PPTX checks are scoped, not universal."
+    },
+    {
+      "id": "IO-08",
+      "owner": [
+        "native_io",
+        "frontend"
+      ],
+      "implementation": "IMPLEMENTED",
+      "automation": "PASS",
+      "browser": "PARTIAL",
+      "native": "PARTIAL",
+      "evidence": "PARTIAL",
+      "evidence_paths": [
+        "runs/deno-final-f9fc398-check.log",
+        "runs/deno-final-f9fc398-fullgate.log",
+        "runs/native-legacy-raw-snapshot-timestamp-rustfmt-green.log",
+        "runs/native-legacy-raw-snapshot-timestamp-cargo-test-green.log",
+        "runs/deno-preview-batch-final-green.log",
+        "runs/native-t6-green.log",
+        "fixture-manifest.json",
+        "runs/deno-final-direct-parse/check.log",
+        "runs/deno-final-direct-parse/test.log"
+      ],
+      "notes": "Batch preview raw-byte limits, MIME isolation and streaming tests pass. Browser 120 valid media cards, three visible boundary errors, three scroll round trips and 20 mixed operations are targeted evidence. Main RSS is one 29,536 KB point; WebKit aggregate and decoded-memory retention are not measured/attributable."
+    },
+    {
+      "id": "IO-09",
+      "owner": [
+        "deno_io"
+      ],
+      "implementation": "IMPLEMENTED",
+      "automation": "PASS",
+      "browser": "PARTIAL",
+      "native": "NOT_APPLICABLE",
+      "evidence": "PARTIAL",
+      "evidence_paths": [
+        "runs/deno-final-f9fc398-check.log",
+        "runs/deno-final-f9fc398-fullgate.log",
+        "runs/native-legacy-raw-snapshot-timestamp-rustfmt-green.log",
+        "runs/native-legacy-raw-snapshot-timestamp-cargo-test-green.log",
+        "runs/deno-r12-lifecycle-green.log",
+        "runs/deno-import-preview-close-race-green.log",
+        "runs/deno-final-direct-parse/check.log",
+        "runs/deno-final-direct-parse/test.log"
+      ],
+      "notes": "Preview lifecycle cap, TTL, cancellation and cleanup pass service tests. Native Final7 GIF/MP4 evidence is scoped; active-playback close/pause is not tested."
+    },
+    {
+      "id": "IO-10",
+      "owner": [
+        "deno_io"
+      ],
+      "implementation": "IMPLEMENTED",
+      "automation": "PASS",
+      "browser": "PARTIAL",
+      "native": "NOT_APPLICABLE",
+      "evidence": "PARTIAL",
+      "evidence_paths": [
+        "runs/deno-final-f9fc398-check.log",
+        "runs/deno-final-f9fc398-fullgate.log",
+        "runs/native-legacy-raw-snapshot-timestamp-rustfmt-green.log",
+        "runs/native-legacy-raw-snapshot-timestamp-cargo-test-green.log",
+        "runs/deno-export-metrics-green.log",
+        "screenshots/browser-p14-markdown-downloaded-1440.jpg",
+        "runs/deno-final-direct-parse/check.log",
+        "runs/deno-final-direct-parse/test.log"
+      ],
+      "notes": "Export preflight and staged-output contracts pass automation. Native Final9 portable HTML, Static Web, PDF and PPTX outputs are physically checked for one fixture. Browser/PDF/PPTX coverage does not establish full-course fidelity."
+    },
+    {
+      "id": "UI-01",
+      "owner": [
+        "frontend"
+      ],
+      "implementation": "IMPLEMENTED",
+      "automation": "PASS",
+      "browser": "PARTIAL",
+      "native": "PARTIAL",
+      "evidence": "PARTIAL",
+      "evidence_paths": [
+        "runs/deno-final-f9fc398-check.log",
+        "runs/deno-final-f9fc398-fullgate.log",
+        "runs/native-legacy-raw-snapshot-timestamp-rustfmt-green.log",
+        "runs/native-legacy-raw-snapshot-timestamp-cargo-test-green.log",
+        "ui-audit.md",
+        "ui-matrix.json",
+        "runs/deno-final-direct-parse/check.log",
+        "runs/deno-final-direct-parse/test.log"
+      ],
+      "notes": "Shared routes and mature page bodies are retained; Browser 64-row and Native targeted evidence are separated from full feature acceptance."
+    },
+    {
+      "id": "UI-02",
+      "owner": [
+        "frontend"
+      ],
+      "implementation": "IMPLEMENTED",
+      "automation": "PASS",
+      "browser": "PARTIAL",
+      "native": "PARTIAL",
+      "evidence": "PARTIAL",
+      "evidence_paths": [
+        "runs/deno-final-f9fc398-check.log",
+        "runs/deno-final-f9fc398-fullgate.log",
+        "runs/native-legacy-raw-snapshot-timestamp-rustfmt-green.log",
+        "runs/native-legacy-raw-snapshot-timestamp-cargo-test-green.log",
+        "ui-audit.md",
+        "browser-media-20-cycles.json",
+        "runs/deno-final-direct-parse/check.log",
+        "runs/deno-final-direct-parse/test.log"
+      ],
+      "notes": "Dialog focus, Escape, opener return and key flows have targeted Browser/Native evidence; the full O01–O11 keyboard matrix remains partial."
+    },
+    {
+      "id": "UI-03",
+      "owner": [
+        "frontend",
+        "root"
+      ],
+      "implementation": "IMPLEMENTED",
+      "automation": "PASS",
+      "browser": "NOT_RUN",
+      "native": "PARTIAL",
+      "evidence": "PARTIAL",
+      "evidence_paths": [
+        "runs/deno-final-f9fc398-check.log",
+        "runs/deno-final-f9fc398-fullgate.log",
+        "runs/native-legacy-raw-snapshot-timestamp-rustfmt-green.log",
+        "runs/native-legacy-raw-snapshot-timestamp-cargo-test-green.log",
+        "runs/deno-full-test-final2.log",
+        "ui-audit.md",
+        "runs/deno-final-direct-parse/check.log",
+        "runs/deno-final-direct-parse/test.log"
+      ],
+      "notes": "Folder/document mapping and identity guards pass service and focused UI tests; native OS picker and end-to-end mapping branches are only partly exercised."
+    },
+    {
+      "id": "UI-04",
+      "owner": [
+        "frontend",
+        "root"
+      ],
+      "implementation": "IMPLEMENTED",
+      "automation": "PASS",
+      "browser": "PARTIAL",
+      "native": "PARTIAL",
+      "evidence": "PARTIAL",
+      "evidence_paths": [
+        "runs/deno-final-f9fc398-check.log",
+        "runs/deno-final-f9fc398-fullgate.log",
+        "runs/native-legacy-raw-snapshot-timestamp-rustfmt-green.log",
+        "runs/native-legacy-raw-snapshot-timestamp-cargo-test-green.log",
+        "screenshots/browser-p05-flow-reordered-reload-1024.jpg",
+        "screenshots/browser-o03-mp4-player-green-1440.jpg",
+        "browser-media-20-cycles.json",
+        "runs/deno-final-direct-parse/check.log",
+        "runs/deno-final-direct-parse/test.log"
+      ],
+      "notes": "Body, Flow, Preview and media interactions have targeted source-pinned tests and CUA evidence; full IME and every media operation remain incomplete."
+    },
+    {
+      "id": "UI-05",
+      "owner": [
+        "frontend",
+        "root"
+      ],
+      "implementation": "IMPLEMENTED",
+      "automation": "PASS",
+      "browser": "PARTIAL",
+      "native": "PARTIAL",
+      "evidence": "PARTIAL",
+      "evidence_paths": [
+        "runs/deno-final-f9fc398-check.log",
+        "runs/deno-final-f9fc398-fullgate.log",
+        "runs/native-legacy-raw-snapshot-timestamp-rustfmt-green.log",
+        "runs/native-legacy-raw-snapshot-timestamp-cargo-test-green.log",
+        "screenshots/browser-o06-delete-neighbor-focus-green-1440.jpg",
+        "fixture-manifest.json",
+        "runs/deno-final-direct-parse/check.log",
+        "runs/deno-final-direct-parse/test.log"
+      ],
+      "notes": "Free Layout delete/undo and placement operations have targeted Browser/Native checks; not all resize, cross-page and keyboard combinations are complete."
+    },
+    {
+      "id": "UI-06",
+      "owner": [
+        "frontend",
+        "root"
+      ],
+      "implementation": "IMPLEMENTED",
+      "automation": "PASS",
+      "browser": "PARTIAL",
+      "native": "PARTIAL",
+      "evidence": "PARTIAL",
+      "evidence_paths": [
+        "runs/deno-final-f9fc398-check.log",
+        "runs/deno-final-f9fc398-fullgate.log",
+        "runs/native-legacy-raw-snapshot-timestamp-rustfmt-green.log",
+        "runs/native-legacy-raw-snapshot-timestamp-cargo-test-green.log",
+        "ui-matrix.json",
+        "ui-audit.md",
+        "runs/deno-final-direct-parse/check.log",
+        "runs/deno-final-direct-parse/test.log"
+      ],
+      "notes": "Browser 64 default rows and 42 applicable sidebar rows are historical b990d49 geometry, with the P13×1280 screenshot mismatch called out; a separate current112 P13×1280 pair matched 1280×900. Native Final6 106-row layout matrix is historical; Final7/10 targeted observations do not replace it."
+    },
+    {
+      "id": "UI-07",
+      "owner": [
+        "native_io",
+        "frontend",
+        "root"
+      ],
+      "implementation": "IMPLEMENTED",
+      "automation": "PASS",
+      "browser": "PARTIAL",
+      "native": "PARTIAL",
+      "evidence": "PARTIAL",
+      "evidence_paths": [
+        "runs/deno-final-f9fc398-check.log",
+        "runs/deno-final-f9fc398-fullgate.log",
+        "runs/native-legacy-raw-snapshot-timestamp-rustfmt-green.log",
+        "runs/native-legacy-raw-snapshot-timestamp-cargo-test-green.log",
+        "browser-media-20-cycles.json",
+        "screenshots/browser-p11-media120-after-three-trips-1440.jpg",
+        "runs/deno-final-direct-parse/check.log",
+        "runs/deno-final-direct-parse/test.log"
+      ],
+      "notes": "Preview resource limits and 120-card rendering are bounded and tested. One Main-process RSS point is 29,536 KB; WebKit total, decoded bytes and object-URL retention are not measured/attributable."
+    },
+    {
+      "id": "UI-08",
+      "owner": [
+        "root"
+      ],
+      "implementation": "IMPLEMENTED",
+      "automation": "PASS",
+      "browser": "NOT_RUN",
+      "native": "PARTIAL",
+      "evidence": "PARTIAL",
+      "evidence_paths": [
+        "runs/deno-final-f9fc398-check.log",
+        "runs/deno-final-f9fc398-fullgate.log",
+        "runs/native-legacy-raw-snapshot-timestamp-rustfmt-green.log",
+        "runs/native-legacy-raw-snapshot-timestamp-cargo-test-green.log",
+        "../../io-ui-closure-completion-report.html",
+        "ui-matrix.json",
+        "runs/deno-final-direct-parse/check.log",
+        "runs/deno-final-direct-parse/test.log"
+      ],
+      "notes": "150%/200% real browser/page/app/OS text scaling has not run. IAB exposed no PageZoom control and Native View showed only Toggle Full Screen; resizing is not zoom. Reduced motion was observed OFF and was not toggled pending authorization."
+    }
+  ],
+  "native_scenarios": [
+    {
+      "id": "N01",
+      "status": "PASS_TARGETED",
+      "evidence_paths": [
+        "runs/native-final6-ui-verification.json",
+        "native-ui-behaviors.json",
+        "runs/native-small-n01-final-physical-proof.log",
+        "runs/native-final6-n06-snapshot-physical-green.json",
+        "runs/native-final10/final10-scroll-prequit-proof.json",
+        "runs/native-final10/final10-scroll-cold-reopen-proof.json"
+      ],
+      "note": "Final6 62 body edits survived same-process Close Window/Launcher Continue (not cold start); physical scan found all 62 markers. Final10 independently verifies cold reopen keeps center scroll_top=836 and Canonical/session bytes unchanged; selected_block_id=null, no caret claim."
+    },
+    {
+      "id": "N02",
+      "status": "PARTIAL",
+      "evidence_paths": [
+        "runs/native-final7/n02-mapping-20-transitions.json",
+        "runs/native-final7/n02-mapping-20-state-transitions-complete.jpg",
+        "runs/native-folder-append-same-basename-focused-green.log",
+        "runs/native-folder-append-same-basename-final-green.log"
+      ],
+      "note": "Final7 mapping preview completed five rounds/20 expected state transitions; distinct-byte same-basename files imported to separate stages. Identical SHA content was correctly deduplicated. Broader scan/retry/adoption error paths remain partial."
+    },
+    {
+      "id": "N03",
+      "status": "PARTIAL",
+      "evidence_paths": [
+        "native-flow-undo-redo.ax.txt",
+        "native-ui-behaviors.json",
+        "runs/native-final7/n03-final7-summary.json",
+        "runs/native-final7/n03-flow-reopened.jpg",
+        "runs/native-final7/n03-gif2-frame-probe-a.jpg",
+        "runs/native-final7/n03-gif2-frame-probe-b.jpg",
+        "runs/native-final7/n03-mp4-progress.jpg"
+      ],
+      "note": "Final7 Flow close/reopen and move/Undo, two distinct sampled GIF frames, and MP4 natural-end playback are verified. Final10 adds no new media-cycle claim. Active-playback close/pause, WebKit decoded-memory/RSS attribution and long-run retention remain untested."
+    },
+    {
+      "id": "N04",
+      "status": "PASS_TARGETED_FOUR_FORMATS",
+      "evidence_paths": [
+        "native-ui-behaviors.json",
+        "runs/native-final9/n04-semantic-html-export-physical-proof.json",
+        "runs/native-final9/n04-static-web-export-physical-proof.json",
+        "runs/native-final9/n04-pdf-export-physical-proof.json",
+        "runs/native-final9/n04-pptx-export-physical-proof.json",
+        "exports/native-final9/portable-output-manifest.json"
+      ],
+      "note": "Final9 physically verifies Semantic HTML, Static Web, PDF and PPTX for one three-page S01-01 fixture; seven portable payloads byte-match originals and Domain is 0. Not whole-course or universal format-fidelity coverage."
+    },
+    {
+      "id": "N05",
+      "status": "PASS_TARGETED_TWO_OUTCOMES",
+      "evidence_paths": [
+        "native-ui-behaviors.json",
+        "runs/native-final5-history-keepdisk-physical-proof.json",
+        "runs/native-final5-history-restore-physical-proof.json",
+        "runs/native-final6-history-after-reopen-metadata.json",
+        "runs/native-final8/n05-final9-preview-rejected.ax.txt",
+        "runs/native-final8/n05-final9-explicit-keep-local-result.ax.txt",
+        "runs/native-final9/n05-final9-after-reopen.ax.txt",
+        "runs/native-final9-n05-keep-local-physical-proof.json",
+        "runs/native-final9/n05-final9-after-reopen-physical-proof.json",
+        "runs/native-final9/n05-final9-nonconflict-merged.ax.txt",
+        "runs/native-final9/n05-final9-nonconflict-merged.json",
+        "runs/native-final9/n05-final9-nonconflict-physical-proof.json",
+        "runs/n05-local-e-manual-evidence-preservation.json"
+      ],
+      "note": "Final9 has two scoped outcomes: same-field conflict exposed explicit Keep Local, saved local value with external version in project.bak and fresh UI reopen; separate distinct-field auto-merge retained local title plus external description, with pre-merge external Canonical in backup. Domain 0. Broad O09 remains partial."
+    },
+    {
+      "id": "N06",
+      "status": "PARTIAL",
+      "evidence_paths": [
+        "runs/native-final6-n06-snapshot-physical-green.json",
+        "runs/native-final6-n06-marker3-physical-green.json",
+        "runs/native-final7-save-version-no-modal-binding-correction.json",
+        "runs/front-first-click-blur-focused.log",
+        "screenshots/native-final/native-final8-first-save-version-pointer-modal.png",
+        "screenshots/native-final/native-final8-first-save-version-ack-list.png",
+        "screenshots/native-final/native-final8-first-save-version-pointer-modal.ax.txt",
+        "screenshots/native-final/native-final8-first-save-version-ack-list.ax.txt",
+        "native-ui-behaviors.json",
+        "runs/native-final8-pointer-snapshot-physical-proof.json",
+        "runs/native-final9-n06-snapshot-click-content-physical-proof.json",
+        "runs/native-final9/n06-controlled-guard-not-overlapped.json",
+        "runs/native-final9/cold-relaunch-session-position-proof.json",
+        "runs/native-final9/cold-relaunch-scroll-position-comparison.json",
+        "runs/front-reader-scroll-validation.json",
+        "runs/front-reader-scroll-focused.log",
+        "runs/native-final10/final10-scroll-cold-reopen-proof.json",
+        "runs/native-final10/native-final10-n06-rename-state-1.json",
+        "runs/native-final10/native-final10-n06-rename-state-2-undo.json",
+        "runs/native-final10/native-final10-n06-rename-state-3-redo.json",
+        "runs/native-final10/native-final10-n06-rename-state-4-final-undo.json"
+      ],
+      "note": "Targeted subchecks: Final8 immediate one-pointer-click named snapshot with complete typed tail and matching physical envelope; Final10 true cold reopen restores scroll_top=836; Final10 physical asset rename→Undo→Redo→Undo preserves ID/hash/usage/path. Compound N06 remains partial: no naturally overlapping continued-edit click-time snapshot freeze and no observed A→B→A delayed reply."
+    },
+    {
+      "id": "N07",
+      "status": "PARTIAL",
+      "evidence_paths": [
+        "native-ui-behaviors.json",
+        "native-media-final3-scroll.json",
+        "runs/native-review-mime-front-green.log"
+      ],
+      "note": "Browser/Native media and preview subchecks are targeted; current evidence does not include attributed WebKit RSS, decoded-memory stabilization, or playback-close pause."
+    },
+    {
+      "id": "N08",
+      "status": "PASS_TARGETED_RECOVERY_FLOWS",
+      "evidence_paths": [
+        "native-ui-behaviors.json"
+      ],
+      "note": "Browser and Native Keep Disk/Restore, failure-preserving retry, active-journal clearing, Domain checks and fresh reopen are targeted passes. Historical recovery.bak may remain after Recovery Restore; no crash-after-unresolved-external-conflict requirement is inferred."
+    }
+  ],
+  "regression_scenarios": [
+    {
+      "id": "R01",
+      "status": "PASS_AUTOMATION_ONLY",
+      "evidence_paths": [
+        "runs/deno-final-f9fc398-fullgate.log",
+        "runs/native-legacy-raw-snapshot-timestamp-cargo-test-green.log",
+        "runs/deno-final-direct-parse/check.log",
+        "runs/deno-final-direct-parse/test.log"
+      ],
+      "note": "Covered by final Deno/Rust automation gates; this does not imply native GUI or OS preference validation."
+    },
+    {
+      "id": "R02",
+      "status": "PASS_AUTOMATION_ONLY",
+      "evidence_paths": [
+        "runs/deno-final-f9fc398-fullgate.log",
+        "runs/native-legacy-raw-snapshot-timestamp-cargo-test-green.log",
+        "runs/deno-final-direct-parse/check.log",
+        "runs/deno-final-direct-parse/test.log"
+      ],
+      "note": "Covered by final Deno/Rust automation gates; this does not imply native GUI or OS preference validation."
+    },
+    {
+      "id": "R03",
+      "status": "PASS_AUTOMATION_ONLY",
+      "evidence_paths": [
+        "runs/deno-final-f9fc398-fullgate.log",
+        "runs/native-legacy-raw-snapshot-timestamp-cargo-test-green.log",
+        "runs/deno-final-direct-parse/check.log",
+        "runs/deno-final-direct-parse/test.log"
+      ],
+      "note": "Covered by final Deno/Rust automation gates; this does not imply native GUI or OS preference validation."
+    },
+    {
+      "id": "R04",
+      "status": "PASS_AUTOMATION_ONLY",
+      "evidence_paths": [
+        "runs/deno-final-f9fc398-fullgate.log",
+        "runs/native-legacy-raw-snapshot-timestamp-cargo-test-green.log",
+        "runs/deno-final-direct-parse/check.log",
+        "runs/deno-final-direct-parse/test.log"
+      ],
+      "note": "Covered by final Deno/Rust automation gates; this does not imply native GUI or OS preference validation."
+    },
+    {
+      "id": "R05",
+      "status": "PASS_AUTOMATION_ONLY",
+      "evidence_paths": [
+        "runs/deno-final-f9fc398-fullgate.log",
+        "runs/native-legacy-raw-snapshot-timestamp-cargo-test-green.log",
+        "runs/deno-final-direct-parse/check.log",
+        "runs/deno-final-direct-parse/test.log"
+      ],
+      "note": "Covered by final Deno/Rust automation gates; this does not imply native GUI or OS preference validation."
+    },
+    {
+      "id": "R06",
+      "status": "PASS_AUTOMATION_ONLY",
+      "evidence_paths": [
+        "runs/deno-final-f9fc398-fullgate.log",
+        "runs/native-legacy-raw-snapshot-timestamp-cargo-test-green.log",
+        "runs/deno-final-direct-parse/check.log",
+        "runs/deno-final-direct-parse/test.log"
+      ],
+      "note": "Covered by final Deno/Rust automation gates; this does not imply native GUI or OS preference validation."
+    },
+    {
+      "id": "R07",
+      "status": "PASS_AUTOMATION_ONLY",
+      "evidence_paths": [
+        "runs/deno-final-f9fc398-fullgate.log",
+        "runs/native-legacy-raw-snapshot-timestamp-cargo-test-green.log",
+        "runs/deno-final-direct-parse/check.log",
+        "runs/deno-final-direct-parse/test.log"
+      ],
+      "note": "Covered by final Deno/Rust automation gates; this does not imply native GUI or OS preference validation."
+    },
+    {
+      "id": "R08",
+      "status": "PASS_AUTOMATION_ONLY",
+      "evidence_paths": [
+        "runs/deno-final-f9fc398-fullgate.log",
+        "runs/native-legacy-raw-snapshot-timestamp-cargo-test-green.log",
+        "runs/deno-final-direct-parse/check.log",
+        "runs/deno-final-direct-parse/test.log"
+      ],
+      "note": "Covered by final Deno/Rust automation gates; this does not imply native GUI or OS preference validation."
+    },
+    {
+      "id": "R09",
+      "status": "PASS_AUTOMATION_ONLY",
+      "evidence_paths": [
+        "runs/deno-final-f9fc398-fullgate.log",
+        "runs/native-legacy-raw-snapshot-timestamp-cargo-test-green.log",
+        "runs/deno-final-direct-parse/check.log",
+        "runs/deno-final-direct-parse/test.log"
+      ],
+      "note": "Covered by final Deno/Rust automation gates; this does not imply native GUI or OS preference validation."
+    },
+    {
+      "id": "R10",
+      "status": "PASS_AUTOMATION_ONLY",
+      "evidence_paths": [
+        "runs/deno-final-f9fc398-fullgate.log",
+        "runs/native-legacy-raw-snapshot-timestamp-cargo-test-green.log",
+        "runs/deno-final-direct-parse/check.log",
+        "runs/deno-final-direct-parse/test.log"
+      ],
+      "note": "Covered by final Deno/Rust automation gates; this does not imply native GUI or OS preference validation."
+    },
+    {
+      "id": "R11",
+      "status": "PASS_AUTOMATION_ONLY",
+      "evidence_paths": [
+        "runs/deno-final-f9fc398-fullgate.log",
+        "runs/native-legacy-raw-snapshot-timestamp-cargo-test-green.log",
+        "runs/deno-final-direct-parse/check.log",
+        "runs/deno-final-direct-parse/test.log"
+      ],
+      "note": "Covered by final Deno/Rust automation gates; this does not imply native GUI or OS preference validation."
+    },
+    {
+      "id": "R12",
+      "status": "PASS_AUTOMATION_ONLY",
+      "evidence_paths": [
+        "runs/deno-final-f9fc398-fullgate.log",
+        "runs/native-legacy-raw-snapshot-timestamp-cargo-test-green.log",
+        "runs/deno-final-direct-parse/check.log",
+        "runs/deno-final-direct-parse/test.log"
+      ],
+      "note": "Covered by final Deno/Rust automation gates; this does not imply native GUI or OS preference validation."
+    },
+    {
+      "id": "R13",
+      "status": "PASS_AUTOMATION_ONLY",
+      "evidence_paths": [
+        "runs/deno-final-f9fc398-fullgate.log",
+        "runs/native-legacy-raw-snapshot-timestamp-cargo-test-green.log",
+        "runs/deno-final-direct-parse/check.log",
+        "runs/deno-final-direct-parse/test.log"
+      ],
+      "note": "Covered by final Deno/Rust automation gates; this does not imply native GUI or OS preference validation."
+    },
+    {
+      "id": "R14",
+      "status": "PASS_AUTOMATION_ONLY",
+      "evidence_paths": [
+        "runs/deno-final-f9fc398-fullgate.log",
+        "runs/native-legacy-raw-snapshot-timestamp-cargo-test-green.log",
+        "runs/deno-final-direct-parse/check.log",
+        "runs/deno-final-direct-parse/test.log"
+      ],
+      "note": "Covered by final Deno/Rust automation gates; this does not imply native GUI or OS preference validation."
+    },
+    {
+      "id": "R15",
+      "status": "PASS_AUTOMATION_ONLY",
+      "evidence_paths": [
+        "runs/deno-final-f9fc398-fullgate.log",
+        "runs/native-legacy-raw-snapshot-timestamp-cargo-test-green.log",
+        "runs/deno-final-direct-parse/check.log",
+        "runs/deno-final-direct-parse/test.log"
+      ],
+      "note": "Covered by final Deno/Rust automation gates; this does not imply native GUI or OS preference validation."
+    },
+    {
+      "id": "R16",
+      "status": "PASS_AUTOMATION_ONLY",
+      "evidence_paths": [
+        "runs/deno-final-f9fc398-fullgate.log",
+        "runs/native-legacy-raw-snapshot-timestamp-cargo-test-green.log",
+        "runs/deno-final-direct-parse/check.log",
+        "runs/deno-final-direct-parse/test.log"
+      ],
+      "note": "Covered by final Deno/Rust automation gates; this does not imply native GUI or OS preference validation."
+    },
+    {
+      "id": "R17",
+      "status": "PASS_AUTOMATION_ONLY",
+      "evidence_paths": [
+        "runs/deno-final-f9fc398-fullgate.log",
+        "runs/native-legacy-raw-snapshot-timestamp-cargo-test-green.log",
+        "runs/deno-final-direct-parse/check.log",
+        "runs/deno-final-direct-parse/test.log"
+      ],
+      "note": "Covered by final Deno/Rust automation gates; this does not imply native GUI or OS preference validation."
+    },
+    {
+      "id": "R18",
+      "status": "PASS_AUTOMATION_ONLY",
+      "evidence_paths": [
+        "runs/deno-final-f9fc398-fullgate.log",
+        "runs/native-legacy-raw-snapshot-timestamp-cargo-test-green.log",
+        "runs/deno-final-direct-parse/check.log",
+        "runs/deno-final-direct-parse/test.log"
+      ],
+      "note": "Covered by final Deno/Rust automation gates; this does not imply native GUI or OS preference validation."
+    },
+    {
+      "id": "R19",
+      "status": "PASS_AUTOMATION_ONLY",
+      "evidence_paths": [
+        "runs/deno-final-f9fc398-fullgate.log",
+        "runs/native-legacy-raw-snapshot-timestamp-cargo-test-green.log",
+        "runs/deno-final-direct-parse/check.log",
+        "runs/deno-final-direct-parse/test.log"
+      ],
+      "note": "Covered by final Deno/Rust automation gates; this does not imply native GUI or OS preference validation."
+    },
+    {
+      "id": "R20",
+      "status": "PASS_AUTOMATION_ONLY",
+      "evidence_paths": [
+        "runs/deno-final-f9fc398-fullgate.log",
+        "runs/native-legacy-raw-snapshot-timestamp-cargo-test-green.log",
+        "runs/deno-final-direct-parse/check.log",
+        "runs/deno-final-direct-parse/test.log"
+      ],
+      "note": "Covered by final Deno/Rust automation gates; this does not imply native GUI or OS preference validation."
+    }
+  ],
+  "scope_decisions": {
+    "D01": "ACCEPTED_BOUNDARY: retain PDF text-layer extraction; no image XObject semantic extraction or OCR",
+    "D02": "ACCEPTED_BOUNDARY: Developer ID signing and notarization are not delivery gates"
+  },
+  "release_state": "v0.2.6 frozen; no public release authorized",
+  "status": "PARTIAL",
+  "current_source_commit": "50aaea7268164b9fa066425ce4a5ac158ca87352",
+  "evidence_provenance": {
+    "current_production_source": "50aaea7268164b9fa066425ce4a5ac158ca87352",
+    "final_deno_gate": "Check exit 0; 716/0 and focused 17/0 at exact combined source 50aaea7268164b9fa066425ce4a5ac158ca87352; see runs/deno-final-direct-parse/check.log, test.log, focused-17.log.",
+    "final_deno_check": "PASS at 50aaea7268164b9fa066425ce4a5ac158ca87352; runs/deno-final-direct-parse/check.log (SHA-256 fc4dcbfccf13b1c71c6fb5c3f14485d7c00ce823ce7003ac20a949ae6d28257b).",
+    "final_native_automation": "runs/native-legacy-raw-snapshot-timestamp-cargo-test-green.log; Rust fcefcb106c2cf4e957d54a1ee7e112e2aa83cac0: 258 passed / 0 failed / 1 ignored.",
+    "final_native_format": "runs/native-legacy-raw-snapshot-timestamp-rustfmt-green.log (fmt and dev build pass at unchanged Rust source fcefcb1).",
+    "final_native_build": "Final10 Native arm64 QA package independently audited; see runs/native-final10/final10-independent-package-audit.json. Package embeds UI 9bbc8cf and Rust fcefcb1; not installed or publicly released.",
+    "native_qa_bundle_build": "Final10 arm64 QA ZIP independently audited: 7,082,849 B; SHA-256 bb3413a4f4f8d7658e69f5e523da514aca034e32f241e2bdc09fe425fadd3822; audit verifies 18 embedded resources (17 raw exact + normalized index), strict signature, and source 9bbc8cf/fcefcb1.",
+    "native_qa_signature_verification": "Final10 ad-hoc strict signature passed; no Developer ID signing/notarization/public release claim.",
+    "browser_basic_matrix_source": "b990d49029333d4bacc46a2f92361779a554545c",
+    "browser_sidebar_matrix_source": "b990d49029333d4bacc46a2f92361779a554545c",
+    "browser_media_and_recovery_supplements": [
+      "dab26b7b09dcde37eba2f59b018b9ac11e7f73e0",
+      "04e9fdf4276fe37b79d7a1ee87656c28865d0fac"
+    ],
+    "native_gui_historical_evidence_source": "04e9fdf4276fe37b79d7a1ee87656c28865d0fac",
+    "native_gui_candidate_source": "Final10 UI 9bbc8cf3067b6117be8de41e1bd5bef3960a671a + Rust fcefcb106c2cf4e957d54a1ee7e112e2aa83cac0 for cold reader scroll and rename cycle; Final9/b097 for N04/N05; Final8/f9 for pointer first-click snapshot. Each outcome retains its own provenance.",
+    "native_gui_candidate_status": "Final10 package audit, scroll_top=836 cold reopen and physical rename→Undo→Redo→Undo pass as targeted evidence. Final9 N04 four-format one-fixture output and N05 two merge outcomes are scoped passes. Full current P/O matrix and compound N06 remain PARTIAL.",
+    "source_state": "Combined source 50aaea7268164b9fa066425ce4a5ac158ca87352: Deno check 0, 716/0, focused 17/0; Rust fcefcb106c2cf4e957d54a1ee7e112e2aa83cac0 258/0/1 ignored. Changed-save on-run tail remains unresolved, so overall PARTIAL/BLOCKED. Native Final10 UI 9bbc8cf3067b6117be8de41e1bd5bef3960a671a and Rust fcefcb106c2cf4e957d54a1ee7e112e2aa83cac0 package/UI evidence are separately source-pinned.",
+    "final_native_dev_build": "Final10 Native arm64 QA package producer build/sign checks and Deno independent package audit pass; exact package includes targeted cold-scroll and rename evidence. See runs/native-final10/final10-independent-package-audit.json; QA only, not installed or publicly released.",
+    "native_current_cold_close": "native-final3-cold-close-observation.json (root-confirmed process exit; evidence row awaiting final structured backwrite)",
+    "test_verification_commit": "50aaea7268164b9fa066425ce4a5ac158ca87352",
+    "native_final6_n06_snapshot_proof": "runs/native-final6-n06-snapshot-physical-green.json",
+    "native_final6_n06_snapshot_proof_sha256": "10e390cd6b2e0216627a4e6ecc3b4a78771c0122a95c86964ae558eeb03f4b26",
+    "current_repository_verification_pin": "50aaea7268164b9fa066425ce4a5ac158ca87352: Deno check 0; 716/0; 17/17 focused writer checks. Final fresh Deno off/on pair shows an unresolved diagnostics-on changed-save p95 regression (+21.12%).",
+    "current_deno_gate_sha256": "eb2130b14c07238cbd67796cfb08b67f9b485c0c5c5b0eb3f49057f58043038c",
+    "current_deno_check_sha256": "fc4dcbfccf13b1c71c6fb5c3f14485d7c00ce823ce7003ac20a949ae6d28257b",
+    "front_first_click_fix_log": "runs/front-first-click-blur-focused.log",
+    "native_first_pointer_snapshot_physical": "runs/native-final8-pointer-snapshot-physical-proof.json",
+    "native_first_pointer_snapshot_physical_sha256": "b39986a1c4943893e4beee8fb92bea7f9cf802f81970c680aecdee92d60f03a4",
+    "native8_package_independent_check": "runs/deno-final8-native-package-independent-check.json",
+    "native8_package_independent_check_sha256": "e334b1707b88c090703a08e6ccecccfc3277468eed4357105731386099c79aea",
+    "native_qa_bundle_audit": "Final10 independent package audit: runs/native-final10/final10-independent-package-audit.json (SHA-256 9104581a0aac9df8e33e486172640d54329ff37a3d8ddd0b5cd9f4081f6e16de); UI 9bbc8cf + Rust fcefcb1.",
+    "native_n05_keep_local": "Final9/b097 targeted same-field Keep Local: runs/native-final9-n05-keep-local-physical-proof.json (SHA-256 2bd23f39ab1e14c07d11cac0add011613a147a2d427b9e297fa4147a8a882dde) plus runs/native-final9/n05-final9-after-reopen-physical-proof.json (SHA-256 975926b9a95f01b4629e82ae18479b6cc9091881fc2a5dd924f1e019c7732a75); UI and later physical read are separate timepoints.",
+    "native_n04_four_format_exports": "runs/native-final9/n04-semantic-html-export-physical-proof.json; runs/native-final9/n04-static-web-export-physical-proof.json; runs/native-final9/n04-pdf-export-physical-proof.json; runs/native-final9/n04-pptx-export-physical-proof.json; portable-output-manifest.json (SHA-256 9dad7893ce414d6ae9d300b8a0a9e58d3543f5625f69d93ac293edee60de4844); fixture Canonical SHA 4957c6e748fa03fe23c495ccb245f85aca012d837f0efb7ec7bb1b46bdfeaf90, UUID bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb, S01-01/all-pages only.",
+    "native_n05_final9_targeted": "Same-field Keep Local physical proof plus separate fresh reopen physical proof; distinct-field merge physical proof. See native_scenarios.N05 and metrics.json observations.native9_n05_branches.",
+    "post_fixture_test_validation": "Current source 50aaea7268164b9fa066425ce4a5ac158ca87352: full Deno check 0, full tests 716/0, focused writer 17/17. See runs/deno-final-direct-parse/.",
+    "native_n05_nonconflict_merge": "Final9/b097 distinct-field automatic merge proof: runs/native-final9/n05-final9-nonconflict-physical-proof.json (SHA-256 95b09b828ada4be2c21474cd3712bdee49c7af1c9c0e09d388ffc68bf14227a2).",
+    "native_n04_four_formats": "Four physical proofs plus portable output manifest SHA-256 9dad7893ce414d6ae9d300b8a0a9e58d3543f5625f69d93ac293edee60de4844; S01-01/all pages only.",
+    "current_source_focused_validation": {
+      "source": "50aaea7268164b9fa066425ce4a5ac158ca87352",
+      "validation_path": "runs/deno-final-direct-parse/focused-17.log",
+      "focused_log": "runs/deno-final-direct-parse/focused-17.log",
+      "focused_log_sha256": "efbcc766dbd55255f737ec53b3afb0b27ecfd2cfb26494dc65e0140f8fa2318",
+      "status": "PASS 17/17"
+    },
+    "native9_reader_scroll_observation": {
+      "status": "OBSERVED_VIEWPORT_MISMATCH; EXACT_PRE_CLOSE_OFFSET_UNAVAILABLE",
+      "session_proof": "runs/native-final9/cold-relaunch-session-position-proof.json",
+      "comparison": "runs/native-final9/cold-relaunch-scroll-position-comparison.json",
+      "post_quit": "runs/native-final9/cold-relaunch-post-quit-release-proof.json",
+      "note": "The pre-relaunch screenshot showed a scrolled reader while the post-reopen screenshot showed the top. The observed session had scroll_top=0 and its mtime predated the pre-relaunch screenshot; no exact pre-close session copy exists."
+    },
+    "current_combined_source": "50aaea7268164b9fa066425ce4a5ac158ca87352",
+    "current_deno_gate": {
+      "source": "50aaea7268164b9fa066425ce4a5ac158ca87352",
+      "check_path": "runs/deno-final-direct-parse/check.log",
+      "check_sha256": "fc4dcbfccf13b1c71c6fb5c3f14485d7c00ce823ce7003ac20a949ae6d28257b",
+      "test_path": "runs/deno-final-direct-parse/test.log",
+      "test_sha256": "eb2130b14c07238cbd67796cfb08b67f9b485c0c5c5b0eb3f49057f58043038c",
+      "focused_path": "runs/deno-final-direct-parse/focused-17.log",
+      "focused_sha256": "efbcc766dbd55255f737ec53b3afb0b27ecfd2cfb26494dc65e0140f8fa2318",
+      "check_exit": 0,
+      "passed": 716,
+      "failed": 0
+    },
+    "native_final10_package": "Final10 QA ZIP 7,082,849 B SHA-256 bb3413a4f4f8d7658e69f5e523da514aca034e32f241e2bdc09fe425fadd3822; independent audit 18 embedded resources / 17 raw exact plus normalized index / strict signature; ad-hoc and not notarized/published.",
+    "native_final10_scroll": "runs/native-final10/final10-scroll-cold-reopen-proof.json; scroll_top=836 restored across actual process relaunch, same session bytes/Canonical; selected_block_id null.",
+    "native_final10_n06_rename": "Four-state physical rename evidence under runs/native-final10/native-final10-n06-rename-state-*.json; final state SHA c09e6826be347cac56ec6a631e810d565fe90bac535d9c1ee833fbd30b2453a8. Scoped subcheck only; N06 compound remains partial.",
+    "deno_current_performance_pair": {
+      "path": "runs/deno-final-50aaea7f/summary.json",
+      "sha256": "3ad9be205efbacd30e4807d78291468b07b48e322d2c6c0c0c5398fa6c486a5f",
+      "source": "50aaea7268164b9fa066425ce4a5ac158ca87352",
+      "off_changed": "median +1.41%; p95 −7.70%",
+      "on_changed": "median +3.11%; p95 +21.12%",
+      "off_noop": "median −62.85%; p95 −63.54%",
+      "on_noop": "median −61.32%; p95 −61.21%",
+      "status": "BLOCKED/PARTIAL; diagnostics-on changed tail cause not isolated."
+    },
+    "final_deno_test": "PASS 716/0 at 50aaea7268164b9fa066425ce4a5ac158ca87352; runs/deno-final-direct-parse/test.log (SHA-256 eb2130b14c07238cbd67796cfb08b67f9b485c0c5c5b0eb3f49057f58043038c).",
+    "final_deno_focus": "PASS 17/0 at 50aaea7268164b9fa066425ce4a5ac158ca87352; runs/deno-final-direct-parse/focused-17.log (SHA-256 efbcc766dbd55255f737ec53b3afb0b27ecfd2cfb26494dc65e0140f8fa2318).",
+    "final_deno_performance": "runs/deno-final-50aaea7f/summary.json SHA-256 3ad9be205efbacd30e4807d78291468b07b48e322d2c6c0c0c5398fa6c486a5f; four fresh off/on runs on source 50aaea7268164b9fa066425ce4a5ac158ca87352. Off changed +1.41%/−7.70% median/p95; on +3.11%/+21.12%; no-op improves in both. On p95 cause not isolated.",
+    "final_native_package_audit": "runs/native-final10/final10-independent-package-audit.json (SHA-256 9104581a0aac9df8e33e486172640d54329ff37a3d8ddd0b5cd9f4081f6e16de).",
+    "native_bundle_artifact": "Producer manifest native-qa-candidate-final10.json preserves READY-at-creation status. Independent audit and current scoped package/UI checks pass; it is QA-only, not a release artifact.",
+    "native_final10_reader_scroll": "runs/native-final10/final10-scroll-cold-reopen-proof.json (SHA-256 f3c65583ff2c83252b4241b49f6c799e8ec1e65ce59d8abad8b6b12ebeb33c80): scroll_top=836 preserved across true relaunch; session/Canonical unchanged; selected_block_id null."
+  },
+  "scenario_status_note": "R01–R20 reflect the final automated verification pin 50aa (Deno 716/0 and Rust 258/0/1 ignored). N01–N08 are separately scoped Native UI/physical observations; compound scenario PASS requires all stated subchecks.",
+  "source_state": "Combined source 50aaea7268164b9fa066425ce4a5ac158ca87352: Deno check 0, tests 716/0, focused writer 17/0; Rust fcefcb106c2cf4e957d54a1ee7e112e2aa83cac0 258/0/1 ignored. Final Deno 50aa diagnostics-on changed p95 is +21.12% and cause is not isolated, so performance remains PARTIAL/BLOCKED. Native Final10 app UI 9bbc8cf3067b6117be8de41e1bd5bef3960a671a + Rust fcefcb106c2cf4e957d54a1ee7e112e2aa83cac0: package independently audited; reader scroll cold reopen and four-state rename cycle pass as targeted checks. Full current UI matrix and compound N06 remain partial.",
+  "plan_traceability": {
+    "source_file": "/Users/youngi/Documents/MiniWork/workbench/Workbench_File_IO_UI_Closure_Development_Plan_2026-10-05.md",
+    "source_sha256": "2d1e0df9776be14d486a1850e921b74a3bb5ced15ea56119f0dc5dadfee97c9c",
+    "numbering_semantics": "§3 contains 18 cross-cut requirement groups (IO-01..IO-10 and UI-01..UI-08). §7 contains execution tasks T0..T12. §8.1 and §8.2 contain 27 UI acceptance targets (P01..P16 and O01..O11), not 27 additional product-requirement IDs. §8.3 defines coverage dimensions (64 page/width rows, applicable sidebar combinations, text scale, keyboard, reduced motion, and media loops), not additional top-level requirement IDs.",
+    "cross_cut_requirement_ids": [
+      "IO-01",
+      "IO-02",
+      "IO-03",
+      "IO-04",
+      "IO-05",
+      "IO-06",
+      "IO-07",
+      "IO-08",
+      "IO-09",
+      "IO-10",
+      "UI-01",
+      "UI-02",
+      "UI-03",
+      "UI-04",
+      "UI-05",
+      "UI-06",
+      "UI-07",
+      "UI-08"
+    ],
+    "task_coverage": {
+      "T0": {
+        "scope": "Record baseline, establish isolated worktree/fixtures, and run baseline gates.",
+        "requirement_ids": [],
+        "ui_goal_ids": [],
+        "foundational_for_all_requirement_groups_and_ui_goals": true
+      },
+      "T1": {
+        "scope": "Project lease and pure-read boundary.",
+        "requirement_ids": [
+          "IO-01",
+          "IO-06"
+        ],
+        "ui_goal_ids": [
+          "O09",
+          "O10"
+        ]
+      },
+      "T2": {
+        "scope": "Truthful snapshot and restore feedback.",
+        "requirement_ids": [
+          "IO-02"
+        ],
+        "ui_goal_ids": [
+          "P15",
+          "O08"
+        ]
+      },
+      "T3": {
+        "scope": "Save transaction, no-op writes, and latest-request coalescing.",
+        "requirement_ids": [
+          "IO-03",
+          "IO-04"
+        ],
+        "ui_goal_ids": [
+          "P02",
+          "P03",
+          "P04",
+          "P05",
+          "P07",
+          "O09"
+        ]
+      },
+      "T4": {
+        "scope": "Independent session and reader-position coordination.",
+        "requirement_ids": [
+          "IO-05"
+        ],
+        "ui_goal_ids": [
+          "P01",
+          "P02",
+          "P03",
+          "P04"
+        ]
+      },
+      "T5": {
+        "scope": "Write failure, recovery, and source consistency.",
+        "requirement_ids": [
+          "IO-06",
+          "IO-07"
+        ],
+        "ui_goal_ids": [
+          "P03",
+          "P04",
+          "P07",
+          "P15",
+          "O05",
+          "O06",
+          "O08",
+          "O09",
+          "O10",
+          "O11"
+        ]
+      },
+      "T6": {
+        "scope": "Bounded native asset-preview reads.",
+        "requirement_ids": [
+          "IO-08",
+          "UI-07"
+        ],
+        "ui_goal_ids": [
+          "P06",
+          "P11",
+          "O03"
+        ]
+      },
+      "T7": {
+        "scope": "Deno import-preview/adoption resource lifecycle.",
+        "requirement_ids": [
+          "IO-09",
+          "IO-07"
+        ],
+        "ui_goal_ids": [
+          "P08",
+          "P09",
+          "O01",
+          "O02"
+        ]
+      },
+      "T8": {
+        "scope": "Bounded export and recoverable output commit.",
+        "requirement_ids": [
+          "IO-10",
+          "IO-07"
+        ],
+        "ui_goal_ids": [
+          "P14",
+          "O07"
+        ]
+      },
+      "T9": {
+        "scope": "Page bodies and shared interaction surfaces.",
+        "requirement_ids": [
+          "UI-01",
+          "UI-02",
+          "UI-05"
+        ],
+        "ui_goal_ids": [
+          "P01",
+          "P02",
+          "P03",
+          "P04",
+          "P05",
+          "P06",
+          "P07",
+          "P08",
+          "P09",
+          "P10",
+          "P11",
+          "P12",
+          "P13",
+          "P14",
+          "P15",
+          "P16",
+          "O01",
+          "O02",
+          "O03",
+          "O04",
+          "O05",
+          "O06",
+          "O07",
+          "O08",
+          "O09",
+          "O10",
+          "O11"
+        ]
+      },
+      "T10": {
+        "scope": "Real flows and page-by-page verification.",
+        "requirement_ids": [
+          "UI-01",
+          "UI-02",
+          "UI-03",
+          "UI-04",
+          "UI-05",
+          "UI-06",
+          "UI-07"
+        ],
+        "ui_goal_ids": [
+          "P01",
+          "P02",
+          "P03",
+          "P04",
+          "P05",
+          "P06",
+          "P07",
+          "P08",
+          "P09",
+          "P10",
+          "P11",
+          "P12",
+          "P13",
+          "P14",
+          "P15",
+          "P16",
+          "O01",
+          "O02",
+          "O03",
+          "O04",
+          "O05",
+          "O06",
+          "O07",
+          "O08",
+          "O09",
+          "O10",
+          "O11"
+        ]
+      },
+      "T11": {
+        "scope": "I/O comparison, resource budgets, and final candidate checks.",
+        "requirement_ids": [
+          "IO-01",
+          "IO-02",
+          "IO-03",
+          "IO-04",
+          "IO-05",
+          "IO-06",
+          "IO-07",
+          "IO-08",
+          "IO-09",
+          "IO-10",
+          "UI-07",
+          "UI-08"
+        ],
+        "ui_goal_ids": [
+          "P11",
+          "O03"
+        ]
+      },
+      "T12": {
+        "scope": "Report, evidence index, and project-status backwrite.",
+        "requirement_ids": [
+          "UI-08"
+        ],
+        "ui_goal_ids": [
+          "P01",
+          "P02",
+          "P03",
+          "P04",
+          "P05",
+          "P06",
+          "P07",
+          "P08",
+          "P09",
+          "P10",
+          "P11",
+          "P12",
+          "P13",
+          "P14",
+          "P15",
+          "P16",
+          "O01",
+          "O02",
+          "O03",
+          "O04",
+          "O05",
+          "O06",
+          "O07",
+          "O08",
+          "O09",
+          "O10",
+          "O11"
+        ]
+      }
+    },
+    "ui_goal_count": 27,
+    "ui_goal_traceability": [
+      {
+        "id": "P01",
+        "kind": "page_or_view",
+        "name": "启动器/项目选择",
+        "plan_location": "§8.1",
+        "original_acceptance_criteria": "继续工作、新建/打开/导入、最近项目、取消 picker、重新定位、移除记录不删文件",
+        "related_cross_cut_requirement_ids": [
+          "IO-01",
+          "IO-05",
+          "IO-06",
+          "UI-01",
+          "UI-06",
+          "UI-08"
+        ],
+        "task_ids": [
+          "T1",
+          "T4",
+          "T9",
+          "T10",
+          "T12"
+        ],
+        "current_status_dimensions": {
+          "overall": "PARTIAL",
+          "browser_layout": "OBSERVED",
+          "browser_behavior": "PARTIAL",
+          "native_layout": "NOT_RUN",
+          "native_targeted": "PARTIAL",
+          "text_scale_150": "NOT_RUN",
+          "text_scale_200": "NOT_RUN",
+          "state_coverage": {
+            "empty": "NOT_RUN",
+            "loading": "NOT_RUN",
+            "error": "NOT_RUN",
+            "long_content": "NOT_RUN"
+          },
+          "sidebar_1024": {
+            "left_and_right_open": "NOT_APPLICABLE",
+            "left_only": "NOT_APPLICABLE",
+            "right_only": "NOT_APPLICABLE",
+            "both_closed": "OBSERVED",
+            "na_reason": "Launcher or reader view does not expose the two workbench sidebar controls.",
+            "evidence_path": "browser-basic-layout-matrix.json"
+          }
+        },
+        "evidence_paths": [
+          "screenshots/final/browser-p01-launcher-1024-none.jpg",
+          "screenshots/final/browser-p01-launcher-1280-none.jpg",
+          "screenshots/final/browser-p01-launcher-1440-none.jpg",
+          "screenshots/final/browser-p01-launcher-1728-none.jpg",
+          "screenshots/native-final/native-final2-launcher.png",
+          "native-ui-behaviors.json"
+        ],
+        "source_test_trace": {
+          "audit_file": "ui-audit.md",
+          "audit_row_id": "P01",
+          "source_and_test_references": [
+            "app/views.js:573",
+            "tests/registry_launcher_test.ts:218",
+            "tests/registry_launcher_test.ts:312",
+            "tests/registry_launcher_test.ts:356",
+            "tests/registry_launcher_test.ts:393"
+          ],
+          "status_caveat": "The audit row is a source/test review pointer. Its historical status prose is not authoritative; status and source pins are taken from this requirements entry, ui-matrix.json, and each evidence record."
+        },
+        "current_matrix_pointer": {
+          "file": "ui-matrix.json",
+          "collection": "pages",
+          "id": "P01"
+        },
+        "remaining_gap": "Only the four-width browser layout observation is complete for this page row. Full page behavior, Native layout, and the separately listed text-scale/state dimensions remain partial or not run; see the linked matrix row."
+      },
+      {
+        "id": "P02",
+        "kind": "page_or_view",
+        "name": "项目概览",
+        "plan_location": "§8.1",
+        "original_acceptance_criteria": "项目摘要、继续工作对象、优先工作队列、近期修改；操作按钮真实响应、正确保存状态",
+        "related_cross_cut_requirement_ids": [
+          "IO-03",
+          "IO-04",
+          "UI-01",
+          "UI-06",
+          "UI-08"
+        ],
+        "task_ids": [
+          "T3",
+          "T4",
+          "T9",
+          "T10",
+          "T12"
+        ],
+        "current_status_dimensions": {
+          "overall": "PARTIAL",
+          "browser_layout": "OBSERVED",
+          "browser_behavior": "PARTIAL",
+          "native_layout": "NOT_RUN",
+          "native_targeted": "NOT_RUN",
+          "text_scale_150": "NOT_RUN",
+          "text_scale_200": "NOT_RUN",
+          "state_coverage": {
+            "empty": "NOT_RUN",
+            "loading": "NOT_RUN",
+            "error": "NOT_RUN",
+            "long_content": "NOT_RUN"
+          },
+          "sidebar_1024": {
+            "left_and_right_open": "OBSERVED",
+            "left_only": "OBSERVED",
+            "right_only": "OBSERVED",
+            "both_closed": "OBSERVED",
+            "na_reason": null,
+            "evidence_path": "browser-sidebar-layout-matrix.json"
+          }
+        },
+        "evidence_paths": [
+          "screenshots/final/browser-p02-overview-1024.jpg",
+          "screenshots/final/browser-p02-overview-1280.jpg",
+          "screenshots/final/browser-p02-overview-1440.jpg",
+          "screenshots/final/browser-p02-overview-1728.jpg"
+        ],
+        "source_test_trace": {
+          "audit_file": "ui-audit.md",
+          "audit_row_id": "P02",
+          "source_and_test_references": [
+            "app/views.js:1804",
+            "app/views.js:760",
+            "tests/workbench_ui_test.ts:184"
+          ],
+          "status_caveat": "The audit row is a source/test review pointer. Its historical status prose is not authoritative; status and source pins are taken from this requirements entry, ui-matrix.json, and each evidence record."
+        },
+        "current_matrix_pointer": {
+          "file": "ui-matrix.json",
+          "collection": "pages",
+          "id": "P02"
+        },
+        "remaining_gap": "Only the four-width browser layout observation is complete for this page row. Full page behavior, Native layout, and the separately listed text-scale/state dimensions remain partial or not run; see the linked matrix row."
+      },
+      {
+        "id": "P03",
+        "kind": "page_or_view",
+        "name": "课程地图",
+        "plan_location": "§8.1",
+        "original_acceptance_criteria": "Stage/Lesson 层级、完成度/缺口、创建/改名/排序/删除、跨阶段移动、选中/折叠/空态",
+        "related_cross_cut_requirement_ids": [
+          "IO-03",
+          "IO-04",
+          "IO-05",
+          "IO-07",
+          "UI-01",
+          "UI-06",
+          "UI-08"
+        ],
+        "task_ids": [
+          "T3",
+          "T9",
+          "T10",
+          "T12"
+        ],
+        "current_status_dimensions": {
+          "overall": "PARTIAL",
+          "browser_layout": "OBSERVED",
+          "browser_behavior": "PARTIAL",
+          "native_layout": "NOT_RUN",
+          "native_targeted": "NOT_RUN",
+          "text_scale_150": "NOT_RUN",
+          "text_scale_200": "NOT_RUN",
+          "state_coverage": {
+            "empty": "NOT_RUN",
+            "loading": "NOT_RUN",
+            "error": "NOT_RUN",
+            "long_content": "NOT_RUN"
+          },
+          "sidebar_1024": {
+            "left_and_right_open": "OBSERVED",
+            "left_only": "OBSERVED",
+            "right_only": "OBSERVED",
+            "both_closed": "OBSERVED",
+            "na_reason": null,
+            "evidence_path": "browser-sidebar-layout-matrix.json"
+          }
+        },
+        "evidence_paths": [
+          "screenshots/final/browser-p03-map-1024-both.jpg",
+          "screenshots/final/browser-p03-map-1280-both.jpg",
+          "screenshots/final/browser-p03-map-1440-both.jpg",
+          "screenshots/final/browser-p03-map-1728-both.jpg"
+        ],
+        "source_test_trace": {
+          "audit_file": "ui-audit.md",
+          "audit_row_id": "P03",
+          "source_and_test_references": [
+            "app/views.js:811",
+            "tests/authoring_ui_test.ts:4138",
+            "tests/authoring_ui_test.ts:4212"
+          ],
+          "status_caveat": "The audit row is a source/test review pointer. Its historical status prose is not authoritative; status and source pins are taken from this requirements entry, ui-matrix.json, and each evidence record."
+        },
+        "current_matrix_pointer": {
+          "file": "ui-matrix.json",
+          "collection": "pages",
+          "id": "P03"
+        },
+        "remaining_gap": "Only the four-width browser layout observation is complete for this page row. Full page behavior, Native layout, and the separately listed text-scale/state dimensions remain partial or not run; see the linked matrix row."
+      },
+      {
+        "id": "P04",
+        "kind": "page_or_view",
+        "name": "Workbench—Body",
+        "plan_location": "§8.1",
+        "original_acceptance_criteria": "写作区域、正文控件、长正文、IME/光标、标题/列表转换、选中区块、真实保存状态",
+        "related_cross_cut_requirement_ids": [
+          "IO-03",
+          "IO-04",
+          "IO-05",
+          "IO-06",
+          "IO-07",
+          "UI-01",
+          "UI-06",
+          "UI-08"
+        ],
+        "task_ids": [
+          "T1",
+          "T3",
+          "T4",
+          "T5",
+          "T9",
+          "T10",
+          "T12"
+        ],
+        "current_status_dimensions": {
+          "overall": "PARTIAL",
+          "browser_layout": "OBSERVED",
+          "browser_behavior": "PARTIAL",
+          "native_layout": "NOT_RUN",
+          "native_targeted": "PARTIAL",
+          "text_scale_150": "NOT_RUN",
+          "text_scale_200": "NOT_RUN",
+          "state_coverage": {
+            "empty": "NOT_RUN",
+            "loading": "NOT_RUN",
+            "error": "NOT_RUN",
+            "long_content": "NOT_RUN"
+          },
+          "sidebar_1024": {
+            "left_and_right_open": "OBSERVED",
+            "left_only": "OBSERVED",
+            "right_only": "OBSERVED",
+            "both_closed": "OBSERVED",
+            "na_reason": null,
+            "evidence_path": "browser-sidebar-layout-matrix.json"
+          }
+        },
+        "evidence_paths": [
+          "screenshots/final/browser-p04-body-1024-both.jpg",
+          "screenshots/final/browser-p04-body-1280-both.jpg",
+          "screenshots/final/browser-p04-body-1440-both.jpg",
+          "screenshots/final/browser-p04-body-1728-both.jpg",
+          "native-ui-behaviors.json",
+          "screenshots/native-final/native-final2-body-autosave-50.png"
+        ],
+        "source_test_trace": {
+          "audit_file": "ui-audit.md",
+          "audit_row_id": "P04",
+          "source_and_test_references": [
+            "app/views.js:931",
+            "tests/authoring_ui_test.ts:885",
+            "tests/authoring_ui_test.ts:2704",
+            "tests/persistence_scheduler_test.ts:320"
+          ],
+          "status_caveat": "The audit row is a source/test review pointer. Its historical status prose is not authoritative; status and source pins are taken from this requirements entry, ui-matrix.json, and each evidence record."
+        },
+        "current_matrix_pointer": {
+          "file": "ui-matrix.json",
+          "collection": "pages",
+          "id": "P04"
+        },
+        "remaining_gap": "Only the four-width browser layout observation is complete for this page row. Full page behavior, Native layout, and the separately listed text-scale/state dimensions remain partial or not run; see the linked matrix row."
+      },
+      {
+        "id": "P05",
+        "kind": "page_or_view",
+        "name": "Workbench—Flow",
+        "plan_location": "§8.1",
+        "original_acceptance_criteria": "行点击定位同一 block、独立拖动 handle、上下移动、Undo/Redo、Canonical 顺序与其他视图一致",
+        "related_cross_cut_requirement_ids": [
+          "IO-03",
+          "IO-04",
+          "UI-01",
+          "UI-04",
+          "UI-06",
+          "UI-08"
+        ],
+        "task_ids": [
+          "T3",
+          "T9",
+          "T10",
+          "T12"
+        ],
+        "current_status_dimensions": {
+          "overall": "PARTIAL",
+          "browser_layout": "OBSERVED",
+          "browser_behavior": "PARTIAL",
+          "native_layout": "NOT_RUN",
+          "native_targeted": "PARTIAL",
+          "text_scale_150": "NOT_RUN",
+          "text_scale_200": "NOT_RUN",
+          "state_coverage": {
+            "empty": "NOT_RUN",
+            "loading": "NOT_RUN",
+            "error": "NOT_RUN",
+            "long_content": "NOT_RUN"
+          },
+          "sidebar_1024": {
+            "left_and_right_open": "OBSERVED",
+            "left_only": "OBSERVED",
+            "right_only": "OBSERVED",
+            "both_closed": "OBSERVED",
+            "na_reason": null,
+            "evidence_path": "browser-sidebar-layout-matrix.json"
+          }
+        },
+        "evidence_paths": [
+          "screenshots/final/browser-p05-flow-1024-both.jpg",
+          "screenshots/final/browser-p05-flow-1280-both.jpg",
+          "screenshots/final/browser-p05-flow-1440-both.jpg",
+          "screenshots/final/browser-p05-flow-1728-both.jpg",
+          "native-ui-behaviors.json",
+          "screenshots/native-final/native-final2-flow-move-undo-redo.png"
+        ],
+        "source_test_trace": {
+          "audit_file": "ui-audit.md",
+          "audit_row_id": "P05",
+          "source_and_test_references": [
+            "app/views.js:1218",
+            "tests/authoring_ui_test.ts:1024",
+            "tests/authoring_ui_test.ts:1081"
+          ],
+          "status_caveat": "The audit row is a source/test review pointer. Its historical status prose is not authoritative; status and source pins are taken from this requirements entry, ui-matrix.json, and each evidence record."
+        },
+        "current_matrix_pointer": {
+          "file": "ui-matrix.json",
+          "collection": "pages",
+          "id": "P05"
+        },
+        "remaining_gap": "Only the four-width browser layout observation is complete for this page row. Full page behavior, Native layout, and the separately listed text-scale/state dimensions remain partial or not run; see the linked matrix row."
+      },
+      {
+        "id": "P06",
+        "kind": "page_or_view",
+        "name": "Workbench—Preview",
+        "plan_location": "§8.1",
+        "original_acceptance_criteria": "阅读主体、注释、Markdown、PNG/GIF/video、素材计数、MP4 图片语法提示、输出预检",
+        "related_cross_cut_requirement_ids": [
+          "IO-08",
+          "IO-09",
+          "IO-10",
+          "UI-01",
+          "UI-04",
+          "UI-06",
+          "UI-08"
+        ],
+        "task_ids": [
+          "T6",
+          "T7",
+          "T8",
+          "T9",
+          "T10",
+          "T12"
+        ],
+        "current_status_dimensions": {
+          "overall": "PARTIAL",
+          "browser_layout": "OBSERVED",
+          "browser_behavior": "PARTIAL",
+          "native_layout": "NOT_RUN",
+          "native_targeted": "PARTIAL",
+          "text_scale_150": "NOT_RUN",
+          "text_scale_200": "NOT_RUN",
+          "state_coverage": {
+            "empty": "NOT_RUN",
+            "loading": "NOT_RUN",
+            "error": "NOT_RUN",
+            "long_content": "NOT_RUN"
+          },
+          "sidebar_1024": {
+            "left_and_right_open": "NOT_APPLICABLE",
+            "left_only": "NOT_APPLICABLE",
+            "right_only": "NOT_APPLICABLE",
+            "both_closed": "NOT_APPLICABLE",
+            "na_reason": "Launcher or reader view does not expose the two workbench sidebar controls.",
+            "evidence_path": "browser-basic-layout-matrix.json"
+          }
+        },
+        "evidence_paths": [
+          "screenshots/final/browser-p06-preview-1024-none.jpg",
+          "screenshots/final/browser-p06-preview-1280-none.jpg",
+          "screenshots/final/browser-p06-preview-1440-none.jpg",
+          "screenshots/final/browser-p06-preview-1728-none.jpg",
+          "native-ui-behaviors.json",
+          "screenshots/native-final/native-final2-mapped-media-preview.png",
+          "screenshots/native-final/native-final2-video-explicit-play.png"
+        ],
+        "source_test_trace": {
+          "audit_file": "ui-audit.md",
+          "audit_row_id": "P06",
+          "source_and_test_references": [
+            "app/views.js:1666",
+            "tests/authoring_ui_test.ts:3141",
+            "tests/authoring_ui_test.ts:2340"
+          ],
+          "status_caveat": "The audit row is a source/test review pointer. Its historical status prose is not authoritative; status and source pins are taken from this requirements entry, ui-matrix.json, and each evidence record."
+        },
+        "current_matrix_pointer": {
+          "file": "ui-matrix.json",
+          "collection": "pages",
+          "id": "P06"
+        },
+        "remaining_gap": "Only the four-width browser layout observation is complete for this page row. Full page behavior, Native layout, and the separately listed text-scale/state dimensions remain partial or not run; see the linked matrix row."
+      },
+      {
+        "id": "P07",
+        "kind": "page_or_view",
+        "name": "Free Layout",
+        "plan_location": "§8.1",
+        "original_acceptance_criteria": "画布、分页/工具/inspector、跨页移动、跨度、新建/复制/删除、Undo、重开与导出",
+        "related_cross_cut_requirement_ids": [
+          "IO-03",
+          "IO-04",
+          "IO-07",
+          "IO-10",
+          "UI-01",
+          "UI-05",
+          "UI-06",
+          "UI-08"
+        ],
+        "task_ids": [
+          "T3",
+          "T5",
+          "T8",
+          "T9",
+          "T10",
+          "T12"
+        ],
+        "current_status_dimensions": {
+          "overall": "PARTIAL",
+          "browser_layout": "OBSERVED",
+          "browser_behavior": "PARTIAL",
+          "native_layout": "NOT_RUN",
+          "native_targeted": "PARTIAL",
+          "text_scale_150": "NOT_RUN",
+          "text_scale_200": "NOT_RUN",
+          "state_coverage": {
+            "empty": "NOT_RUN",
+            "loading": "NOT_RUN",
+            "error": "NOT_RUN",
+            "long_content": "NOT_RUN"
+          },
+          "sidebar_1024": {
+            "left_and_right_open": "OBSERVED",
+            "left_only": "OBSERVED",
+            "right_only": "OBSERVED",
+            "both_closed": "OBSERVED",
+            "na_reason": null,
+            "evidence_path": "browser-sidebar-layout-matrix.json"
+          }
+        },
+        "evidence_paths": [
+          "screenshots/final/browser-p07-layout-1024-both.jpg",
+          "screenshots/final/browser-p07-layout-1280-both.jpg",
+          "screenshots/final/browser-p07-layout-1440-both.jpg",
+          "screenshots/final/browser-p07-layout-1728-both.jpg",
+          "native-ui-behaviors.json",
+          "screenshots/native-final/native-final2-layout-delete-undo-redo.png"
+        ],
+        "source_test_trace": {
+          "audit_file": "ui-audit.md",
+          "audit_row_id": "P07",
+          "source_and_test_references": [
+            "app/views.js:1253",
+            "app/layout_pages.js:140",
+            "tests/authoring_ui_test.ts:1458",
+            "tests/authoring_ui_test.ts:1906",
+            "tests/authoring_ui_test.ts:1984"
+          ],
+          "status_caveat": "The audit row is a source/test review pointer. Its historical status prose is not authoritative; status and source pins are taken from this requirements entry, ui-matrix.json, and each evidence record."
+        },
+        "current_matrix_pointer": {
+          "file": "ui-matrix.json",
+          "collection": "pages",
+          "id": "P07"
+        },
+        "remaining_gap": "Only the four-width browser layout observation is complete for this page row. Full page behavior, Native layout, and the separately listed text-scale/state dimensions remain partial or not run; see the linked matrix row."
+      },
+      {
+        "id": "P08",
+        "kind": "page_or_view",
+        "name": "文件",
+        "plan_location": "§8.1",
+        "original_acceptance_criteria": "只读源浏览器、过滤、选择预览、retry、继续 Mapping；源文件不被重命名或改写",
+        "related_cross_cut_requirement_ids": [
+          "IO-09",
+          "UI-01",
+          "UI-06",
+          "UI-08"
+        ],
+        "task_ids": [
+          "T7",
+          "T9",
+          "T10",
+          "T12"
+        ],
+        "current_status_dimensions": {
+          "overall": "PARTIAL",
+          "browser_layout": "OBSERVED",
+          "browser_behavior": "PARTIAL",
+          "native_layout": "NOT_RUN",
+          "native_targeted": "NOT_RUN",
+          "text_scale_150": "NOT_RUN",
+          "text_scale_200": "NOT_RUN",
+          "state_coverage": {
+            "empty": "NOT_RUN",
+            "loading": "NOT_RUN",
+            "error": "NOT_RUN",
+            "long_content": "NOT_RUN"
+          },
+          "sidebar_1024": {
+            "left_and_right_open": "OBSERVED",
+            "left_only": "OBSERVED",
+            "right_only": "OBSERVED",
+            "both_closed": "OBSERVED",
+            "na_reason": null,
+            "evidence_path": "browser-sidebar-layout-matrix.json"
+          }
+        },
+        "evidence_paths": [
+          "screenshots/final/browser-p08-files-empty-1024-both.jpg",
+          "screenshots/final/browser-p08-files-empty-1280-both.jpg",
+          "screenshots/final/browser-p08-files-empty-1440-both.jpg",
+          "screenshots/final/browser-p08-files-empty-1728-both.jpg"
+        ],
+        "source_test_trace": {
+          "audit_file": "ui-audit.md",
+          "audit_row_id": "P08",
+          "source_and_test_references": [
+            "app/views.js:1976",
+            "tests/t04_adoption_test.ts:223",
+            "tests/document_import_dialog_test.ts:500",
+            "tests/document_import_dialog_test.ts:546"
+          ],
+          "status_caveat": "The audit row is a source/test review pointer. Its historical status prose is not authoritative; status and source pins are taken from this requirements entry, ui-matrix.json, and each evidence record."
+        },
+        "current_matrix_pointer": {
+          "file": "ui-matrix.json",
+          "collection": "pages",
+          "id": "P08"
+        },
+        "remaining_gap": "Only the four-width browser layout observation is complete for this page row. Full page behavior, Native layout, and the separately listed text-scale/state dimensions remain partial or not run; see the linked matrix row."
+      },
+      {
+        "id": "P09",
+        "kind": "page_or_view",
+        "name": "收件箱",
+        "plan_location": "§8.1",
+        "original_acceptance_criteria": "pending/saved-asset/assigned 分组、capture、triage、assetize、ignore、目标为空时的真实说明",
+        "related_cross_cut_requirement_ids": [
+          "IO-09",
+          "UI-01",
+          "UI-06",
+          "UI-08"
+        ],
+        "task_ids": [
+          "T7",
+          "T9",
+          "T10",
+          "T12"
+        ],
+        "current_status_dimensions": {
+          "overall": "PARTIAL",
+          "browser_layout": "OBSERVED",
+          "browser_behavior": "PARTIAL",
+          "native_layout": "NOT_RUN",
+          "native_targeted": "NOT_RUN",
+          "text_scale_150": "NOT_RUN",
+          "text_scale_200": "NOT_RUN",
+          "state_coverage": {
+            "empty": "NOT_RUN",
+            "loading": "NOT_RUN",
+            "error": "NOT_RUN",
+            "long_content": "NOT_RUN"
+          },
+          "sidebar_1024": {
+            "left_and_right_open": "OBSERVED",
+            "left_only": "OBSERVED",
+            "right_only": "OBSERVED",
+            "both_closed": "OBSERVED",
+            "na_reason": null,
+            "evidence_path": "browser-sidebar-layout-matrix.json"
+          }
+        },
+        "evidence_paths": [
+          "screenshots/final/browser-p09-inbox-empty-1024-both.jpg",
+          "screenshots/final/browser-p09-inbox-empty-1280-both.jpg",
+          "screenshots/final/browser-p09-inbox-empty-1440-both.jpg",
+          "screenshots/final/browser-p09-inbox-empty-1728-both.jpg"
+        ],
+        "source_test_trace": {
+          "audit_file": "ui-audit.md",
+          "audit_row_id": "P09",
+          "source_and_test_references": [
+            "app/views.js:1870",
+            "tests/authoring_ui_test.ts:2051"
+          ],
+          "status_caveat": "The audit row is a source/test review pointer. Its historical status prose is not authoritative; status and source pins are taken from this requirements entry, ui-matrix.json, and each evidence record."
+        },
+        "current_matrix_pointer": {
+          "file": "ui-matrix.json",
+          "collection": "pages",
+          "id": "P09"
+        },
+        "remaining_gap": "Only the four-width browser layout observation is complete for this page row. Full page behavior, Native layout, and the separately listed text-scale/state dimensions remain partial or not run; see the linked matrix row."
+      },
+      {
+        "id": "P10",
+        "kind": "page_or_view",
+        "name": "制作看板",
+        "plan_location": "§8.1",
+        "original_acceptance_criteria": "状态维度、列计数、卡片进度、拖动改状态、打开对象、空列/无课程",
+        "related_cross_cut_requirement_ids": [
+          "UI-01",
+          "UI-06",
+          "UI-08"
+        ],
+        "task_ids": [
+          "T9",
+          "T10",
+          "T12"
+        ],
+        "current_status_dimensions": {
+          "overall": "PARTIAL",
+          "browser_layout": "OBSERVED",
+          "browser_behavior": "PARTIAL",
+          "native_layout": "NOT_RUN",
+          "native_targeted": "NOT_RUN",
+          "text_scale_150": "NOT_RUN",
+          "text_scale_200": "NOT_RUN",
+          "state_coverage": {
+            "empty": "NOT_RUN",
+            "loading": "NOT_RUN",
+            "error": "NOT_RUN",
+            "long_content": "NOT_RUN"
+          },
+          "sidebar_1024": {
+            "left_and_right_open": "OBSERVED",
+            "left_only": "OBSERVED",
+            "right_only": "OBSERVED",
+            "both_closed": "OBSERVED",
+            "na_reason": null,
+            "evidence_path": "browser-sidebar-layout-matrix.json"
+          }
+        },
+        "evidence_paths": [
+          "screenshots/final/browser-p10-board-1024-both.jpg",
+          "screenshots/final/browser-p10-board-1280-both.jpg",
+          "screenshots/final/browser-p10-board-1440-both.jpg",
+          "screenshots/final/browser-p10-board-1728-both.jpg"
+        ],
+        "source_test_trace": {
+          "audit_file": "ui-audit.md",
+          "audit_row_id": "P10",
+          "source_and_test_references": [
+            "app/views.js:1918"
+          ],
+          "status_caveat": "The audit row is a source/test review pointer. Its historical status prose is not authoritative; status and source pins are taken from this requirements entry, ui-matrix.json, and each evidence record."
+        },
+        "current_matrix_pointer": {
+          "file": "ui-matrix.json",
+          "collection": "pages",
+          "id": "P10"
+        },
+        "remaining_gap": "Only the four-width browser layout observation is complete for this page row. Full page behavior, Native layout, and the separately listed text-scale/state dimensions remain partial or not run; see the linked matrix row."
+      },
+      {
+        "id": "P11",
+        "kind": "page_or_view",
+        "name": "素材库",
+        "plan_location": "§8.1",
+        "original_acceptance_criteria": "真缩略图、用量、导入/失败、viewer、改名/Undo、菜单键盘、120+ 卡片真实滚动",
+        "related_cross_cut_requirement_ids": [
+          "IO-08",
+          "IO-09",
+          "UI-01",
+          "UI-06",
+          "UI-07",
+          "UI-08"
+        ],
+        "task_ids": [
+          "T6",
+          "T7",
+          "T11",
+          "T9",
+          "T10",
+          "T12"
+        ],
+        "current_status_dimensions": {
+          "overall": "PARTIAL",
+          "browser_layout": "OBSERVED",
+          "browser_behavior": "PARTIAL",
+          "native_layout": "NOT_RUN",
+          "native_targeted": "PARTIAL",
+          "text_scale_150": "NOT_RUN",
+          "text_scale_200": "NOT_RUN",
+          "state_coverage": {
+            "empty": "NOT_RUN",
+            "loading": "NOT_RUN",
+            "error": "NOT_RUN",
+            "long_content": "NOT_RUN"
+          },
+          "sidebar_1024": {
+            "left_and_right_open": "OBSERVED",
+            "left_only": "OBSERVED",
+            "right_only": "OBSERVED",
+            "both_closed": "OBSERVED",
+            "na_reason": null,
+            "evidence_path": "browser-sidebar-layout-matrix.json"
+          }
+        },
+        "evidence_paths": [
+          "screenshots/final/browser-p11-media-1024-both.jpg",
+          "screenshots/final/browser-p11-media-1280-both.jpg",
+          "screenshots/final/browser-p11-media-1440-both.jpg",
+          "screenshots/final/browser-p11-media-1728-both.jpg",
+          "browser-frozen-media-three-trips.json",
+          "browser-frozen-p11-widths.json",
+          "screenshots/final/browser-frozen-media-three-trips-complete.jpg",
+          "screenshots/native-final/native-final2-gif-viewer.png",
+          "native-ui-behaviors.json"
+        ],
+        "source_test_trace": {
+          "audit_file": "ui-audit.md",
+          "audit_row_id": "P11",
+          "source_and_test_references": [
+            "app/views.js:2285",
+            "app/main.js:5859",
+            "tests/asset_thumbnail_test.ts:455",
+            "tests/asset_thumbnail_test.ts:615",
+            "tests/asset_thumbnail_test.ts:727",
+            "tests/asset_thumbnail_test.ts:820",
+            "tests/authoring_ui_test.ts:3510"
+          ],
+          "status_caveat": "The audit row is a source/test review pointer. Its historical status prose is not authoritative; status and source pins are taken from this requirements entry, ui-matrix.json, and each evidence record."
+        },
+        "current_matrix_pointer": {
+          "file": "ui-matrix.json",
+          "collection": "pages",
+          "id": "P11"
+        },
+        "remaining_gap": "Only the four-width browser layout observation is complete for this page row. Full page behavior, Native layout, and the separately listed text-scale/state dimensions remain partial or not run; see the linked matrix row."
+      },
+      {
+        "id": "P12",
+        "kind": "page_or_view",
+        "name": "待补/需求总览",
+        "plan_location": "§8.1",
+        "original_acceptance_criteria": "分组/计数/优先级、真实 anchor 定位、过滤、解决/编辑/删除、素材关联",
+        "related_cross_cut_requirement_ids": [
+          "UI-01",
+          "UI-06",
+          "UI-08"
+        ],
+        "task_ids": [
+          "T9",
+          "T10",
+          "T12"
+        ],
+        "current_status_dimensions": {
+          "overall": "PARTIAL",
+          "browser_layout": "OBSERVED",
+          "browser_behavior": "PARTIAL",
+          "native_layout": "NOT_RUN",
+          "native_targeted": "NOT_RUN",
+          "text_scale_150": "NOT_RUN",
+          "text_scale_200": "NOT_RUN",
+          "state_coverage": {
+            "empty": "NOT_RUN",
+            "loading": "NOT_RUN",
+            "error": "NOT_RUN",
+            "long_content": "NOT_RUN"
+          },
+          "sidebar_1024": {
+            "left_and_right_open": "OBSERVED",
+            "left_only": "OBSERVED",
+            "right_only": "OBSERVED",
+            "both_closed": "OBSERVED",
+            "na_reason": null,
+            "evidence_path": "browser-sidebar-layout-matrix.json"
+          }
+        },
+        "evidence_paths": [
+          "screenshots/final/browser-p12-requirements-empty-1024-both.jpg",
+          "screenshots/final/browser-p12-requirements-empty-1280-both.jpg",
+          "screenshots/final/browser-p12-requirements-empty-1440-both.jpg",
+          "screenshots/final/browser-p12-requirements-empty-1728-both.jpg"
+        ],
+        "source_test_trace": {
+          "audit_file": "ui-audit.md",
+          "audit_row_id": "P12",
+          "source_and_test_references": [
+            "app/views.js:1762",
+            "tests/authoring_ui_test.ts:3422"
+          ],
+          "status_caveat": "The audit row is a source/test review pointer. Its historical status prose is not authoritative; status and source pins are taken from this requirements entry, ui-matrix.json, and each evidence record."
+        },
+        "current_matrix_pointer": {
+          "file": "ui-matrix.json",
+          "collection": "pages",
+          "id": "P12"
+        },
+        "remaining_gap": "Only the four-width browser layout observation is complete for this page row. Full page behavior, Native layout, and the separately listed text-scale/state dimensions remain partial or not run; see the linked matrix row."
+      },
+      {
+        "id": "P13",
+        "kind": "page_or_view",
+        "name": "更新中心",
+        "plan_location": "§8.1",
+        "original_acceptance_criteria": "AI draft/suggestion 计数、审阅入口、empty/available/error；不冒充应用版本更新页",
+        "related_cross_cut_requirement_ids": [
+          "UI-01",
+          "UI-06",
+          "UI-08"
+        ],
+        "task_ids": [
+          "T9",
+          "T10",
+          "T12"
+        ],
+        "current_status_dimensions": {
+          "overall": "PARTIAL",
+          "browser_layout": "OBSERVED",
+          "browser_behavior": "PARTIAL",
+          "native_layout": "NOT_RUN",
+          "native_targeted": "NOT_RUN",
+          "text_scale_150": "NOT_RUN",
+          "text_scale_200": "NOT_RUN",
+          "state_coverage": {
+            "empty": "NOT_RUN",
+            "loading": "NOT_RUN",
+            "error": "NOT_RUN",
+            "long_content": "NOT_RUN"
+          },
+          "sidebar_1024": {
+            "left_and_right_open": "OBSERVED",
+            "left_only": "OBSERVED",
+            "right_only": "OBSERVED",
+            "both_closed": "OBSERVED",
+            "na_reason": null,
+            "evidence_path": "browser-sidebar-layout-matrix.json"
+          }
+        },
+        "evidence_paths": [
+          "screenshots/final/browser-p13-updates-empty-1024-both.jpg",
+          "screenshots/final/browser-p13-updates-empty-1280-both.jpg",
+          "screenshots/final/browser-p13-updates-empty-1440-both.jpg",
+          "screenshots/final/browser-p13-updates-empty-1728-both.jpg"
+        ],
+        "source_test_trace": {
+          "audit_file": "ui-audit.md",
+          "audit_row_id": "P13",
+          "source_and_test_references": [
+            "app/views.js:2492",
+            "tests/ai_ui_test.ts:809",
+            "tests/ai_ui_test.ts:923"
+          ],
+          "status_caveat": "The audit row is a source/test review pointer. Its historical status prose is not authoritative; status and source pins are taken from this requirements entry, ui-matrix.json, and each evidence record."
+        },
+        "current_matrix_pointer": {
+          "file": "ui-matrix.json",
+          "collection": "pages",
+          "id": "P13"
+        },
+        "remaining_gap": "Only the four-width browser layout observation is complete for this page row. Full page behavior, Native layout, and the separately listed text-scale/state dimensions remain partial or not run; see the linked matrix row."
+      },
+      {
+        "id": "P14",
+        "kind": "page_or_view",
+        "name": "发布中心",
+        "plan_location": "§8.1",
+        "original_acceptance_criteria": "范围/格式/页尺寸/capability、blocker/warning、acknowledge、导出/显示文件/历史",
+        "related_cross_cut_requirement_ids": [
+          "IO-10",
+          "UI-01",
+          "UI-06",
+          "UI-08"
+        ],
+        "task_ids": [
+          "T8",
+          "T9",
+          "T10",
+          "T12"
+        ],
+        "current_status_dimensions": {
+          "overall": "PARTIAL",
+          "browser_layout": "OBSERVED",
+          "browser_behavior": "PARTIAL",
+          "native_layout": "NOT_RUN",
+          "native_targeted": "PARTIAL",
+          "text_scale_150": "NOT_RUN",
+          "text_scale_200": "NOT_RUN",
+          "state_coverage": {
+            "empty": "NOT_RUN",
+            "loading": "NOT_RUN",
+            "error": "NOT_RUN",
+            "long_content": "NOT_RUN"
+          },
+          "sidebar_1024": {
+            "left_and_right_open": "OBSERVED",
+            "left_only": "OBSERVED",
+            "right_only": "OBSERVED",
+            "both_closed": "OBSERVED",
+            "na_reason": null,
+            "evidence_path": "browser-sidebar-layout-matrix.json"
+          }
+        },
+        "evidence_paths": [
+          "screenshots/final/browser-p14-publish-1024-both.jpg",
+          "screenshots/final/browser-p14-publish-1280-both.jpg",
+          "screenshots/final/browser-p14-publish-1440-both.jpg",
+          "screenshots/final/browser-p14-publish-1728-both.jpg",
+          "native-ui-behaviors.json",
+          "screenshots/native-final/native-final2-pdf-exported.png",
+          "screenshots/native-final/native-final2-static-web-exported.png"
+        ],
+        "source_test_trace": {
+          "audit_file": "ui-audit.md",
+          "audit_row_id": "P14",
+          "source_and_test_references": [
+            "app/views.js:2344",
+            "app/views.js:2451",
+            "tests/authoring_ui_test.ts:2340",
+            "tests/authoring_ui_test.ts:2489"
+          ],
+          "status_caveat": "The audit row is a source/test review pointer. Its historical status prose is not authoritative; status and source pins are taken from this requirements entry, ui-matrix.json, and each evidence record."
+        },
+        "current_matrix_pointer": {
+          "file": "ui-matrix.json",
+          "collection": "pages",
+          "id": "P14"
+        },
+        "remaining_gap": "Only the four-width browser layout observation is complete for this page row. Full page behavior, Native layout, and the separately listed text-scale/state dimensions remain partial or not run; see the linked matrix row."
+      },
+      {
+        "id": "P15",
+        "kind": "page_or_view",
+        "name": "版本历史",
+        "plan_location": "§8.1",
+        "original_acceptance_criteria": "pending/成功/失败快照、真实历史发现、恢复前备份、恢复、空态和坏条目隔离",
+        "related_cross_cut_requirement_ids": [
+          "IO-02",
+          "IO-07",
+          "UI-01",
+          "UI-06",
+          "UI-08"
+        ],
+        "task_ids": [
+          "T2",
+          "T5",
+          "T9",
+          "T10",
+          "T12"
+        ],
+        "current_status_dimensions": {
+          "overall": "PARTIAL",
+          "browser_layout": "OBSERVED",
+          "browser_behavior": "PARTIAL",
+          "native_layout": "NOT_RUN",
+          "native_targeted": "PARTIAL",
+          "text_scale_150": "NOT_RUN",
+          "text_scale_200": "NOT_RUN",
+          "state_coverage": {
+            "empty": "NOT_RUN",
+            "loading": "NOT_RUN",
+            "error": "NOT_RUN",
+            "long_content": "NOT_RUN"
+          },
+          "sidebar_1024": {
+            "left_and_right_open": "OBSERVED",
+            "left_only": "OBSERVED",
+            "right_only": "OBSERVED",
+            "both_closed": "OBSERVED",
+            "na_reason": null,
+            "evidence_path": "browser-sidebar-layout-matrix.json"
+          },
+          "latest_native_source_commit": "77993519e31cb3c780a77af319ce3033acecccf2",
+          "latest_native_observation": "At 7799351, Final5 showed and completed a recovery retry UI flow after a deliberate 0555 backup failure; the duplicate-project keep-both choice retained the recovery prompt, then Keep Disk completed. Canonical/backup/journal physical proof remains pending. Current-source snapshot-history restore/domain validation is separate and pending."
+        },
+        "evidence_paths": [
+          "screenshots/final/browser-p15-versions-1024-both.jpg",
+          "screenshots/final/browser-p15-versions-1280-both.jpg",
+          "screenshots/final/browser-p15-versions-1440-both.jpg",
+          "screenshots/final/browser-p15-versions-1728-both.jpg",
+          "screenshots/final/browser-final-source-p15-history-1024.jpg",
+          "screenshots/final/browser-final-source-p15-history-1280.jpg",
+          "screenshots/final/browser-final-source-p15-history-1440.jpg",
+          "screenshots/final/browser-final-source-p15-history-1728.jpg",
+          "browser-final-behaviors.json",
+          "native-ui-behaviors.json",
+          "screenshots/native-final/native-final5-recovery-present.png",
+          "screenshots/native-final/native-final5-recovery-backup-failure.png",
+          "screenshots/native-final/native-final5-recovery-restored.png",
+          "screenshots/native-final/native-final5-duplicate-preserves-recovery.png",
+          "screenshots/native-final/native-final5-recovery-keep-disk.png",
+          "screenshots/native-final/native-final5-versions-valid-invalid.png"
+        ],
+        "source_test_trace": {
+          "audit_file": "ui-audit.md",
+          "audit_row_id": "P15",
+          "source_and_test_references": [
+            "app/views.js:2322",
+            "tests/authoring_ui_test.ts:525",
+            "tests/authoring_ui_test.ts:593"
+          ],
+          "status_caveat": "The audit row is a source/test review pointer. Its historical status prose is not authoritative; status and source pins are taken from this requirements entry, ui-matrix.json, and each evidence record."
+        },
+        "current_matrix_pointer": {
+          "file": "ui-matrix.json",
+          "collection": "pages",
+          "id": "P15"
+        },
+        "remaining_gap": "Final5 recovery UI retry and keep-disk behavior were observed, but physical Canonical/backup/journal verification is pending. Native populated snapshot-history restore/domain validation, full Native layout matrix, and the separately listed text-scale/state dimensions remain partial or not run."
+      },
+      {
+        "id": "P16",
+        "kind": "page_or_view",
+        "name": "设置",
+        "plan_location": "§8.1",
+        "original_acceptance_criteria": "General/AI Connections/Models/Accounts/Project，正确进入、表单/错误/临时凭据清理",
+        "related_cross_cut_requirement_ids": [
+          "UI-01",
+          "UI-06",
+          "UI-08"
+        ],
+        "task_ids": [
+          "T9",
+          "T10",
+          "T12"
+        ],
+        "current_status_dimensions": {
+          "overall": "PARTIAL",
+          "browser_layout": "OBSERVED",
+          "browser_behavior": "PARTIAL",
+          "native_layout": "NOT_RUN",
+          "native_targeted": "NOT_RUN",
+          "text_scale_150": "NOT_RUN",
+          "text_scale_200": "NOT_RUN",
+          "state_coverage": {
+            "empty": "NOT_RUN",
+            "loading": "NOT_RUN",
+            "error": "NOT_RUN",
+            "long_content": "NOT_RUN"
+          },
+          "sidebar_1024": {
+            "left_and_right_open": "OBSERVED",
+            "left_only": "OBSERVED",
+            "right_only": "OBSERVED",
+            "both_closed": "OBSERVED",
+            "na_reason": null,
+            "evidence_path": "browser-sidebar-layout-matrix.json"
+          }
+        },
+        "evidence_paths": [
+          "screenshots/final/browser-p16-settings-1024-both.jpg",
+          "screenshots/final/browser-p16-settings-1280-both.jpg",
+          "screenshots/final/browser-p16-settings-1440-both.jpg",
+          "screenshots/final/browser-p16-settings-1728-both.jpg"
+        ],
+        "source_test_trace": {
+          "audit_file": "ui-audit.md",
+          "audit_row_id": "P16",
+          "source_and_test_references": [
+            "app/views.js:2502",
+            "tests/ai_ui_test.ts:1694"
+          ],
+          "status_caveat": "The audit row is a source/test review pointer. Its historical status prose is not authoritative; status and source pins are taken from this requirements entry, ui-matrix.json, and each evidence record."
+        },
+        "current_matrix_pointer": {
+          "file": "ui-matrix.json",
+          "collection": "pages",
+          "id": "P16"
+        },
+        "remaining_gap": "Only the four-width browser layout observation is complete for this page row. Full page behavior, Native layout, and the separately listed text-scale/state dimensions remain partial or not run; see the linked matrix row."
+      },
+      {
+        "id": "O01",
+        "kind": "interaction_surface",
+        "name": "Mapping Preview",
+        "plan_location": "§8.2",
+        "original_acceptance_criteria": "按 route 验收；选择/目标/计数、取消/继续、快切/重开/过期扫描、窄宽",
+        "related_cross_cut_requirement_ids": [
+          "IO-07",
+          "IO-09",
+          "UI-02",
+          "UI-03",
+          "UI-08"
+        ],
+        "task_ids": [
+          "T7",
+          "T9",
+          "T10",
+          "T12"
+        ],
+        "current_status_dimensions": {
+          "overall": "PARTIAL",
+          "browser": "NOT_RUN",
+          "native": "PARTIAL",
+          "keyboard": "NOT_RUN",
+          "pending_and_error": "PARTIAL"
+        },
+        "evidence_paths": [
+          "native-mapping-selection-sequence.json",
+          "native-ui-behaviors.json",
+          "screenshots/native-final/native-final2-mapping-preview-20-selection.png"
+        ],
+        "source_test_trace": {
+          "audit_file": "ui-audit.md",
+          "audit_row_id": "O01",
+          "source_and_test_references": [
+            "app/views.js:2258",
+            "tests/document_import_dialog_test.ts:537",
+            "tests/document_import_dialog_test.ts:584",
+            "tests/document_import_dialog_test.ts:660",
+            "tests/document_import_dialog_test.ts:761"
+          ],
+          "status_caveat": "The audit row is a source/test review pointer. Its historical status prose is not authoritative; status and source pins are taken from this requirements entry, ui-matrix.json, and each evidence record."
+        },
+        "current_matrix_pointer": {
+          "file": "ui-matrix.json",
+          "collection": "interaction_surfaces",
+          "id": "O01"
+        },
+        "remaining_gap": "Native final2 scan and selection were observed; 20 changes ended with 2 selected roots and do not prove full Mapping acceptance."
+      },
+      {
+        "id": "O02",
+        "kind": "interaction_surface",
+        "name": "文档选择器",
+        "plan_location": "§8.2",
+        "original_acceptance_criteria": "分组、路径/类型/大小、整行与 checkbox、全选/清空、重试、取消无写入、焦点返回",
+        "related_cross_cut_requirement_ids": [
+          "IO-09",
+          "UI-02",
+          "UI-03",
+          "UI-08"
+        ],
+        "task_ids": [
+          "T7",
+          "T9",
+          "T10",
+          "T12"
+        ],
+        "current_status_dimensions": {
+          "overall": "PARTIAL",
+          "browser": "NOT_RUN",
+          "native": "PARTIAL",
+          "keyboard": "PARTIAL",
+          "pending_and_error": "NOT_RUN"
+        },
+        "evidence_paths": [
+          "native-mapping-document-picker-focus.json",
+          "native-ui-behaviors.json",
+          "screenshots/native-final/native-final2-mapping-document-picker.png",
+          "screenshots/native-final/native-final2-folder-picker-cancelled.png"
+        ],
+        "source_test_trace": {
+          "audit_file": "ui-audit.md",
+          "audit_row_id": "O02",
+          "source_and_test_references": [
+            "app/views.js:2154",
+            "tests/document_import_dialog_test.ts:389",
+            "tests/document_import_dialog_test.ts:442",
+            "tests/document_import_dialog_test.ts:500",
+            "tests/document_import_dialog_test.ts:546",
+            "tests/document_import_dialog_test.ts:761"
+          ],
+          "status_caveat": "The audit row is a source/test review pointer. Its historical status prose is not authoritative; status and source pins are taken from this requirements entry, ui-matrix.json, and each evidence record."
+        },
+        "current_matrix_pointer": {
+          "file": "ui-matrix.json",
+          "collection": "interaction_surfaces",
+          "id": "O02"
+        },
+        "remaining_gap": "Native final2 chooser opened/cancelled; Escape closed it, but focus returned to a container, not the Confirm button."
+      },
+      {
+        "id": "O03",
+        "kind": "interaction_surface",
+        "name": "图片/GIF/video viewer",
+        "plan_location": "§8.2",
+        "original_acceptance_criteria": "正确资源、GIF 意图播放、视频默认暂停/显式 Play/关闭复位、键盘、资源释放",
+        "related_cross_cut_requirement_ids": [
+          "IO-08",
+          "UI-02",
+          "UI-04",
+          "UI-07",
+          "UI-08"
+        ],
+        "task_ids": [
+          "T6",
+          "T11",
+          "T9",
+          "T10",
+          "T12"
+        ],
+        "current_status_dimensions": {
+          "overall": "PARTIAL",
+          "browser": "PARTIAL",
+          "native": "PARTIAL",
+          "keyboard": "PARTIAL",
+          "pending_and_error": "NOT_RUN"
+        },
+        "evidence_paths": [
+          "browser-frozen-media-three-trips.json",
+          "native-video-close-focus.ax.txt",
+          "screenshots/native-final/native-final2-gif-viewer.png",
+          "screenshots/native-final/native-final2-video-explicit-play.png",
+          "native-ui-behaviors.json"
+        ],
+        "source_test_trace": {
+          "audit_file": "ui-audit.md",
+          "audit_row_id": "O03",
+          "source_and_test_references": [
+            "app/main.js:5859",
+            "tests/asset_thumbnail_test.ts:615",
+            "tests/authoring_ui_test.ts:4694"
+          ],
+          "status_caveat": "The audit row is a source/test review pointer. Its historical status prose is not authoritative; status and source pins are taken from this requirements entry, ui-matrix.json, and each evidence record."
+        },
+        "current_matrix_pointer": {
+          "file": "ui-matrix.json",
+          "collection": "interaction_surfaces",
+          "id": "O03"
+        },
+        "remaining_gap": "Browser cycles and Native final2 playback observed; memory limits and complete native list loop not measured."
+      },
+      {
+        "id": "O04",
+        "kind": "interaction_surface",
+        "name": "AI settings",
+        "plan_location": "§8.2",
+        "original_acceptance_criteria": "连接/模型/订阅/provider 状态、错误、临时 key 清理、宽度/文字放大、真实键盘",
+        "related_cross_cut_requirement_ids": [
+          "UI-02",
+          "UI-06",
+          "UI-08"
+        ],
+        "task_ids": [
+          "T9",
+          "T10",
+          "T12"
+        ],
+        "current_status_dimensions": {
+          "overall": "PARTIAL",
+          "browser": "PARTIAL",
+          "native": "NOT_RUN",
+          "keyboard": "PARTIAL",
+          "pending_and_error": "NOT_RUN"
+        },
+        "evidence_paths": [
+          "browser-final-behaviors.json"
+        ],
+        "source_test_trace": {
+          "audit_file": "ui-audit.md",
+          "audit_row_id": "O04",
+          "source_and_test_references": [
+            "app/views.js:2502",
+            "app/views.js:3702",
+            "tests/ai_ui_test.ts:633",
+            "tests/ai_ui_test.ts:1694"
+          ],
+          "status_caveat": "The audit row is a source/test review pointer. Its historical status prose is not authoritative; status and source pins are taken from this requirements entry, ui-matrix.json, and each evidence record."
+        },
+        "current_matrix_pointer": {
+          "file": "ui-matrix.json",
+          "collection": "interaction_surfaces",
+          "id": "O04"
+        },
+        "remaining_gap": "Browser Tab/Shift+Tab/Escape focus return observed on source 04e9fdf; no real credentials used."
+      },
+      {
+        "id": "O05",
+        "kind": "interaction_surface",
+        "name": "Rename",
+        "plan_location": "§8.2",
+        "original_acceptance_criteria": "managed asset 物理改名、空名/非法名、取消、Undo；阶段/课时保留适合其场景的编辑器",
+        "related_cross_cut_requirement_ids": [
+          "IO-07",
+          "UI-02",
+          "UI-08"
+        ],
+        "task_ids": [
+          "T5",
+          "T9",
+          "T10",
+          "T12"
+        ],
+        "current_status_dimensions": {
+          "overall": "PARTIAL",
+          "browser": "PARTIAL",
+          "native": "NOT_RUN",
+          "keyboard": "PARTIAL",
+          "pending_and_error": "NOT_RUN"
+        },
+        "evidence_paths": [
+          "browser-media-20-cycles.json",
+          "runs/deno-o05-rename-redo-proof.log"
+        ],
+        "source_test_trace": {
+          "audit_file": "ui-audit.md",
+          "audit_row_id": "O05",
+          "source_and_test_references": [
+            "app/main.js:7983",
+            "tests/authoring_ui_test.ts:3510"
+          ],
+          "status_caveat": "The audit row is a source/test review pointer. Its historical status prose is not authoritative; status and source pins are taken from this requirements entry, ui-matrix.json, and each evidence record."
+        },
+        "current_matrix_pointer": {
+          "file": "ui-matrix.json",
+          "collection": "interaction_surfaces",
+          "id": "O05"
+        },
+        "remaining_gap": "Browser rename/cancel and physical rename/undo focused path observed; full native dialog matrix not complete."
+      },
+      {
+        "id": "O06",
+        "kind": "interaction_surface",
+        "name": "Delete confirmation",
+        "plan_location": "§8.2",
+        "original_acceptance_criteria": "页面删除与共享确认一致；一次确认一次操作，取消无副作用，Undo、合理焦点",
+        "related_cross_cut_requirement_ids": [
+          "IO-07",
+          "UI-02",
+          "UI-05",
+          "UI-08"
+        ],
+        "task_ids": [
+          "T5",
+          "T9",
+          "T10",
+          "T12"
+        ],
+        "current_status_dimensions": {
+          "overall": "PARTIAL",
+          "browser": "PARTIAL",
+          "native": "PARTIAL",
+          "keyboard": "PARTIAL",
+          "pending_and_error": "NOT_RUN"
+        },
+        "evidence_paths": [
+          "screenshots/browser-o06-delete-neighbor-focus-green-1440.jpg",
+          "native-ui-behaviors.json",
+          "screenshots/native-final/native-final2-layout-delete-undo-redo.png"
+        ],
+        "source_test_trace": {
+          "audit_file": "ui-audit.md",
+          "audit_row_id": "O06",
+          "source_and_test_references": [
+            "tests/authoring_ui_test.ts:1458",
+            "tests/authoring_ui_test.ts:1499"
+          ],
+          "status_caveat": "The audit row is a source/test review pointer. Its historical status prose is not authoritative; status and source pins are taken from this requirements entry, ui-matrix.json, and each evidence record."
+        },
+        "current_matrix_pointer": {
+          "file": "ui-matrix.json",
+          "collection": "interaction_surfaces",
+          "id": "O06"
+        },
+        "remaining_gap": "Browser cancel/Esc/confirm/neighbor focus and Native final2 layout delete/Undo/Redo observed; not all surfaces reviewed."
+      },
+      {
+        "id": "O07",
+        "kind": "interaction_surface",
+        "name": "Publish preflight",
+        "plan_location": "§8.2",
+        "original_acceptance_criteria": "blocker/warning/path、acknowledge、禁用/可执行状态、返回/导出、真实内容与键盘",
+        "related_cross_cut_requirement_ids": [
+          "IO-10",
+          "UI-02",
+          "UI-08"
+        ],
+        "task_ids": [
+          "T8",
+          "T9",
+          "T10",
+          "T12"
+        ],
+        "current_status_dimensions": {
+          "overall": "PARTIAL",
+          "browser": "PARTIAL",
+          "native": "PARTIAL",
+          "keyboard": "NOT_RUN",
+          "pending_and_error": "PARTIAL"
+        },
+        "evidence_paths": [
+          "screenshots/browser-o07-preflight-green-1440.jpg",
+          "screenshots/browser-p14-markdown-downloaded-1440.jpg",
+          "runs/native-staticweb-pdf-physical-proof.log",
+          "screenshots/native-final/native-final2-pdf-exported.png",
+          "screenshots/native-final/native-final2-static-web-exported.png",
+          "native-ui-behaviors.json"
+        ],
+        "source_test_trace": {
+          "audit_file": "ui-audit.md",
+          "audit_row_id": "O07",
+          "source_and_test_references": [
+            "app/views.js:2451",
+            "tests/authoring_ui_test.ts:2340",
+            "tests/authoring_ui_test.ts:2489"
+          ],
+          "status_caveat": "The audit row is a source/test review pointer. Its historical status prose is not authoritative; status and source pins are taken from this requirements entry, ui-matrix.json, and each evidence record."
+        },
+        "current_matrix_pointer": {
+          "file": "ui-matrix.json",
+          "collection": "interaction_surfaces",
+          "id": "O07"
+        },
+        "remaining_gap": "Browser Markdown download/preflight observed; Native PDF verified and final2 static-web UI ACK had a directory/count mismatch awaiting final3 recheck."
+      },
+      {
+        "id": "O08",
+        "kind": "interaction_surface",
+        "name": "Recovery",
+        "plan_location": "§8.2",
+        "original_acceptance_criteria": "保存时间/恢复对象/两种选择、备份前置、真实失败、明确恢复/保留磁盘语义",
+        "related_cross_cut_requirement_ids": [
+          "IO-02",
+          "IO-07",
+          "UI-02",
+          "UI-08"
+        ],
+        "task_ids": [
+          "T2",
+          "T5",
+          "T9",
+          "T10",
+          "T12"
+        ],
+        "current_status_dimensions": {
+          "overall": "PARTIAL",
+          "browser": "PASS",
+          "native": "PARTIAL",
+          "keyboard": "NOT_RUN",
+          "pending_and_error": "PARTIAL",
+          "native_targeted": "PARTIAL",
+          "latest_native_source_commit": "77993519e31cb3c780a77af319ce3033acecccf2",
+          "latest_native_observation": "Final5 at 7799351: prompt visible on explicit open; 0555 backup failure retained choices; after permission repair, restore retry UI showed candidate and persisted-backup success; keep-both duplicate handling retained the prompt; Keep Disk completed in UI. Canonical/backup/journal physical proof is pending."
+        },
+        "evidence_paths": [
+          "browser-final-behaviors.json",
+          "runs/deno-fhistory-keepdisk-physical-proof.log",
+          "runs/deno-fhistory-restore-physical-proof.log",
+          "native-ui-behaviors.json",
+          "screenshots/native-final/native-final5-recovery-present.png",
+          "screenshots/native-final/native-final5-recovery-backup-failure.png",
+          "screenshots/native-final/native-final5-recovery-restored.png",
+          "screenshots/native-final/native-final5-duplicate-preserves-recovery.png",
+          "screenshots/native-final/native-final5-recovery-keep-disk.png"
+        ],
+        "source_test_trace": {
+          "audit_file": "ui-audit.md",
+          "audit_row_id": "O08",
+          "source_and_test_references": [
+            "tests/recovery_ui_test.ts:569",
+            "tests/authoring_ui_test.ts:593"
+          ],
+          "status_caveat": "The audit row is a source/test review pointer. Its historical status prose is not authoritative; status and source pins are taken from this requirements entry, ui-matrix.json, and each evidence record."
+        },
+        "current_matrix_pointer": {
+          "file": "ui-matrix.json",
+          "collection": "interaction_surfaces",
+          "id": "O08"
+        },
+        "remaining_gap": "Browser keep-disk and restore have physical sidecar/Canonical proofs and clean reload on 04e9fdf. Native Final5 recovery retry, duplicate-choice preservation, and keep-disk are UI-observed; corresponding Canonical/backup/journal physical proof and a full Native matrix remain outstanding."
+      },
+      {
+        "id": "O09",
+        "kind": "interaction_surface",
+        "name": "External modification",
+        "plan_location": "§8.2",
+        "original_acceptance_criteria": "外部/本地差异、暂停保存、reload/merge/keep-local 的适用条件和再次变更处理",
+        "related_cross_cut_requirement_ids": [
+          "IO-01",
+          "IO-03",
+          "IO-06",
+          "IO-07",
+          "UI-02",
+          "UI-08"
+        ],
+        "task_ids": [
+          "T1",
+          "T3",
+          "T5",
+          "T9",
+          "T10",
+          "T12"
+        ],
+        "current_status_dimensions": {
+          "overall": "PARTIAL",
+          "browser": "PARTIAL",
+          "native": "PASS_TARGETED_TWO_OUTCOMES",
+          "keyboard": "NOT_RUN",
+          "pending_and_error": "PARTIAL"
+        },
+        "evidence_paths": [
+          "browser-final-behaviors.json",
+          "runs/native-final8/n05-final9-preview-rejected.ax.txt",
+          "runs/native-final8/n05-final9-explicit-keep-local-result.ax.txt",
+          "runs/native-final9/n05-final9-after-reopen.ax.txt",
+          "runs/native-final9-n05-keep-local-physical-proof.json",
+          "runs/native-final9/n05-final9-after-reopen-physical-proof.json",
+          "runs/native-final9/n05-final9-nonconflict-merged.ax.txt",
+          "runs/native-final9/n05-final9-nonconflict-physical-proof.json",
+          "runs/n05-local-e-manual-evidence-preservation.json"
+        ],
+        "source_test_trace": {
+          "audit_file": "ui-audit.md",
+          "audit_row_id": "O09",
+          "source_and_test_references": [
+            "app/main.js:4526",
+            "tests/recovery_ui_test.ts:253",
+            "tests/recovery_ui_test.ts:483",
+            "tests/authoring_ui_test.ts:3014",
+            "tests/authoring_ui_test.ts:5017"
+          ],
+          "status_caveat": "Native Final9 evidence supports two scoped outcomes only; overall O09 remains PARTIAL. Browser evidence is historical b990d49, and broader keyboard/lock/recovery paths are not closed."
+        },
+        "current_matrix_pointer": {
+          "file": "ui-matrix.json",
+          "collection": "interaction_surfaces",
+          "id": "O09"
+        },
+        "remaining_gap": "Final9 Native has UI/physical/fresh-reopen evidence for same-field Keep Local and UI/physical evidence for distinct-field auto-merge. Browser conflict flow was observed historically on b990d49 and has not been rechecked on the final source; broader conflict, lock-race, keyboard, and automatic recovery coverage remain partial."
+      },
+      {
+        "id": "O10",
+        "kind": "interaction_surface",
+        "name": "Project lock",
+        "plan_location": "§8.2",
+        "original_acceptance_criteria": "占用与失效说明、安全 Retry/Return；不删除/强取他人锁",
+        "related_cross_cut_requirement_ids": [
+          "IO-01",
+          "IO-06",
+          "UI-02",
+          "UI-08"
+        ],
+        "task_ids": [
+          "T1",
+          "T5",
+          "T9",
+          "T10",
+          "T12"
+        ],
+        "current_status_dimensions": {
+          "overall": "PARTIAL",
+          "browser": "NOT_RUN",
+          "native": "PARTIAL",
+          "keyboard": "NOT_RUN",
+          "pending_and_error": "PARTIAL"
+        },
+        "evidence_paths": [
+          "native-ui-behaviors.json",
+          "runs/native-review-leased-pointer-isolated.log"
+        ],
+        "source_test_trace": {
+          "audit_file": "ui-audit.md",
+          "audit_row_id": "O10",
+          "source_and_test_references": [
+            "tests/authoring_ui_test.ts:4022"
+          ],
+          "status_caveat": "The audit row is a source/test review pointer. Its historical status prose is not authoritative; status and source pins are taken from this requirements entry, ui-matrix.json, and each evidence record."
+        },
+        "current_matrix_pointer": {
+          "file": "ui-matrix.json",
+          "collection": "interaction_surfaces",
+          "id": "O10"
+        },
+        "remaining_gap": "Automated lease/lifecycle gates pass and Native final2 project opening was observed; full lock dialog/focus path not measured."
+      },
+      {
+        "id": "O11",
+        "kind": "interaction_surface",
+        "name": "重定位/重复身份",
+        "plan_location": "§8.2",
+        "original_acceptance_criteria": "OS picker 取消/错误、错误 ID 拒绝、duplicate 选择、移除记录不删文件",
+        "related_cross_cut_requirement_ids": [
+          "IO-01",
+          "IO-06",
+          "IO-07",
+          "UI-02",
+          "UI-03",
+          "UI-08"
+        ],
+        "task_ids": [
+          "T1",
+          "T5",
+          "T9",
+          "T10",
+          "T12"
+        ],
+        "current_status_dimensions": {
+          "overall": "PARTIAL",
+          "browser": "PARTIAL",
+          "native": "NOT_RUN",
+          "keyboard": "NOT_RUN",
+          "pending_and_error": "PARTIAL"
+        },
+        "evidence_paths": [
+          "browser-session-instant-reload-green.json"
+        ],
+        "source_test_trace": {
+          "audit_file": "ui-audit.md",
+          "audit_row_id": "O11",
+          "source_and_test_references": [
+            "app/main.js:6997",
+            "tests/registry_launcher_test.ts:356",
+            "tests/registry_launcher_test.ts:460",
+            "tests/registry_launcher_test.ts:524",
+            "tests/registry_launcher_test.ts:545"
+          ],
+          "status_caveat": "The audit row is a source/test review pointer. Its historical status prose is not authoritative; status and source pins are taken from this requirements entry, ui-matrix.json, and each evidence record."
+        },
+        "current_matrix_pointer": {
+          "file": "ui-matrix.json",
+          "collection": "interaction_surfaces",
+          "id": "O11"
+        },
+        "remaining_gap": "Browser session route reload survived immediate reload; relocation/duplicate identity flows are not fully measured."
+      }
+    ],
+    "matrix_dimensions": {
+      "page_width_rows": "64 = P01..P16 × 1024/1280/1440/1728 at 900px; OBSERVED on b990d49, not current-source behavior PASS.",
+      "sidebar_rows": "42 = 14 applicable page/view entries × left/right/none at 1024px; OBSERVED on b990d49; P01 launcher and P06 reader sidebar controls are N/A.",
+      "other_dimensions": "§8.3 text-scale/reduced-motion/keyboard/media dimensions are separate. Page/browser zoom and OS text-scale methods must be recorded separately; the current IAB exposed no PageZoom control and Native View exposed Toggle Full Screen only, so real 150/200 scaling is NOT_RUN, not replaced by CSS or window resize. OS reduced-motion was observed off and has not been toggled; RSS/decoded memory remains NOT_MEASURED."
+    },
+    "last_source_pin_at_document_update": "50aaea7268164b9fa066425ce4a5ac158ca87352",
+    "source_state_note": "Combined source/gate is 50aaea7268164b9fa066425ce4a5ac158ca87352: Deno check 0, full 716/0, focused 17/0; Rust fcefcb1 has 258/0/1 ignored. Browser and Native geometry retain historical pins. Final10 adds targeted native cold-scroll and physical asset-rename evidence. Deno no-op improves; changed-save diagnostics-on p95 regresses +21.12% and cause is not isolated, so performance remains PARTIAL/BLOCKED."
+  },
+  "report_source_commit": "50aaea7268164b9fa066425ce4a5ac158ca87352",
+  "final_performance_status": "BLOCKED_CHANGED_SAVE_DIAGNOSTIC_ON_TAIL_REGRESSION",
+  "performance_note": "Fresh 50aa paired runs: off changed median +1.41%/p95 −7.70%; on changed median +3.11%/p95 +21.12%; on no-op median/p95 −61.32%/−61.21%. Do not average modes or claim an isolated cause/significance. No-op improvement does not offset the measured changed-save tail. §10.2 requires unresolved regression to remain explicitly blocked.",
+  "archive_notes": {
+    "historical_qa_packages": "native-qa-historical-packages-archive-20261006.json; seven prior ZIPs moved to task-owned /private/tmp archive with original hashes/manifests retained.",
+    "native_target_cache": "native-target-cache-archive-20261006.json; target-native cache archived outside repository.",
+    "delivery_rule": "Only current Final10 QA package and repository-present evidence are indexed; archived historical ZIPs are inventory metadata, not missing repository files."
+  }
+}

@@ -1,0 +1,7 @@
+Check tests/import_export_test.ts
+running 2 tests from ./tests/import_export_test.ts
+incomplete import rollback retains recovery backups through outer cleanup ... ok (40ms)
+incomplete import rollback exposes a safe recovery path through CommandBus ... ok (59ms)
+
+ok | 2 passed | 0 failed | 28 filtered out (103ms)
+

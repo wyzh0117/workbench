@@ -1,0 +1,13 @@
+{
+  "root": "/tmp/workbench-io-ui-F-history-denoio-20261006",
+  "canonical": {
+    "bytes": 69270,
+    "sha256": "64b9b83fdbbea3eb2da223c2b368aef031ba644096719a09c9e10643898267be",
+    "project_id": "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
+    "title": "F-history unindexed prior snapshot"
+  },
+  "recovery_journal": {
+    "present": false
+  },
+  "domain_validation_issues": 0
+}

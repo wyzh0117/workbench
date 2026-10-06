@@ -1,0 +1,36 @@
+Window: "AI Course Workbench", App: AI Course Workbench QA Preview Final9.
+0 standard window AI Course Workbench, Secondary Actions: Raise
+	1 scroll area
+		2 HTML content Description: AI Course Workbench, URL: tauri://localhost
+			3 container 课程文件与当前编辑内容存在差异
+				4 text 保存已暂停
+				5 heading 课程文件与当前编辑内容存在差异, Value: 2
+					6 text 课程文件与当前编辑内容存在差异
+				7 text 为避免覆盖，手动保存和自动保存都已暂停。你可以继续查看；下一步请选择重新载入、自动合并，或在确认后保留本地版本。
+				8 text 磁盘变化 
+				9 text 2
+				10 text 本地变化 
+				11 text 2
+				12 text 合并冲突 
+				13 text 1
+				14 text blocks
+				15 text 本地与外部都修改了此处
+				16 button 重新载入磁盘版本
+				17 button 预览并自动合并
+				18 button 明确保留本地版本
+			19 container
+				20 text 还有无法自动合并的内容，请选择重新载入或明确保留本地版本
+				21 button 关闭提示
+	22 close button
+	23 full screen button Help: this button also has an action to zoom the window, Secondary Actions: zoom the window
+	24 minimize button
+	25 text AI Course Workbench
+26 menu bar
+	27 AI Course Workbench QA Preview Final9
+	28 File
+	29 Edit
+	30 View
+	31 Window
+	32 Help
+
+The focused UI element is 16 button 重新载入磁盘版本

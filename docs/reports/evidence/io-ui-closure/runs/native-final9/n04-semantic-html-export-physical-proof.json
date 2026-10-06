@@ -1,0 +1,47 @@
+{
+  "captured_at_utc": "2026-10-06T10:57:49.243597+00:00",
+  "source_pin": "b09718c0823f170836a223bab79b750722e83c73",
+  "format": "Semantic HTML",
+  "ui_scope": "S01-01, all layout pages; UI displayed 2 files",
+  "canonical": {
+    "path": "/private/tmp/workbench-io-ui-native-final/layout/project.json",
+    "bytes": 73780,
+    "sha256": "4957c6e748fa03fe23c495ccb245f85aca012d837f0efb7ec7bb1b46bdfeaf90"
+  },
+  "expected_frozen_canonical_sha256": "4957c6e748fa03fe23c495ccb245f85aca012d837f0efb7ec7bb1b46bdfeaf90",
+  "artifacts": [
+    {
+      "path": "/private/tmp/workbench-io-ui-native-final9-exports/native-final9-layout-s01-01-semantic-html.html",
+      "bytes": 14187,
+      "sha256": "6c868561a24f31cd3c8810bc61a23ebdc62209c899ec7a925ce6be5babad60b9"
+    },
+    {
+      "path": "/private/tmp/workbench-io-ui-native-final9-exports/assets/00000000-0000-4000-8000-00000000001d-renamed-second-qa.png",
+      "bytes": 1488,
+      "sha256": "0c479466fd0ea052ca693290293b423068552c091e37922de3944ce7eefdf0d3"
+    }
+  ],
+  "html_parse": {
+    "page_sections": [
+      {
+        "aria_label": "第 1 页",
+        "page_id": "00000000-0000-4000-8000-000000000059"
+      },
+      {
+        "aria_label": "跨页文本与图片",
+        "page_id": "00000000-0000-4000-8000-00000000005a"
+      },
+      {
+        "aria_label": "长正文续页",
+        "page_id": "00000000-0000-4000-8000-00000000005b"
+      }
+    ],
+    "local_media_references": [
+      "assets/00000000-0000-4000-8000-00000000001d-renamed-second-qa.png"
+    ],
+    "local_reference_verified": true,
+    "media_matches_canonical_asset_id": "00000000-0000-4000-8000-00000000001d",
+    "media_matches_canonical_asset_sha256": "0c479466fd0ea052ca693290293b423068552c091e37922de3944ce7eefdf0d3"
+  },
+  "scope_note": "This is one UI-exported Semantic HTML artifact plus its one referenced PNG, not a static-web package."
+}

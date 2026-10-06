@@ -1,0 +1,110 @@
+{
+  "captured_at": "2026-10-06T06:53:33.101Z",
+  "verification": "read-only physical capture after Native UI reported named Save Version success; no fixture mutation",
+  "project_root": "/tmp/workbench-io-ui-native-final/history-restore",
+  "canonical": {
+    "path": "/tmp/workbench-io-ui-native-final/history-restore/project.json",
+    "size_bytes": 70915,
+    "sha256": "253e95c5eda83f38d4511362c823be51dad5cfd7841a308e2b28908f20ee06b9",
+    "mtime": "2026-10-06T06:53:32.908Z",
+    "project_id": "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
+    "title": "F-history recovery candidate restore final",
+    "updated_at": "2026-10-06T06:53:32.528Z",
+    "schema_version": "1.0.0",
+    "snapshot_row_count": 4,
+    "domain_issues": [],
+    "n01_markers_found": 62,
+    "has_immediate_N06_marker": true,
+    "has_strict_retry_marker": true
+  },
+  "n06_snapshots": [
+    {
+      "id": "fbdcb3e4-a129-45f6-8635-1184d7bb1087",
+      "name": "N06 Strict Retry Marker2 2026-10-06",
+      "created_at": "1791269447315",
+      "project_id": "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
+      "canonical_row": {
+        "created_at": "1791269447315",
+        "git_commit_hash": null,
+        "id": "fbdcb3e4-a129-45f6-8635-1184d7bb1087",
+        "name": "N06 Strict Retry Marker2 2026-10-06",
+        "note": "",
+        "project_id": "dddddddd-dddd-4ddd-8ddd-dddddddddddd"
+      },
+      "envelope": {
+        "path": "/tmp/workbench-io-ui-native-final/history-restore/.workspace/snapshots/fbdcb3e4-a129-45f6-8635-1184d7bb1087.json",
+        "size_bytes": 72949,
+        "sha256": "59d4629b7214c1868486ccf37018c99efc386b8713480c7d7100c99b6f6d0edf",
+        "mtime": "2026-10-06T06:50:47.320Z",
+        "id": "fbdcb3e4-a129-45f6-8635-1184d7bb1087",
+        "project_id": "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
+        "project_dir": "/private/tmp/workbench-io-ui-native-final/history-restore",
+        "lease_generation": "app-p43987-1791267794848-0-6c2a58ec92f755b13cbc21963ff3a8eb50874c94768c06f9:lease-1",
+        "editor_generation": 1,
+        "operation_id": "fdd56ad2-e3fb-4209-9530-ea41b1bdcf05",
+        "revision": 142,
+        "name": "N06 Strict Retry Marker2 2026-10-06",
+        "created_at": "1791269447315",
+        "declared_content_hash": "db4299f18bddf50cd018e601721c0f3b328e0d447c013007d7668932a913f745",
+        "content_hash_method": "SHA-256 of compact UTF-8 JSON.stringify(envelope.project)",
+        "recomputed_compact_project_hash": "db4299f18bddf50cd018e601721c0f3b328e0d447c013007d7668932a913f745",
+        "content_hash_matches": true,
+        "embedded_project_id": "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
+        "embedded_title": "F-history recovery candidate restore final",
+        "embedded_snapshot_rows": 3,
+        "domain_issues": [],
+        "n01_markers_found": 62,
+        "contains_immediate_marker": true,
+        "contains_strict_retry_marker": true
+      },
+      "disk_row_matches": true
+    },
+    {
+      "id": "8b344fe5-35c0-43a8-a869-b612cc483a2d",
+      "name": "N06 Immediate Final6 Save Version 2026-10-06",
+      "created_at": "1791268974986",
+      "project_id": "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
+      "canonical_row": {
+        "created_at": "1791268974986",
+        "git_commit_hash": null,
+        "id": "8b344fe5-35c0-43a8-a869-b612cc483a2d",
+        "name": "N06 Immediate Final6 Save Version 2026-10-06",
+        "note": "",
+        "project_id": "dddddddd-dddd-4ddd-8ddd-dddddddddddd"
+      },
+      "envelope": {
+        "path": "/tmp/workbench-io-ui-native-final/history-restore/.workspace/snapshots/8b344fe5-35c0-43a8-a869-b612cc483a2d.json",
+        "size_bytes": 72533,
+        "sha256": "8838c45be7e1444b739f73e1551cb88cad9ae9d784349d0eddcf2404a8fff539",
+        "mtime": "2026-10-06T06:42:54.993Z",
+        "id": "8b344fe5-35c0-43a8-a869-b612cc483a2d",
+        "project_id": "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
+        "project_dir": "/private/tmp/workbench-io-ui-native-final/history-restore",
+        "lease_generation": "app-p43987-1791267794848-0-6c2a58ec92f755b13cbc21963ff3a8eb50874c94768c06f9:lease-1",
+        "editor_generation": 1,
+        "operation_id": "e4aa0a76-86cd-49ec-876d-0358c72d055f",
+        "revision": 31,
+        "name": "N06 Immediate Final6 Save Version 2026-10-06",
+        "created_at": "1791268974986",
+        "declared_content_hash": "74e74028d0a1a6828274ef9579a8b3ae1c7be8663321446f793392997fed91f2",
+        "content_hash_method": "SHA-256 of compact UTF-8 JSON.stringify(envelope.project)",
+        "recomputed_compact_project_hash": "74e74028d0a1a6828274ef9579a8b3ae1c7be8663321446f793392997fed91f2",
+        "content_hash_matches": true,
+        "embedded_project_id": "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
+        "embedded_title": "F-history recovery candidate restore final",
+        "embedded_snapshot_rows": 2,
+        "domain_issues": [],
+        "n01_markers_found": 62,
+        "contains_immediate_marker": false,
+        "contains_strict_retry_marker": false
+      },
+      "disk_row_matches": true
+    }
+  ],
+  "snapshot_directory": {
+    "path": "/tmp/workbench-io-ui-native-final/history-restore/.workspace/snapshots",
+    "total_entries": 13,
+    "files": 13,
+    "mode": "755"
+  }
+}

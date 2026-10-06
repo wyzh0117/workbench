@@ -1,0 +1,14 @@
+F-small MP4 media source/Range endpoint diagnosis
+captured_at_utc=2026-10-05T20:45:54.800888+00:00
+fixture_project=http://127.0.0.1:4188 project_id=00000000-0000-4000-8000-000000004188
+asset_id=00000000-0000-4000-8000-000000000084
+prior_ui_token_after_viewer_closed=404 JSON error "视频预览已关闭或过期，请重新打开。"; expected after UI release, cannot establish pre-close state from this expired token
+media-source status=200 result={"mime": "video/mp4", "size": 8748, "url": "/api/media/<redacted-after-release>"}
+fresh_token=<redacted-after-release>
+HEAD range=None status=200 type=video/mp4 length=8748 range_out=None accept_ranges=bytes sample_hex=
+GET range='bytes=0-63' status=206 type=video/mp4 length=64 range_out=bytes 0-63/8748 accept_ranges=bytes sample_hex=000000206674797069736f6d0000020069736f6d69736f32617663316d703431000003496d6f6f760000006c6d766864000000000000000000000000000003e8
+GET range='bytes=-32' status=206 type=video/mp4 length=32 range_out=bytes 8716-8747/8748 accept_ranges=bytes sample_hex=fc4c0004005b80e9bb8000c0a01e08b33f6a7b5ae0cfa577c0d5bc14c9d91b44
+GET range='bytes=0-0,2-3' status=416 body=b''
+GET full status=200 type=video/mp4 header_length=8748 actual_bytes=8748 sha256=697f1b863079014da64bc345296d4671197a4d921341bf11ef71c26dc21cf7c6 first32_hex=000000206674797069736f6d0000020069736f6d69736f32617663316d703431 agrees_media_source_size=True agrees_media_source_mime=True
+DELETE release status=204 body=b''
+live_viewer_reprobe=2026-10-05T20:47:26.297225+00:00 same URL /api/media/ecfd20f08f468c616db5b3c4485de64280712a901892f990385431db7fd40471 while viewer OPEN; HEAD 404 and GET Range bytes=0-63 404 JSON "视频预览已关闭或过期，请重新打开。"

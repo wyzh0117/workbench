@@ -1,0 +1,13 @@
+Native final2 mapping-project lease release check
+checked_utc=2026-10-06T03:47:09Z
+known_mapping_pid=18646
+ps_mapping_pid:
+official_app_process (not modified):
+ 9832     1 S    20:52:16 /Applications/AI Course Workbench.app/Contents/MacOS/ai-course-workbench
+layout_project_guard_openers:
+qa_session_guard_openers:
+layout_project_and_guard_metadata:
+/private/tmp/workbench-io-ui-native-final/layout/.workspace/project.lock.guard size=0 mtime=Oct  6 11:36:21 2026
+/private/tmp/workbench-io-ui-native-final/layout/project.json size=73780 mtime=Oct  6 11:40:04 2026
+/private/tmp/workbench-io-ui-native-final/layout/project.bak size=73780 mtime=Oct  6 11:39:55 2026
+interpretation: PID 18646 absent and neither QA project guard nor QA session guard has an open file descriptor; the zero-byte project.lock.guard file and Canonical/backup remain on disk. PID 9832 is the installed public app and was not touched.

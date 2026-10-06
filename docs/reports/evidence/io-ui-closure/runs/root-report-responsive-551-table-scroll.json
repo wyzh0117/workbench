@@ -1,0 +1,15 @@
+{
+  "observed_at": "2026-10-06T08:03:37.361Z",
+  "source_commit": "11232c28515e2e8708ee4f586757606ce1bdf8f8",
+  "report_state": "DRAFT_FINAL7_AND_PAIRED_METRICS_PENDING",
+  "viewport_css_width": 551,
+  "document_scroll_width": 551,
+  "table_count": 4,
+  "table_css_width": 960,
+  "scroll_container_css_width": 497,
+  "overflow_x": "auto",
+  "image_count": 8,
+  "all_images_decoded": true,
+  "screenshot": "/Users/youngi/.codex/worktrees/io-ui-closure/workbench/docs/reports/evidence/io-ui-closure/screenshots/report-responsive-551-table-scroll.jpg",
+  "mime": "image/jpeg"
+}

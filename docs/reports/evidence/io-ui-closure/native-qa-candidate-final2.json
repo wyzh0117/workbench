@@ -1,0 +1,60 @@
+{
+  "kind": "local_native_qa_candidate",
+  "status": "superseded_pending_native_cold_window_close_fix",
+  "source_commit": "04e9fdf4276fe37b79d7a1ee87656c28865d0fac",
+  "source_tree_note": "app/** and src-tauri production source were clean at build; later Deno test-only edits do not change embedded frontend/Rust production code",
+  "version": "0.2.7",
+  "overlay": {
+    "path": "/tmp/workbench-io-ui-closure-qa-overlay.json",
+    "sha256": "7fe6471be8ce87a40151bf931016d5d1c7bb369b64b25f570f37b8fceea21024",
+    "product_name": "AI Course Workbench QA Preview",
+    "bundle_identifier": "io.github.wyzh0117.ai-course-workbench.qa.io-ui-closure"
+  },
+  "build": {
+    "command": "CARGO_TARGET_DIR=/tmp/io-ui-closure-native-qa-prewarm-target CARGO_BUILD_JOBS=2 cargo tauri build --target aarch64-apple-darwin --features custom-protocol --config /tmp/workbench-io-ui-closure-qa-overlay.json --bundles app --no-sign",
+    "profile": "release",
+    "exit_code": 0,
+    "target": "aarch64-apple-darwin",
+    "log": "docs/reports/evidence/io-ui-closure/runs/native-final2-qa-build.log"
+  },
+  "app": {
+    "path": "/tmp/io-ui-closure-native-qa-final2/AI Course Workbench QA Preview.app",
+    "product_name": "AI Course Workbench QA Preview",
+    "bundle_identifier": "io.github.wyzh0117.ai-course-workbench.qa.io-ui-closure",
+    "short_version": "0.2.7",
+    "bundle_version": "0.2.7",
+    "architecture": "arm64",
+    "signature": "ad-hoc; no Team ID; not Developer ID notarized",
+    "codesign_deep_strict_verify": "passed",
+    "verification_log": "docs/reports/evidence/io-ui-closure/runs/native-final2-qa-sign-verify.log",
+    "executable_sha256": "c80c06ae10275e144be6ec3ea4e6eb9524c017281a80a9470a937ec33b96fdf4",
+    "bundle_tree_sha256": "5220cdcfaf75854d22e22e819a4cb501f79f9a80219869acc646660c05c806d4",
+    "bundle_tree_sha256_algorithm": "sorted relative path + NUL + file SHA-256 hex + LF"
+  },
+  "zip": {
+    "path": "/tmp/io-ui-closure-native-qa-final2/AI-Course-Workbench-QA-Preview-aarch64-0.2.7.zip",
+    "size_bytes": 7069415,
+    "sha256": "fe410e1368c113d59184bfb38b9632daf19151486c9584a01c7f5dae6fb9554a",
+    "integrity": "unzip -t passed",
+    "verification_log": "docs/reports/evidence/io-ui-closure/runs/native-final2-qa-zip-verify.log"
+  },
+  "embedded_frontend": {
+    "app_source_file_count": 18,
+    "exact_source_byte_matches": 17,
+    "index_html_normalized_dom_event_stream_equal": true,
+    "all_current_source_assets_payloads_present_in_signed_executable": true,
+    "nonmatching_codegen_payloads_embedded": 0,
+    "verification_log": "docs/reports/evidence/io-ui-closure/runs/native-final2-qa-asset-check.log"
+  },
+  "native_gui_qa": "Root CUA verified Native Open and project load on this candidate. Cold launcher close is pending a distinct rebuild after the cold-window-close fix; final2 remains available for reachable-menu checks.",
+  "runtime_sample": {
+    "captured_at_utc": "2026-10-06T03:12:29Z",
+    "command": "ps -axo pid=,ppid=,rss=,command= | rg -F '/tmp/io-ui-closure-native-qa-final2/'",
+    "pid": 18646,
+    "ppid": 1,
+    "rss_kib": 32736,
+    "rss_mib": 31.96875,
+    "scope": "One main-process sample only; WebKit child attribution, app-wide RSS, and memory growth were not measured.",
+    "log": "docs/reports/evidence/io-ui-closure/runs/native-final2-main-process-rss.log"
+  }
+}

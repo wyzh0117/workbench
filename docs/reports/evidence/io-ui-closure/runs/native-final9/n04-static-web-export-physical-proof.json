@@ -1,0 +1,51 @@
+{
+  "captured_at_utc": "2026-10-06T10:58:57.590237+00:00",
+  "source_pin": "b09718c0823f170836a223bab79b750722e83c73",
+  "format": "Static Web directory export",
+  "ui_scope": "S01-01, all layout pages; UI reported 3 files, directory output (not ZIP)",
+  "canonical": {
+    "path": "/private/tmp/workbench-io-ui-native-final/layout/project.json",
+    "bytes": 73780,
+    "sha256": "4957c6e748fa03fe23c495ccb245f85aca012d837f0efb7ec7bb1b46bdfeaf90"
+  },
+  "expected_frozen_canonical_sha256": "4957c6e748fa03fe23c495ccb245f85aca012d837f0efb7ec7bb1b46bdfeaf90",
+  "export_root": "/private/tmp/workbench-io-ui-native-final9-exports/native-final9-layout-s01-01-static-web",
+  "physical_file_count": 3,
+  "files": [
+    {
+      "path": "/private/tmp/workbench-io-ui-native-final9-exports/native-final9-layout-s01-01-static-web/index.html",
+      "bytes": 14187,
+      "sha256": "6c868561a24f31cd3c8810bc61a23ebdc62209c899ec7a925ce6be5babad60b9",
+      "relative_path": "index.html"
+    },
+    {
+      "path": "/private/tmp/workbench-io-ui-native-final9-exports/native-final9-layout-s01-01-static-web/manifest.json",
+      "bytes": 284,
+      "sha256": "5fda7dd7c8d2469b3e1f75d45d6a279af5e1dc7861bbc5d9a03f809d45f1ff16",
+      "relative_path": "manifest.json"
+    },
+    {
+      "path": "/private/tmp/workbench-io-ui-native-final9-exports/native-final9-layout-s01-01-static-web/assets/00000000-0000-4000-8000-00000000001d-renamed-second-qa.png",
+      "bytes": 1488,
+      "sha256": "0c479466fd0ea052ca693290293b423068552c091e37922de3944ce7eefdf0d3",
+      "relative_path": "assets/00000000-0000-4000-8000-00000000001d-renamed-second-qa.png"
+    }
+  ],
+  "manifest": {
+    "assets": [
+      "assets/00000000-0000-4000-8000-00000000001d-renamed-second-qa.png"
+    ],
+    "content_item_id": "00000000-0000-4000-8000-000000000004",
+    "entrypoint": "index.html",
+    "project_id": "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+    "schema_version": 1,
+    "scope": "lesson"
+  },
+  "checks": {
+    "project_id_matches": true,
+    "entrypoint_exists": true,
+    "asset_list_files_exist": true,
+    "html_has_3_page_sections": true,
+    "asset_payload_matches_canonical": true
+  }
+}

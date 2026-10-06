@@ -1,0 +1,14 @@
+Command: deno run -A scripts/io_benchmark.ts --help
+Observed stdout:
+{
+  "output": "/Users/youngi/.codex/worktrees/io-ui-closure/workbench/docs/reports/evidence/io-ui-closure/deno-candidate-large.json",
+  "mode": "candidate",
+  "measurement_mode": "instrumented_latency_and_counters",
+  "fixture_sha256": "14991258eb33336582280c093d97cc3fc61ba6dab166c1a8970ce542f05509a4",
+  "iterations_per_case": 10
+}
+Exit code: 0
+Classification: invalid_unplanned_attempt; --help is not implemented and the script ran its default candidate/on mode. Excluded from all approved final comparison statistics.
+Observed output JSON mtime (local +08:00): 2026-10-06 22:06:46.
+Source HEAD at run: 7a3fb7f2a68765093191e38c0e48dfa1a44e9e27.
+Runner SHA-256: 38529c5ffc60507d02005b736f05ffff30a8ea2f6bc399b727c57826f534ff11.

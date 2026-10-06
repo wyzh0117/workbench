@@ -1,0 +1,58 @@
+{
+  "captured_at": "2026-10-06T06:46:37.463Z",
+  "verification": "read-only physical files after fresh AX Save Version confirmation; no fixture mutation",
+  "project_root": "/tmp/workbench-io-ui-native-final/history-restore",
+  "canonical": {
+    "path": "/tmp/workbench-io-ui-native-final/history-restore/project.json",
+    "size_bytes": 70525,
+    "sha256": "fb222f6998e329047a28cdfc77511eb35875db58e1359aec8d6e357eea241b36",
+    "mtime": "2026-10-06T06:46:30.682Z",
+    "project_id": "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
+    "title": "F-history recovery candidate restore final",
+    "updated_at": "2026-10-06T06:46:30.220Z",
+    "schema_version": "1.0.0",
+    "snapshot_row_count": 3,
+    "matching_snapshot_row": {
+      "created_at": "1791268974986",
+      "git_commit_hash": null,
+      "id": "8b344fe5-35c0-43a8-a869-b612cc483a2d",
+      "name": "N06 Immediate Final6 Save Version 2026-10-06",
+      "note": "",
+      "project_id": "dddddddd-dddd-4ddd-8ddd-dddddddddddd"
+    },
+    "domain_issues": [],
+    "n01_markers_found": 62,
+    "missing_n01_markers": [],
+    "has_n06": true
+  },
+  "snapshot": {
+    "id": "8b344fe5-35c0-43a8-a869-b612cc483a2d",
+    "path": "/tmp/workbench-io-ui-native-final/history-restore/.workspace/snapshots/8b344fe5-35c0-43a8-a869-b612cc483a2d.json",
+    "size_bytes": 72533,
+    "sha256": "8838c45be7e1444b739f73e1551cb88cad9ae9d784349d0eddcf2404a8fff539",
+    "mtime": "2026-10-06T06:42:54.993Z",
+    "project_id": "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
+    "project_dir": "/private/tmp/workbench-io-ui-native-final/history-restore",
+    "lease_generation": "app-p43987-1791267794848-0-6c2a58ec92f755b13cbc21963ff3a8eb50874c94768c06f9:lease-1",
+    "editor_generation": 1,
+    "operation_id": "e4aa0a76-86cd-49ec-876d-0358c72d055f",
+    "revision": 31,
+    "name": "N06 Immediate Final6 Save Version 2026-10-06",
+    "note": "",
+    "created_at": "1791268974986",
+    "content_hash": "74e74028d0a1a6828274ef9579a8b3ae1c7be8663321446f793392997fed91f2",
+    "canonical_row_matches": true,
+    "embedded_project_id": "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
+    "embedded_title": "F-history recovery candidate restore final",
+    "embedded_domain_issues": [],
+    "embedded_snapshot_row_count": 2,
+    "embedded_n01_markers_found": 62,
+    "embedded_missing_n01_markers": [],
+    "embedded_has_n06": true
+  },
+  "snapshot_directory": {
+    "path": "/tmp/workbench-io-ui-native-final/history-restore/.workspace/snapshots",
+    "file_count": 12,
+    "mode": "755"
+  }
+}

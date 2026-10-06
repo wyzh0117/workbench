@@ -1,0 +1,47 @@
+{
+  "evidence_kind": "independent_final8_package_audit",
+  "captured_at_utc": "2026-10-06 09:29:49 UTC",
+  "source_commit": "f9fc398f8dcb009228a0cc8c5cc6e86aa290e0d6",
+  "rust_source_commit": "fcefcb106c2cf4e957d54a1ee7e112e2aa83cac0",
+  "app": {
+    "path": "/tmp/io-ui-closure-native-qa-final8/AI Course Workbench QA Preview Final8.app",
+    "product_name": "AI Course Workbench QA Preview Final8",
+    "bundle_identifier": "io.github.wyzh0117.ai-course-workbench.qa.io-ui-closure.final8",
+    "version": "0.2.7",
+    "architecture": "arm64",
+    "signature": "ad-hoc; no Developer ID; not notarized",
+    "codesign_verify_deep_strict": "passed",
+    "files": 4,
+    "uncompressed_bytes": 20247529,
+    "app_tree_sha256": "367bc54387f260b822c1ab095ad13545fe4946677d1f34911dac7ad5c379ae8a",
+    "app_tree_matches_manifest": true,
+    "file_manifest_matches": true
+  },
+  "embedded_frontend": {
+    "verification_path": "docs/reports/evidence/io-ui-closure/native-f9fc398-final8-embedded-assets.json",
+    "verification_sha256": "14e1678eb4c9745de4e712597c2a3d66798480736e3631aa169e98cb67b49eca",
+    "source_files": 18,
+    "source_file_count": 18,
+    "source_hashes_all_match": true,
+    "exact_payload_matches": 17,
+    "transformed_index_dom_events_equal": true,
+    "all_matched_payloads_found_in_signed_executable": true
+  },
+  "zip": {
+    "path": "docs/reports/evidence/io-ui-closure/native-qa-candidate-final8-aarch64-0.2.7.zip",
+    "bytes": 7082114,
+    "sha256": "a51711e8a04a168a356f24311b28913baabeb267ca2b441ee7ddb6726cc900a7",
+    "crc_check": "passed",
+    "top_level_entries": [
+      "AI Course Workbench QA Preview Final8.app"
+    ],
+    "entries": 9,
+    "app_payload_hashes_match": true
+  },
+  "scope": {
+    "app_launched_by_auditor": false,
+    "installed": false,
+    "published": false,
+    "native_gui_qa": "pending root UI verification on this exact Final8 bundle"
+  }
+}

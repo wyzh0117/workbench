@@ -1,0 +1,31 @@
+Window: "AI Course Workbench", App: AI Course Workbench QA Preview Final8.
+0 standard window AI Course Workbench, Secondary Actions: Raise
+	1 scroll area
+		2 HTML content Description: AI Course Workbench, URL: tauri://localhost
+			3 container 保存版本
+				4 text 长期历史
+				5 heading 保存版本, Value: 2
+					6 text 保存版本
+				7 button 关闭保存版本
+				8 container
+					9 text 版本名称
+					10 text field (settable) 版本名称, Placeholder: 例如：第一课正文定稿
+				11 container
+					12 text 备注
+					13 text entry area (settable) 备注, Value: [text entry area], Placeholder: 记录这个节点为什么重要
+						14 text 记录这个节点为什么重要
+				15 button 取消
+				16 button 保存版本
+	17 close button
+	18 full screen button Help: this button also has an action to zoom the window, Secondary Actions: zoom the window
+	19 minimize button
+	20 text AI Course Workbench
+21 menu bar
+	22 AI Course Workbench QA Preview Final8
+	23 File
+	24 Edit
+	25 View
+	26 Window
+	27 Help
+
+The focused UI element is 10 text field (settable) 版本名称, Placeholder: 例如：第一课正文定稿

@@ -1,0 +1,15 @@
+{
+  "captured_at": "2026-10-06T12:33:06.327Z",
+  "app": "io.github.wyzh0117.ai-course-workbench.qa.io-ui-closure.final10",
+  "fixture": "/tmp/workbench-io-ui-native-final10-n06-rename-referenced",
+  "project_id": "6c68e8c5-4a15-4c3a-b803-51b32a6708f7",
+  "asset_id": "00000000-0000-4000-8000-00000000001d",
+  "action": "toolbar Undo after UI asset rename",
+  "expected_filename": "renamed-second-qa.png",
+  "jpeg_signature": [
+    255,
+    216,
+    255
+  ],
+  "screenshot_bytes": 473716
+}

@@ -1,0 +1,601 @@
+{
+  "title": "Final Deno save benchmark after canonical serialization reuse",
+  "source_pin": "1482a4233e8d9f0453104cd6661dae78abef4891",
+  "baseline_pin": "dfcb23e (archive checkout; source module hashes recorded in raw JSON)",
+  "runner_sha256": "38529c5ffc60507d02005b736f05ffff30a8ea2f6bc399b727c57826f534ff11",
+  "fixture": {
+    "path": "/tmp/workbench-large-canonical-fixture.json",
+    "bytes": 7469246,
+    "sha256": "14991258eb33336582280c093d97cc3fc61ba6dab166c1a8970ce542f05509a4",
+    "project_id": "00000000-0000-4000-8000-000000000001"
+  },
+  "method": {
+    "warmups_excluded": 3,
+    "iterations_each_case": 10,
+    "statistics": "conventional median (average middle pair for n=10), p95 nearest-rank; baseline then candidate; sequential exclusive window",
+    "unprobed_off_pair": true,
+    "instrumented_pair": "reused prior baseline-on run because runner SHA, instrumentation flags, and fixture SHA are unchanged; current candidate-on run uses same method"
+  },
+  "raw_artifacts": {
+    "baseline_off": {
+      "path": "docs/reports/evidence/io-ui-closure/runs/deno-final-1482a42-performance/baseline-off.json",
+      "sha256": "ec0eb315691bdfcc114b956f120291480d98cf876e749236ee371c878447c1f8",
+      "bytes": 3411
+    },
+    "candidate_off": {
+      "path": "docs/reports/evidence/io-ui-closure/runs/deno-final-1482a42-performance/candidate-off.json",
+      "sha256": "3a6240287e1e3f9b39964fc1d7d81bc412e211f8fcc3e62a208ca06f6e32caa7",
+      "bytes": 3581
+    },
+    "candidate_on": {
+      "path": "docs/reports/evidence/io-ui-closure/runs/deno-final-1482a42-performance/candidate-on.json",
+      "sha256": "18bd1f5d36633e853a227172fb8cb6c2ffadf88f9670739b4d64b52b398c32af",
+      "bytes": 9324
+    },
+    "baseline_on_reused": {
+      "path": "docs/reports/evidence/io-ui-closure/runs/deno-final5df34d-performance/baseline-on.json",
+      "sha256": "565f8828c7441f45930fa63c99450d334a6fe4b407b7e0a7e923774463d7482a",
+      "bytes": 7397
+    },
+    "baseline_off_log": {
+      "path": "docs/reports/evidence/io-ui-closure/runs/deno-final-1482a42-performance/baseline-off.log",
+      "sha256": "1f328cef80868c2b5bbe767685770967bc4d0e64e13ffbc64f09f4d412f275eb",
+      "bytes": 349
+    },
+    "candidate_off_log": {
+      "path": "docs/reports/evidence/io-ui-closure/runs/deno-final-1482a42-performance/candidate-off.log",
+      "sha256": "22e3abc86da33210a0d44b07d44e61fe83439d43e0bca6f8969bc9a81c23e819",
+      "bytes": 351
+    },
+    "candidate_on_log": {
+      "path": "docs/reports/evidence/io-ui-closure/runs/deno-final-1482a42-performance/candidate-on.log",
+      "sha256": "658f791b36f84d9f4fd41be0294374f4ecd7b1888a555e6fe5717af08e186fc1",
+      "bytes": 362
+    }
+  },
+  "unprobed_off": {
+    "baseline": {
+      "changed": {
+        "n": 10,
+        "samples_ms": [
+          421.8594579999999,
+          417.9709579999999,
+          435.1170000000002,
+          403.3028750000003,
+          432.3388330000007,
+          382.30975000000035,
+          402.2323329999999,
+          386.62362499999836,
+          422.7225419999995,
+          391.42462499999965
+        ],
+        "median_conventional_ms": 410.6369165000001,
+        "p95_nearest_rank_ms": 435.1170000000002,
+        "file_io": null,
+        "service_metrics": null
+      },
+      "no_op": {
+        "n": 10,
+        "samples_ms": [
+          510.7772500000001,
+          487.34662500000013,
+          422.49633399999993,
+          428.2669589999996,
+          466.4627500000006,
+          401.810708,
+          485.0911249999999,
+          431.0737500000005,
+          459.03649999999925,
+          404.66504199999963
+        ],
+        "median_conventional_ms": 445.05512499999986,
+        "p95_nearest_rank_ms": 510.7772500000001,
+        "file_io": null,
+        "service_metrics": null
+      }
+    },
+    "candidate": {
+      "changed": {
+        "n": 10,
+        "samples_ms": [
+          514.0399579999998,
+          516.6090830000003,
+          537.7015840000004,
+          509.217208,
+          502.0759170000001,
+          517.1237080000001,
+          517.7756250000002,
+          509.4392909999997,
+          531.325417,
+          556.3570419999996
+        ],
+        "median_conventional_ms": 516.8663955000002,
+        "p95_nearest_rank_ms": 556.3570419999996,
+        "file_io": null,
+        "service_metrics": null
+      },
+      "no_op": {
+        "n": 10,
+        "samples_ms": [
+          195.5316670000002,
+          207.61129199999982,
+          187.09625000000005,
+          192.94537500000024,
+          187.22641699999986,
+          193.84279100000003,
+          206.53741700000046,
+          189.073042,
+          199.3538749999998,
+          185.1324999999997
+        ],
+        "median_conventional_ms": 193.39408300000014,
+        "p95_nearest_rank_ms": 207.61129199999982,
+        "file_io": null,
+        "service_metrics": null
+      }
+    },
+    "delta": {
+      "changed_median": {
+        "baseline": 410.6369165000001,
+        "candidate": 516.8663955000002,
+        "delta_ms": 106.22947900000008,
+        "delta_percent": 25.86944201350199
+      },
+      "changed_p95": {
+        "baseline": 435.1170000000002,
+        "candidate": 556.3570419999996,
+        "delta_ms": 121.24004199999945,
+        "delta_percent": 27.863779627088658
+      },
+      "no_op_median": {
+        "baseline": 445.05512499999986,
+        "candidate": 193.39408300000014,
+        "delta_ms": -251.66104199999972,
+        "delta_percent": -56.54603842613874
+      },
+      "no_op_p95": {
+        "baseline": 510.7772500000001,
+        "candidate": 207.61129199999982,
+        "delta_ms": -303.1659580000003,
+        "delta_percent": -59.353849060427066
+      }
+    }
+  },
+  "instrumented_on": {
+    "baseline_reused_source_run": "dfcb23e; created before serialization-reuse change at 5df34d test pin",
+    "baseline": {
+      "changed": {
+        "n": 10,
+        "samples_ms": [
+          389.49995899999976,
+          411.5585000000001,
+          408.122292,
+          397.36195899999984,
+          403.0216249999994,
+          393.90320900000006,
+          447.27900000000045,
+          389.55412499999875,
+          399.05995900000016,
+          409.1163749999996
+        ],
+        "median_conventional_ms": 401.0407919999998,
+        "p95_nearest_rank_ms": 447.27900000000045,
+        "file_io": {
+          "by_target": {
+            "workspace_sidecar": {
+              "read_operations": 10,
+              "read_bytes": 2050,
+              "write_operations": 0,
+              "write_bytes": 0,
+              "sync_attempts": 0,
+              "sync_successes": 0,
+              "rename_in": 0,
+              "rename_out": 0,
+              "removes": 0
+            },
+            "canonical_project": {
+              "read_operations": 30,
+              "read_bytes": 224077380,
+              "write_operations": 0,
+              "write_bytes": 0,
+              "sync_attempts": 0,
+              "sync_successes": 0,
+              "rename_in": 10,
+              "rename_out": 0,
+              "removes": 0
+            },
+            "owned_temp": {
+              "read_operations": 0,
+              "read_bytes": 0,
+              "write_operations": 30,
+              "write_bytes": 244853840,
+              "sync_attempts": 20,
+              "sync_successes": 20,
+              "rename_in": 0,
+              "rename_out": 30,
+              "removes": 0
+            },
+            "recovery_journal": {
+              "read_operations": 0,
+              "read_bytes": 0,
+              "write_operations": 0,
+              "write_bytes": 0,
+              "sync_attempts": 0,
+              "sync_successes": 0,
+              "rename_in": 10,
+              "rename_out": 0,
+              "removes": 10
+            },
+            "search_index": {
+              "read_operations": 0,
+              "read_bytes": 0,
+              "write_operations": 0,
+              "write_bytes": 0,
+              "sync_attempts": 0,
+              "sync_successes": 0,
+              "rename_in": 10,
+              "rename_out": 0,
+              "removes": 0
+            }
+          },
+          "open_operations": 30,
+          "close_operations": 30,
+          "peak_open_handles": 2,
+          "read_file_operations": 30,
+          "read_file_bytes": 224077380,
+          "read_text_file_operations": 10,
+          "read_text_file_bytes": 2050,
+          "write_file_operations": 0,
+          "write_file_bytes": 0,
+          "write_text_file_operations": 10,
+          "write_text_file_bytes": 101130750,
+          "rename_operations": 30,
+          "remove_operations": 10
+        },
+        "service_metrics": null
+      },
+      "no_op": {
+        "n": 10,
+        "samples_ms": [
+          400.02183300000024,
+          408.84408299999996,
+          397.2287500000002,
+          416.39987500000007,
+          407.80804199999966,
+          428.3447920000003,
+          426.41491700000006,
+          408.00075000000015,
+          418.98825000000033,
+          407.867166
+        ],
+        "median_conventional_ms": 408.42241650000005,
+        "p95_nearest_rank_ms": 428.3447920000003,
+        "file_io": {
+          "by_target": {
+            "workspace_sidecar": {
+              "read_operations": 11,
+              "read_bytes": 2255,
+              "write_operations": 1,
+              "write_bytes": 205,
+              "sync_attempts": 1,
+              "sync_successes": 1,
+              "rename_in": 0,
+              "rename_out": 0,
+              "removes": 0
+            },
+            "canonical_project": {
+              "read_operations": 30,
+              "read_bytes": 224077380,
+              "write_operations": 0,
+              "write_bytes": 0,
+              "sync_attempts": 0,
+              "sync_successes": 0,
+              "rename_in": 10,
+              "rename_out": 0,
+              "removes": 0
+            },
+            "owned_temp": {
+              "read_operations": 0,
+              "read_bytes": 0,
+              "write_operations": 30,
+              "write_bytes": 244853700,
+              "sync_attempts": 20,
+              "sync_successes": 20,
+              "rename_in": 0,
+              "rename_out": 30,
+              "removes": 0
+            },
+            "recovery_journal": {
+              "read_operations": 0,
+              "read_bytes": 0,
+              "write_operations": 0,
+              "write_bytes": 0,
+              "sync_attempts": 0,
+              "sync_successes": 0,
+              "rename_in": 10,
+              "rename_out": 0,
+              "removes": 10
+            },
+            "search_index": {
+              "read_operations": 0,
+              "read_bytes": 0,
+              "write_operations": 0,
+              "write_bytes": 0,
+              "sync_attempts": 0,
+              "sync_successes": 0,
+              "rename_in": 10,
+              "rename_out": 0,
+              "removes": 0
+            }
+          },
+          "open_operations": 32,
+          "close_operations": 32,
+          "peak_open_handles": 3,
+          "read_file_operations": 30,
+          "read_file_bytes": 224077380,
+          "read_text_file_operations": 10,
+          "read_text_file_bytes": 2050,
+          "write_file_operations": 0,
+          "write_file_bytes": 0,
+          "write_text_file_operations": 10,
+          "write_text_file_bytes": 101130610,
+          "rename_operations": 30,
+          "remove_operations": 10
+        },
+        "service_metrics": null
+      }
+    },
+    "candidate": {
+      "changed": {
+        "n": 10,
+        "samples_ms": [
+          501.56845799999974,
+          525.7329159999999,
+          499.6179999999995,
+          493.1624579999998,
+          500.4559590000008,
+          503.5313329999999,
+          571.1558750000004,
+          523.9654579999997,
+          507.6597920000004,
+          491.4830000000002
+        ],
+        "median_conventional_ms": 502.5498954999998,
+        "p95_nearest_rank_ms": 571.1558750000004,
+        "file_io": {
+          "by_target": {
+            "workspace_sidecar": {
+              "read_operations": 11,
+              "read_bytes": 2838,
+              "write_operations": 1,
+              "write_bytes": 258,
+              "sync_attempts": 1,
+              "sync_successes": 1,
+              "rename_in": 0,
+              "rename_out": 0,
+              "removes": 0
+            },
+            "canonical_project": {
+              "read_operations": 3450,
+              "read_bytes": 224077380,
+              "write_operations": 0,
+              "write_bytes": 0,
+              "sync_attempts": 0,
+              "sync_successes": 0,
+              "rename_in": 10,
+              "rename_out": 0,
+              "removes": 0
+            },
+            "owned_temp": {
+              "read_operations": 0,
+              "read_bytes": 0,
+              "write_operations": 1170,
+              "write_bytes": 319546130,
+              "sync_attempts": 30,
+              "sync_successes": 30,
+              "rename_in": 0,
+              "rename_out": 40,
+              "removes": 0
+            },
+            "recovery_journal": {
+              "read_operations": 0,
+              "read_bytes": 0,
+              "write_operations": 0,
+              "write_bytes": 0,
+              "sync_attempts": 0,
+              "sync_successes": 0,
+              "rename_in": 10,
+              "rename_out": 0,
+              "removes": 10
+            },
+            "other": {
+              "read_operations": 0,
+              "read_bytes": 0,
+              "write_operations": 0,
+              "write_bytes": 0,
+              "sync_attempts": 30,
+              "sync_successes": 30,
+              "rename_in": 0,
+              "rename_out": 0,
+              "removes": 0
+            },
+            "canonical_backup": {
+              "read_operations": 0,
+              "read_bytes": 0,
+              "write_operations": 0,
+              "write_bytes": 0,
+              "sync_attempts": 0,
+              "sync_successes": 0,
+              "rename_in": 10,
+              "rename_out": 0,
+              "removes": 0
+            },
+            "search_index": {
+              "read_operations": 0,
+              "read_bytes": 0,
+              "write_operations": 0,
+              "write_bytes": 0,
+              "sync_attempts": 0,
+              "sync_successes": 0,
+              "rename_in": 10,
+              "rename_out": 0,
+              "removes": 0
+            }
+          },
+          "open_operations": 102,
+          "close_operations": 102,
+          "peak_open_handles": 4,
+          "read_file_operations": 0,
+          "read_file_bytes": 0,
+          "read_text_file_operations": 10,
+          "read_text_file_bytes": 2580,
+          "write_file_operations": 0,
+          "write_file_bytes": 0,
+          "write_text_file_operations": 10,
+          "write_text_file_bytes": 101130750,
+          "rename_operations": 40,
+          "remove_operations": 10
+        },
+        "service_metrics": {
+          "project_full_read_operations": 20,
+          "project_full_read_bytes": 149384920,
+          "project_hash_passes": 20,
+          "project_hash_bytes": 149384920,
+          "project_temp_files_created": 10,
+          "project_temp_write_bytes": 74692460,
+          "project_backup_copy_operations": 10,
+          "project_backup_copy_read_bytes": 74692460,
+          "project_backup_copy_write_bytes": 74692460,
+          "project_file_sync_attempts": 20,
+          "project_file_sync_successes": 20,
+          "project_backup_renames": 10,
+          "project_promotions": 10,
+          "project_directory_sync_attempts": 10,
+          "project_directory_sync_successes": 10,
+          "recovery_journal_temp_files_created": 10,
+          "recovery_journal_temp_write_bytes": 69030460,
+          "recovery_journal_file_sync_attempts": 10,
+          "recovery_journal_file_sync_successes": 10,
+          "recovery_journal_promotions": 10,
+          "recovery_journal_removal_attempts": 10,
+          "recovery_journal_removal_successes": 10,
+          "recovery_directory_sync_attempts": 20,
+          "recovery_directory_sync_successes": 20
+        }
+      },
+      "no_op": {
+        "n": 10,
+        "samples_ms": [
+          190.69908299999997,
+          208.13149999999996,
+          185.38145799999984,
+          201.32749999999987,
+          186.56087500000012,
+          182.96787499999982,
+          189.23683299999993,
+          196.64462500000036,
+          194.20499999999993,
+          180.72541599999977
+        ],
+        "median_conventional_ms": 189.96795799999995,
+        "p95_nearest_rank_ms": 208.13149999999996,
+        "file_io": {
+          "by_target": {
+            "workspace_sidecar": {
+              "read_operations": 10,
+              "read_bytes": 2580,
+              "write_operations": 0,
+              "write_bytes": 0,
+              "sync_attempts": 0,
+              "sync_successes": 0,
+              "rename_in": 0,
+              "rename_out": 0,
+              "removes": 0
+            },
+            "canonical_project": {
+              "read_operations": 1150,
+              "read_bytes": 74692460,
+              "write_operations": 0,
+              "write_bytes": 0,
+              "sync_attempts": 0,
+              "sync_successes": 0,
+              "rename_in": 0,
+              "rename_out": 0,
+              "removes": 0
+            }
+          },
+          "open_operations": 20,
+          "close_operations": 20,
+          "peak_open_handles": 2,
+          "read_file_operations": 0,
+          "read_file_bytes": 0,
+          "read_text_file_operations": 10,
+          "read_text_file_bytes": 2580,
+          "write_file_operations": 0,
+          "write_file_bytes": 0,
+          "write_text_file_operations": 0,
+          "write_text_file_bytes": 0,
+          "rename_operations": 0,
+          "remove_operations": 0
+        },
+        "service_metrics": {
+          "project_full_read_operations": 10,
+          "project_full_read_bytes": 74692460,
+          "project_hash_passes": 10,
+          "project_hash_bytes": 74692460,
+          "project_temp_files_created": 0,
+          "project_temp_write_bytes": 0,
+          "project_backup_copy_operations": 0,
+          "project_backup_copy_read_bytes": 0,
+          "project_backup_copy_write_bytes": 0,
+          "project_file_sync_attempts": 0,
+          "project_file_sync_successes": 0,
+          "project_backup_renames": 0,
+          "project_promotions": 0,
+          "project_directory_sync_attempts": 0,
+          "project_directory_sync_successes": 0,
+          "recovery_journal_temp_files_created": 0,
+          "recovery_journal_temp_write_bytes": 0,
+          "recovery_journal_file_sync_attempts": 0,
+          "recovery_journal_file_sync_successes": 0,
+          "recovery_journal_promotions": 0,
+          "recovery_journal_removal_attempts": 0,
+          "recovery_journal_removal_successes": 0,
+          "recovery_directory_sync_attempts": 0,
+          "recovery_directory_sync_successes": 0
+        }
+      }
+    },
+    "delta": {
+      "changed_median": {
+        "baseline": 401.0407919999998,
+        "candidate": 502.5498954999998,
+        "delta_ms": 101.50910350000004,
+        "delta_percent": 25.311416076597038
+      },
+      "changed_p95": {
+        "baseline": 447.27900000000045,
+        "candidate": 571.1558750000004,
+        "delta_ms": 123.87687499999993,
+        "delta_percent": 27.695660873861684
+      },
+      "no_op_median": {
+        "baseline": 408.42241650000005,
+        "candidate": 189.96795799999995,
+        "delta_ms": -218.4544585000001,
+        "delta_percent": -53.48738210112424
+      },
+      "no_op_p95": {
+        "baseline": 428.3447920000003,
+        "candidate": 208.13149999999996,
+        "delta_ms": -220.21329200000037,
+        "delta_percent": -51.41028818671855
+      }
+    }
+  },
+  "interpretation": {
+    "changed_save": "Candidate remains slower than legacy: about +25.9% unprobed conventional median and +27.9% p95. Compared with pre-fix candidate 5df34d unprobed (median 587.831 ms, p95 660.726 ms), the serialization reuse candidate is about 12.1% faster at median and 15.8% at p95. Remaining changed-path cause is not isolated by this final run; earlier symmetric profile localized most measured difference to the save path, but its instrumentation point was pre-fix and inclusive phase timings are not additive.",
+    "no_op_save": "Candidate is about 56.5% faster unprobed at median and avoids canonical/recovery writes; instrumented counters show one full read/hash per no-op save, with zero temp writes, backups, syncs, promotions, or journal removals.",
+    "measurement_limits": "Unprobed latency has no filesystem/service counters. Instrumented baseline file-I/O counters have no service diagnostics; candidate service diagnostics provide full-read/hash/write counts. RSS, device physical write amplification, and in-process peak buffers are not measured."
+  }
+}

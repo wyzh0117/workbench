@@ -1,0 +1,213 @@
+{
+  "captured_at_utc": "2026-10-06T08:48:47.391Z",
+  "source_pin": "11232c28515e2e8708ee4f586757606ce1bdf8f8",
+  "ui_observation_reference": "native-final7-first-save-version-pointer-no-modal",
+  "scope": "Read-only path/binding and marker recheck. The earlier exact-literal scan did not remove Markdown backslash escapes; this supplement matches rendered strings after removing only backslashes immediately before hyphens.",
+  "runtime": {
+    "pid": 55408,
+    "process": "55408 /private/tmp/io-ui-closure-native-qa-final7/AI Course Workbench QA Preview Final7.app/Contents/MacOS/ai-course-workbench",
+    "bundle_id": "io.github.wyzh0117.ai-course-workbench.qa.io-ui-closure.final7",
+    "session_path": "/Users/youngi/Library/Application Support/io.github.wyzh0117.ai-course-workbench.qa.io-ui-closure.final7/.workspace/session.json",
+    "session_bytes": 1385,
+    "session_mtime_utc": "2026-10-06T08:45:41.347Z",
+    "session_sha256": "aecbdaf9b2bad327ec2a529a312f259ebc421cdcddd4d0fb6e5a9d663b14381c",
+    "session_project_id": "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
+    "session_project_dir": "/private/tmp/workbench-io-ui-native-final/history-restore",
+    "session_project_realpath": "/private/tmp/workbench-io-ui-native-final/history-restore",
+    "session_route": "board",
+    "session_active_content_item_id": "00000000-0000-4000-8000-000000000004",
+    "fixture_realpath": "/private/tmp/workbench-io-ui-native-final/history-restore",
+    "private_alias_realpath": "/private/tmp/workbench-io-ui-native-final/history-restore",
+    "aliases_same_realpath": true,
+    "workspace_entries": [
+      "recovery.bak",
+      "snapshots",
+      "project.lock",
+      "index.json",
+      "project.lock.guard"
+    ],
+    "process_open_handles_matching_fixture_or_session": []
+  },
+  "canonical": {
+    "path": "/tmp/workbench-io-ui-native-final/history-restore/project.json",
+    "private_alias": "/private/tmp/workbench-io-ui-native-final/history-restore/project.json",
+    "bytes": 71306,
+    "sha256": "26001bf8df76d8b6ad501b58c23f2c883d11afdbe6cdf1a0dfb5f0764f52dfc9",
+    "mtime_utc": "2026-10-06T08:34:43.986Z",
+    "project_id": "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
+    "title": "F-history recovery candidate restore final",
+    "updated_at": "2026-10-06T08:34:43.609Z",
+    "exact_domain_issue_count": 0,
+    "exact_domain_issues": []
+  },
+  "marker_match": {
+    "n01_expected_unique": 62,
+    "raw_exact_hyphen_tokens": 0,
+    "raw_markdown_escaped_tokens": 62,
+    "normalized_rendered_tokens": 62,
+    "missing_after_normalization": [],
+    "duplicate_after_normalization": [],
+    "n06": [
+      {
+        "marker": "N06 Final7 FirstClick marker 2026-10-06",
+        "raw_exact_occurrences": 0,
+        "raw_markdown_escaped_occurrences": 1,
+        "normalized_rendered_occurrences": 1,
+        "paths": [
+          "$.blocks[1].content"
+        ]
+      },
+      {
+        "marker": "N06 Final7 Pointer FirstClick marker 2026-10-06",
+        "raw_exact_occurrences": 0,
+        "raw_markdown_escaped_occurrences": 0,
+        "normalized_rendered_occurrences": 0,
+        "paths": []
+      }
+    ],
+    "marker_blocks": [
+      {
+        "array_index": 1,
+        "id": "00000000-0000-4000-8000-00000000000d",
+        "document_id": "00000000-0000-4000-8000-000000000008",
+        "type": "paragraph",
+        "content_length_bytes": 1872,
+        "raw_excerpt": "ile preserving valid domain structure\\. N01 continuous run marker N01\\-01 N01\\-02 N01\\-03 N01\\-04 N01\\-05 N01\\-06 N01\\-07 N01\\-08 N01\\-09 N01\\-10 N01\\-11 N01\\-12 N01\\-13 N01\\-14 N01\\-15 N01\\-16 N01\\-17 N01\\-18 N01\\-19 N0",
+        "normalized_excerpt": "N06 strict immediate marker3 2026-10-06 N06 Final7 FirstClick marker 2026-10-06 N06 Final7 Pointer FirstClick marker 2026-10"
+      }
+    ]
+  },
+  "snapshots": {
+    "directory": "/tmp/workbench-io-ui-native-final/history-restore/.workspace/snapshots",
+    "file_count_including_meta": 14,
+    "metadata_rows": [
+      {
+        "created_at": "1791269696215",
+        "git_commit_hash": null,
+        "id": "2853a468-2936-488c-b45a-3c525f7bb719",
+        "name": "N06 Strict Immediate Marker3 2026-10-06",
+        "note": "",
+        "project_id": "dddddddd-dddd-4ddd-8ddd-dddddddddddd"
+      },
+      {
+        "created_at": "1791269447315",
+        "git_commit_hash": null,
+        "id": "fbdcb3e4-a129-45f6-8635-1184d7bb1087",
+        "name": "N06 Strict Retry Marker2 2026-10-06",
+        "note": "",
+        "project_id": "dddddddd-dddd-4ddd-8ddd-dddddddddddd"
+      },
+      {
+        "created_at": "1791268974986",
+        "git_commit_hash": null,
+        "id": "8b344fe5-35c0-43a8-a869-b612cc483a2d",
+        "name": "N06 Immediate Final6 Save Version 2026-10-06",
+        "note": "",
+        "project_id": "dddddddd-dddd-4ddd-8ddd-dddddddddddd"
+      },
+      {
+        "created_at": "1791265820165",
+        "git_commit_hash": null,
+        "id": "6df78a1d-bacc-4cc5-9247-8ff48123fa85",
+        "name": "恢复前备份",
+        "note": "恢复自动保存前自动创建",
+        "project_id": "dddddddd-dddd-4ddd-8ddd-dddddddddddd"
+      },
+      {
+        "created_at": "2026-10-06T01:07:45.671Z",
+        "git_commit_hash": null,
+        "id": "1fd63b8f-6f70-4c57-a614-1652ac2591fa",
+        "name": "恢复前备份",
+        "note": "恢复旧版本前自动保存当前项目",
+        "project_id": "dddddddd-dddd-4ddd-8ddd-dddddddddddd"
+      }
+    ],
+    "files": [
+      {
+        "name": "1fd63b8f-6f70-4c57-a614-1652ac2591fa.json",
+        "bytes": 69584,
+        "mtime_utc": "2026-10-06T01:07:45.676Z",
+        "sha256": "ae2559e8e66fd65757ed0f1004a343ad461a2b09001de590306b13da83148808"
+      },
+      {
+        "name": "1fd63b8f-6f70-4c57-a614-1652ac2591fa.meta.json",
+        "bytes": 265,
+        "mtime_utc": "2026-10-06T01:07:45.733Z",
+        "sha256": "930a7e2559b1118d61a9bebc28535c07e053afe9deaf1aba865c497afb1ab399"
+      },
+      {
+        "name": "2853a468-2936-488c-b45a-3c525f7bb719.json",
+        "bytes": 73276,
+        "mtime_utc": "2026-10-06T06:54:56.222Z",
+        "sha256": "3bed5cb32a50415c14ddd0710e8ed7adbb476e1f58be4ea888fb54e63c0b1d47"
+      },
+      {
+        "name": "6df78a1d-bacc-4cc5-9247-8ff48123fa85.json",
+        "bytes": 71590,
+        "mtime_utc": "2026-10-06T05:50:20.171Z",
+        "sha256": "eac4f3ed9dd2bc62ec30f5d85c9b848d9f0e553378f048ee79b97858d3451585"
+      },
+      {
+        "name": "8b344fe5-35c0-43a8-a869-b612cc483a2d.json",
+        "bytes": 72533,
+        "mtime_utc": "2026-10-06T06:42:54.993Z",
+        "sha256": "8838c45be7e1444b739f73e1551cb88cad9ae9d784349d0eddcf2404a8fff539"
+      },
+      {
+        "name": "e5b8bafa-6e52-4754-bd0f-69cecafc0ba3.json",
+        "bytes": 68969,
+        "mtime_utc": "2026-10-06T01:07:17.426Z",
+        "sha256": "ee46a931ad6172928032ae8cf9dbb3c7fa60cb365f46b9e0a16b1203b54ae1be"
+      },
+      {
+        "name": "e5b8bafa-6e52-4754-bd0f-69cecafc0ba3.meta.json",
+        "bytes": 286,
+        "mtime_utc": "2026-10-06T01:07:17.436Z",
+        "sha256": "e9e23f3fd8107c762ff04888bb1437668bea06f22cd932fe430ee0c405b1bb79"
+      },
+      {
+        "name": "fbdcb3e4-a129-45f6-8635-1184d7bb1087.json",
+        "bytes": 72949,
+        "mtime_utc": "2026-10-06T06:50:47.320Z",
+        "sha256": "59d4629b7214c1868486ccf37018c99efc386b8713480c7d7100c99b6f6d0edf"
+      },
+      {
+        "name": "history_corrupt_20261006.json",
+        "bytes": 30,
+        "mtime_utc": "2026-10-06T00:59:03.578Z",
+        "sha256": "0b2cc6cac164a6170248e19b780455299bc2617a744bbfe4c6b283fe6f4dc51a"
+      },
+      {
+        "name": "history_incomplete_20261006.json",
+        "bytes": 68972,
+        "mtime_utc": "2026-10-06T00:59:03.578Z",
+        "sha256": "cd31885f33812bc0c9d35464e54c866721457bd2666752af43246506bc6409c3"
+      },
+      {
+        "name": "history_incomplete_20261006.meta.json",
+        "bytes": 174,
+        "mtime_utc": "2026-10-06T00:59:03.578Z",
+        "sha256": "53a2dac98b14e50bda6bdf55edc21b084bbd3b208817c67e0813f9c8412963f3"
+      },
+      {
+        "name": "history_named_20261006.json",
+        "bytes": 68973,
+        "mtime_utc": "2026-10-06T00:59:03.554Z",
+        "sha256": "078415fead41496736f495068d35daabd5740c5dc3ca08302acca2919d828396"
+      },
+      {
+        "name": "history_named_20261006.meta.json",
+        "bytes": 293,
+        "mtime_utc": "2026-10-06T00:59:03.565Z",
+        "sha256": "ae606c19570820c05501ddc33fc2bfa5b7a64c3356bfaaeddac56d1d086d9dc1"
+      },
+      {
+        "name": "history_unindexed_20261006.json",
+        "bytes": 68972,
+        "mtime_utc": "2026-10-06T00:59:03.577Z",
+        "sha256": "1669e0c858a1d63aeda8be4431a7af1cdfb00859824dc319f521cb6896732a1d"
+      }
+    ],
+    "final7_n06_named_snapshot_rows": []
+  }
+}

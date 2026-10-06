@@ -1,0 +1,61 @@
+{
+  "scope": "synthetic isolated Native conflict fixture only",
+  "fixture_root": "/tmp/workbench-io-ui-F-external-conflict-final7",
+  "project_id": "fb45a2d4-fbcb-4095-9d10-76f18fa98a14",
+  "target_block_id": "00000000-0000-4000-8000-00000000000d",
+  "sequence": {
+    "baseline_sha256": "99e96140bd2d59cfcec0a139417578eefa888228e11bce6e96671d721965d7fd",
+    "baseline_size": 74906,
+    "baseline_visible_markers": [
+      "N05-LOCAL-20261006-A",
+      "N05-LOCAL-CONTINUED-20261006-C",
+      "N05-LOCAL-20261006-D"
+    ],
+    "guarded_external_write": {
+      "result": "written",
+      "finished_utc": "2026-10-06T09:48:18.858871Z",
+      "updated_at": "2026-10-06T09:48:18.856Z",
+      "marker": "N05-EXTERNAL-20261006-B",
+      "canonical_size": 74936,
+      "canonical_sha256": "83e5bd95f3ee69c98bb752f51e5cc3aaee9c37186791e03cfb5fcbf2000d19df",
+      "method": "exact project.id/block/content/SHA precondition; source-span replacement of target content and project.updated_at only; same-directory atomic replace; file and parent fsync"
+    },
+    "after_native_conflict_prompt_read": {
+      "captured_utc": "2026-10-06T09:50:24.059561Z",
+      "canonical_size": 74936,
+      "canonical_sha256": "83e5bd95f3ee69c98bb752f51e5cc3aaee9c37186791e03cfb5fcbf2000d19df",
+      "visible_markers": {
+        "N05-LOCAL-20261006-A": true,
+        "N05-LOCAL-CONTINUED-20261006-C": true,
+        "N05-LOCAL-20261006-D": true,
+        "N05-EXTERNAL-20261006-B": true,
+        "N05-LOCAL-20261006-E": false
+      },
+      "domain_validation_issues": 0
+    },
+    "recovery_sidecar_and_lease_read": {
+      "captured_utc": "2026-10-06T09:56:53.609Z",
+      "canonical_size": 74936,
+      "canonical_sha256": "83e5bd95f3ee69c98bb752f51e5cc3aaee9c37186791e03cfb5fcbf2000d19df",
+      "recovery_json_present": false,
+      "recovery_backup_variants_present": false,
+      "local_E_in_canonical": false,
+      "project_lock": {
+        "sha256": "60082b107d422f17c7fa1fdb0f88d9e35cecfb1c60fa1e43c5a599b76ad8fa0e",
+        "pid": 59640,
+        "app_instance_id": "app-p59640-1791278894961-0-c58b4da1af8ba894452ca45d1d5bf74c2ea58a59752dd10d",
+        "opened_at": "2026-10-06T09:37:34.329Z",
+        "heartbeat": "2026-10-06T09:56:51.436Z"
+      },
+      "project_lock_guard": {
+        "exists": true,
+        "size": 0
+      }
+    }
+  },
+  "limitations": [
+    "No local E recovery journal was present at the sidecar capture; do not claim local E survives quit/reopen.",
+    "The first helper attempt was safely rejected because it expected a root-level id; the corrected schema guard uses project.id.",
+    "No read/write occurred after the Native conflict prompt except read-only Canonical/domain/sidecar verification."
+  ]
+}

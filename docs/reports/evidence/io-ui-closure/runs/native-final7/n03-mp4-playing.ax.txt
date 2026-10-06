@@ -1,0 +1,904 @@
+Window: "AI Course Workbench", App: AI Course Workbench QA Preview Final7.
+0 standard window AI Course Workbench, Secondary Actions: Raise
+	1 scroll area
+		2 HTML content Description: AI Course Workbench, URL: tauri://localhost
+			3 container
+				4 button 返回项目选择；当前项目不会关闭
+				5 text AI Course Workbench
+				6 button File I/O media-ui QA fixture ⌄, Help: 点击修改课程标题
+				7 button (disabled) 打开上一课
+				8 button S01-01｜Large canonical lesson, Help: 点击修改当前课程标题
+				9 button (disabled) 打开下一课
+				10 text ✓ 已保存
+				11 button 撤销上一次编辑
+				12 button 恢复上一次编辑
+				13 pop up button 设置
+				14 button 保存
+				15 button 保存版本
+				16 button 预览
+				17 button 导出
+				18 button 项目概览
+				19 button 打开课程：S01-01 Large canonical lesson
+				20 button 关闭课程标签：S01-01 Large canonical lesson, Help: 关闭课程标签
+				21 text 项目导航
+				22 button 收起左栏
+				23 container 项目页面
+					24 button ⌂ 项目概览
+					25 button ▦ 课程地图
+					26 button ✎ 工作台
+					27 button ▧ 自由排版
+					28 button 📂 文件
+					29 button ↓ 收件箱
+					30 button ▤ 制作看板
+					31 button ◈ 媒体库
+					32 button != 待补总览
+					33 button ✦ 更新中心
+					34 button ↗ 发布中心
+					35 button ◷ 版本历史
+					36 button ⚙ 项目设置
+				37 text 本课程 0/1 课完成 S01 FIXTURE STAGE
+				38 button S01-01 Large canonical lesson, Help: Large canonical lesson
+				39 button ＋ 快速收集 ⌘⇧空格
+				40 button ⌕ 搜索与命令 ⌘K
+				41 container (showing 31-131 of 131 items)
+					42 text 等待加载
+					43 text Fixture image 23
+					44 text 图片
+					45 text 1 KB
+					46 text 尚未引用
+					47 button 插入素材：Fixture image 23, Help: 插入到当前位置
+					48 summary 更多素材操作：Fixture image 23, Help: 更多素材操作, Value: off
+						49 text ⋯
+					50 text 等待加载
+					51 text Fixture image 24
+					52 text 图片
+					53 text 1 KB
+					54 text 尚未引用
+					55 button 插入素材：Fixture image 24, Help: 插入到当前位置
+					56 summary 更多素材操作：Fixture image 24, Help: 更多素材操作, Value: off
+						57 text ⋯
+					58 text 等待加载
+					59 text Fixture image 25
+					60 text 图片
+					61 text 1 KB
+					62 text 尚未引用
+					63 button 插入素材：Fixture image 25, Help: 插入到当前位置
+					64 summary 更多素材操作：Fixture image 25, Help: 更多素材操作, Value: off
+						65 text ⋯
+					66 text 等待加载
+					67 text Fixture image 26
+					68 text 图片
+					69 text 1 KB
+					70 text 尚未引用
+					71 button 插入素材：Fixture image 26, Help: 插入到当前位置
+					72 summary 更多素材操作：Fixture image 26, Help: 更多素材操作, Value: off
+						73 text ⋯
+					74 text 等待加载
+					75 text Fixture image 27
+					76 text 图片
+					77 text 1 KB
+					78 text 尚未引用
+					79 button 插入素材：Fixture image 27, Help: 插入到当前位置
+					80 summary 更多素材操作：Fixture image 27, Help: 更多素材操作, Value: off
+						81 text ⋯
+					82 button 放大查看 Fixture image 28, Help: 点击查看大图
+					83 text Fixture image 28
+					84 text 图片
+					85 text 1 KB
+					86 text 尚未引用
+					87 button 插入素材：Fixture image 28, Help: 插入到当前位置
+					88 summary 更多素材操作：Fixture image 28, Help: 更多素材操作, Value: off
+						89 text ⋯
+					90 button 放大查看 Fixture image 29, Help: 点击查看大图
+					91 text Fixture image 29
+					92 text 图片
+					93 text 1 KB
+					94 text 尚未引用
+					95 button 插入素材：Fixture image 29, Help: 插入到当前位置
+					96 summary 更多素材操作：Fixture image 29, Help: 更多素材操作, Value: off
+						97 text ⋯
+					98 button 放大查看 Fixture image 30, Help: 点击查看大图
+					99 text Fixture image 30
+					100 text 图片
+					101 text 1 KB
+					102 text 尚未引用
+					103 button 插入素材：Fixture image 30, Help: 插入到当前位置
+					104 summary 更多素材操作：Fixture image 30, Help: 更多素材操作, Value: off
+						105 text ⋯
+					106 button 放大查看 Fixture image 31, Help: 点击查看大图
+					107 text Fixture image 31
+					108 text 图片
+					109 text 1 KB
+					110 text 尚未引用
+					111 button 插入素材：Fixture image 31, Help: 插入到当前位置
+					112 summary 更多素材操作：Fixture image 31, Help: 更多素材操作, Value: off
+						113 text ⋯
+					114 button 放大查看 Fixture image 32, Help: 点击查看大图
+					115 text Fixture image 32
+					116 text 图片
+					117 text 1 KB
+					118 text 尚未引用
+					119 button 插入素材：Fixture image 32, Help: 插入到当前位置
+					120 summary 更多素材操作：Fixture image 32, Help: 更多素材操作, Value: off
+						121 text ⋯
+					122 button 放大查看 Fixture image 33, Help: 点击查看大图
+					123 text Fixture image 33
+					124 text 图片
+					125 text 1 KB
+					126 text 尚未引用
+					127 button 插入素材：Fixture image 33, Help: 插入到当前位置
+					128 summary 更多素材操作：Fixture image 33, Help: 更多素材操作, Value: off
+						129 text ⋯
+					130 text 等待加载
+					131 text Fixture image 34
+					132 text 图片
+					133 text 1 KB
+					134 text 尚未引用
+					135 button 插入素材：Fixture image 34, Help: 插入到当前位置
+					136 summary 更多素材操作：Fixture image 34, Help: 更多素材操作, Value: off
+						137 text ⋯
+					138 text 等待加载
+					139 text Fixture image 35
+					140 text 图片
+					141 text 1 KB
+					142 text 尚未引用
+					143 button 插入素材：Fixture image 35, Help: 插入到当前位置
+					144 summary 更多素材操作：Fixture image 35, Help: 更多素材操作, Value: off
+						145 text ⋯
+					146 text 等待加载
+					147 text Fixture image 36
+					148 text 图片
+					149 text 1 KB
+					150 text 尚未引用
+					151 button 插入素材：Fixture image 36, Help: 插入到当前位置
+					152 summary 更多素材操作：Fixture image 36, Help: 更多素材操作, Value: off
+						153 text ⋯
+					154 text 等待加载
+					155 text Fixture image 37
+					156 text 图片
+					157 text 1 KB
+					158 text 尚未引用
+					159 button 插入素材：Fixture image 37, Help: 插入到当前位置
+					160 summary 更多素材操作：Fixture image 37, Help: 更多素材操作, Value: off
+						161 text ⋯
+					162 text 等待加载
+					163 text Fixture image 38
+					164 text 图片
+					165 text 1 KB
+					166 text 尚未引用
+					167 button 插入素材：Fixture image 38, Help: 插入到当前位置
+					168 summary 更多素材操作：Fixture image 38, Help: 更多素材操作, Value: off
+						169 text ⋯
+					170 text 等待加载
+					171 text Fixture image 39
+					172 text 图片
+					173 text 1 KB
+					174 text 尚未引用
+					175 button 插入素材：Fixture image 39, Help: 插入到当前位置
+					176 summary 更多素材操作：Fixture image 39, Help: 更多素材操作, Value: off
+						177 text ⋯
+					178 text 等待加载
+					179 text Fixture image 40
+					180 text 图片
+					181 text 1 KB
+					182 text 尚未引用
+					183 button 插入素材：Fixture image 40, Help: 插入到当前位置
+					184 summary 更多素材操作：Fixture image 40, Help: 更多素材操作, Value: off
+						185 text ⋯
+					186 text 等待加载
+					187 text Fixture image 41
+					188 text 图片
+					189 text 1 KB
+					190 text 尚未引用
+					191 button 插入素材：Fixture image 41, Help: 插入到当前位置
+					192 summary 更多素材操作：Fixture image 41, Help: 更多素材操作, Value: off
+						193 text ⋯
+					194 text 等待加载
+					195 text Fixture image 42
+					196 text 图片
+					197 text 1 KB
+					198 text 尚未引用
+					199 button 插入素材：Fixture image 42, Help: 插入到当前位置
+					200 summary 更多素材操作：Fixture image 42, Help: 更多素材操作, Value: off
+						201 text ⋯
+					202 text 等待加载
+					203 text Fixture image 43
+					204 text 图片
+					205 text 1 KB
+					206 text 尚未引用
+					207 button 插入素材：Fixture image 43, Help: 插入到当前位置
+					208 summary 更多素材操作：Fixture image 43, Help: 更多素材操作, Value: off
+						209 text ⋯
+					210 text 等待加载
+					211 text Fixture image 44
+					212 text 图片
+					213 text 1 KB
+					214 text 尚未引用
+					215 button 插入素材：Fixture image 44, Help: 插入到当前位置
+					216 summary 更多素材操作：Fixture image 44, Help: 更多素材操作, Value: off
+						217 text ⋯
+					218 text 等待加载
+					219 text Fixture image 45
+					220 text 图片
+					221 text 1 KB
+					222 text 尚未引用
+					223 button 插入素材：Fixture image 45, Help: 插入到当前位置
+					224 summary 更多素材操作：Fixture image 45, Help: 更多素材操作, Value: off
+						225 text ⋯
+					226 text 等待加载
+					227 text Fixture image 46
+					228 text 图片
+					229 text 1 KB
+					230 text 尚未引用
+					231 button 插入素材：Fixture image 46, Help: 插入到当前位置
+					232 summary 更多素材操作：Fixture image 46, Help: 更多素材操作, Value: off
+						233 text ⋯
+					234 text 等待加载
+					235 text Fixture image 47
+					236 text 图片
+					237 text 1 KB
+					238 text 尚未引用
+					239 button 插入素材：Fixture image 47, Help: 插入到当前位置
+					240 summary 更多素材操作：Fixture image 47, Help: 更多素材操作, Value: off
+						241 text ⋯
+					242 text 等待加载
+					243 text Fixture image 48
+					244 text 图片
+					245 text 1 KB
+					246 text 尚未引用
+					247 button 插入素材：Fixture image 48, Help: 插入到当前位置
+					248 summary 更多素材操作：Fixture image 48, Help: 更多素材操作, Value: off
+						249 text ⋯
+					250 text 等待加载
+					251 text Fixture image 49
+					252 text 图片
+					253 text 1 KB
+					254 text 尚未引用
+					255 button 插入素材：Fixture image 49, Help: 插入到当前位置
+					256 summary 更多素材操作：Fixture image 49, Help: 更多素材操作, Value: off
+						257 text ⋯
+					258 text 等待加载
+					259 text Fixture image 50
+					260 text 图片
+					261 text 1 KB
+					262 text 尚未引用
+					263 button 插入素材：Fixture image 50, Help: 插入到当前位置
+					264 summary 更多素材操作：Fixture image 50, Help: 更多素材操作, Value: off
+						265 text ⋯
+					266 text 等待加载
+					267 text Fixture image 51
+					268 text 图片
+					269 text 1 KB
+					270 text 尚未引用
+					271 button 插入素材：Fixture image 51, Help: 插入到当前位置
+					272 summary 更多素材操作：Fixture image 51, Help: 更多素材操作, Value: off
+						273 text ⋯
+					274 text 等待加载
+					275 text Fixture image 52
+					276 text 图片
+					277 text 1 KB
+					278 text 尚未引用
+					279 button 插入素材：Fixture image 52, Help: 插入到当前位置
+					280 summary 更多素材操作：Fixture image 52, Help: 更多素材操作, Value: off
+						281 text ⋯
+					282 text 等待加载
+					283 text Fixture image 53
+					284 text 图片
+					285 text 1 KB
+					286 text 尚未引用
+					287 button 插入素材：Fixture image 53, Help: 插入到当前位置
+					288 summary 更多素材操作：Fixture image 53, Help: 更多素材操作, Value: off
+						289 text ⋯
+					290 text 等待加载
+					291 text Fixture image 54
+					292 text 图片
+					293 text 1 KB
+					294 text 尚未引用
+					295 button 插入素材：Fixture image 54, Help: 插入到当前位置
+					296 summary 更多素材操作：Fixture image 54, Help: 更多素材操作, Value: off
+						297 text ⋯
+					298 text 等待加载
+					299 text Fixture image 55
+					300 text 图片
+					301 text 1 KB
+					302 text 尚未引用
+					303 button 插入素材：Fixture image 55, Help: 插入到当前位置
+					304 summary 更多素材操作：Fixture image 55, Help: 更多素材操作, Value: off
+						305 text ⋯
+					306 text 等待加载
+					307 text Fixture image 56
+					308 text 图片
+					309 text 1 KB
+					310 text 尚未引用
+					311 button 插入素材：Fixture image 56, Help: 插入到当前位置
+					312 summary 更多素材操作：Fixture image 56, Help: 更多素材操作, Value: off
+						313 text ⋯
+					314 text 等待加载
+					315 text Fixture image 57
+					316 text 图片
+					317 text 1 KB
+					318 text 尚未引用
+					319 button 插入素材：Fixture image 57, Help: 插入到当前位置
+					320 summary 更多素材操作：Fixture image 57, Help: 更多素材操作, Value: off
+						321 text ⋯
+					322 text 等待加载
+					323 text Fixture image 58
+					324 text 图片
+					325 text 1 KB
+					326 text 尚未引用
+					327 button 插入素材：Fixture image 58, Help: 插入到当前位置
+					328 summary 更多素材操作：Fixture image 58, Help: 更多素材操作, Value: off
+						329 text ⋯
+					330 text 等待加载
+					331 text Fixture image 59
+					332 text 图片
+					333 text 1 KB
+					334 text 尚未引用
+					335 button 插入素材：Fixture image 59, Help: 插入到当前位置
+					336 summary 更多素材操作：Fixture image 59, Help: 更多素材操作, Value: off
+						337 text ⋯
+					338 text 等待加载
+					339 text Fixture image 60
+					340 text 图片
+					341 text 1 KB
+					342 text 尚未引用
+					343 button 插入素材：Fixture image 60, Help: 插入到当前位置
+					344 summary 更多素材操作：Fixture image 60, Help: 更多素材操作, Value: off
+						345 text ⋯
+					346 text 等待加载
+					347 text Fixture image 61
+					348 text 图片
+					349 text 1 KB
+					350 text 尚未引用
+					351 button 插入素材：Fixture image 61, Help: 插入到当前位置
+					352 summary 更多素材操作：Fixture image 61, Help: 更多素材操作, Value: off
+						353 text ⋯
+					354 text 等待加载
+					355 text Fixture image 62
+					356 text 图片
+					357 text 1 KB
+					358 text 尚未引用
+					359 button 插入素材：Fixture image 62, Help: 插入到当前位置
+					360 summary 更多素材操作：Fixture image 62, Help: 更多素材操作, Value: off
+						361 text ⋯
+					362 text 等待加载
+					363 text Fixture image 63
+					364 text 图片
+					365 text 1 KB
+					366 text 尚未引用
+					367 button 插入素材：Fixture image 63, Help: 插入到当前位置
+					368 summary 更多素材操作：Fixture image 63, Help: 更多素材操作, Value: off
+						369 text ⋯
+					370 text 等待加载
+					371 text Fixture image 64
+					372 text 图片
+					373 text 1 KB
+					374 text 尚未引用
+					375 button 插入素材：Fixture image 64, Help: 插入到当前位置
+					376 summary 更多素材操作：Fixture image 64, Help: 更多素材操作, Value: off
+						377 text ⋯
+					378 text 等待加载
+					379 text Fixture image 65
+					380 text 图片
+					381 text 1 KB
+					382 text 尚未引用
+					383 button 插入素材：Fixture image 65, Help: 插入到当前位置
+					384 summary 更多素材操作：Fixture image 65, Help: 更多素材操作, Value: off
+						385 text ⋯
+					386 text 等待加载
+					387 text Fixture image 66
+					388 text 图片
+					389 text 1 KB
+					390 text 尚未引用
+					391 button 插入素材：Fixture image 66, Help: 插入到当前位置
+					392 summary 更多素材操作：Fixture image 66, Help: 更多素材操作, Value: off
+						393 text ⋯
+					394 text 等待加载
+					395 text Fixture image 67
+					396 text 图片
+					397 text 1 KB
+					398 text 尚未引用
+					399 button 插入素材：Fixture image 67, Help: 插入到当前位置
+					400 summary 更多素材操作：Fixture image 67, Help: 更多素材操作, Value: off
+						401 text ⋯
+					402 text 等待加载
+					403 text Fixture image 68
+					404 text 图片
+					405 text 1 KB
+					406 text 尚未引用
+					407 button 插入素材：Fixture image 68, Help: 插入到当前位置
+					408 summary 更多素材操作：Fixture image 68, Help: 更多素材操作, Value: off
+						409 text ⋯
+					410 text 等待加载
+					411 text Fixture image 69
+					412 text 图片
+					413 text 1 KB
+					414 text 尚未引用
+					415 button 插入素材：Fixture image 69, Help: 插入到当前位置
+					416 summary 更多素材操作：Fixture image 69, Help: 更多素材操作, Value: off
+						417 text ⋯
+					418 text 等待加载
+					419 text Fixture image 70
+					420 text 图片
+					421 text 1 KB
+					422 text 尚未引用
+					423 button 插入素材：Fixture image 70, Help: 插入到当前位置
+					424 summary 更多素材操作：Fixture image 70, Help: 更多素材操作, Value: off
+						425 text ⋯
+					426 text 等待加载
+					427 text Fixture image 71
+					428 text 图片
+					429 text 1 KB
+					430 text 尚未引用
+					431 button 插入素材：Fixture image 71, Help: 插入到当前位置
+					432 summary 更多素材操作：Fixture image 71, Help: 更多素材操作, Value: off
+						433 text ⋯
+					434 text 等待加载
+					435 text Fixture image 72
+					436 text 图片
+					437 text 1 KB
+					438 text 尚未引用
+					439 button 插入素材：Fixture image 72, Help: 插入到当前位置
+					440 summary 更多素材操作：Fixture image 72, Help: 更多素材操作, Value: off
+						441 text ⋯
+					442 text 等待加载
+					443 text Fixture image 73
+					444 text 图片
+					445 text 1 KB
+					446 text 尚未引用
+					447 button 插入素材：Fixture image 73, Help: 插入到当前位置
+					448 summary 更多素材操作：Fixture image 73, Help: 更多素材操作, Value: off
+						449 text ⋯
+					450 text 等待加载
+					451 text Fixture image 74
+					452 text 图片
+					453 text 1 KB
+					454 text 尚未引用
+					455 button 插入素材：Fixture image 74, Help: 插入到当前位置
+					456 summary 更多素材操作：Fixture image 74, Help: 更多素材操作, Value: off
+						457 text ⋯
+					458 text 等待加载
+					459 text Fixture image 75
+					460 text 图片
+					461 text 1 KB
+					462 text 尚未引用
+					463 button 插入素材：Fixture image 75, Help: 插入到当前位置
+					464 summary 更多素材操作：Fixture image 75, Help: 更多素材操作, Value: off
+						465 text ⋯
+					466 button 放大查看 Fixture image 76, Help: 点击查看大图
+					467 text Fixture image 76
+					468 text 图片
+					469 text 1 KB
+					470 text 尚未引用
+					471 button 插入素材：Fixture image 76, Help: 插入到当前位置
+					472 summary 更多素材操作：Fixture image 76, Help: 更多素材操作, Value: off
+						473 text ⋯
+					474 button 放大查看 Fixture image 77, Help: 点击查看大图
+					475 text Fixture image 77
+					476 text 图片
+					477 text 1 KB
+					478 text 尚未引用
+					479 button 插入素材：Fixture image 77, Help: 插入到当前位置
+					480 summary 更多素材操作：Fixture image 77, Help: 更多素材操作, Value: off
+						481 text ⋯
+					482 button 放大查看 Fixture image 78, Help: 点击查看大图
+					483 text Fixture image 78
+					484 text 图片
+					485 text 1 KB
+					486 text 尚未引用
+					487 button 插入素材：Fixture image 78, Help: 插入到当前位置
+					488 summary 更多素材操作：Fixture image 78, Help: 更多素材操作, Value: off
+						489 text ⋯
+					490 button 放大查看 Fixture image 79, Help: 点击查看大图
+					491 text Fixture image 79
+					492 text 图片
+					493 text 1 KB
+					494 text 尚未引用
+					495 button 插入素材：Fixture image 79, Help: 插入到当前位置
+					496 summary 更多素材操作：Fixture image 79, Help: 更多素材操作, Value: off
+						497 text ⋯
+					498 text 等待加载
+					499 text Fixture image 80
+					500 text 图片
+					501 text 1 KB
+					502 text 尚未引用
+					503 button 插入素材：Fixture image 80, Help: 插入到当前位置
+					504 summary 更多素材操作：Fixture image 80, Help: 更多素材操作, Value: off
+						505 text ⋯
+					506 text 等待加载
+					507 text Fixture image 81
+					508 text 图片
+					509 text 1 KB
+					510 text 尚未引用
+					511 button 插入素材：Fixture image 81, Help: 插入到当前位置
+					512 summary 更多素材操作：Fixture image 81, Help: 更多素材操作, Value: off
+						513 text ⋯
+					514 text 等待加载
+					515 text Fixture image 82
+					516 text 图片
+					517 text 1 KB
+					518 text 尚未引用
+					519 button 插入素材：Fixture image 82, Help: 插入到当前位置
+					520 summary 更多素材操作：Fixture image 82, Help: 更多素材操作, Value: off
+						521 text ⋯
+					522 text 等待加载
+					523 text Fixture image 83
+					524 text 图片
+					525 text 1 KB
+					526 text 尚未引用
+					527 button 插入素材：Fixture image 83, Help: 插入到当前位置
+					528 summary 更多素材操作：Fixture image 83, Help: 更多素材操作, Value: off
+						529 text ⋯
+					530 text 等待加载
+					531 text Fixture image 84
+					532 text 图片
+					533 text 1 KB
+					534 text 尚未引用
+					535 button 插入素材：Fixture image 84, Help: 插入到当前位置
+					536 summary 更多素材操作：Fixture image 84, Help: 更多素材操作, Value: off
+						537 text ⋯
+					538 text 等待加载
+					539 text Fixture image 85
+					540 text 图片
+					541 text 1 KB
+					542 text 尚未引用
+					543 button 插入素材：Fixture image 85, Help: 插入到当前位置
+					544 summary 更多素材操作：Fixture image 85, Help: 更多素材操作, Value: off
+						545 text ⋯
+					546 text 等待加载
+					547 text Fixture image 86
+					548 text 图片
+					549 text 1 KB
+					550 text 尚未引用
+					551 button 插入素材：Fixture image 86, Help: 插入到当前位置
+					552 summary 更多素材操作：Fixture image 86, Help: 更多素材操作, Value: off
+						553 text ⋯
+					554 text 等待加载
+					555 text Fixture image 87
+					556 text 图片
+					557 text 1 KB
+					558 text 尚未引用
+					559 button 插入素材：Fixture image 87, Help: 插入到当前位置
+					560 summary 更多素材操作：Fixture image 87, Help: 更多素材操作, Value: off
+						561 text ⋯
+					562 text 等待加载
+					563 text Fixture image 88
+					564 text 图片
+					565 text 1 KB
+					566 text 尚未引用
+					567 button 插入素材：Fixture image 88, Help: 插入到当前位置
+					568 summary 更多素材操作：Fixture image 88, Help: 更多素材操作, Value: off
+						569 text ⋯
+					570 text 等待加载
+					571 text Fixture image 89
+					572 text 图片
+					573 text 1 KB
+					574 text 尚未引用
+					575 button 插入素材：Fixture image 89, Help: 插入到当前位置
+					576 summary 更多素材操作：Fixture image 89, Help: 更多素材操作, Value: off
+						577 text ⋯
+					578 text 等待加载
+					579 text Fixture image 90
+					580 text 图片
+					581 text 1 KB
+					582 text 尚未引用
+					583 button 插入素材：Fixture image 90, Help: 插入到当前位置
+					584 summary 更多素材操作：Fixture image 90, Help: 更多素材操作, Value: off
+						585 text ⋯
+					586 text 等待加载
+					587 text Fixture image 91
+					588 text 图片
+					589 text 1 KB
+					590 text 尚未引用
+					591 button 插入素材：Fixture image 91, Help: 插入到当前位置
+					592 summary 更多素材操作：Fixture image 91, Help: 更多素材操作, Value: off
+						593 text ⋯
+					594 text 等待加载
+					595 text Fixture image 92
+					596 text 图片
+					597 text 1 KB
+					598 text 尚未引用
+					599 button 插入素材：Fixture image 92, Help: 插入到当前位置
+					600 summary 更多素材操作：Fixture image 92, Help: 更多素材操作, Value: off
+						601 text ⋯
+					602 text 等待加载
+					603 text Fixture image 93
+					604 text 图片
+					605 text 1 KB
+					606 text 尚未引用
+					607 button 插入素材：Fixture image 93, Help: 插入到当前位置
+					608 summary 更多素材操作：Fixture image 93, Help: 更多素材操作, Value: off
+						609 text ⋯
+					610 text 等待加载
+					611 text Fixture image 94
+					612 text 图片
+					613 text 1 KB
+					614 text 尚未引用
+					615 button 插入素材：Fixture image 94, Help: 插入到当前位置
+					616 summary 更多素材操作：Fixture image 94, Help: 更多素材操作, Value: off
+						617 text ⋯
+					618 text 等待加载
+					619 text Fixture image 95
+					620 text 图片
+					621 text 1 KB
+					622 text 尚未引用
+					623 button 插入素材：Fixture image 95, Help: 插入到当前位置
+					624 summary 更多素材操作：Fixture image 95, Help: 更多素材操作, Value: off
+						625 text ⋯
+					626 text 等待加载
+					627 text Fixture image 96
+					628 text 图片
+					629 text 1 KB
+					630 text 尚未引用
+					631 button 插入素材：Fixture image 96, Help: 插入到当前位置
+					632 summary 更多素材操作：Fixture image 96, Help: 更多素材操作, Value: off
+						633 text ⋯
+					634 text 等待加载
+					635 text Fixture image 97
+					636 text 图片
+					637 text 1 KB
+					638 text 尚未引用
+					639 button 插入素材：Fixture image 97, Help: 插入到当前位置
+					640 summary 更多素材操作：Fixture image 97, Help: 更多素材操作, Value: off
+						641 text ⋯
+					642 text 等待加载
+					643 text Fixture image 98
+					644 text 图片
+					645 text 1 KB
+					646 text 尚未引用
+					647 button 插入素材：Fixture image 98, Help: 插入到当前位置
+					648 summary 更多素材操作：Fixture image 98, Help: 更多素材操作, Value: off
+						649 text ⋯
+					650 text 等待加载
+					651 text Fixture image 99
+					652 text 图片
+					653 text 1 KB
+					654 text 尚未引用
+					655 button 插入素材：Fixture image 99, Help: 插入到当前位置
+					656 summary 更多素材操作：Fixture image 99, Help: 更多素材操作, Value: off
+						657 text ⋯
+					658 text 等待加载
+					659 text Fixture image 100
+					660 text 图片
+					661 text 1 KB
+					662 text 尚未引用
+					663 button 插入素材：Fixture image 100, Help: 插入到当前位置
+					664 summary 更多素材操作：Fixture image 100, Help: 更多素材操作, Value: off
+						665 text ⋯
+					666 text 等待加载
+					667 text Fixture image 101
+					668 text 图片
+					669 text 1 KB
+					670 text 尚未引用
+					671 button 插入素材：Fixture image 101, Help: 插入到当前位置
+					672 summary 更多素材操作：Fixture image 101, Help: 更多素材操作, Value: off
+						673 text ⋯
+					674 text 等待加载
+					675 text Fixture image 102
+					676 text 图片
+					677 text 1 KB
+					678 text 尚未引用
+					679 button 插入素材：Fixture image 102, Help: 插入到当前位置
+					680 summary 更多素材操作：Fixture image 102, Help: 更多素材操作, Value: off
+						681 text ⋯
+					682 text 等待加载
+					683 text Fixture image 103
+					684 text 图片
+					685 text 1 KB
+					686 text 尚未引用
+					687 button 插入素材：Fixture image 103, Help: 插入到当前位置
+					688 summary 更多素材操作：Fixture image 103, Help: 更多素材操作, Value: off
+						689 text ⋯
+					690 text 等待加载
+					691 text Fixture image 104
+					692 text 图片
+					693 text 1 KB
+					694 text 尚未引用
+					695 button 插入素材：Fixture image 104, Help: 插入到当前位置
+					696 summary 更多素材操作：Fixture image 104, Help: 更多素材操作, Value: off
+						697 text ⋯
+					698 text 等待加载
+					699 text Fixture image 105
+					700 text 图片
+					701 text 1 KB
+					702 text 尚未引用
+					703 button 插入素材：Fixture image 105, Help: 插入到当前位置
+					704 summary 更多素材操作：Fixture image 105, Help: 更多素材操作, Value: off
+						705 text ⋯
+					706 button 放大查看 Fixture image 106, Help: 点击查看大图
+					707 text Fixture image 106
+					708 text 图片
+					709 text 1 KB
+					710 text 尚未引用
+					711 button 插入素材：Fixture image 106, Help: 插入到当前位置
+					712 summary 更多素材操作：Fixture image 106, Help: 更多素材操作, Value: off
+						713 text ⋯
+					714 button 放大查看 Fixture image 107, Help: 点击查看大图
+					715 text Fixture image 107
+					716 text 图片
+					717 text 1 KB
+					718 text 尚未引用
+					719 button 插入素材：Fixture image 107, Help: 插入到当前位置
+					720 summary 更多素材操作：Fixture image 107, Help: 更多素材操作, Value: off
+						721 text ⋯
+					722 button 放大查看 Fixture image 108, Help: 点击查看大图
+					723 text Fixture image 108
+					724 text 图片
+					725 text 1 KB
+					726 text 尚未引用
+					727 button 插入素材：Fixture image 108, Help: 插入到当前位置
+					728 summary 更多素材操作：Fixture image 108, Help: 更多素材操作, Value: off
+						729 text ⋯
+					730 button 放大查看 Fixture image 109, Help: 点击查看大图
+					731 text Fixture image 109
+					732 text 图片
+					733 text 1 KB
+					734 text 尚未引用
+					735 button 插入素材：Fixture image 109, Help: 插入到当前位置
+					736 summary 更多素材操作：Fixture image 109, Help: 更多素材操作, Value: off
+						737 text ⋯
+					738 button 放大查看 Fixture image 110, Help: 点击查看大图
+					739 text Fixture image 110
+					740 text 图片
+					741 text 1 KB
+					742 text 尚未引用
+					743 button 插入素材：Fixture image 110, Help: 插入到当前位置
+					744 summary 更多素材操作：Fixture image 110, Help: 更多素材操作, Value: off
+						745 text ⋯
+					746 button 放大查看 Fixture image 111, Help: 点击查看大图
+					747 text Fixture image 111
+					748 text 图片
+					749 text 1 KB
+					750 text 尚未引用
+					751 button 插入素材：Fixture image 111, Help: 插入到当前位置
+					752 summary 更多素材操作：Fixture image 111, Help: 更多素材操作, Value: off
+						753 text ⋯
+					754 text 等待加载
+					755 text Fixture image 112
+					756 text 图片
+					757 text 1 KB
+					758 text 尚未引用
+					759 button 插入素材：Fixture image 112, Help: 插入到当前位置
+					760 summary 更多素材操作：Fixture image 112, Help: 更多素材操作, Value: off
+						761 text ⋯
+					762 text 等待加载
+					763 text Fixture image 113
+					764 text 图片
+					765 text 1 KB
+					766 text 尚未引用
+					767 button 插入素材：Fixture image 113, Help: 插入到当前位置
+					768 summary 更多素材操作：Fixture image 113, Help: 更多素材操作, Value: off
+						769 text ⋯
+					770 text 等待加载
+					771 text Fixture GIF 1
+					772 text GIF
+					773 text 7 KB
+					774 text 尚未引用
+					775 button 插入素材：Fixture GIF 1, Help: 插入到当前位置
+					776 summary 更多素材操作：Fixture GIF 1, Help: 更多素材操作, Value: off
+						777 text ⋯
+					778 text 等待加载
+					779 text Fixture MP4 1
+					780 text 视频
+					781 text 9 KB
+					782 text 尚未引用
+					783 button 插入素材：Fixture MP4 1, Help: 插入到当前位置
+					784 summary 更多素材操作：Fixture MP4 1, Help: 更多素材操作, Value: off
+						785 text ⋯
+					786 button 放大查看 Fixture GIF 2, Help: 点击查看大图
+					787 text Fixture GIF 2
+					788 text GIF
+					789 text 7 KB
+					790 text 尚未引用
+					791 button 插入素材：Fixture GIF 2, Help: 插入到当前位置
+					792 summary 更多素材操作：Fixture GIF 2, Help: 更多素材操作, Value: off
+						793 text ⋯
+					794 button 放大查看 Fixture MP4 2, Help: 点击查看大图
+					795 text 0:02
+					796 text Fixture MP4 2
+					797 text 视频
+					798 text 9 KB
+					799 text 尚未引用
+					800 button 插入素材：Fixture MP4 2, Help: 插入到当前位置
+					801 summary 更多素材操作：Fixture MP4 2, Help: 更多素材操作, Value: off
+						802 text ⋯
+					803 button 放大查看 Fixture GIF 3, Help: 点击查看大图
+					804 text Fixture GIF 3
+					805 text GIF
+					806 text 7 KB
+					807 text 尚未引用
+					808 button 插入素材：Fixture GIF 3, Help: 插入到当前位置
+					809 summary 更多素材操作：Fixture GIF 3, Help: 更多素材操作, Value: off
+						810 text ⋯
+					811 button 放大查看 Fixture MP4 3, Help: 点击查看大图
+					812 text 0:02
+					813 text Fixture MP4 3
+					814 text 视频
+					815 text 9 KB
+					816 text 尚未引用
+					817 button 插入素材：Fixture MP4 3, Help: 插入到当前位置
+					818 summary 更多素材操作：Fixture MP4 3, Help: 更多素材操作, Value: off
+						819 text ⋯
+					820 container Boundary fixture: missing file · 图片 预览失败
+						821 text Boundary fixture: missing file · 图片 预览失败 无法读取素材: No such file or directory (os error 2)
+						822 button 重试预览：Boundary fixture: missing file, Help: 重试预览
+					823 text Boundary fixture: missing file
+					824 text 图片
+					825 text 37 B
+					826 text 尚未引用
+					827 button 插入素材：Boundary fixture: missing file, Help: 插入到当前位置
+					828 summary 更多素材操作：Boundary fixture: missing file, Help: 更多素材操作, Value: off
+						829 text ⋯
+					830 container Boundary fixture: exceeds preview cap · 图片 预览失败
+						831 text Boundary fixture: exceeds preview cap · 图片 预览失败 素材超过 8 MiB 单文件预览上限
+						832 button 重试预览：Boundary fixture: exceeds preview cap, Help: 重试预览
+					833 text Boundary fixture: exceeds preview cap
+					834 text 图片
+					835 text 8.0 MB
+					836 text 尚未引用
+					837 button 插入素材：Boundary fixture: exceeds preview cap, Help: 插入到当前位置
+					838 summary 更多素材操作：Boundary fixture: exceeds preview cap, Help: 更多素材操作, Value: off
+						839 text ⋯
+					840 container Boundary fixture: mismatched MIME · 图片 预览失败
+						841 text Boundary fixture: mismatched MIME · 图片 预览失败 图片素材的 MIME 类型与素材类型不一致
+						842 button 重试预览：Boundary fixture: mismatched MIME, Help: 重试预览
+					843 text Boundary fixture: mismatched MIME
+					844 text 图片
+					845 text 1 KB
+					846 text 尚未引用
+					847 button 插入素材：Boundary fixture: mismatched MIME, Help: 插入到当前位置
+					848 summary 更多素材操作：Boundary fixture: mismatched MIME, Help: 更多素材操作, Value: off
+						849 text ⋯
+				850 button 媒体
+				851 button 待补
+				852 button 状态
+				853 button AI 助手
+				854 button 属性
+				855 button 版本
+				856 button 收起右栏
+				857 container
+					858 text 作用对象： S01-01｜Large canonical lesson
+				859 text 完成这一课
+				860 heading 待补 0, Value: 2
+					861 text 待补 
+					862 text 0
+				863 button 新增待补占位符
+				864 text 0 内容待补 0 排版待补 0 缺素材
+				865 button ＋ 文字待补
+				866 button ＋ 图片待补
+				867 text 这一课没有未完成的待补内容，可以继续写正文或查看预览。
+				868 text 待补会一直保存，重开项目后仍然可以定位到这里。
+				869 text S01-01｜Large canonical lesson 正文：待研究 待补：已齐 排版：未开始 完成度：93% 本地优先 · 自动保存
+				870 container 媒体预览：Fixture MP4 2
+					871 text 媒体预览
+					872 heading Fixture MP4 2, Value: 2
+						873 text Fixture MP4 2
+					874 button 关闭媒体预览
+					875 container Fixture MP4 2, URL: asset://localhost/%2Fprivate%2Ftmp%2Fworkbench-io-ui-native-final%2Fmedia%2Fassets%2Ffixture-01.mp4
+						876 container
+							877 button Enter Picture in Picture
+							878 container Video Controls
+								879 button Skip Back 15 Seconds
+								880 button Pause
+								881 button Skip Forward 15 Seconds
+								882 text Elapsed: 0 seconds
+								883 container
+									884 slider (settable, float) Value: 0, Details: 0 seconds
+										885 value indicator 0
+								886 text Duration: 2 seconds
+								887 button Mute
+								888 button More…
+					889 button 播放视频
+	890 close button
+	891 full screen button Help: this button also has an action to zoom the window, Secondary Actions: zoom the window
+	892 minimize button
+	893 text AI Course Workbench
+894 menu bar
+	895 AI Course Workbench QA Preview Final7
+	896 File
+	897 Edit
+	898 View
+	899 Window
+	900 Help
+
+The focused UI element is 2 HTML content Description: AI Course Workbench, URL: tauri://localhost

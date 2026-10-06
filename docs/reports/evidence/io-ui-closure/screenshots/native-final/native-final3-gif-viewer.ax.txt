@@ -1,0 +1,24 @@
+Window: "AI Course Workbench", App: AI Course Workbench QA Preview Final3.
+0 standard window AI Course Workbench, Secondary Actions: Raise
+	1 scroll area
+		2 HTML content Description: AI Course Workbench, URL: tauri://localhost
+			3 container 媒体预览：Fixture GIF 3
+				4 text 媒体预览
+				5 heading Fixture GIF 3, Value: 2
+					6 text Fixture GIF 3
+				7 button 关闭媒体预览
+				8 image Fixture GIF 3
+				9 text 64 × 64
+	10 close button
+	11 full screen button Help: this button also has an action to zoom the window, Secondary Actions: zoom the window
+	12 minimize button
+	13 text AI Course Workbench
+14 menu bar
+	15 AI Course Workbench QA Preview Final3
+	16 File
+	17 Edit
+	18 View
+	19 Window
+	20 Help
+
+The focused UI element is 7 button 关闭媒体预览

@@ -1,0 +1,6 @@
+Check tests/authoring_ui_test.ts
+running 1 test from ./tests/authoring_ui_test.ts
+an uncertain canonical mutation pauses later saves without discarding edits ... ok (20ms)
+
+ok | 1 passed | 0 failed | 79 filtered out (24ms)
+

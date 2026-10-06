@@ -1,0 +1,22 @@
+Diff in /Users/youngi/.codex/worktrees/io-ui-closure/workbench/src-tauri/src/lib.rs:20051:
+         };
+         fail_snapshot_directory_sync_for_test(snapshot_id);
+ 
+-        let acknowledgement = create().expect("directory sync failure cannot undo hard-linked snapshot");
++        let acknowledgement =
++            create().expect("directory sync failure cannot undo hard-linked snapshot");
+         let path = directory
+             .join(".workspace/snapshots")
+             .join(format!("{snapshot_id}.json"));
+Diff in /Users/youngi/.codex/worktrees/io-ui-closure/workbench/src-tauri/src/lib.rs:20062:
+         assert_eq!(acknowledgement["outcome"], json!("written"));
+         assert_eq!(acknowledgement["content_hash"], json!(expected_hash));
+         assert_eq!(persisted["content_hash"], json!(expected_hash));
+-        assert_eq!(snapshot_content_hash(&persisted["project"]).unwrap(), expected_hash);
++        assert_eq!(
++            snapshot_content_hash(&persisted["project"]).unwrap(),
++            expected_hash
++        );
+         assert!(
+             acknowledgement["durability_warning"]
+                 .as_str()

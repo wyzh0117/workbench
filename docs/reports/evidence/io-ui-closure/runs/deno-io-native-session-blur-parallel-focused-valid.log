@@ -1,0 +1,5 @@
+./tests/native_boot_test.ts => native relaunch without a launch locator reads a full session once ... ok (67ms)
+./tests/dogfooding_test.ts => blur into an action keeps the editor and action alive until click dispatch ... ok (91ms)
+
+ok | 2 passed | 0 failed | 46 filtered out (100ms)
+

@@ -1,0 +1,308 @@
+{
+  "source_commit": "04e9fdf4276fe37b79d7a1ee87656c28865d0fac",
+  "candidate": "native-final2",
+  "started_at": "2026-10-06T03:07:04.868Z",
+  "ended_at": "2026-10-06T03:09:29.180Z",
+  "operation": "actual Native settable Body entry edits with AX observations after each edit; includes CUA interruption and orchestration gaps",
+  "frames": [
+    {
+      "at": "2026-10-06T03:07:07.468Z",
+      "sequence": 1,
+      "state": "The following is a diff from the previous accessibility tree for Window: \"AI Course Workbench\" with ~ and + representing changed and added elements, respectively. Removed elements are summarized by ID range.\nRemoved element IDs: 120, 182, 195\n+\t\t\t\t264 text ✓ 已保存\n+\t\t\t\t\t265 text ⠿ 正文 02\n~\t\t\t\t\t181 text entry area (settable) 正文内容, Value: Local conflict draft retained for explicit resolution. Native autosave QA 01., Placeholder: 开始写点什么…\n+\t\t\t\t\t\t266 text (settable) Local conflict draft retained for explicit resolution. Native autosave QA 01.\n+\t\t\t\t\t267 button 放大查看 Fixture MP4 1, Help: 点击查看大图\n+\t\t\t\t\t268 text 视频 Fixture MP4 1 imported · 9 KB\n+\t\t\t\t269 text S01-01｜Fixture lesson 1 正文：待研究 待补：已齐 排版：未开始 完成度：92% 本地优先 · 自动保存\nThe focused UI element is 181 text entry area (settable) 正文内容, Value: Local conflict draft retained for explicit resolution. Native autosave QA 01., Placeholder: 开始写点什么…"
+    },
+    {
+      "at": "2026-10-06T03:07:20.908Z",
+      "sequence": 2,
+      "index": 181,
+      "state": "The following is a diff from the previous accessibility tree for Window: \"AI Course Workbench\" with ~ and + representing changed and added elements, respectively. Removed elements are summarized by ID range.\nRemoved element IDs: 264, 266\n+\t\t\t\t269 text 正在保存…\n~\t\t\t\t\t181 text entry area (settable) 正文内容, Value: Local conflict draft retained for explicit resolution. Native autosave QA 02., Placeholder: 开始写点什么…\n+\t\t\t\t\t\t270 text (settable) Local conflict draft retained for explicit resolution. Native autosave QA 02.\n+\t\t\t\t271 text S01-01｜Fixture lesson 1 正文：待研究 待补：已齐 排版：未开始 完成度：92% 本地优先 · 自动保存\nThe focused UI element is 181 text entry area (settable) 正文内容, Value: Local conflict draft retained for explicit resolution. Native autosave QA 02., Placeholder: 开始写点什么…"
+    },
+    {
+      "at": "2026-10-06T03:07:22.228Z",
+      "sequence": 3,
+      "index": 181,
+      "state": "The following is a diff from the previous accessibility tree for Window: \"AI Course Workbench\" with ~ and + representing changed and added elements, respectively. Removed elements are summarized by ID range.\n~\t\t\t\t269 text ✓ 已保存\n~\t\t\t\t\t181 text entry area (settable) 正文内容, Value: Local conflict draft retained for explicit resolution. Native autosave QA 03., Placeholder: 开始写点什么…\n~\t\t\t\t\t\t270 text (settable) Local conflict draft retained for explicit resolution. Native autosave QA 03.\nThe focused UI element is 181 text entry area (settable) 正文内容, Value: Local conflict draft retained for explicit resolution. Native autosave QA 03., Placeholder: 开始写点什么…"
+    },
+    {
+      "at": "2026-10-06T03:07:25.014Z",
+      "sequence": 4,
+      "index": 181,
+      "state": "The following is a diff from the previous accessibility tree for Window: \"AI Course Workbench\" with ~ and + representing changed and added elements, respectively. Removed elements are summarized by ID range.\n~\t\t\t\t269 text 正在保存…\n~\t\t\t\t\t181 text entry area (settable) 正文内容, Value: Local conflict draft retained for explicit resolution. Native autosave QA 04., Placeholder: 开始写点什么…\n~\t\t\t\t\t\t270 text (settable) Local conflict draft retained for explicit resolution. Native autosave QA 04.\nThe focused UI element is 181 text entry area (settable) 正文内容, Value: Local conflict draft retained for explicit resolution. Native autosave QA 04., Placeholder: 开始写点什么…"
+    },
+    {
+      "at": "2026-10-06T03:07:26.868Z",
+      "sequence": 5,
+      "index": 181,
+      "state": "The following is a diff from the previous accessibility tree for Window: \"AI Course Workbench\" with ~ and + representing changed and added elements, respectively. Removed elements are summarized by ID range.\n~\t\t\t\t269 text ✓ 已保存\n~\t\t\t\t\t181 text entry area (settable) 正文内容, Value: Local conflict draft retained for explicit resolution. Native autosave QA 05., Placeholder: 开始写点什么…\n~\t\t\t\t\t\t270 text (settable) Local conflict draft retained for explicit resolution. Native autosave QA 05.\nThe focused UI element is 181 text entry area (settable) 正文内容, Value: Local conflict draft retained for explicit resolution. Native autosave QA 05., Placeholder: 开始写点什么…"
+    },
+    {
+      "at": "2026-10-06T03:07:28.137Z",
+      "sequence": 6,
+      "index": 181,
+      "state": "The following is a diff from the previous accessibility tree for Window: \"AI Course Workbench\" with ~ and + representing changed and added elements, respectively. Removed elements are summarized by ID range.\n~\t\t\t\t\t181 text entry area (settable) 正文内容, Value: Local conflict draft retained for explicit resolution. Native autosave QA 06., Placeholder: 开始写点什么…\n~\t\t\t\t\t\t270 text (settable) Local conflict draft retained for explicit resolution. Native autosave QA 06.\nThe focused UI element is 181 text entry area (settable) 正文内容, Value: Local conflict draft retained for explicit resolution. Native autosave QA 06., Placeholder: 开始写点什么…"
+    },
+    {
+      "at": "2026-10-06T03:07:29.399Z",
+      "sequence": 7,
+      "index": 181,
+      "state": "The following is a diff from the previous accessibility tree for Window: \"AI Course Workbench\" with ~ and + representing changed and added elements, respectively. Removed elements are summarized by ID range.\n~\t\t\t\t\t181 text entry area (settable) 正文内容, Value: Local conflict draft retained for explicit resolution. Native autosave QA 07., Placeholder: 开始写点什么…\n~\t\t\t\t\t\t270 text (settable) Local conflict draft retained for explicit resolution. Native autosave QA 07.\nThe focused UI element is 181 text entry area (settable) 正文内容, Value: Local conflict draft retained for explicit resolution. Native autosave QA 07., Placeholder: 开始写点什么…"
+    },
+    {
+      "at": "2026-10-06T03:07:30.543Z",
+      "sequence": 8,
+      "index": 181,
+      "state": "The following is a diff from the previous accessibility tree for Window: \"AI Course Workbench\" with ~ and + representing changed and added elements, respectively. Removed elements are summarized by ID range.\n~\t\t\t\t\t181 text entry area (settable) 正文内容, Value: Local conflict draft retained for explicit resolution. Native autosave QA 08., Placeholder: 开始写点什么…\n~\t\t\t\t\t\t270 text (settable) Local conflict draft retained for explicit resolution. Native autosave QA 08.\nThe focused UI element is 181 text entry area (settable) 正文内容, Value: Local conflict draft retained for explicit resolution. Native autosave QA 08., Placeholder: 开始写点什么…"
+    },
+    {
+      "at": "2026-10-06T03:07:32.264Z",
+      "sequence": 9,
+      "index": 181,
+      "state": "The following is a diff from the previous accessibility tree for Window: \"AI Course Workbench\" with ~ and + representing changed and added elements, respectively. Removed elements are summarized by ID range.\n~\t\t\t\t\t181 text entry area (settable) 正文内容, Value: Local conflict draft retained for explicit resolution. Native autosave QA 09., Placeholder: 开始写点什么…\n~\t\t\t\t\t\t270 text (settable) Local conflict draft retained for explicit resolution. Native autosave QA 09.\nThe focused UI element is 181 text entry area (settable) 正文内容, Value: Local conflict draft retained for explicit resolution. Native autosave QA 09., Placeholder: 开始写点什么…"
+    },
+    {
+      "at": "2026-10-06T03:07:34.275Z",
+      "sequence": 10,
+      "index": 181,
+      "state": "The following is a diff from the previous accessibility tree for Window: \"AI Course Workbench\" with ~ and + representing changed and added elements, respectively. Removed elements are summarized by ID range.\n~\t\t\t\t\t181 text entry area (settable) 正文内容, Value: Local conflict draft retained for explicit resolution. Native autosave QA 10., Placeholder: 开始写点什么…\n~\t\t\t\t\t\t270 text (settable) Local conflict draft retained for explicit resolution. Native autosave QA 10.\nThe focused UI element is 181 text entry area (settable) 正文内容, Value: Local conflict draft retained for explicit resolution. Native autosave QA 10., Placeholder: 开始写点什么…"
+    },
+    {
+      "at": "2026-10-06T03:07:35.807Z",
+      "sequence": 11,
+      "index": 181,
+      "state": "The following is a diff from the previous accessibility tree for Window: \"AI Course Workbench\" with ~ and + representing changed and added elements, respectively. Removed elements are summarized by ID range.\n~\t\t\t\t\t181 text entry area (settable) 正文内容, Value: Local conflict draft retained for explicit resolution. Native autosave QA 11., Placeholder: 开始写点什么…\n~\t\t\t\t\t\t270 text (settable) Local conflict draft retained for explicit resolution. Native autosave QA 11.\nThe focused UI element is 181 text entry area (settable) 正文内容, Value: Local conflict draft retained for explicit resolution. Native autosave QA 11., Placeholder: 开始写点什么…"
+    },
+    {
+      "at": "2026-10-06T03:07:37.047Z",
+      "sequence": 12,
+      "index": 181,
+      "state": "The following is a diff from the previous accessibility tree for Window: \"AI Course Workbench\" with ~ and + representing changed and added elements, respectively. Removed elements are summarized by ID range.\n~\t\t\t\t\t181 text entry area (settable) 正文内容, Value: Local conflict draft retained for explicit resolution. Native autosave QA 12., Placeholder: 开始写点什么…\n~\t\t\t\t\t\t270 text (settable) Local conflict draft retained for explicit resolution. Native autosave QA 12.\nThe focused UI element is 181 text entry area (settable) 正文内容, Value: Local conflict draft retained for explicit resolution. Native autosave QA 12., Placeholder: 开始写点什么…"
+    },
+    {
+      "at": "2026-10-06T03:07:38.250Z",
+      "sequence": 13,
+      "index": 181,
+      "state": "The following is a diff from the previous accessibility tree for Window: \"AI Course Workbench\" with ~ and + representing changed and added elements, respectively. Removed elements are summarized by ID range.\n~\t\t\t\t\t181 text entry area (settable) 正文内容, Value: Local conflict draft retained for explicit resolution. Native autosave QA 13., Placeholder: 开始写点什么…\n~\t\t\t\t\t\t270 text (settable) Local conflict draft retained for explicit resolution. Native autosave QA 13.\nThe focused UI element is 181 text entry area (settable) 正文内容, Value: Local conflict draft retained for explicit resolution. Native autosave QA 13., Placeholder: 开始写点什么…"
+    },
+    {
+      "at": "2026-10-06T03:07:39.328Z",
+      "sequence": 14,
+      "index": 181,
+      "state": "The following is a diff from the previous accessibility tree for Window: \"AI Course Workbench\" with ~ and + representing changed and added elements, respectively. Removed elements are summarized by ID range.\n~\t\t\t\t\t181 text entry area (settable) 正文内容, Value: Local conflict draft retained for explicit resolution. Native autosave QA 14., Placeholder: 开始写点什么…\n~\t\t\t\t\t\t270 text (settable) Local conflict draft retained for explicit resolution. Native autosave QA 14.\nThe focused UI element is 181 text entry area (settable) 正文内容, Value: Local conflict draft retained for explicit resolution. Native autosave QA 14., Placeholder: 开始写点什么…"
+    },
+    {
+      "at": "2026-10-06T03:07:55.281Z",
+      "sequence": 15,
+      "index": 181,
+      "state": "The following is a diff from the previous accessibility tree for Window: \"AI Course Workbench\" with ~ and + representing changed and added elements, respectively. Removed elements are summarized by ID range.\n~\t\t\t\t\t181 text entry area (settable) 正文内容, Value: Local conflict draft retained for explicit resolution. Native autosave QA 15., Placeholder: 开始写点什么…\n~\t\t\t\t\t\t270 text (settable) Local conflict draft retained for explicit resolution. Native autosave QA 15.\nThe focused UI element is 181 text entry area (settable) 正文内容, Value: Local conflict draft retained for explicit resolution. Native autosave QA 15., Placeholder: 开始写点什么…"
+    },
+    {
+      "at": "2026-10-06T03:07:56.755Z",
+      "sequence": 16,
+      "index": 181,
+      "state": "The following is a diff from the previous accessibility tree for Window: \"AI Course Workbench\" with ~ and + representing changed and added elements, respectively. Removed elements are summarized by ID range.\n~\t\t\t\t\t181 text entry area (settable) 正文内容, Value: Local conflict draft retained for explicit resolution. Native autosave QA 16., Placeholder: 开始写点什么…\n~\t\t\t\t\t\t270 text (settable) Local conflict draft retained for explicit resolution. Native autosave QA 16.\nThe focused UI element is 181 text entry area (settable) 正文内容, Value: Local conflict draft retained for explicit resolution. Native autosave QA 16., Placeholder: 开始写点什么…"
+    },
+    {
+      "at": "2026-10-06T03:07:57.962Z",
+      "sequence": 17,
+      "index": 181,
+      "state": "The following is a diff from the previous accessibility tree for Window: \"AI Course Workbench\" with ~ and + representing changed and added elements, respectively. Removed elements are summarized by ID range.\n~\t\t\t\t\t181 text entry area (settable) 正文内容, Value: Local conflict draft retained for explicit resolution. Native autosave QA 17., Placeholder: 开始写点什么…\n~\t\t\t\t\t\t270 text (settable) Local conflict draft retained for explicit resolution. Native autosave QA 17.\nThe focused UI element is 181 text entry area (settable) 正文内容, Value: Local conflict draft retained for explicit resolution. Native autosave QA 17., Placeholder: 开始写点什么…"
+    },
+    {
+      "at": "2026-10-06T03:07:59.224Z",
+      "sequence": 18,
+      "index": 181,
+      "state": "The following is a diff from the previous accessibility tree for Window: \"AI Course Workbench\" with ~ and + representing changed and added elements, respectively. Removed elements are summarized by ID range.\n~\t\t\t\t\t181 text entry area (settable) 正文内容, Value: Local conflict draft retained for explicit resolution. Native autosave QA 18., Placeholder: 开始写点什么…\n~\t\t\t\t\t\t270 text (settable) Local conflict draft retained for explicit resolution. Native autosave QA 18.\nThe focused UI element is 181 text entry area (settable) 正文内容, Value: Local conflict draft retained for explicit resolution. Native autosave QA 18., Placeholder: 开始写点什么…"
+    },
+    {
+      "at": "2026-10-06T03:08:00.730Z",
+      "sequence": 19,
+      "index": 181,
+      "state": "The following is a diff from the previous accessibility tree for Window: \"AI Course Workbench\" with ~ and + representing changed and added elements, respectively. Removed elements are summarized by ID range.\n~\t\t\t\t\t181 text entry area (settable) 正文内容, Value: Local conflict draft retained for explicit resolution. Native autosave QA 19., Placeholder: 开始写点什么…\n~\t\t\t\t\t\t270 text (settable) Local conflict draft retained for explicit resolution. Native autosave QA 19.\nThe focused UI element is 181 text entry area (settable) 正文内容, Value: Local conflict draft retained for explicit resolution. Native autosave QA 19., Placeholder: 开始写点什么…"
+    },
+    {
+      "at": "2026-10-06T03:08:01.913Z",
+      "sequence": 20,
+      "index": 181,
+      "state": "The following is a diff from the previous accessibility tree for Window: \"AI Course Workbench\" with ~ and + representing changed and added elements, respectively. Removed elements are summarized by ID range.\n~\t\t\t\t269 text 正在保存…\n~\t\t\t\t\t181 text entry area (settable) 正文内容, Value: Local conflict draft retained for explicit resolution. Native autosave QA 20., Placeholder: 开始写点什么…\n~\t\t\t\t\t\t270 text (settable) Local conflict draft retained for explicit resolution. Native autosave QA 20.\nThe focused UI element is 181 text entry area (settable) 正文内容, Value: Local conflict draft retained for explicit resolution. Native autosave QA 20., Placeholder: 开始写点什么…"
+    },
+    {
+      "at": "2026-10-06T03:08:03.331Z",
+      "sequence": 21,
+      "index": 181,
+      "state": "The following is a diff from the previous accessibility tree for Window: \"AI Course Workbench\" with ~ and + representing changed and added elements, respectively. Removed elements are summarized by ID range.\n~\t\t\t\t269 text ✓ 已保存\n~\t\t\t\t\t181 text entry area (settable) 正文内容, Value: Local conflict draft retained for explicit resolution. Native autosave QA 21., Placeholder: 开始写点什么…\n~\t\t\t\t\t\t270 text (settable) Local conflict draft retained for explicit resolution. Native autosave QA 21.\nThe focused UI element is 181 text entry area (settable) 正文内容, Value: Local conflict draft retained for explicit resolution. Native autosave QA 21., Placeholder: 开始写点什么…"
+    },
+    {
+      "at": "2026-10-06T03:08:04.787Z",
+      "sequence": 22,
+      "index": 181,
+      "state": "The following is a diff from the previous accessibility tree for Window: \"AI Course Workbench\" with ~ and + representing changed and added elements, respectively. Removed elements are summarized by ID range.\n~\t\t\t\t\t181 text entry area (settable) 正文内容, Value: Local conflict draft retained for explicit resolution. Native autosave QA 22., Placeholder: 开始写点什么…\n~\t\t\t\t\t\t270 text (settable) Local conflict draft retained for explicit resolution. Native autosave QA 22.\nThe focused UI element is 181 text entry area (settable) 正文内容, Value: Local conflict draft retained for explicit resolution. Native autosave QA 22., Placeholder: 开始写点什么…"
+    },
+    {
+      "at": "2026-10-06T03:08:06.127Z",
+      "sequence": 23,
+      "index": 181,
+      "state": "The following is a diff from the previous accessibility tree for Window: \"AI Course Workbench\" with ~ and + representing changed and added elements, respectively. Removed elements are summarized by ID range.\n~\t\t\t\t\t181 text entry area (settable) 正文内容, Value: Local conflict draft retained for explicit resolution. Native autosave QA 23., Placeholder: 开始写点什么…\n~\t\t\t\t\t\t270 text (settable) Local conflict draft retained for explicit resolution. Native autosave QA 23.\nThe focused UI element is 181 text entry area (settable) 正文内容, Value: Local conflict draft retained for explicit resolution. Native autosave QA 23., Placeholder: 开始写点什么…"
+    },
+    {
+      "at": "2026-10-06T03:08:07.445Z",
+      "sequence": 24,
+      "index": 181,
+      "state": "The following is a diff from the previous accessibility tree for Window: \"AI Course Workbench\" with ~ and + representing changed and added elements, respectively. Removed elements are summarized by ID range.\n~\t\t\t\t\t181 text entry area (settable) 正文内容, Value: Local conflict draft retained for explicit resolution. Native autosave QA 24., Placeholder: 开始写点什么…\n~\t\t\t\t\t\t270 text (settable) Local conflict draft retained for explicit resolution. Native autosave QA 24.\nThe focused UI element is 181 text entry area (settable) 正文内容, Value: Local conflict draft retained for explicit resolution. Native autosave QA 24., Placeholder: 开始写点什么…"
+    },
+    {
+      "at": "2026-10-06T03:08:08.968Z",
+      "sequence": 25,
+      "index": 181,
+      "state": "The following is a diff from the previous accessibility tree for Window: \"AI Course Workbench\" with ~ and + representing changed and added elements, respectively. Removed elements are summarized by ID range.\n~\t\t\t\t\t181 text entry area (settable) 正文内容, Value: Local conflict draft retained for explicit resolution. Native autosave QA 25., Placeholder: 开始写点什么…\n~\t\t\t\t\t\t270 text (settable) Local conflict draft retained for explicit resolution. Native autosave QA 25.\nThe focused UI element is 181 text entry area (settable) 正文内容, Value: Local conflict draft retained for explicit resolution. Native autosave QA 25., Placeholder: 开始写点什么…"
+    },
+    {
+      "at": "2026-10-06T03:08:10.322Z",
+      "sequence": 26,
+      "index": 181,
+      "state": "The following is a diff from the previous accessibility tree for Window: \"AI Course Workbench\" with ~ and + representing changed and added elements, respectively. Removed elements are summarized by ID range.\n~\t\t\t\t\t181 text entry area (settable) 正文内容, Value: Local conflict draft retained for explicit resolution. Native autosave QA 26., Placeholder: 开始写点什么…\n~\t\t\t\t\t\t270 text (settable) Local conflict draft retained for explicit resolution. Native autosave QA 26.\nThe focused UI element is 181 text entry area (settable) 正文内容, Value: Local conflict draft retained for explicit resolution. Native autosave QA 26., Placeholder: 开始写点什么…"
+    },
+    {
+      "at": "2026-10-06T03:08:11.395Z",
+      "sequence": 27,
+      "index": 181,
+      "state": "The following is a diff from the previous accessibility tree for Window: \"AI Course Workbench\" with ~ and + representing changed and added elements, respectively. Removed elements are summarized by ID range.\n~\t\t\t\t\t181 text entry area (settable) 正文内容, Value: Local conflict draft retained for explicit resolution. Native autosave QA 27., Placeholder: 开始写点什么…\n~\t\t\t\t\t\t270 text (settable) Local conflict draft retained for explicit resolution. Native autosave QA 27.\nThe focused UI element is 181 text entry area (settable) 正文内容, Value: Local conflict draft retained for explicit resolution. Native autosave QA 27., Placeholder: 开始写点什么…"
+    },
+    {
+      "at": "2026-10-06T03:08:12.549Z",
+      "sequence": 28,
+      "index": 181,
+      "state": "The following is a diff from the previous accessibility tree for Window: \"AI Course Workbench\" with ~ and + representing changed and added elements, respectively. Removed elements are summarized by ID range.\n~\t\t\t\t\t181 text entry area (settable) 正文内容, Value: Local conflict draft retained for explicit resolution. Native autosave QA 28., Placeholder: 开始写点什么…\n~\t\t\t\t\t\t270 text (settable) Local conflict draft retained for explicit resolution. Native autosave QA 28.\nThe focused UI element is 181 text entry area (settable) 正文内容, Value: Local conflict draft retained for explicit resolution. Native autosave QA 28., Placeholder: 开始写点什么…"
+    },
+    {
+      "at": "2026-10-06T03:08:13.659Z",
+      "sequence": 29,
+      "index": 181,
+      "state": "The following is a diff from the previous accessibility tree for Window: \"AI Course Workbench\" with ~ and + representing changed and added elements, respectively. Removed elements are summarized by ID range.\n~\t\t\t\t\t181 text entry area (settable) 正文内容, Value: Local conflict draft retained for explicit resolution. Native autosave QA 29., Placeholder: 开始写点什么…\n~\t\t\t\t\t\t270 text (settable) Local conflict draft retained for explicit resolution. Native autosave QA 29.\nThe focused UI element is 181 text entry area (settable) 正文内容, Value: Local conflict draft retained for explicit resolution. Native autosave QA 29., Placeholder: 开始写点什么…"
+    },
+    {
+      "at": "2026-10-06T03:08:14.711Z",
+      "sequence": 30,
+      "index": 181,
+      "state": "The following is a diff from the previous accessibility tree for Window: \"AI Course Workbench\" with ~ and + representing changed and added elements, respectively. Removed elements are summarized by ID range.\n~\t\t\t\t\t181 text entry area (settable) 正文内容, Value: Local conflict draft retained for explicit resolution. Native autosave QA 30., Placeholder: 开始写点什么…\n~\t\t\t\t\t\t270 text (settable) Local conflict draft retained for explicit resolution. Native autosave QA 30.\nThe focused UI element is 181 text entry area (settable) 正文内容, Value: Local conflict draft retained for explicit resolution. Native autosave QA 30., Placeholder: 开始写点什么…"
+    },
+    {
+      "at": "2026-10-06T03:09:05.788Z",
+      "sequence": 31,
+      "index": 181,
+      "state": "The following is a diff from the previous accessibility tree for Window: \"AI Course Workbench\" with ~ and + representing changed and added elements, respectively. Removed elements are summarized by ID range.\n~\t\t\t\t269 text 正在保存…\n~\t\t\t\t\t181 text entry area (settable) 正文内容, Value: Local conflict draft retained for explicit resolution. Native autosave QA 31., Placeholder: 开始写点什么…\n~\t\t\t\t\t\t270 text (settable) Local conflict draft retained for explicit resolution. Native autosave QA 31.\nThe focused UI element is 181 text entry area (settable) 正文内容, Value: Local conflict draft retained for explicit resolution. Native autosave QA 31., Placeholder: 开始写点什么…"
+    },
+    {
+      "at": "2026-10-06T03:09:07.245Z",
+      "sequence": 32,
+      "index": 181,
+      "state": "The following is a diff from the previous accessibility tree for Window: \"AI Course Workbench\" with ~ and + representing changed and added elements, respectively. Removed elements are summarized by ID range.\n~\t\t\t\t269 text ✓ 已保存\n~\t\t\t\t\t181 text entry area (settable) 正文内容, Value: Local conflict draft retained for explicit resolution. Native autosave QA 32., Placeholder: 开始写点什么…\n~\t\t\t\t\t\t270 text (settable) Local conflict draft retained for explicit resolution. Native autosave QA 32.\nThe focused UI element is 181 text entry area (settable) 正文内容, Value: Local conflict draft retained for explicit resolution. Native autosave QA 32., Placeholder: 开始写点什么…"
+    },
+    {
+      "at": "2026-10-06T03:09:08.619Z",
+      "sequence": 33,
+      "index": 181,
+      "state": "The following is a diff from the previous accessibility tree for Window: \"AI Course Workbench\" with ~ and + representing changed and added elements, respectively. Removed elements are summarized by ID range.\n~\t\t\t\t\t181 text entry area (settable) 正文内容, Value: Local conflict draft retained for explicit resolution. Native autosave QA 33., Placeholder: 开始写点什么…\n~\t\t\t\t\t\t270 text (settable) Local conflict draft retained for explicit resolution. Native autosave QA 33.\nThe focused UI element is 181 text entry area (settable) 正文内容, Value: Local conflict draft retained for explicit resolution. Native autosave QA 33., Placeholder: 开始写点什么…"
+    },
+    {
+      "at": "2026-10-06T03:09:09.882Z",
+      "sequence": 34,
+      "index": 181,
+      "state": "The following is a diff from the previous accessibility tree for Window: \"AI Course Workbench\" with ~ and + representing changed and added elements, respectively. Removed elements are summarized by ID range.\n~\t\t\t\t\t181 text entry area (settable) 正文内容, Value: Local conflict draft retained for explicit resolution. Native autosave QA 34., Placeholder: 开始写点什么…\n~\t\t\t\t\t\t270 text (settable) Local conflict draft retained for explicit resolution. Native autosave QA 34.\nThe focused UI element is 181 text entry area (settable) 正文内容, Value: Local conflict draft retained for explicit resolution. Native autosave QA 34., Placeholder: 开始写点什么…"
+    },
+    {
+      "at": "2026-10-06T03:09:11.065Z",
+      "sequence": 35,
+      "index": 181,
+      "state": "The following is a diff from the previous accessibility tree for Window: \"AI Course Workbench\" with ~ and + representing changed and added elements, respectively. Removed elements are summarized by ID range.\n~\t\t\t\t\t181 text entry area (settable) 正文内容, Value: Local conflict draft retained for explicit resolution. Native autosave QA 35., Placeholder: 开始写点什么…\n~\t\t\t\t\t\t270 text (settable) Local conflict draft retained for explicit resolution. Native autosave QA 35.\nThe focused UI element is 181 text entry area (settable) 正文内容, Value: Local conflict draft retained for explicit resolution. Native autosave QA 35., Placeholder: 开始写点什么…"
+    },
+    {
+      "at": "2026-10-06T03:09:12.199Z",
+      "sequence": 36,
+      "index": 181,
+      "state": "The following is a diff from the previous accessibility tree for Window: \"AI Course Workbench\" with ~ and + representing changed and added elements, respectively. Removed elements are summarized by ID range.\n~\t\t\t\t\t181 text entry area (settable) 正文内容, Value: Local conflict draft retained for explicit resolution. Native autosave QA 36., Placeholder: 开始写点什么…\n~\t\t\t\t\t\t270 text (settable) Local conflict draft retained for explicit resolution. Native autosave QA 36.\nThe focused UI element is 181 text entry area (settable) 正文内容, Value: Local conflict draft retained for explicit resolution. Native autosave QA 36., Placeholder: 开始写点什么…"
+    },
+    {
+      "at": "2026-10-06T03:09:13.379Z",
+      "sequence": 37,
+      "index": 181,
+      "state": "The following is a diff from the previous accessibility tree for Window: \"AI Course Workbench\" with ~ and + representing changed and added elements, respectively. Removed elements are summarized by ID range.\n~\t\t\t\t\t181 text entry area (settable) 正文内容, Value: Local conflict draft retained for explicit resolution. Native autosave QA 37., Placeholder: 开始写点什么…\n~\t\t\t\t\t\t270 text (settable) Local conflict draft retained for explicit resolution. Native autosave QA 37.\nThe focused UI element is 181 text entry area (settable) 正文内容, Value: Local conflict draft retained for explicit resolution. Native autosave QA 37., Placeholder: 开始写点什么…"
+    },
+    {
+      "at": "2026-10-06T03:09:15.043Z",
+      "sequence": 38,
+      "index": 181,
+      "state": "The following is a diff from the previous accessibility tree for Window: \"AI Course Workbench\" with ~ and + representing changed and added elements, respectively. Removed elements are summarized by ID range.\n~\t\t\t\t\t181 text entry area (settable) 正文内容, Value: Local conflict draft retained for explicit resolution. Native autosave QA 38., Placeholder: 开始写点什么…\n~\t\t\t\t\t\t270 text (settable) Local conflict draft retained for explicit resolution. Native autosave QA 38.\nThe focused UI element is 181 text entry area (settable) 正文内容, Value: Local conflict draft retained for explicit resolution. Native autosave QA 38., Placeholder: 开始写点什么…"
+    },
+    {
+      "at": "2026-10-06T03:09:16.343Z",
+      "sequence": 39,
+      "index": 181,
+      "state": "The following is a diff from the previous accessibility tree for Window: \"AI Course Workbench\" with ~ and + representing changed and added elements, respectively. Removed elements are summarized by ID range.\n~\t\t\t\t\t181 text entry area (settable) 正文内容, Value: Local conflict draft retained for explicit resolution. Native autosave QA 39., Placeholder: 开始写点什么…\n~\t\t\t\t\t\t270 text (settable) Local conflict draft retained for explicit resolution. Native autosave QA 39.\nThe focused UI element is 181 text entry area (settable) 正文内容, Value: Local conflict draft retained for explicit resolution. Native autosave QA 39., Placeholder: 开始写点什么…"
+    },
+    {
+      "at": "2026-10-06T03:09:17.466Z",
+      "sequence": 40,
+      "index": 181,
+      "state": "The following is a diff from the previous accessibility tree for Window: \"AI Course Workbench\" with ~ and + representing changed and added elements, respectively. Removed elements are summarized by ID range.\n~\t\t\t\t\t181 text entry area (settable) 正文内容, Value: Local conflict draft retained for explicit resolution. Native autosave QA 40., Placeholder: 开始写点什么…\n~\t\t\t\t\t\t270 text (settable) Local conflict draft retained for explicit resolution. Native autosave QA 40.\nThe focused UI element is 181 text entry area (settable) 正文内容, Value: Local conflict draft retained for explicit resolution. Native autosave QA 40., Placeholder: 开始写点什么…"
+    },
+    {
+      "at": "2026-10-06T03:09:18.564Z",
+      "sequence": 41,
+      "index": 181,
+      "state": "The following is a diff from the previous accessibility tree for Window: \"AI Course Workbench\" with ~ and + representing changed and added elements, respectively. Removed elements are summarized by ID range.\n~\t\t\t\t\t181 text entry area (settable) 正文内容, Value: Local conflict draft retained for explicit resolution. Native autosave QA 41., Placeholder: 开始写点什么…\n~\t\t\t\t\t\t270 text (settable) Local conflict draft retained for explicit resolution. Native autosave QA 41.\nThe focused UI element is 181 text entry area (settable) 正文内容, Value: Local conflict draft retained for explicit resolution. Native autosave QA 41., Placeholder: 开始写点什么…"
+    },
+    {
+      "at": "2026-10-06T03:09:19.644Z",
+      "sequence": 42,
+      "index": 181,
+      "state": "The following is a diff from the previous accessibility tree for Window: \"AI Course Workbench\" with ~ and + representing changed and added elements, respectively. Removed elements are summarized by ID range.\n~\t\t\t\t\t181 text entry area (settable) 正文内容, Value: Local conflict draft retained for explicit resolution. Native autosave QA 42., Placeholder: 开始写点什么…\n~\t\t\t\t\t\t270 text (settable) Local conflict draft retained for explicit resolution. Native autosave QA 42.\nThe focused UI element is 181 text entry area (settable) 正文内容, Value: Local conflict draft retained for explicit resolution. Native autosave QA 42., Placeholder: 开始写点什么…"
+    },
+    {
+      "at": "2026-10-06T03:09:21.076Z",
+      "sequence": 43,
+      "index": 181,
+      "state": "The following is a diff from the previous accessibility tree for Window: \"AI Course Workbench\" with ~ and + representing changed and added elements, respectively. Removed elements are summarized by ID range.\n~\t\t\t\t\t181 text entry area (settable) 正文内容, Value: Local conflict draft retained for explicit resolution. Native autosave QA 43., Placeholder: 开始写点什么…\n~\t\t\t\t\t\t270 text (settable) Local conflict draft retained for explicit resolution. Native autosave QA 43.\nThe focused UI element is 181 text entry area (settable) 正文内容, Value: Local conflict draft retained for explicit resolution. Native autosave QA 43., Placeholder: 开始写点什么…"
+    },
+    {
+      "at": "2026-10-06T03:09:22.166Z",
+      "sequence": 44,
+      "index": 181,
+      "state": "The following is a diff from the previous accessibility tree for Window: \"AI Course Workbench\" with ~ and + representing changed and added elements, respectively. Removed elements are summarized by ID range.\n~\t\t\t\t269 text 正在保存…\n~\t\t\t\t\t181 text entry area (settable) 正文内容, Value: Local conflict draft retained for explicit resolution. Native autosave QA 44., Placeholder: 开始写点什么…\n~\t\t\t\t\t\t270 text (settable) Local conflict draft retained for explicit resolution. Native autosave QA 44.\nThe focused UI element is 181 text entry area (settable) 正文内容, Value: Local conflict draft retained for explicit resolution. Native autosave QA 44., Placeholder: 开始写点什么…"
+    },
+    {
+      "at": "2026-10-06T03:09:23.513Z",
+      "sequence": 45,
+      "index": 181,
+      "state": "The following is a diff from the previous accessibility tree for Window: \"AI Course Workbench\" with ~ and + representing changed and added elements, respectively. Removed elements are summarized by ID range.\n~\t\t\t\t269 text ✓ 已保存\n~\t\t\t\t\t181 text entry area (settable) 正文内容, Value: Local conflict draft retained for explicit resolution. Native autosave QA 45., Placeholder: 开始写点什么…\n~\t\t\t\t\t\t270 text (settable) Local conflict draft retained for explicit resolution. Native autosave QA 45.\nThe focused UI element is 181 text entry area (settable) 正文内容, Value: Local conflict draft retained for explicit resolution. Native autosave QA 45., Placeholder: 开始写点什么…"
+    },
+    {
+      "at": "2026-10-06T03:09:24.749Z",
+      "sequence": 46,
+      "index": 181,
+      "state": "The following is a diff from the previous accessibility tree for Window: \"AI Course Workbench\" with ~ and + representing changed and added elements, respectively. Removed elements are summarized by ID range.\n~\t\t\t\t\t181 text entry area (settable) 正文内容, Value: Local conflict draft retained for explicit resolution. Native autosave QA 46., Placeholder: 开始写点什么…\n~\t\t\t\t\t\t270 text (settable) Local conflict draft retained for explicit resolution. Native autosave QA 46.\nThe focused UI element is 181 text entry area (settable) 正文内容, Value: Local conflict draft retained for explicit resolution. Native autosave QA 46., Placeholder: 开始写点什么…"
+    },
+    {
+      "at": "2026-10-06T03:09:25.936Z",
+      "sequence": 47,
+      "index": 181,
+      "state": "The following is a diff from the previous accessibility tree for Window: \"AI Course Workbench\" with ~ and + representing changed and added elements, respectively. Removed elements are summarized by ID range.\n~\t\t\t\t\t181 text entry area (settable) 正文内容, Value: Local conflict draft retained for explicit resolution. Native autosave QA 47., Placeholder: 开始写点什么…\n~\t\t\t\t\t\t270 text (settable) Local conflict draft retained for explicit resolution. Native autosave QA 47.\nThe focused UI element is 181 text entry area (settable) 正文内容, Value: Local conflict draft retained for explicit resolution. Native autosave QA 47., Placeholder: 开始写点什么…"
+    },
+    {
+      "at": "2026-10-06T03:09:27.051Z",
+      "sequence": 48,
+      "index": 181,
+      "state": "The following is a diff from the previous accessibility tree for Window: \"AI Course Workbench\" with ~ and + representing changed and added elements, respectively. Removed elements are summarized by ID range.\n~\t\t\t\t\t181 text entry area (settable) 正文内容, Value: Local conflict draft retained for explicit resolution. Native autosave QA 48., Placeholder: 开始写点什么…\n~\t\t\t\t\t\t270 text (settable) Local conflict draft retained for explicit resolution. Native autosave QA 48.\nThe focused UI element is 181 text entry area (settable) 正文内容, Value: Local conflict draft retained for explicit resolution. Native autosave QA 48., Placeholder: 开始写点什么…"
+    },
+    {
+      "at": "2026-10-06T03:09:28.118Z",
+      "sequence": 49,
+      "index": 181,
+      "state": "The following is a diff from the previous accessibility tree for Window: \"AI Course Workbench\" with ~ and + representing changed and added elements, respectively. Removed elements are summarized by ID range.\n~\t\t\t\t\t181 text entry area (settable) 正文内容, Value: Local conflict draft retained for explicit resolution. Native autosave QA 49., Placeholder: 开始写点什么…\n~\t\t\t\t\t\t270 text (settable) Local conflict draft retained for explicit resolution. Native autosave QA 49.\nThe focused UI element is 181 text entry area (settable) 正文内容, Value: Local conflict draft retained for explicit resolution. Native autosave QA 49., Placeholder: 开始写点什么…"
+    },
+    {
+      "at": "2026-10-06T03:09:29.178Z",
+      "sequence": 50,
+      "index": 181,
+      "state": "The following is a diff from the previous accessibility tree for Window: \"AI Course Workbench\" with ~ and + representing changed and added elements, respectively. Removed elements are summarized by ID range.\n~\t\t\t\t\t181 text entry area (settable) 正文内容, Value: Local conflict draft retained for explicit resolution. Native autosave QA 50., Placeholder: 开始写点什么…\n~\t\t\t\t\t\t270 text (settable) Local conflict draft retained for explicit resolution. Native autosave QA 50.\nThe focused UI element is 181 text entry area (settable) 正文内容, Value: Local conflict draft retained for explicit resolution. Native autosave QA 50., Placeholder: 开始写点什么…"
+    }
+  ]
+}

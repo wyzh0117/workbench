@@ -1,0 +1,2014 @@
+{
+  "scope": "Actual default browser DOM and screenshot observations, not native GUI or exhaustive behavior",
+  "rows": [
+    {
+      "page": "P02",
+      "fixture": "F-small-final",
+      "fixture_id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      "source_commit": "b990d49029333d4bacc46a2f92361779a554545c",
+      "width": 1024,
+      "height": 900,
+      "sidebars": "left+right",
+      "observation": {
+        "dialogs": 0,
+        "documentWidth": 1024,
+        "h1": "File I/O small-final QA fixture",
+        "headings": [
+          "继续工作",
+          "待处理",
+          "最近编辑的课时",
+          "待补 0"
+        ],
+        "viewport": {
+          "height": 900,
+          "width": 1024
+        }
+      },
+      "screenshot": "/Users/youngi/.codex/worktrees/io-ui-closure/workbench/docs/reports/evidence/io-ui-closure/screenshots/final/browser-p02-overview-1024.jpg",
+      "browser_status": "OBSERVED",
+      "native_status": "NOT_RUN"
+    },
+    {
+      "page": "P02",
+      "fixture": "F-small-final",
+      "fixture_id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      "source_commit": "b990d49029333d4bacc46a2f92361779a554545c",
+      "width": 1280,
+      "height": 900,
+      "sidebars": "left+right",
+      "observation": {
+        "dialogs": 0,
+        "documentWidth": 1280,
+        "h1": "File I/O small-final QA fixture",
+        "headings": [
+          "继续工作",
+          "待处理",
+          "最近编辑的课时",
+          "待补 0"
+        ],
+        "viewport": {
+          "height": 900,
+          "width": 1280
+        }
+      },
+      "screenshot": "/Users/youngi/.codex/worktrees/io-ui-closure/workbench/docs/reports/evidence/io-ui-closure/screenshots/final/browser-p02-overview-1280.jpg",
+      "browser_status": "OBSERVED",
+      "native_status": "NOT_RUN"
+    },
+    {
+      "page": "P02",
+      "fixture": "F-small-final",
+      "fixture_id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      "source_commit": "b990d49029333d4bacc46a2f92361779a554545c",
+      "width": 1440,
+      "height": 900,
+      "sidebars": "left+right",
+      "observation": {
+        "dialogs": 0,
+        "documentWidth": 1440,
+        "h1": "File I/O small-final QA fixture",
+        "headings": [
+          "继续工作",
+          "待处理",
+          "最近编辑的课时",
+          "待补 0"
+        ],
+        "viewport": {
+          "height": 900,
+          "width": 1440
+        }
+      },
+      "screenshot": "/Users/youngi/.codex/worktrees/io-ui-closure/workbench/docs/reports/evidence/io-ui-closure/screenshots/final/browser-p02-overview-1440.jpg",
+      "browser_status": "OBSERVED",
+      "native_status": "NOT_RUN"
+    },
+    {
+      "page": "P02",
+      "fixture": "F-small-final",
+      "fixture_id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      "source_commit": "b990d49029333d4bacc46a2f92361779a554545c",
+      "width": 1728,
+      "height": 900,
+      "sidebars": "left+right",
+      "observation": {
+        "dialogs": 0,
+        "documentWidth": 1728,
+        "h1": "File I/O small-final QA fixture",
+        "headings": [
+          "继续工作",
+          "待处理",
+          "最近编辑的课时",
+          "待补 0"
+        ],
+        "viewport": {
+          "height": 900,
+          "width": 1728
+        }
+      },
+      "screenshot": "/Users/youngi/.codex/worktrees/io-ui-closure/workbench/docs/reports/evidence/io-ui-closure/screenshots/final/browser-p02-overview-1728.jpg",
+      "browser_status": "OBSERVED",
+      "native_status": "NOT_RUN"
+    },
+    {
+      "page": "P03",
+      "fixture": "F-small-final",
+      "fixture_id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      "source_commit": "b990d49029333d4bacc46a2f92361779a554545c",
+      "width": 1024,
+      "height": 900,
+      "sidebars": "both",
+      "observation": {
+        "dialogs": 0,
+        "documentWidth": 1024,
+        "h1": "File I/O small-final QA fixture",
+        "headings": [
+          "",
+          "",
+          "待补 0"
+        ],
+        "sidebarButtons": [
+          "收起左栏",
+          "收起右栏"
+        ],
+        "viewport": {
+          "height": 900,
+          "width": 1024
+        }
+      },
+      "screenshot": "/Users/youngi/.codex/worktrees/io-ui-closure/workbench/docs/reports/evidence/io-ui-closure/screenshots/final/browser-p03-map-1024-both.jpg",
+      "browser_status": "OBSERVED",
+      "native_status": "NOT_RUN",
+      "case_kind": "default",
+      "observed_at_utc": "2026-10-06T00:50:15.242Z"
+    },
+    {
+      "page": "P03",
+      "fixture": "F-small-final",
+      "fixture_id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      "source_commit": "b990d49029333d4bacc46a2f92361779a554545c",
+      "width": 1280,
+      "height": 900,
+      "sidebars": "both",
+      "observation": {
+        "dialogs": 0,
+        "documentWidth": 1280,
+        "h1": "File I/O small-final QA fixture",
+        "headings": [
+          "",
+          "",
+          "待补 0"
+        ],
+        "sidebarButtons": [
+          "收起左栏",
+          "收起右栏"
+        ],
+        "viewport": {
+          "height": 900,
+          "width": 1280
+        }
+      },
+      "screenshot": "/Users/youngi/.codex/worktrees/io-ui-closure/workbench/docs/reports/evidence/io-ui-closure/screenshots/final/browser-p03-map-1280-both.jpg",
+      "browser_status": "OBSERVED",
+      "native_status": "NOT_RUN",
+      "case_kind": "default",
+      "observed_at_utc": "2026-10-06T00:50:15.533Z"
+    },
+    {
+      "page": "P03",
+      "fixture": "F-small-final",
+      "fixture_id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      "source_commit": "b990d49029333d4bacc46a2f92361779a554545c",
+      "width": 1440,
+      "height": 900,
+      "sidebars": "both",
+      "observation": {
+        "dialogs": 0,
+        "documentWidth": 1440,
+        "h1": "File I/O small-final QA fixture",
+        "headings": [
+          "",
+          "",
+          "待补 0"
+        ],
+        "sidebarButtons": [
+          "收起左栏",
+          "收起右栏"
+        ],
+        "viewport": {
+          "height": 900,
+          "width": 1440
+        }
+      },
+      "screenshot": "/Users/youngi/.codex/worktrees/io-ui-closure/workbench/docs/reports/evidence/io-ui-closure/screenshots/final/browser-p03-map-1440-both.jpg",
+      "browser_status": "OBSERVED",
+      "native_status": "NOT_RUN",
+      "case_kind": "default",
+      "observed_at_utc": "2026-10-06T00:50:15.739Z"
+    },
+    {
+      "page": "P03",
+      "fixture": "F-small-final",
+      "fixture_id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      "source_commit": "b990d49029333d4bacc46a2f92361779a554545c",
+      "width": 1728,
+      "height": 900,
+      "sidebars": "both",
+      "observation": {
+        "dialogs": 0,
+        "documentWidth": 1728,
+        "h1": "File I/O small-final QA fixture",
+        "headings": [
+          "",
+          "",
+          "待补 0"
+        ],
+        "sidebarButtons": [
+          "收起左栏",
+          "收起右栏"
+        ],
+        "viewport": {
+          "height": 900,
+          "width": 1728
+        }
+      },
+      "screenshot": "/Users/youngi/.codex/worktrees/io-ui-closure/workbench/docs/reports/evidence/io-ui-closure/screenshots/final/browser-p03-map-1728-both.jpg",
+      "browser_status": "OBSERVED",
+      "native_status": "NOT_RUN",
+      "case_kind": "default",
+      "observed_at_utc": "2026-10-06T00:50:15.941Z"
+    },
+    {
+      "page": "P04",
+      "fixture": "F-small-final",
+      "fixture_id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      "source_commit": "b990d49029333d4bacc46a2f92361779a554545c",
+      "width": 1024,
+      "height": 900,
+      "sidebars": "both",
+      "observation": {
+        "dialogs": 0,
+        "documentWidth": 1024,
+        "h1": "Fixture lesson 1",
+        "headings": [
+          "待补 0"
+        ],
+        "sidebarButtons": [
+          "收起左栏",
+          "收起右栏"
+        ],
+        "viewport": {
+          "height": 900,
+          "width": 1024
+        }
+      },
+      "screenshot": "/Users/youngi/.codex/worktrees/io-ui-closure/workbench/docs/reports/evidence/io-ui-closure/screenshots/final/browser-p04-body-1024-both.jpg",
+      "browser_status": "OBSERVED",
+      "native_status": "NOT_RUN",
+      "case_kind": "default",
+      "observed_at_utc": "2026-10-06T00:51:06.765Z"
+    },
+    {
+      "page": "P04",
+      "fixture": "F-small-final",
+      "fixture_id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      "source_commit": "b990d49029333d4bacc46a2f92361779a554545c",
+      "width": 1280,
+      "height": 900,
+      "sidebars": "both",
+      "observation": {
+        "dialogs": 0,
+        "documentWidth": 1280,
+        "h1": "Fixture lesson 1",
+        "headings": [
+          "待补 0"
+        ],
+        "sidebarButtons": [
+          "收起左栏",
+          "收起右栏"
+        ],
+        "viewport": {
+          "height": 900,
+          "width": 1280
+        }
+      },
+      "screenshot": "/Users/youngi/.codex/worktrees/io-ui-closure/workbench/docs/reports/evidence/io-ui-closure/screenshots/final/browser-p04-body-1280-both.jpg",
+      "browser_status": "OBSERVED",
+      "native_status": "NOT_RUN",
+      "case_kind": "default",
+      "observed_at_utc": "2026-10-06T00:51:07.105Z"
+    },
+    {
+      "page": "P04",
+      "fixture": "F-small-final",
+      "fixture_id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      "source_commit": "b990d49029333d4bacc46a2f92361779a554545c",
+      "width": 1440,
+      "height": 900,
+      "sidebars": "both",
+      "observation": {
+        "dialogs": 0,
+        "documentWidth": 1440,
+        "h1": "Fixture lesson 1",
+        "headings": [
+          "待补 0"
+        ],
+        "sidebarButtons": [
+          "收起左栏",
+          "收起右栏"
+        ],
+        "viewport": {
+          "height": 900,
+          "width": 1440
+        }
+      },
+      "screenshot": "/Users/youngi/.codex/worktrees/io-ui-closure/workbench/docs/reports/evidence/io-ui-closure/screenshots/final/browser-p04-body-1440-both.jpg",
+      "browser_status": "OBSERVED",
+      "native_status": "NOT_RUN",
+      "case_kind": "default",
+      "observed_at_utc": "2026-10-06T00:51:07.310Z"
+    },
+    {
+      "page": "P04",
+      "fixture": "F-small-final",
+      "fixture_id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      "source_commit": "b990d49029333d4bacc46a2f92361779a554545c",
+      "width": 1728,
+      "height": 900,
+      "sidebars": "both",
+      "observation": {
+        "dialogs": 0,
+        "documentWidth": 1728,
+        "h1": "Fixture lesson 1",
+        "headings": [
+          "待补 0"
+        ],
+        "sidebarButtons": [
+          "收起左栏",
+          "收起右栏"
+        ],
+        "viewport": {
+          "height": 900,
+          "width": 1728
+        }
+      },
+      "screenshot": "/Users/youngi/.codex/worktrees/io-ui-closure/workbench/docs/reports/evidence/io-ui-closure/screenshots/final/browser-p04-body-1728-both.jpg",
+      "browser_status": "OBSERVED",
+      "native_status": "NOT_RUN",
+      "case_kind": "default",
+      "observed_at_utc": "2026-10-06T00:51:07.517Z"
+    },
+    {
+      "page": "P05",
+      "fixture": "F-small-final",
+      "fixture_id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      "source_commit": "b990d49029333d4bacc46a2f92361779a554545c",
+      "width": 1024,
+      "height": 900,
+      "sidebars": "both",
+      "observation": {
+        "dialogs": 0,
+        "documentWidth": 1024,
+        "h1": "Fixture lesson 1",
+        "headings": [
+          "内容流程",
+          "待补 0"
+        ],
+        "sidebarButtons": [
+          "收起左栏",
+          "收起右栏"
+        ],
+        "viewport": {
+          "height": 900,
+          "width": 1024
+        }
+      },
+      "screenshot": "/Users/youngi/.codex/worktrees/io-ui-closure/workbench/docs/reports/evidence/io-ui-closure/screenshots/final/browser-p05-flow-1024-both.jpg",
+      "browser_status": "OBSERVED",
+      "native_status": "NOT_RUN",
+      "case_kind": "default",
+      "observed_at_utc": "2026-10-06T00:51:23.998Z"
+    },
+    {
+      "page": "P05",
+      "fixture": "F-small-final",
+      "fixture_id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      "source_commit": "b990d49029333d4bacc46a2f92361779a554545c",
+      "width": 1280,
+      "height": 900,
+      "sidebars": "both",
+      "observation": {
+        "dialogs": 0,
+        "documentWidth": 1280,
+        "h1": "Fixture lesson 1",
+        "headings": [
+          "内容流程",
+          "待补 0"
+        ],
+        "sidebarButtons": [
+          "收起左栏",
+          "收起右栏"
+        ],
+        "viewport": {
+          "height": 900,
+          "width": 1280
+        }
+      },
+      "screenshot": "/Users/youngi/.codex/worktrees/io-ui-closure/workbench/docs/reports/evidence/io-ui-closure/screenshots/final/browser-p05-flow-1280-both.jpg",
+      "browser_status": "OBSERVED",
+      "native_status": "NOT_RUN",
+      "case_kind": "default",
+      "observed_at_utc": "2026-10-06T00:51:24.200Z"
+    },
+    {
+      "page": "P05",
+      "fixture": "F-small-final",
+      "fixture_id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      "source_commit": "b990d49029333d4bacc46a2f92361779a554545c",
+      "width": 1440,
+      "height": 900,
+      "sidebars": "both",
+      "observation": {
+        "dialogs": 0,
+        "documentWidth": 1440,
+        "h1": "Fixture lesson 1",
+        "headings": [
+          "内容流程",
+          "待补 0"
+        ],
+        "sidebarButtons": [
+          "收起左栏",
+          "收起右栏"
+        ],
+        "viewport": {
+          "height": 900,
+          "width": 1440
+        }
+      },
+      "screenshot": "/Users/youngi/.codex/worktrees/io-ui-closure/workbench/docs/reports/evidence/io-ui-closure/screenshots/final/browser-p05-flow-1440-both.jpg",
+      "browser_status": "OBSERVED",
+      "native_status": "NOT_RUN",
+      "case_kind": "default",
+      "observed_at_utc": "2026-10-06T00:51:24.361Z"
+    },
+    {
+      "page": "P05",
+      "fixture": "F-small-final",
+      "fixture_id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      "source_commit": "b990d49029333d4bacc46a2f92361779a554545c",
+      "width": 1728,
+      "height": 900,
+      "sidebars": "both",
+      "observation": {
+        "dialogs": 0,
+        "documentWidth": 1728,
+        "h1": "Fixture lesson 1",
+        "headings": [
+          "内容流程",
+          "待补 0"
+        ],
+        "sidebarButtons": [
+          "收起左栏",
+          "收起右栏"
+        ],
+        "viewport": {
+          "height": 900,
+          "width": 1728
+        }
+      },
+      "screenshot": "/Users/youngi/.codex/worktrees/io-ui-closure/workbench/docs/reports/evidence/io-ui-closure/screenshots/final/browser-p05-flow-1728-both.jpg",
+      "browser_status": "OBSERVED",
+      "native_status": "NOT_RUN",
+      "case_kind": "default",
+      "observed_at_utc": "2026-10-06T00:51:24.506Z"
+    },
+    {
+      "page": "P06",
+      "fixture": "F-small-final",
+      "fixture_id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      "source_commit": "b990d49029333d4bacc46a2f92361779a554545c",
+      "width": 1024,
+      "height": 900,
+      "sidebars": "none",
+      "observation": {
+        "dialogs": 0,
+        "documentWidth": 1024,
+        "h1": "Fixture lesson 1",
+        "headings": [
+          "Fixture heading 1",
+          "待补 0"
+        ],
+        "sidebarButtons": [
+          "收起左栏",
+          "收起右栏"
+        ],
+        "viewport": {
+          "height": 900,
+          "width": 1024
+        }
+      },
+      "screenshot": "/Users/youngi/.codex/worktrees/io-ui-closure/workbench/docs/reports/evidence/io-ui-closure/screenshots/final/browser-p06-preview-1024-none.jpg",
+      "browser_status": "OBSERVED",
+      "native_status": "NOT_RUN",
+      "case_kind": "default",
+      "observed_at_utc": "2026-10-06T00:53:15.810Z"
+    },
+    {
+      "page": "P06",
+      "fixture": "F-small-final",
+      "fixture_id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      "source_commit": "b990d49029333d4bacc46a2f92361779a554545c",
+      "width": 1280,
+      "height": 900,
+      "sidebars": "none",
+      "observation": {
+        "dialogs": 0,
+        "documentWidth": 1280,
+        "h1": "Fixture lesson 1",
+        "headings": [
+          "Fixture heading 1",
+          "待补 0"
+        ],
+        "sidebarButtons": [
+          "收起左栏",
+          "收起右栏"
+        ],
+        "viewport": {
+          "height": 900,
+          "width": 1280
+        }
+      },
+      "screenshot": "/Users/youngi/.codex/worktrees/io-ui-closure/workbench/docs/reports/evidence/io-ui-closure/screenshots/final/browser-p06-preview-1280-none.jpg",
+      "browser_status": "OBSERVED",
+      "native_status": "NOT_RUN",
+      "case_kind": "default",
+      "observed_at_utc": "2026-10-06T00:53:15.999Z"
+    },
+    {
+      "page": "P06",
+      "fixture": "F-small-final",
+      "fixture_id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      "source_commit": "b990d49029333d4bacc46a2f92361779a554545c",
+      "width": 1440,
+      "height": 900,
+      "sidebars": "none",
+      "observation": {
+        "dialogs": 0,
+        "documentWidth": 1440,
+        "h1": "Fixture lesson 1",
+        "headings": [
+          "Fixture heading 1",
+          "待补 0"
+        ],
+        "sidebarButtons": [
+          "收起左栏",
+          "收起右栏"
+        ],
+        "viewport": {
+          "height": 900,
+          "width": 1440
+        }
+      },
+      "screenshot": "/Users/youngi/.codex/worktrees/io-ui-closure/workbench/docs/reports/evidence/io-ui-closure/screenshots/final/browser-p06-preview-1440-none.jpg",
+      "browser_status": "OBSERVED",
+      "native_status": "NOT_RUN",
+      "case_kind": "default",
+      "observed_at_utc": "2026-10-06T00:53:16.153Z"
+    },
+    {
+      "page": "P06",
+      "fixture": "F-small-final",
+      "fixture_id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      "source_commit": "b990d49029333d4bacc46a2f92361779a554545c",
+      "width": 1728,
+      "height": 900,
+      "sidebars": "none",
+      "observation": {
+        "dialogs": 0,
+        "documentWidth": 1728,
+        "h1": "Fixture lesson 1",
+        "headings": [
+          "Fixture heading 1",
+          "待补 0"
+        ],
+        "sidebarButtons": [
+          "收起左栏",
+          "收起右栏"
+        ],
+        "viewport": {
+          "height": 900,
+          "width": 1728
+        }
+      },
+      "screenshot": "/Users/youngi/.codex/worktrees/io-ui-closure/workbench/docs/reports/evidence/io-ui-closure/screenshots/final/browser-p06-preview-1728-none.jpg",
+      "browser_status": "OBSERVED",
+      "native_status": "NOT_RUN",
+      "case_kind": "default",
+      "observed_at_utc": "2026-10-06T00:53:16.461Z"
+    },
+    {
+      "page": "P08",
+      "fixture": "F-small-final",
+      "fixture_id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      "source_commit": "b990d49029333d4bacc46a2f92361779a554545c",
+      "width": 1024,
+      "height": 900,
+      "sidebars": "both",
+      "observation": {
+        "dialogs": 0,
+        "documentWidth": 1024,
+        "h1": "文件浏览",
+        "headings": [
+          "尚未连接资料文件夹",
+          "待补 0"
+        ],
+        "sidebarButtons": [
+          "收起左栏",
+          "收起右栏"
+        ],
+        "viewport": {
+          "height": 900,
+          "width": 1024
+        }
+      },
+      "screenshot": "/Users/youngi/.codex/worktrees/io-ui-closure/workbench/docs/reports/evidence/io-ui-closure/screenshots/final/browser-p08-files-empty-1024-both.jpg",
+      "browser_status": "OBSERVED",
+      "native_status": "NOT_RUN",
+      "case_kind": "default",
+      "observed_at_utc": "2026-10-06T00:54:26.300Z"
+    },
+    {
+      "page": "P08",
+      "fixture": "F-small-final",
+      "fixture_id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      "source_commit": "b990d49029333d4bacc46a2f92361779a554545c",
+      "width": 1280,
+      "height": 900,
+      "sidebars": "both",
+      "observation": {
+        "dialogs": 0,
+        "documentWidth": 1280,
+        "h1": "文件浏览",
+        "headings": [
+          "尚未连接资料文件夹",
+          "待补 0"
+        ],
+        "sidebarButtons": [
+          "收起左栏",
+          "收起右栏"
+        ],
+        "viewport": {
+          "height": 900,
+          "width": 1280
+        }
+      },
+      "screenshot": "/Users/youngi/.codex/worktrees/io-ui-closure/workbench/docs/reports/evidence/io-ui-closure/screenshots/final/browser-p08-files-empty-1280-both.jpg",
+      "browser_status": "OBSERVED",
+      "native_status": "NOT_RUN",
+      "case_kind": "default",
+      "observed_at_utc": "2026-10-06T00:54:26.607Z"
+    },
+    {
+      "page": "P08",
+      "fixture": "F-small-final",
+      "fixture_id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      "source_commit": "b990d49029333d4bacc46a2f92361779a554545c",
+      "width": 1440,
+      "height": 900,
+      "sidebars": "both",
+      "observation": {
+        "dialogs": 0,
+        "documentWidth": 1440,
+        "h1": "文件浏览",
+        "headings": [
+          "尚未连接资料文件夹",
+          "待补 0"
+        ],
+        "sidebarButtons": [
+          "收起左栏",
+          "收起右栏"
+        ],
+        "viewport": {
+          "height": 900,
+          "width": 1440
+        }
+      },
+      "screenshot": "/Users/youngi/.codex/worktrees/io-ui-closure/workbench/docs/reports/evidence/io-ui-closure/screenshots/final/browser-p08-files-empty-1440-both.jpg",
+      "browser_status": "OBSERVED",
+      "native_status": "NOT_RUN",
+      "case_kind": "default",
+      "observed_at_utc": "2026-10-06T00:54:26.915Z"
+    },
+    {
+      "page": "P08",
+      "fixture": "F-small-final",
+      "fixture_id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      "source_commit": "b990d49029333d4bacc46a2f92361779a554545c",
+      "width": 1728,
+      "height": 900,
+      "sidebars": "both",
+      "observation": {
+        "dialogs": 0,
+        "documentWidth": 1728,
+        "h1": "文件浏览",
+        "headings": [
+          "尚未连接资料文件夹",
+          "待补 0"
+        ],
+        "sidebarButtons": [
+          "收起左栏",
+          "收起右栏"
+        ],
+        "viewport": {
+          "height": 900,
+          "width": 1728
+        }
+      },
+      "screenshot": "/Users/youngi/.codex/worktrees/io-ui-closure/workbench/docs/reports/evidence/io-ui-closure/screenshots/final/browser-p08-files-empty-1728-both.jpg",
+      "browser_status": "OBSERVED",
+      "native_status": "NOT_RUN",
+      "case_kind": "default",
+      "observed_at_utc": "2026-10-06T00:54:27.019Z"
+    },
+    {
+      "page": "P09",
+      "fixture": "F-small-final",
+      "fixture_id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      "source_commit": "b990d49029333d4bacc46a2f92361779a554545c",
+      "width": 1024,
+      "height": 900,
+      "sidebars": "both",
+      "observation": {
+        "dialogs": 0,
+        "documentWidth": 1024,
+        "h1": "收件箱 0",
+        "headings": [
+          "收件箱是空的",
+          "待补 0"
+        ],
+        "sidebarButtons": [
+          "收起左栏",
+          "收起右栏"
+        ],
+        "viewport": {
+          "height": 900,
+          "width": 1024
+        }
+      },
+      "screenshot": "/Users/youngi/.codex/worktrees/io-ui-closure/workbench/docs/reports/evidence/io-ui-closure/screenshots/final/browser-p09-inbox-empty-1024-both.jpg",
+      "browser_status": "OBSERVED",
+      "native_status": "NOT_RUN",
+      "case_kind": "default",
+      "observed_at_utc": "2026-10-06T00:54:47.837Z"
+    },
+    {
+      "page": "P09",
+      "fixture": "F-small-final",
+      "fixture_id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      "source_commit": "b990d49029333d4bacc46a2f92361779a554545c",
+      "width": 1280,
+      "height": 900,
+      "sidebars": "both",
+      "observation": {
+        "dialogs": 0,
+        "documentWidth": 1280,
+        "h1": "收件箱 0",
+        "headings": [
+          "收件箱是空的",
+          "待补 0"
+        ],
+        "sidebarButtons": [
+          "收起左栏",
+          "收起右栏"
+        ],
+        "viewport": {
+          "height": 900,
+          "width": 1280
+        }
+      },
+      "screenshot": "/Users/youngi/.codex/worktrees/io-ui-closure/workbench/docs/reports/evidence/io-ui-closure/screenshots/final/browser-p09-inbox-empty-1280-both.jpg",
+      "browser_status": "OBSERVED",
+      "native_status": "NOT_RUN",
+      "case_kind": "default",
+      "observed_at_utc": "2026-10-06T00:54:47.994Z"
+    },
+    {
+      "page": "P09",
+      "fixture": "F-small-final",
+      "fixture_id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      "source_commit": "b990d49029333d4bacc46a2f92361779a554545c",
+      "width": 1440,
+      "height": 900,
+      "sidebars": "both",
+      "observation": {
+        "dialogs": 0,
+        "documentWidth": 1440,
+        "h1": "收件箱 0",
+        "headings": [
+          "收件箱是空的",
+          "待补 0"
+        ],
+        "sidebarButtons": [
+          "收起左栏",
+          "收起右栏"
+        ],
+        "viewport": {
+          "height": 900,
+          "width": 1440
+        }
+      },
+      "screenshot": "/Users/youngi/.codex/worktrees/io-ui-closure/workbench/docs/reports/evidence/io-ui-closure/screenshots/final/browser-p09-inbox-empty-1440-both.jpg",
+      "browser_status": "OBSERVED",
+      "native_status": "NOT_RUN",
+      "case_kind": "default",
+      "observed_at_utc": "2026-10-06T00:54:48.147Z"
+    },
+    {
+      "page": "P09",
+      "fixture": "F-small-final",
+      "fixture_id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      "source_commit": "b990d49029333d4bacc46a2f92361779a554545c",
+      "width": 1728,
+      "height": 900,
+      "sidebars": "both",
+      "observation": {
+        "dialogs": 0,
+        "documentWidth": 1728,
+        "h1": "收件箱 0",
+        "headings": [
+          "收件箱是空的",
+          "待补 0"
+        ],
+        "sidebarButtons": [
+          "收起左栏",
+          "收起右栏"
+        ],
+        "viewport": {
+          "height": 900,
+          "width": 1728
+        }
+      },
+      "screenshot": "/Users/youngi/.codex/worktrees/io-ui-closure/workbench/docs/reports/evidence/io-ui-closure/screenshots/final/browser-p09-inbox-empty-1728-both.jpg",
+      "browser_status": "OBSERVED",
+      "native_status": "NOT_RUN",
+      "case_kind": "default",
+      "observed_at_utc": "2026-10-06T00:54:48.301Z"
+    },
+    {
+      "page": "P10",
+      "fixture": "F-small-final",
+      "fixture_id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      "source_commit": "b990d49029333d4bacc46a2f92361779a554545c",
+      "width": 1024,
+      "height": 900,
+      "sidebars": "both",
+      "observation": {
+        "dialogs": 0,
+        "documentWidth": 1024,
+        "h1": "制作看板",
+        "headings": [
+          "待研究",
+          "起草中",
+          "待审核",
+          "已定稿",
+          "待补 0"
+        ],
+        "sidebarButtons": [
+          "收起左栏",
+          "收起右栏"
+        ],
+        "viewport": {
+          "height": 900,
+          "width": 1024
+        }
+      },
+      "screenshot": "/Users/youngi/.codex/worktrees/io-ui-closure/workbench/docs/reports/evidence/io-ui-closure/screenshots/final/browser-p10-board-1024-both.jpg",
+      "browser_status": "OBSERVED",
+      "native_status": "NOT_RUN",
+      "case_kind": "default",
+      "observed_at_utc": "2026-10-06T00:55:15.033Z"
+    },
+    {
+      "page": "P10",
+      "fixture": "F-small-final",
+      "fixture_id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      "source_commit": "b990d49029333d4bacc46a2f92361779a554545c",
+      "width": 1280,
+      "height": 900,
+      "sidebars": "both",
+      "observation": {
+        "dialogs": 0,
+        "documentWidth": 1280,
+        "h1": "制作看板",
+        "headings": [
+          "待研究",
+          "起草中",
+          "待审核",
+          "已定稿",
+          "待补 0"
+        ],
+        "sidebarButtons": [
+          "收起左栏",
+          "收起右栏"
+        ],
+        "viewport": {
+          "height": 900,
+          "width": 1280
+        }
+      },
+      "screenshot": "/Users/youngi/.codex/worktrees/io-ui-closure/workbench/docs/reports/evidence/io-ui-closure/screenshots/final/browser-p10-board-1280-both.jpg",
+      "browser_status": "OBSERVED",
+      "native_status": "NOT_RUN",
+      "case_kind": "default",
+      "observed_at_utc": "2026-10-06T00:55:15.356Z"
+    },
+    {
+      "page": "P10",
+      "fixture": "F-small-final",
+      "fixture_id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      "source_commit": "b990d49029333d4bacc46a2f92361779a554545c",
+      "width": 1440,
+      "height": 900,
+      "sidebars": "both",
+      "observation": {
+        "dialogs": 0,
+        "documentWidth": 1440,
+        "h1": "制作看板",
+        "headings": [
+          "待研究",
+          "起草中",
+          "待审核",
+          "已定稿",
+          "待补 0"
+        ],
+        "sidebarButtons": [
+          "收起左栏",
+          "收起右栏"
+        ],
+        "viewport": {
+          "height": 900,
+          "width": 1440
+        }
+      },
+      "screenshot": "/Users/youngi/.codex/worktrees/io-ui-closure/workbench/docs/reports/evidence/io-ui-closure/screenshots/final/browser-p10-board-1440-both.jpg",
+      "browser_status": "OBSERVED",
+      "native_status": "NOT_RUN",
+      "case_kind": "default",
+      "observed_at_utc": "2026-10-06T00:55:15.560Z"
+    },
+    {
+      "page": "P10",
+      "fixture": "F-small-final",
+      "fixture_id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      "source_commit": "b990d49029333d4bacc46a2f92361779a554545c",
+      "width": 1728,
+      "height": 900,
+      "sidebars": "both",
+      "observation": {
+        "dialogs": 0,
+        "documentWidth": 1728,
+        "h1": "制作看板",
+        "headings": [
+          "待研究",
+          "起草中",
+          "待审核",
+          "已定稿",
+          "待补 0"
+        ],
+        "sidebarButtons": [
+          "收起左栏",
+          "收起右栏"
+        ],
+        "viewport": {
+          "height": 900,
+          "width": 1728
+        }
+      },
+      "screenshot": "/Users/youngi/.codex/worktrees/io-ui-closure/workbench/docs/reports/evidence/io-ui-closure/screenshots/final/browser-p10-board-1728-both.jpg",
+      "browser_status": "OBSERVED",
+      "native_status": "NOT_RUN",
+      "case_kind": "default",
+      "observed_at_utc": "2026-10-06T00:55:15.736Z"
+    },
+    {
+      "page": "P12",
+      "fixture": "F-small-final",
+      "fixture_id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      "source_commit": "b990d49029333d4bacc46a2f92361779a554545c",
+      "width": 1024,
+      "height": 900,
+      "sidebars": "both",
+      "observation": {
+        "dialogs": 0,
+        "documentWidth": 1024,
+        "h1": "待补总览",
+        "headings": [
+          "目前没有待补内容",
+          "待补 0"
+        ],
+        "sidebarButtons": [
+          "收起左栏",
+          "收起右栏"
+        ],
+        "viewport": {
+          "height": 900,
+          "width": 1024
+        }
+      },
+      "screenshot": "/Users/youngi/.codex/worktrees/io-ui-closure/workbench/docs/reports/evidence/io-ui-closure/screenshots/final/browser-p12-requirements-empty-1024-both.jpg",
+      "browser_status": "OBSERVED",
+      "native_status": "NOT_RUN",
+      "case_kind": "default",
+      "observed_at_utc": "2026-10-06T00:56:03.876Z"
+    },
+    {
+      "page": "P12",
+      "fixture": "F-small-final",
+      "fixture_id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      "source_commit": "b990d49029333d4bacc46a2f92361779a554545c",
+      "width": 1280,
+      "height": 900,
+      "sidebars": "both",
+      "observation": {
+        "dialogs": 0,
+        "documentWidth": 1280,
+        "h1": "待补总览",
+        "headings": [
+          "目前没有待补内容",
+          "待补 0"
+        ],
+        "sidebarButtons": [
+          "收起左栏",
+          "收起右栏"
+        ],
+        "viewport": {
+          "height": 900,
+          "width": 1280
+        }
+      },
+      "screenshot": "/Users/youngi/.codex/worktrees/io-ui-closure/workbench/docs/reports/evidence/io-ui-closure/screenshots/final/browser-p12-requirements-empty-1280-both.jpg",
+      "browser_status": "OBSERVED",
+      "native_status": "NOT_RUN",
+      "case_kind": "default",
+      "observed_at_utc": "2026-10-06T00:56:04.026Z"
+    },
+    {
+      "page": "P12",
+      "fixture": "F-small-final",
+      "fixture_id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      "source_commit": "b990d49029333d4bacc46a2f92361779a554545c",
+      "width": 1440,
+      "height": 900,
+      "sidebars": "both",
+      "observation": {
+        "dialogs": 0,
+        "documentWidth": 1440,
+        "h1": "待补总览",
+        "headings": [
+          "目前没有待补内容",
+          "待补 0"
+        ],
+        "sidebarButtons": [
+          "收起左栏",
+          "收起右栏"
+        ],
+        "viewport": {
+          "height": 900,
+          "width": 1440
+        }
+      },
+      "screenshot": "/Users/youngi/.codex/worktrees/io-ui-closure/workbench/docs/reports/evidence/io-ui-closure/screenshots/final/browser-p12-requirements-empty-1440-both.jpg",
+      "browser_status": "OBSERVED",
+      "native_status": "NOT_RUN",
+      "case_kind": "default",
+      "observed_at_utc": "2026-10-06T00:56:04.181Z"
+    },
+    {
+      "page": "P12",
+      "fixture": "F-small-final",
+      "fixture_id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      "source_commit": "b990d49029333d4bacc46a2f92361779a554545c",
+      "width": 1728,
+      "height": 900,
+      "sidebars": "both",
+      "observation": {
+        "dialogs": 0,
+        "documentWidth": 1728,
+        "h1": "待补总览",
+        "headings": [
+          "目前没有待补内容",
+          "待补 0"
+        ],
+        "sidebarButtons": [
+          "收起左栏",
+          "收起右栏"
+        ],
+        "viewport": {
+          "height": 900,
+          "width": 1728
+        }
+      },
+      "screenshot": "/Users/youngi/.codex/worktrees/io-ui-closure/workbench/docs/reports/evidence/io-ui-closure/screenshots/final/browser-p12-requirements-empty-1728-both.jpg",
+      "browser_status": "OBSERVED",
+      "native_status": "NOT_RUN",
+      "case_kind": "default",
+      "observed_at_utc": "2026-10-06T00:56:04.386Z"
+    },
+    {
+      "page": "P13",
+      "fixture": "F-small-final",
+      "fixture_id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      "source_commit": "b990d49029333d4bacc46a2f92361779a554545c",
+      "width": 1024,
+      "height": 900,
+      "sidebars": "both",
+      "observation": {
+        "dialogs": 0,
+        "documentWidth": 1024,
+        "h1": "更新中心",
+        "headings": [
+          "先检查，再决定",
+          "待补 0"
+        ],
+        "sidebarButtons": [
+          "收起左栏",
+          "收起右栏"
+        ],
+        "viewport": {
+          "height": 900,
+          "width": 1024
+        }
+      },
+      "screenshot": "/Users/youngi/.codex/worktrees/io-ui-closure/workbench/docs/reports/evidence/io-ui-closure/screenshots/final/browser-p13-updates-empty-1024-both.jpg",
+      "browser_status": "OBSERVED",
+      "native_status": "NOT_RUN",
+      "case_kind": "default",
+      "observed_at_utc": "2026-10-06T00:56:19.104Z"
+    },
+    {
+      "page": "P13",
+      "fixture": "F-small-final",
+      "fixture_id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      "source_commit": "b990d49029333d4bacc46a2f92361779a554545c",
+      "width": 1280,
+      "height": 900,
+      "sidebars": "both",
+      "observation": {
+        "dialogs": 0,
+        "documentWidth": 1280,
+        "h1": "更新中心",
+        "headings": [
+          "先检查，再决定",
+          "待补 0"
+        ],
+        "sidebarButtons": [
+          "收起左栏",
+          "收起右栏"
+        ],
+        "viewport": {
+          "height": 900,
+          "width": 1280
+        }
+      },
+      "screenshot": "/Users/youngi/.codex/worktrees/io-ui-closure/workbench/docs/reports/evidence/io-ui-closure/screenshots/final/browser-p13-updates-empty-1280-both.jpg",
+      "browser_status": "OBSERVED",
+      "native_status": "NOT_RUN",
+      "case_kind": "default",
+      "observed_at_utc": "2026-10-06T00:56:19.308Z",
+      "screenshot_validation": {
+        "status": "SIZE_MISMATCH",
+        "recorded_css_viewport_px": {
+          "width": 1280,
+          "height": 900
+        },
+        "actual_jpeg_px": {
+          "width": 1024,
+          "height": 900
+        },
+        "sha256": "9a49d323918d83dc64f23439959083cb25358fd673cdf6aeab741e17c50d07ae",
+        "note": "Historical b990d49 row: DOM observation records 1280x900, but the retained screenshot is 1024x900. Keep the DOM observation; do not treat this JPEG as matched-size visual evidence."
+      }
+    },
+    {
+      "page": "P13",
+      "fixture": "F-small-final",
+      "fixture_id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      "source_commit": "b990d49029333d4bacc46a2f92361779a554545c",
+      "width": 1440,
+      "height": 900,
+      "sidebars": "both",
+      "observation": {
+        "dialogs": 0,
+        "documentWidth": 1440,
+        "h1": "更新中心",
+        "headings": [
+          "先检查，再决定",
+          "待补 0"
+        ],
+        "sidebarButtons": [
+          "收起左栏",
+          "收起右栏"
+        ],
+        "viewport": {
+          "height": 900,
+          "width": 1440
+        }
+      },
+      "screenshot": "/Users/youngi/.codex/worktrees/io-ui-closure/workbench/docs/reports/evidence/io-ui-closure/screenshots/final/browser-p13-updates-empty-1440-both.jpg",
+      "browser_status": "OBSERVED",
+      "native_status": "NOT_RUN",
+      "case_kind": "default",
+      "observed_at_utc": "2026-10-06T00:56:19.410Z"
+    },
+    {
+      "page": "P13",
+      "fixture": "F-small-final",
+      "fixture_id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      "source_commit": "b990d49029333d4bacc46a2f92361779a554545c",
+      "width": 1728,
+      "height": 900,
+      "sidebars": "both",
+      "observation": {
+        "dialogs": 0,
+        "documentWidth": 1728,
+        "h1": "更新中心",
+        "headings": [
+          "先检查，再决定",
+          "待补 0"
+        ],
+        "sidebarButtons": [
+          "收起左栏",
+          "收起右栏"
+        ],
+        "viewport": {
+          "height": 900,
+          "width": 1728
+        }
+      },
+      "screenshot": "/Users/youngi/.codex/worktrees/io-ui-closure/workbench/docs/reports/evidence/io-ui-closure/screenshots/final/browser-p13-updates-empty-1728-both.jpg",
+      "browser_status": "OBSERVED",
+      "native_status": "NOT_RUN",
+      "case_kind": "default",
+      "observed_at_utc": "2026-10-06T00:56:19.616Z"
+    },
+    {
+      "page": "P14",
+      "fixture": "F-small-final",
+      "fixture_id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      "source_commit": "b990d49029333d4bacc46a2f92361779a554545c",
+      "width": 1024,
+      "height": 900,
+      "sidebars": "both",
+      "observation": {
+        "dialogs": 0,
+        "documentWidth": 1024,
+        "h1": "发布中心",
+        "headings": [
+          "1. 选择输出范围",
+          "3. 选择格式",
+          "发布记录",
+          "待补 0"
+        ],
+        "sidebarButtons": [
+          "收起左栏",
+          "收起右栏"
+        ],
+        "viewport": {
+          "height": 900,
+          "width": 1024
+        }
+      },
+      "screenshot": "/Users/youngi/.codex/worktrees/io-ui-closure/workbench/docs/reports/evidence/io-ui-closure/screenshots/final/browser-p14-publish-1024-both.jpg",
+      "browser_status": "OBSERVED",
+      "native_status": "NOT_RUN",
+      "case_kind": "default",
+      "observed_at_utc": "2026-10-06T00:59:41.730Z"
+    },
+    {
+      "page": "P14",
+      "fixture": "F-small-final",
+      "fixture_id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      "source_commit": "b990d49029333d4bacc46a2f92361779a554545c",
+      "width": 1280,
+      "height": 900,
+      "sidebars": "both",
+      "observation": {
+        "dialogs": 0,
+        "documentWidth": 1280,
+        "h1": "发布中心",
+        "headings": [
+          "1. 选择输出范围",
+          "3. 选择格式",
+          "发布记录",
+          "待补 0"
+        ],
+        "sidebarButtons": [
+          "收起左栏",
+          "收起右栏"
+        ],
+        "viewport": {
+          "height": 900,
+          "width": 1280
+        }
+      },
+      "screenshot": "/Users/youngi/.codex/worktrees/io-ui-closure/workbench/docs/reports/evidence/io-ui-closure/screenshots/final/browser-p14-publish-1280-both.jpg",
+      "browser_status": "OBSERVED",
+      "native_status": "NOT_RUN",
+      "case_kind": "default",
+      "observed_at_utc": "2026-10-06T00:59:42.134Z"
+    },
+    {
+      "page": "P14",
+      "fixture": "F-small-final",
+      "fixture_id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      "source_commit": "b990d49029333d4bacc46a2f92361779a554545c",
+      "width": 1440,
+      "height": 900,
+      "sidebars": "both",
+      "observation": {
+        "dialogs": 0,
+        "documentWidth": 1440,
+        "h1": "发布中心",
+        "headings": [
+          "1. 选择输出范围",
+          "3. 选择格式",
+          "发布记录",
+          "待补 0"
+        ],
+        "sidebarButtons": [
+          "收起左栏",
+          "收起右栏"
+        ],
+        "viewport": {
+          "height": 900,
+          "width": 1440
+        }
+      },
+      "screenshot": "/Users/youngi/.codex/worktrees/io-ui-closure/workbench/docs/reports/evidence/io-ui-closure/screenshots/final/browser-p14-publish-1440-both.jpg",
+      "browser_status": "OBSERVED",
+      "native_status": "NOT_RUN",
+      "case_kind": "default",
+      "observed_at_utc": "2026-10-06T00:59:42.337Z"
+    },
+    {
+      "page": "P14",
+      "fixture": "F-small-final",
+      "fixture_id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      "source_commit": "b990d49029333d4bacc46a2f92361779a554545c",
+      "width": 1728,
+      "height": 900,
+      "sidebars": "both",
+      "observation": {
+        "dialogs": 0,
+        "documentWidth": 1728,
+        "h1": "发布中心",
+        "headings": [
+          "1. 选择输出范围",
+          "3. 选择格式",
+          "发布记录",
+          "待补 0"
+        ],
+        "sidebarButtons": [
+          "收起左栏",
+          "收起右栏"
+        ],
+        "viewport": {
+          "height": 900,
+          "width": 1728
+        }
+      },
+      "screenshot": "/Users/youngi/.codex/worktrees/io-ui-closure/workbench/docs/reports/evidence/io-ui-closure/screenshots/final/browser-p14-publish-1728-both.jpg",
+      "browser_status": "OBSERVED",
+      "native_status": "NOT_RUN",
+      "case_kind": "default",
+      "observed_at_utc": "2026-10-06T00:59:42.647Z"
+    },
+    {
+      "page": "P15",
+      "fixture": "F-small-final",
+      "fixture_id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      "source_commit": "b990d49029333d4bacc46a2f92361779a554545c",
+      "width": 1024,
+      "height": 900,
+      "sidebars": "both",
+      "observation": {
+        "dialogs": 0,
+        "documentWidth": 1024,
+        "h1": "版本历史",
+        "headings": [
+          "命名版本",
+          "还没有命名版本",
+          "待补 0"
+        ],
+        "sidebarButtons": [
+          "收起左栏",
+          "收起右栏"
+        ],
+        "viewport": {
+          "height": 900,
+          "width": 1024
+        }
+      },
+      "screenshot": "/Users/youngi/.codex/worktrees/io-ui-closure/workbench/docs/reports/evidence/io-ui-closure/screenshots/final/browser-p15-versions-1024-both.jpg",
+      "browser_status": "OBSERVED",
+      "native_status": "NOT_RUN",
+      "case_kind": "default",
+      "observed_at_utc": "2026-10-06T00:59:52.016Z"
+    },
+    {
+      "page": "P15",
+      "fixture": "F-small-final",
+      "fixture_id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      "source_commit": "b990d49029333d4bacc46a2f92361779a554545c",
+      "width": 1280,
+      "height": 900,
+      "sidebars": "both",
+      "observation": {
+        "dialogs": 0,
+        "documentWidth": 1280,
+        "h1": "版本历史",
+        "headings": [
+          "命名版本",
+          "还没有命名版本",
+          "待补 0"
+        ],
+        "sidebarButtons": [
+          "收起左栏",
+          "收起右栏"
+        ],
+        "viewport": {
+          "height": 900,
+          "width": 1280
+        }
+      },
+      "screenshot": "/Users/youngi/.codex/worktrees/io-ui-closure/workbench/docs/reports/evidence/io-ui-closure/screenshots/final/browser-p15-versions-1280-both.jpg",
+      "browser_status": "OBSERVED",
+      "native_status": "NOT_RUN",
+      "case_kind": "default",
+      "observed_at_utc": "2026-10-06T00:59:52.230Z"
+    },
+    {
+      "page": "P15",
+      "fixture": "F-small-final",
+      "fixture_id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      "source_commit": "b990d49029333d4bacc46a2f92361779a554545c",
+      "width": 1440,
+      "height": 900,
+      "sidebars": "both",
+      "observation": {
+        "dialogs": 0,
+        "documentWidth": 1440,
+        "h1": "版本历史",
+        "headings": [
+          "命名版本",
+          "还没有命名版本",
+          "待补 0"
+        ],
+        "sidebarButtons": [
+          "收起左栏",
+          "收起右栏"
+        ],
+        "viewport": {
+          "height": 900,
+          "width": 1440
+        }
+      },
+      "screenshot": "/Users/youngi/.codex/worktrees/io-ui-closure/workbench/docs/reports/evidence/io-ui-closure/screenshots/final/browser-p15-versions-1440-both.jpg",
+      "browser_status": "OBSERVED",
+      "native_status": "NOT_RUN",
+      "case_kind": "default",
+      "observed_at_utc": "2026-10-06T00:59:52.419Z"
+    },
+    {
+      "page": "P15",
+      "fixture": "F-small-final",
+      "fixture_id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      "source_commit": "b990d49029333d4bacc46a2f92361779a554545c",
+      "width": 1728,
+      "height": 900,
+      "sidebars": "both",
+      "observation": {
+        "dialogs": 0,
+        "documentWidth": 1728,
+        "h1": "版本历史",
+        "headings": [
+          "命名版本",
+          "还没有命名版本",
+          "待补 0"
+        ],
+        "sidebarButtons": [
+          "收起左栏",
+          "收起右栏"
+        ],
+        "viewport": {
+          "height": 900,
+          "width": 1728
+        }
+      },
+      "screenshot": "/Users/youngi/.codex/worktrees/io-ui-closure/workbench/docs/reports/evidence/io-ui-closure/screenshots/final/browser-p15-versions-1728-both.jpg",
+      "browser_status": "OBSERVED",
+      "native_status": "NOT_RUN",
+      "case_kind": "default",
+      "observed_at_utc": "2026-10-06T00:59:52.728Z"
+    },
+    {
+      "page": "P16",
+      "fixture": "F-small-final",
+      "fixture_id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      "source_commit": "b990d49029333d4bacc46a2f92361779a554545c",
+      "width": 1024,
+      "height": 900,
+      "sidebars": "both",
+      "observation": {
+        "dialogs": 0,
+        "documentWidth": 1024,
+        "h1": "项目设置",
+        "headings": [
+          "常规",
+          "AI 连接",
+          "模型",
+          "账户",
+          "项目",
+          "待补 0"
+        ],
+        "sidebarButtons": [
+          "收起左栏",
+          "收起右栏"
+        ],
+        "viewport": {
+          "height": 900,
+          "width": 1024
+        }
+      },
+      "screenshot": "/Users/youngi/.codex/worktrees/io-ui-closure/workbench/docs/reports/evidence/io-ui-closure/screenshots/final/browser-p16-settings-1024-both.jpg",
+      "browser_status": "OBSERVED",
+      "native_status": "NOT_RUN",
+      "case_kind": "default",
+      "observed_at_utc": "2026-10-06T01:00:01.810Z"
+    },
+    {
+      "page": "P16",
+      "fixture": "F-small-final",
+      "fixture_id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      "source_commit": "b990d49029333d4bacc46a2f92361779a554545c",
+      "width": 1280,
+      "height": 900,
+      "sidebars": "both",
+      "observation": {
+        "dialogs": 0,
+        "documentWidth": 1280,
+        "h1": "项目设置",
+        "headings": [
+          "常规",
+          "AI 连接",
+          "模型",
+          "账户",
+          "项目",
+          "待补 0"
+        ],
+        "sidebarButtons": [
+          "收起左栏",
+          "收起右栏"
+        ],
+        "viewport": {
+          "height": 900,
+          "width": 1280
+        }
+      },
+      "screenshot": "/Users/youngi/.codex/worktrees/io-ui-closure/workbench/docs/reports/evidence/io-ui-closure/screenshots/final/browser-p16-settings-1280-both.jpg",
+      "browser_status": "OBSERVED",
+      "native_status": "NOT_RUN",
+      "case_kind": "default",
+      "observed_at_utc": "2026-10-06T01:00:02.015Z"
+    },
+    {
+      "page": "P16",
+      "fixture": "F-small-final",
+      "fixture_id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      "source_commit": "b990d49029333d4bacc46a2f92361779a554545c",
+      "width": 1440,
+      "height": 900,
+      "sidebars": "both",
+      "observation": {
+        "dialogs": 0,
+        "documentWidth": 1440,
+        "h1": "项目设置",
+        "headings": [
+          "常规",
+          "AI 连接",
+          "模型",
+          "账户",
+          "项目",
+          "待补 0"
+        ],
+        "sidebarButtons": [
+          "收起左栏",
+          "收起右栏"
+        ],
+        "viewport": {
+          "height": 900,
+          "width": 1440
+        }
+      },
+      "screenshot": "/Users/youngi/.codex/worktrees/io-ui-closure/workbench/docs/reports/evidence/io-ui-closure/screenshots/final/browser-p16-settings-1440-both.jpg",
+      "browser_status": "OBSERVED",
+      "native_status": "NOT_RUN",
+      "case_kind": "default",
+      "observed_at_utc": "2026-10-06T01:00:02.223Z"
+    },
+    {
+      "page": "P16",
+      "fixture": "F-small-final",
+      "fixture_id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      "source_commit": "b990d49029333d4bacc46a2f92361779a554545c",
+      "width": 1728,
+      "height": 900,
+      "sidebars": "both",
+      "observation": {
+        "dialogs": 0,
+        "documentWidth": 1728,
+        "h1": "项目设置",
+        "headings": [
+          "常规",
+          "AI 连接",
+          "模型",
+          "账户",
+          "项目",
+          "待补 0"
+        ],
+        "sidebarButtons": [
+          "收起左栏",
+          "收起右栏"
+        ],
+        "viewport": {
+          "height": 900,
+          "width": 1728
+        }
+      },
+      "screenshot": "/Users/youngi/.codex/worktrees/io-ui-closure/workbench/docs/reports/evidence/io-ui-closure/screenshots/final/browser-p16-settings-1728-both.jpg",
+      "browser_status": "OBSERVED",
+      "native_status": "NOT_RUN",
+      "case_kind": "default",
+      "observed_at_utc": "2026-10-06T01:00:02.531Z"
+    },
+    {
+      "page": "P01",
+      "fixture": "F-small-final",
+      "fixture_id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      "source_commit": "b990d49029333d4bacc46a2f92361779a554545c",
+      "width": 1024,
+      "height": 900,
+      "sidebars": "none",
+      "observation": {
+        "dialogs": 0,
+        "documentWidth": 1024,
+        "h1": "把一套课程，从想法做到发布",
+        "headings": [
+          "继续你上次的工作",
+          "新建、打开或导入",
+          "最近打开"
+        ],
+        "sidebarButtons": [],
+        "viewport": {
+          "height": 900,
+          "width": 1024
+        }
+      },
+      "screenshot": "/Users/youngi/.codex/worktrees/io-ui-closure/workbench/docs/reports/evidence/io-ui-closure/screenshots/final/browser-p01-launcher-1024-none.jpg",
+      "browser_status": "OBSERVED",
+      "native_status": "NOT_RUN",
+      "case_kind": "default",
+      "observed_at_utc": "2026-10-06T01:00:11.799Z"
+    },
+    {
+      "page": "P01",
+      "fixture": "F-small-final",
+      "fixture_id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      "source_commit": "b990d49029333d4bacc46a2f92361779a554545c",
+      "width": 1280,
+      "height": 900,
+      "sidebars": "none",
+      "observation": {
+        "dialogs": 0,
+        "documentWidth": 1280,
+        "h1": "把一套课程，从想法做到发布",
+        "headings": [
+          "继续你上次的工作",
+          "新建、打开或导入",
+          "最近打开"
+        ],
+        "sidebarButtons": [],
+        "viewport": {
+          "height": 900,
+          "width": 1280
+        }
+      },
+      "screenshot": "/Users/youngi/.codex/worktrees/io-ui-closure/workbench/docs/reports/evidence/io-ui-closure/screenshots/final/browser-p01-launcher-1280-none.jpg",
+      "browser_status": "OBSERVED",
+      "native_status": "NOT_RUN",
+      "case_kind": "default",
+      "observed_at_utc": "2026-10-06T01:00:12.003Z"
+    },
+    {
+      "page": "P01",
+      "fixture": "F-small-final",
+      "fixture_id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      "source_commit": "b990d49029333d4bacc46a2f92361779a554545c",
+      "width": 1440,
+      "height": 900,
+      "sidebars": "none",
+      "observation": {
+        "dialogs": 0,
+        "documentWidth": 1440,
+        "h1": "把一套课程，从想法做到发布",
+        "headings": [
+          "继续你上次的工作",
+          "新建、打开或导入",
+          "最近打开"
+        ],
+        "sidebarButtons": [],
+        "viewport": {
+          "height": 900,
+          "width": 1440
+        }
+      },
+      "screenshot": "/Users/youngi/.codex/worktrees/io-ui-closure/workbench/docs/reports/evidence/io-ui-closure/screenshots/final/browser-p01-launcher-1440-none.jpg",
+      "browser_status": "OBSERVED",
+      "native_status": "NOT_RUN",
+      "case_kind": "default",
+      "observed_at_utc": "2026-10-06T01:00:12.210Z"
+    },
+    {
+      "page": "P01",
+      "fixture": "F-small-final",
+      "fixture_id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      "source_commit": "b990d49029333d4bacc46a2f92361779a554545c",
+      "width": 1728,
+      "height": 900,
+      "sidebars": "none",
+      "observation": {
+        "dialogs": 0,
+        "documentWidth": 1728,
+        "h1": "把一套课程，从想法做到发布",
+        "headings": [
+          "继续你上次的工作",
+          "新建、打开或导入",
+          "最近打开"
+        ],
+        "sidebarButtons": [],
+        "viewport": {
+          "height": 900,
+          "width": 1728
+        }
+      },
+      "screenshot": "/Users/youngi/.codex/worktrees/io-ui-closure/workbench/docs/reports/evidence/io-ui-closure/screenshots/final/browser-p01-launcher-1728-none.jpg",
+      "browser_status": "OBSERVED",
+      "native_status": "NOT_RUN",
+      "case_kind": "default",
+      "observed_at_utc": "2026-10-06T01:00:12.416Z"
+    },
+    {
+      "page": "P07",
+      "fixture": "F-layout-final",
+      "fixture_id": "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+      "source_commit": "b990d49029333d4bacc46a2f92361779a554545c",
+      "width": 1024,
+      "height": 900,
+      "sidebars": "both",
+      "observation": {
+        "dialogs": 0,
+        "documentWidth": 1024,
+        "h1": "自由排版",
+        "headings": [
+          "待补 0"
+        ],
+        "sidebarButtons": [
+          "收起左栏",
+          "收起右栏"
+        ],
+        "viewport": {
+          "height": 900,
+          "width": 1024
+        }
+      },
+      "screenshot": "/Users/youngi/.codex/worktrees/io-ui-closure/workbench/docs/reports/evidence/io-ui-closure/screenshots/final/browser-p07-layout-1024-both.jpg",
+      "browser_status": "OBSERVED",
+      "native_status": "NOT_RUN",
+      "case_kind": "default",
+      "observed_at_utc": "2026-10-06T01:00:32.960Z"
+    },
+    {
+      "page": "P07",
+      "fixture": "F-layout-final",
+      "fixture_id": "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+      "source_commit": "b990d49029333d4bacc46a2f92361779a554545c",
+      "width": 1280,
+      "height": 900,
+      "sidebars": "both",
+      "observation": {
+        "dialogs": 0,
+        "documentWidth": 1280,
+        "h1": "自由排版",
+        "headings": [
+          "待补 0"
+        ],
+        "sidebarButtons": [
+          "收起左栏",
+          "收起右栏"
+        ],
+        "viewport": {
+          "height": 900,
+          "width": 1280
+        }
+      },
+      "screenshot": "/Users/youngi/.codex/worktrees/io-ui-closure/workbench/docs/reports/evidence/io-ui-closure/screenshots/final/browser-p07-layout-1280-both.jpg",
+      "browser_status": "OBSERVED",
+      "native_status": "NOT_RUN",
+      "case_kind": "default",
+      "observed_at_utc": "2026-10-06T01:00:33.155Z"
+    },
+    {
+      "page": "P07",
+      "fixture": "F-layout-final",
+      "fixture_id": "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+      "source_commit": "b990d49029333d4bacc46a2f92361779a554545c",
+      "width": 1440,
+      "height": 900,
+      "sidebars": "both",
+      "observation": {
+        "dialogs": 0,
+        "documentWidth": 1440,
+        "h1": "自由排版",
+        "headings": [
+          "待补 0"
+        ],
+        "sidebarButtons": [
+          "收起左栏",
+          "收起右栏"
+        ],
+        "viewport": {
+          "height": 900,
+          "width": 1440
+        }
+      },
+      "screenshot": "/Users/youngi/.codex/worktrees/io-ui-closure/workbench/docs/reports/evidence/io-ui-closure/screenshots/final/browser-p07-layout-1440-both.jpg",
+      "browser_status": "OBSERVED",
+      "native_status": "NOT_RUN",
+      "case_kind": "default",
+      "observed_at_utc": "2026-10-06T01:00:33.256Z"
+    },
+    {
+      "page": "P07",
+      "fixture": "F-layout-final",
+      "fixture_id": "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+      "source_commit": "b990d49029333d4bacc46a2f92361779a554545c",
+      "width": 1728,
+      "height": 900,
+      "sidebars": "both",
+      "observation": {
+        "dialogs": 0,
+        "documentWidth": 1728,
+        "h1": "自由排版",
+        "headings": [
+          "待补 0"
+        ],
+        "sidebarButtons": [
+          "收起左栏",
+          "收起右栏"
+        ],
+        "viewport": {
+          "height": 900,
+          "width": 1728
+        }
+      },
+      "screenshot": "/Users/youngi/.codex/worktrees/io-ui-closure/workbench/docs/reports/evidence/io-ui-closure/screenshots/final/browser-p07-layout-1728-both.jpg",
+      "browser_status": "OBSERVED",
+      "native_status": "NOT_RUN",
+      "case_kind": "default",
+      "observed_at_utc": "2026-10-06T01:00:33.571Z"
+    },
+    {
+      "page": "P11",
+      "fixture": "F-media-ui-final",
+      "fixture_id": "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+      "source_commit": "b990d49029333d4bacc46a2f92361779a554545c",
+      "width": 1024,
+      "height": 900,
+      "sidebars": "both",
+      "observation": {
+        "dialogs": 0,
+        "documentWidth": 1024,
+        "h1": "媒体库 123",
+        "headings": [
+          "待补 0"
+        ],
+        "sidebarButtons": [
+          "收起左栏",
+          "收起右栏"
+        ],
+        "viewport": {
+          "height": 900,
+          "width": 1024
+        }
+      },
+      "screenshot": "/Users/youngi/.codex/worktrees/io-ui-closure/workbench/docs/reports/evidence/io-ui-closure/screenshots/final/browser-p11-media-1024-both.jpg",
+      "browser_status": "OBSERVED",
+      "native_status": "NOT_RUN",
+      "case_kind": "default",
+      "observed_at_utc": "2026-10-06T01:01:05.600Z"
+    },
+    {
+      "page": "P11",
+      "fixture": "F-media-ui-final",
+      "fixture_id": "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+      "source_commit": "b990d49029333d4bacc46a2f92361779a554545c",
+      "width": 1280,
+      "height": 900,
+      "sidebars": "both",
+      "observation": {
+        "dialogs": 0,
+        "documentWidth": 1280,
+        "h1": "媒体库 123",
+        "headings": [
+          "待补 0"
+        ],
+        "sidebarButtons": [
+          "收起左栏",
+          "收起右栏"
+        ],
+        "viewport": {
+          "height": 900,
+          "width": 1280
+        }
+      },
+      "screenshot": "/Users/youngi/.codex/worktrees/io-ui-closure/workbench/docs/reports/evidence/io-ui-closure/screenshots/final/browser-p11-media-1280-both.jpg",
+      "browser_status": "OBSERVED",
+      "native_status": "NOT_RUN",
+      "case_kind": "default",
+      "observed_at_utc": "2026-10-06T01:01:06.114Z"
+    },
+    {
+      "page": "P11",
+      "fixture": "F-media-ui-final",
+      "fixture_id": "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+      "source_commit": "b990d49029333d4bacc46a2f92361779a554545c",
+      "width": 1440,
+      "height": 900,
+      "sidebars": "both",
+      "observation": {
+        "dialogs": 0,
+        "documentWidth": 1440,
+        "h1": "媒体库 123",
+        "headings": [
+          "待补 0"
+        ],
+        "sidebarButtons": [
+          "收起左栏",
+          "收起右栏"
+        ],
+        "viewport": {
+          "height": 900,
+          "width": 1440
+        }
+      },
+      "screenshot": "/Users/youngi/.codex/worktrees/io-ui-closure/workbench/docs/reports/evidence/io-ui-closure/screenshots/final/browser-p11-media-1440-both.jpg",
+      "browser_status": "OBSERVED",
+      "native_status": "NOT_RUN",
+      "case_kind": "default",
+      "observed_at_utc": "2026-10-06T01:01:06.616Z"
+    },
+    {
+      "page": "P11",
+      "fixture": "F-media-ui-final",
+      "fixture_id": "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+      "source_commit": "b990d49029333d4bacc46a2f92361779a554545c",
+      "width": 1728,
+      "height": 900,
+      "sidebars": "both",
+      "observation": {
+        "dialogs": 0,
+        "documentWidth": 1728,
+        "h1": "媒体库 123",
+        "headings": [
+          "待补 0"
+        ],
+        "sidebarButtons": [
+          "收起左栏",
+          "收起右栏"
+        ],
+        "viewport": {
+          "height": 900,
+          "width": 1728
+        }
+      },
+      "screenshot": "/Users/youngi/.codex/worktrees/io-ui-closure/workbench/docs/reports/evidence/io-ui-closure/screenshots/final/browser-p11-media-1728-both.jpg",
+      "browser_status": "OBSERVED",
+      "native_status": "NOT_RUN",
+      "case_kind": "default",
+      "observed_at_utc": "2026-10-06T01:01:07.041Z"
+    }
+  ],
+  "current_production_source_at_report_time": "7555f02fdbdad1c3aa558b2b85e3cfe6fb8fa3be",
+  "source_status_note": "These observations retain their per-row historical source_commit; native_status describes width-matrix coverage, not app availability.",
+  "current_source_commit": "7555f02fdbdad1c3aa558b2b85e3cfe6fb8fa3be",
+  "source_state": "Latest production source freeze at report update: 7555f02fdbdad1c3aa558b2b85e3cfe6fb8fa3be. These rows remain observations on their own recorded source pins; they do not show that behavior was rerun on current source."
+}

@@ -1,0 +1,156 @@
+Window: "AI Course Workbench", App: AI Course Workbench QA Preview Final3.
+0 standard window AI Course Workbench, Secondary Actions: Raise
+	1 scroll area
+		2 HTML content Description: AI Course Workbench, URL: tauri://localhost
+			3 container
+				4 button 返回项目选择；当前项目不会关闭
+				5 text AI Course Workbench
+				6 button workbench-io-ui-F-mapping-native-final3 ⌄, Help: 点击修改课程标题
+				7 button (disabled) 打开上一课
+				8 button S01-01｜01 图文 与 跨目录链接 Lesson, Help: 点击修改当前课程标题
+				9 button 打开下一课
+				10 text ✓ 已保存
+				11 button 撤销上一次编辑
+				12 button 恢复上一次编辑
+				13 pop up button 设置
+				14 button 保存
+				15 button 保存版本
+				16 button 预览
+				17 button 导出
+				18 button 项目概览
+				19 button 打开课程：S01-01 01 图文 与 跨目录链接 Lesson
+				20 button 关闭课程标签：S01-01 01 图文 与 跨目录链接 Lesson, Help: 关闭课程标签
+				21 text 项目导航
+				22 button 收起左栏
+				23 container 项目页面
+					24 button ⌂ 项目概览
+					25 button ▦ 课程地图
+					26 button ✎ 工作台
+					27 button ▧ 自由排版
+					28 button 📂 文件
+					29 button ↓ 收件箱
+					30 button ▤ 制作看板
+					31 button ◈ 媒体库
+					32 button != 待补总览
+					33 button ✦ 更新中心
+					34 button ↗ 发布中心
+					35 button ◷ 版本历史
+					36 button ⚙ 项目设置
+				37 text 本课程 0/3 课完成 S01 01 基础 STAGE
+				38 button S01-01 01 图文 与 跨目录链接 Lesson, Help: 01 图文 与 跨目录链接 Lesson
+				39 text S02 02 进阶 STAGE
+				40 button S02-01 03 视频 Lesson, Help: 03 视频 Lesson
+				41 text S03 01 基础 STAGE
+				42 button S03-01 shared lesson, Help: shared lesson
+				43 text S04 02 进阶 STAGE
+				44 button ＋ 快速收集 ⌘⇧空格
+				45 button ⌕ 搜索与命令 ⌘K
+				46 text 课程地图 · 阶段与课时
+				47 heading workbench-io-ui-F-mapping-native-final3, Value: 1
+					48 button workbench-io-ui-F-mapping-native-final3, Help: 点击修改课程标题
+				49 text 按阶段组织课时；拖动课时即可调整顺序或归属。
+				50 button 项目属性
+				51 button 定位当前课
+				52 button ＋ 新阶段
+				53 button ＋ 新建课程内容
+				54 button 继续下一处未完成
+				55 container 课程完成情况
+					56 text 3
+					57 text 课时
+					58 text 0
+					59 text 已完成
+					60 text 0
+					61 text 待补
+					62 text 0
+					63 text 缺素材
+				64 toggle button S01, Help: 查看阶段属性, Value: off
+				65 button 01 基础 Stage, Help: 点击修改阶段名称
+				66 text 1 课 · 完成 0
+				67 button (expanded) 折叠阶段：01 基础 Stage, Help: 折叠阶段, Secondary Actions: Collapse
+				68 button 重命名阶段：01 基础 Stage, Help: 重命名阶段
+				69 button (disabled) 上移阶段：01 基础 Stage, Help: 上移阶段
+				70 button 下移阶段：01 基础 Stage, Help: 下移阶段
+				71 summary 更多阶段操作：01 基础 Stage, Help: 更多阶段操作, Value: off
+					72 text ⋯
+				73 button 拖动01 图文 与 跨目录链接 Lesson
+				74 button S01-01 01 图文 与 跨目录链接 Lesson 第一课：跨目录图片与 GIF
+无待补 还没有排版版本 ›
+				75 button 重命名课程：01 图文 与 跨目录链接 Lesson, Help: 重命名这一课
+				76 button (disabled) 上移课程：01 图文 与 跨目录链接 Lesson, Help: 上移这一课
+				77 button 下移课程：01 图文 与 跨目录链接 Lesson, Help: 下移这一课
+				78 button 删除课程：01 图文 与 跨目录链接 Lesson, Help: 删除这一课（会先确认；可以用撤销恢复）
+				79 toggle button S02, Help: 查看阶段属性, Value: off
+				80 button 02 进阶 Stage, Help: 点击修改阶段名称
+				81 text 1 课 · 完成 0
+				82 button (expanded) 折叠阶段：02 进阶 Stage, Help: 折叠阶段, Secondary Actions: Collapse
+				83 button 重命名阶段：02 进阶 Stage, Help: 重命名阶段
+				84 button 上移阶段：02 进阶 Stage, Help: 上移阶段
+				85 button 下移阶段：02 进阶 Stage, Help: 下移阶段
+				86 summary 更多阶段操作：02 进阶 Stage, Help: 更多阶段操作, Value: off
+					87 text ⋯
+				88 button 拖动03 视频 Lesson
+				89 button S02-01 03 视频 Lesson 第三课：视频演示
+无待补 还没有排版版本 ›
+				90 button 重命名课程：03 视频 Lesson, Help: 重命名这一课
+				91 button (disabled) 上移课程：03 视频 Lesson, Help: 上移这一课
+				92 button 下移课程：03 视频 Lesson, Help: 下移这一课
+				93 button 删除课程：03 视频 Lesson, Help: 删除这一课（会先确认；可以用撤销恢复）
+				94 toggle button S03, Help: 查看阶段属性, Value: off
+				95 button 01 基础 Stage, Help: 点击修改阶段名称
+				96 text 1 课 · 完成 0
+				97 button (expanded) 折叠阶段：01 基础 Stage, Help: 折叠阶段, Secondary Actions: Collapse
+				98 button 重命名阶段：01 基础 Stage, Help: 重命名阶段
+				99 button 上移阶段：01 基础 Stage, Help: 上移阶段
+				100 button 下移阶段：01 基础 Stage, Help: 下移阶段
+				101 summary 更多阶段操作：01 基础 Stage, Help: 更多阶段操作, Value: off
+					102 text ⋯
+				103 button 拖动shared lesson
+				104 button S03-01 shared lesson 第一课：跨目录图片与 GIF
+无待补 还没有排版版本 ›
+				105 button 重命名课程：shared lesson, Help: 重命名这一课
+				106 button (disabled) 上移课程：shared lesson, Help: 上移这一课
+				107 button 下移课程：shared lesson, Help: 下移这一课
+				108 button 删除课程：shared lesson, Help: 删除这一课（会先确认；可以用撤销恢复）
+				109 toggle button S04, Help: 查看阶段属性, Value: off
+				110 button 02 进阶 Stage, Help: 点击修改阶段名称
+				111 text 0 课 · 完成 0
+				112 button (expanded) 折叠阶段：02 进阶 Stage, Help: 折叠阶段, Secondary Actions: Collapse
+				113 button 重命名阶段：02 进阶 Stage, Help: 重命名阶段
+				114 button 上移阶段：02 进阶 Stage, Help: 上移阶段
+				115 button (disabled) 下移阶段：02 进阶 Stage, Help: 下移阶段
+				116 summary 更多阶段操作：02 进阶 Stage, Help: 更多阶段操作, Value: off
+					117 text ⋯
+				118 text 这个阶段还没有内容；可以新建一课，或把课时拖到这里。
+				119 button 媒体
+				120 button 待补
+				121 button 状态
+				122 button AI 助手
+				123 button 属性
+				124 button 版本
+				125 button 收起右栏
+				126 container
+					127 text 作用对象： S01-01｜01 图文 与 跨目录链接 Lesson
+				128 text 完成这一课
+				129 heading 待补 0, Value: 2
+					130 text 待补 
+					131 text 0
+				132 button 新增待补占位符
+				133 text 0 内容待补 0 排版待补 0 缺素材
+				134 button ＋ 文字待补
+				135 button ＋ 图片待补
+				136 text 这一课没有未完成的待补内容，可以继续写正文或查看预览。
+				137 text 待补会一直保存，重开项目后仍然可以定位到这里。
+				138 text S01-01｜01 图文 与 跨目录链接 Lesson 正文：待研究 待补：已齐 排版：未开始 完成度：86% 本地优先 · 自动保存
+	139 close button
+	140 full screen button Help: this button also has an action to zoom the window, Secondary Actions: zoom the window
+	141 minimize button
+	142 text AI Course Workbench
+143 menu bar
+	144 AI Course Workbench QA Preview Final3
+	145 File
+	146 Edit
+	147 View
+	148 Window
+	149 Help
+
+The focused UI element is 2 HTML content Description: AI Course Workbench, URL: tauri://localhost

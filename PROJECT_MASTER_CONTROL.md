@@ -4248,3 +4248,52 @@ v0.2.5 及更早 tag / DMG / sidecar 永久冻结；v0.2.5 的 DMG digest `a8488
 ## 46.5 后续验收边界
 
 独立 reviewer 未发现已证实未修复的实现缺陷。Deno 602/602、Rust 222/222 与公开包校验通过；发布不抬高未观察到的 UI 行为状态。Mac 锁屏使 native smoke 为 BLOCKED；只对 Overview 完成 1024/1280/1440/1728×900 测量；其他路由、侧栏组合、系统 text scaling、部分 overlay 键盘路径以及 Free Layout 删除/重开/导出仍按 completion report 标为 PARTIAL。截图只在 CUA 内联出现，没有本地截图文件。后续可用桌面环境开放时补做，不改写 §45 与 v0.2.5 历史，也不创建 V1-T07 或关闭 V1。
+
+---
+
+# 47. File I/O 与 UI 收尾（2026-10-06，本地验收进行中）
+
+> 本节是 v0.2.6 之后的本地滚动记录，不改写已发布版本、不创建新 V1 子任务，也不构成发布授权。最终 Deno source pin 为 `50aaea7268164b9fa066425ce4a5ac158ca87352`；`deno task check` exit 0、完整测试 716/0、bound-save focused 17/17。Native UI source 为 `9bbc8cf3067b6117be8de41e1bd5bef3960a671a`，Rust pin `fcefcb106c2cf4e957d54a1ee7e112e2aa83cac0` 的 fmt 与测试结果为 258/0/1 ignored。Deno-only source commit 未修改 Native app/Rust payload。
+
+Final10 arm64 QA 包独立审计通过：签名有效，18 项嵌入资源中 17 项字节精确匹配，`index.html` 经路径/索引规范化核对；ZIP 为 7,082,849 B，SHA-256 `bb3413a4f4f8d7658e69f5e523da514aca034e32f241e2bdc09fe425fadd3822`。该包仅为未发布 QA 制品。
+
+## 47.1 门禁与覆盖范围
+
+```text
+deno task check          PASS，exit 0，source 50aaea7268164b9fa066425ce4a5ac158ca87352
+deno task test           PASS，716 passed / 0 failed，同一 source pin
+bound-save focused       PASS，17/17
+cargo fmt --check        PASS，Rust pin fcefcb106c2cf4e957d54a1ee7e112e2aa83cac0
+cargo test               PASS，258 passed / 0 failed / 1 ignored
+```
+
+验收矩阵覆盖 IO-01..IO-10 与 UI-01..UI-08 共 18 个需求组，以及 P01..P16、O01..O11 共 27 个 UI 目标；总体仍为 PARTIAL。逐项状态及证据映射见 `requirements.json`、`ui-matrix.json` 和 HTML completion report。
+
+## 47.2 Native 与 Browser 实测边界
+
+Native Final10 真实冷重开前后的 app-local session 均保存阅读区 `scroll_top=836`，Canonical 与 session 内容保持不变；`selected_block_id=null`，不据此声称恢复文本光标。独立 UI 复验了被正文引用 PNG 的改名→Undo→Redo→Undo 四态，资产 ID、checksum、引用位置和文件字节符合预期。对应记录见 `runs/native-final10/center-scroll-*` 与 `runs/native-final10/referenced-asset-*`。
+
+Final9 N04 在同一冻结的 S01-01 fixture 上完成 Semantic HTML、Static Web、PDF、PPTX 四种 UI 导出及物理核验；七份 portable payload 与预期资源对应。N05 同字段冲突通过显式 Keep Local，异字段无冲突路径通过自动合并；Keep Local 后重开显示本地结果。N05 无冲突轮中，外部 description 与本地 title 最终都存在；其 UI summary 的 0 conflicts 是 Preview 前显示，不能当作 merge API 返回值或 ACK 字段的独立观测。
+
+保存请求在执行期间继续编辑时，点击时快照冻结以及 A→B→A 迟到 ACK 没有真实 UI 观察；N06 复合项仍 PARTIAL。Final8 首击流程、Final9 cold-scroll mismatch、Final7 截断 marker等历史失败/范围记录保留，不以新通过覆盖旧观察。
+
+Browser 64 个页面×宽度和 42 个侧栏组合属于 `b990d49` 下的历史几何观察，不能充作当前完整矩阵；历史 P13×1280 截图实际为 1024×900，Root 后续只补了 P13×1280 配对定向观察。Native Final6 的 106 条布局行也只作历史观察。当前 Native P/O 状态按逐行证据为准。
+
+150%/200% 真实文字缩放未运行；IAB 未见 PageZoom 控件，Native View 可见全屏入口但未观察到文字缩放能力，CSS 仿真不计。Reduced motion 实测为 OFF，未在未经授权情况下切换。Native 1728 记录为 capture 像素宽，逻辑/CSS viewport 未测。Main process 有一个 29,536 KB RSS 点样本，不代表稳定/总量；WebKit RSS、decoded image memory、object URL 留存、设备级写放大和进程内峰值均未测。
+
+## 47.3 性能结果与剩余状态
+
+最终 Deno 配对使用固定 runner `38529c5ffc60507d02005b736f05ffff30a8ea2f6bc399b727c57826f534ff11` 和 7,469,246 B fixture（SHA-256 `14991258eb33336582280c093d97cc3fc61ba6dab166c1a8970ce542f05509a4`），dfcb archive baseline 对 50aa candidate；每组 3 次 warmup 排除，10 changed 与 10 no-op。完整样本和口径见 `runs/deno-final-50aaea7f/summary.json`，SHA-256 `3ad9be205efbacd30e4807d78291468b07b48e322d2c6c0c0c5398fa6c486a5f`。
+
+| Deno 配对 | median 变化 | nearest-rank p95 变化 | 结论 |
+| --- | ---: | ---: | --- |
+| changed，probe off | +1.41% | −7.70% | 描述性样本；不能据此判定没有延迟退化 |
+| changed，probe on | +3.11% | +21.12% | 10 样本的 candidate tail 未定位，性能 PARTIAL/BLOCKED |
+| no-op，probe off | −62.85% | −63.54% | targeted 性能改善 |
+| no-op，probe on | −61.32% | −61.21% | targeted 性能改善 |
+
+no-op 每 10 次仍执行读取/哈希，但逻辑计数显示 Canonical、recovery journal、backup 均无写入、copy、sync、promotion 或 removal。Probe-on 是逻辑 API 计数，不等同设备级物理 I/O；probe-off 计数为 `null`，不是 0。不要将 no-op 改善与 changed-save tail 抵消。
+
+Native 最新 warm pair 是单独的 debug backend profile，不代表 GUI/IPC，也不与 Deno 横向排名：changed median 3.030287→2.809134 s（−7.30%），p95 3.062217→2.825630 s；no-op median 3.036862→0.859863 s（−71.69%），p95 3.322058→0.868051 s。Final 总状态维持 PARTIAL；公开 v0.2.6、历史 tag/DMG/sidecar 与 V1 状态保持冻结，不执行公开发布。
+
+证据入口：[`HTML completion report`](docs/reports/io-ui-closure-completion-report.html)、[`requirements.json`](docs/reports/evidence/io-ui-closure/requirements.json)、[`ui-matrix.json`](docs/reports/evidence/io-ui-closure/ui-matrix.json)、[`metrics.json`](docs/reports/evidence/io-ui-closure/metrics.json)、[`artifacts.json`](docs/reports/evidence/io-ui-closure/artifacts.json)。

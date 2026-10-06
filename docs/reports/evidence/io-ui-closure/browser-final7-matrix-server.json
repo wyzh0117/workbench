@@ -1,0 +1,18 @@
+{
+  "url": "http://127.0.0.1:4193/",
+  "bind": "127.0.0.1:4193",
+  "pid": 55639,
+  "process": "55639  2004 deno run -A scripts/dev_server.ts",
+  "cwd_lsof": "p55639\nfcwd\nn/Users/youngi/.codex/worktrees/io-ui-closure/workbench",
+  "project_root_env": "/tmp/workbench-io-ui-browser-matrix-final7",
+  "port_env": "4193",
+  "api_status": {
+    "mode": "service",
+    "project_open": true,
+    "project_root": "/tmp/workbench-io-ui-browser-matrix-final7"
+  },
+  "project_id": "cc8c8590-5dfb-4a3f-b5b6-035e15792399",
+  "project_title": "Final7 browser geometry QA fixture",
+  "source_pin": "11232c28515e2e8708ee4f586757606ce1bdf8f8",
+  "started_at_utc": "2026-10-06T08:25:47+00:00"
+}

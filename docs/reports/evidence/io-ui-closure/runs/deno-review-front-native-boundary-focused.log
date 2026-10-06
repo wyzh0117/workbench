@@ -1,0 +1,10 @@
+Check tests/native_boundary_test.ts
+running 5 tests from ./tests/native_boundary_test.ts
+native shell exposes explicit project and high-level workflows ... ok (18ms)
+native boundary has no fs or shell Tauri capability ... ok (333µs)
+every project command the app sends natively has a shell mapping ... ok (743µs)
+every single-struct shell command is nested by the app payload builder ... ok (9ms)
+folder.adopt native IPC sends the confirmed plan and direct-child selection flat ... ok (1ms)
+
+ok | 5 passed | 0 failed (34ms)
+

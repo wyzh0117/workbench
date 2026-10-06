@@ -1,0 +1,51 @@
+Check tests/t04_adoption_test.ts
+running 16 tests from ./tests/t04_adoption_test.ts
+unconfirmed plan must not be applied (§31/§32) ... ok (43ms)
+Deno adopt refuses when project.json already exists (matches native) ... ok (80ms)
+Strategy A in-place adoption writes project.json + .workspace; originals unchanged ... ok (70ms)
+adopted folder can page and export while source files stay unchanged (§12.2) ... ok (63ms)
+selected+ignore and unselected files are not imported ... ok (54ms)
+same checksum reuses existing Asset; same name different bytes does not silent-overwrite ... ok (63ms)
+markdown lesson becomes Canonical blocks; docx/pdf stay Source/Reference ... ok (52ms)
+asset promotion failure leaves Canonical manifest uncommitted ... ok (25ms)
+append commit failure removes only transaction-owned promoted assets ... ok (38ms)
+folder.adopt command applies confirmed plan into the chosen folder ... ok (78ms)
+UI confirmation performs one adopt action and keeps row controls distinct ... FAILED (93ms)
+failed import keeps the editable plan, shows a persistent safe reason, and can retry ... FAILED (33ms)
+folder append is one undoable Canonical change and never removes source files ... FAILED (33ms)
+Markdown import keeps missing local image refs visible and cleans only its own staging on failure ... ok (67ms)
+append targets a lesson, preserves its edits/pages, and skips Markdown duplicates unless acknowledged ... ok (73ms)
+256 MiB adoption streams and stores the actual target SHA-256 ... ok (903ms)
+
+ ERRORS 
+
+UI confirmation performs one adopt action and keeps row controls distinct => ./tests/t04_adoption_test.ts:840:6
+error: Error: one confirm must call folder.adopt once (got 0)
+  if (!condition) throw new Error(message);
+                        ^
+    at assert (file:///Users/youngi/.codex/worktrees/io-ui-closure/workbench/tests/t04_adoption_test.ts:47:25)
+    at file:///Users/youngi/.codex/worktrees/io-ui-closure/workbench/tests/t04_adoption_test.ts:872:5
+
+failed import keeps the editable plan, shows a persistent safe reason, and can retry => ./tests/t04_adoption_test.ts:909:6
+error: Error: the actionable error must remain in UI state after the toast expires
+  if (!condition) throw new Error(message);
+                        ^
+    at assert (file:///Users/youngi/.codex/worktrees/io-ui-closure/workbench/tests/t04_adoption_test.ts:47:25)
+    at file:///Users/youngi/.codex/worktrees/io-ui-closure/workbench/tests/t04_adoption_test.ts:930:5
+
+folder append is one undoable Canonical change and never removes source files => ./tests/t04_adoption_test.ts:970:6
+error: Error: confirmed append should execute once
+  if (!condition) throw new Error(message);
+                        ^
+    at assert (file:///Users/youngi/.codex/worktrees/io-ui-closure/workbench/tests/t04_adoption_test.ts:47:25)
+    at file:///Users/youngi/.codex/worktrees/io-ui-closure/workbench/tests/t04_adoption_test.ts:989:5
+
+ FAILURES 
+
+UI confirmation performs one adopt action and keeps row controls distinct => ./tests/t04_adoption_test.ts:840:6
+failed import keeps the editable plan, shows a persistent safe reason, and can retry => ./tests/t04_adoption_test.ts:909:6
+folder append is one undoable Canonical change and never removes source files => ./tests/t04_adoption_test.ts:970:6
+
+FAILED | 13 passed | 3 failed (1s)
+
+error: Test failed

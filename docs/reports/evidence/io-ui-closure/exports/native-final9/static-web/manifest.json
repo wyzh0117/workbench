@@ -1,0 +1,10 @@
+{
+  "assets": [
+    "assets/00000000-0000-4000-8000-00000000001d-renamed-second-qa.png"
+  ],
+  "content_item_id": "00000000-0000-4000-8000-000000000004",
+  "entrypoint": "index.html",
+  "project_id": "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+  "schema_version": 1,
+  "scope": "lesson"
+}

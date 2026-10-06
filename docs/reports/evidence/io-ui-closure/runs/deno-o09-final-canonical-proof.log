@@ -1,0 +1,11 @@
+scope=/tmp/workbench-io-ui-F-small-final/project.json
+bytes=74755 sha256=7fbb46b2fa556d9a689a7541e2f5bc4f6de80c429c4bd594abc3c1ceb5111243
+project_id=aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa title=External canonical title QA updated_at=2026-10-06T01:35:19.619Z
+counts={"assets": 8, "blocks": 22, "content_items": 4, "documents": 4, "inbox_items": 1, "layout_pages": 0, "placements": 0, "requirements": 1, "snapshots": 0, "stages": 2}
+local_draft=present block_index=1 block_id=00000000-0000-4000-8000-00000000000d document_id=00000000-0000-4000-8000-000000000008 canonical_value="Local conflict draft retained for explicit resolution\\."
+asset_paths_verified=8/8 failures=[]
+requirements=[{"completed": null, "id": "a50cc3c5-c387-4483-b571-d9221e680dc4", "resolution": null, "state": null, "status": "open", "title": null}]
+inbox_items=[{"asset_id": "d5849787-a165-4c39-ba3b-b401bc4945f5", "filename": null, "id": "b56c5719-ca12-43a2-b5d5-eb026f692ffa", "status": "triaged", "title": "QA inbox triage item: retain thi"}]
+read_state={"fingerprint": {"exists": true, "hash": "7fbb46b2fa556d9a689a7541e2f5bc4f6de80c429c4bd594abc3c1ceb5111243", "mtime_ms": 1791250604273, "size": 74755}, "project_dir": "/tmp/workbench-io-ui-F-small-final", "project_id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"}
+read_state_matches_disk=True
+domain_validation={"issue_count":0,"issues":[]}

@@ -1,0 +1,149 @@
+Window: "AI Course Workbench", App: AI Course Workbench QA Preview Final6.
+0 standard window AI Course Workbench, Secondary Actions: Raise
+	1 scroll area
+		2 HTML content Description: AI Course Workbench, URL: tauri://localhost
+			3 container
+				4 button 返回项目选择；当前项目不会关闭
+				5 text AI Course Workbench
+				6 button F-history recovery candidate restore final ⌄, Help: 点击修改课程标题
+				7 button (disabled) 打开上一课
+				8 button S01-01｜Fixture lesson 1, Help: 点击修改当前课程标题
+				9 button 打开下一课
+				10 text ✓ 已保存
+				11 button 撤销上一次编辑
+				12 button 恢复上一次编辑
+				13 pop up button 设置
+				14 button 保存
+				15 button 保存版本
+				16 button 预览
+				17 button 导出
+				18 button 项目概览
+				19 button 打开课程：S01-01 Fixture lesson 1
+				20 button 关闭课程标签：S01-01 Fixture lesson 1, Help: 关闭课程标签
+				21 text 项目导航
+				22 button 收起左栏
+				23 container 项目页面
+					24 button ⌂ 项目概览
+					25 button ▦ 课程地图
+					26 button ✎ 工作台
+					27 button ▧ 自由排版
+					28 button 📂 文件
+					29 button ↓ 收件箱
+					30 button ▤ 制作看板
+					31 button ◈ 媒体库
+					32 button != 待补总览
+					33 button ✦ 更新中心
+					34 button ↗ 发布中心
+					35 button ◷ 版本历史
+					36 button ⚙ 项目设置
+				37 text 本课程 0/4 课完成 S01 FIXTURE STAGE
+				38 button S01-01 Fixture lesson 1, Help: Fixture lesson 1
+				39 button S01-02 Fixture lesson 2, Help: Fixture lesson 2
+				40 text S02 FIXTURE STAGE 2
+				41 button S02-01 Fixture lesson 3, Help: Fixture lesson 3
+				42 button S02-02 Fixture lesson 4, Help: Fixture lesson 4
+				43 button ＋ 快速收集 ⌘⇧空格
+				44 button ⌕ 搜索与命令 ⌘K
+				45 text 安全恢复
+				46 heading 版本历史, Value: 1
+					47 text 版本历史
+				48 text 版本记录保存课程正文、排版与引用关系，不复制素材文件；恢复不会找回已删除或改写的素材，也不会还原素材文件名。
+				49 button 保存当前版本
+				50 button 刷新
+				51 container 版本概况
+					52 container
+						53 text 已保存版本 9 可随时恢复
+					54 container
+						55 text 自动保存 开启 编辑内容持续保存
+					56 container
+						57 text 恢复保护 启用 恢复前备份会先持久保存
+				58 heading 命名版本, Value: 2
+					59 text 命名版本
+				60 text 为发布、审核或大幅修改前保存一个清楚的回退点。
+				61 text 9
+				62 content list
+					63 container
+						64 heading 历史版本, Value: 3
+							65 text 历史版本
+						66 text 已保存 没有备注 2026/10/6 16:07:39
+						67 button 恢复此版本
+					68 container
+						69 heading 历史版本, Value: 3
+							70 text 历史版本
+						71 text 已保存 没有备注 2026/10/6 16:07:39
+						72 button 恢复此版本
+					73 container
+						74 heading 历史版本, Value: 3
+							75 text 历史版本
+						76 text 已保存 没有备注 2026/10/6 16:07:38
+						77 button 恢复此版本
+					78 container
+						79 heading 历史版本, Value: 3
+							80 text 历史版本
+						81 text 已保存 没有备注 2026/10/6 16:07:38
+						82 button 恢复此版本
+					83 container
+						84 heading 历史版本, Value: 3
+							85 text 历史版本
+						86 text 已保存 没有备注 2026/10/6 16:07:38
+						87 button 恢复此版本
+					88 container
+						89 heading N06 Strict Immediate Marker3 2026-10-06, Value: 3
+							90 text N06 Strict Immediate Marker3 2026-10-06
+						91 text 已保存 没有备注 2026/10/6 14:54:56
+						92 button 恢复此版本
+					93 container
+						94 heading N06 Strict Retry Marker2 2026-10-06, Value: 3
+							95 text N06 Strict Retry Marker2 2026-10-06
+						96 text 已保存 没有备注 2026/10/6 14:50:47
+						97 button 恢复此版本
+					98 container
+						99 heading N06 Immediate Final6 Save Version 2026-10-06, Value: 3
+							100 text N06 Immediate Final6 Save Version 2026-10-06
+						101 text 已保存 没有备注 2026/10/6 14:42:54
+						102 button 恢复此版本
+					103 container
+						104 heading 恢复前备份, Value: 3
+							105 text 恢复前备份
+						106 text 已保存 恢复自动保存前自动创建 2026/10/6 13:50:20
+						107 button 恢复此版本
+					108 container
+						109 heading 历史版本无法读取, Value: 3
+							110 text 历史版本无法读取
+						111 text 无法读取 历史版本编号无效 保存时间未知
+						112 button (disabled) 恢复此版本
+					113 container
+						114 heading 历史版本无法读取, Value: 3
+							115 text 历史版本无法读取
+						116 text 无法读取 项目 JSON 无效: EOF while parsing a value at line 1 column 30 保存时间未知
+						117 button (disabled) 恢复此版本
+					118 container
+						119 heading 历史版本无法读取, Value: 3
+							120 text 历史版本无法读取
+						121 text 无法读取 历史版本编号无效 保存时间未知
+						122 button (disabled) 恢复此版本
+					123 container
+						124 heading 历史版本无法读取, Value: 3
+							125 text 历史版本无法读取
+						126 text 无法读取 历史版本编号无效 保存时间未知
+						127 button (disabled) 恢复此版本
+					128 container
+						129 heading 历史版本无法读取, Value: 3
+							130 text 历史版本无法读取
+						131 text 无法读取 历史版本编号无效 保存时间未知
+						132 button (disabled) 恢复此版本
+				133 button 展开右栏
+				134 text S01-01｜Fixture lesson 1 正文：待研究 待补：已齐 排版：未开始 完成度：83% 本地优先 · 自动保存
+	135 close button
+	136 full screen button Help: this button also has an action to zoom the window, Secondary Actions: zoom the window
+	137 minimize button
+	138 text AI Course Workbench
+139 menu bar
+	140 AI Course Workbench QA Preview Final6
+	141 File
+	142 Edit
+	143 View
+	144 Window
+	145 Help
+
+The focused UI element is 2 HTML content Description: AI Course Workbench, URL: tauri://localhost

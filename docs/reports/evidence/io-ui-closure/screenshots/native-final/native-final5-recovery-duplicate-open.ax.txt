@@ -1,0 +1,36 @@
+Window: "AI Course Workbench", App: AI Course Workbench QA Preview Final5.
+0 standard window AI Course Workbench, Secondary Actions: Raise
+	1 scroll area
+		2 HTML content Description: AI Course Workbench, URL: tauri://localhost
+			3 container 检测到同一个 Workbench 项目的两个副本
+				4 text 项目身份检查
+				5 heading 检测到同一个 Workbench 项目的两个副本, Value: 2
+					6 text 检测到同一个 Workbench 项目的两个副本
+				7 text 同一个项目标识出现在两个文件夹，登记表不会替你决定哪一个才是你要用的那个。
+				8 text F-history unindexed prior snapshot
+				9 container
+					10 text 登记表里记录的位置
+					11 container /private/tmp/workbench-io-ui-native-final/history-restore
+						12 text …/workbench-io-ui-native-final/history-restore
+					13 text 这次打开的位置
+					14 container /private/tmp/workbench-io-ui-native-final/history
+						15 text …/workbench-io-ui-native-final/history
+				16 button 更新项目位置
+				17 button 保留两条记录（标注副本）
+				18 button 先不动登记表
+			19 container
+				20 text 发现未完成的保存；磁盘版本没有改变，请选择恢复暂存内容或保留磁盘版本。
+				21 button 关闭提示
+	22 close button
+	23 full screen button Help: this button also has an action to zoom the window, Secondary Actions: zoom the window
+	24 minimize button
+	25 text AI Course Workbench
+26 menu bar
+	27 AI Course Workbench QA Preview Final5
+	28 File
+	29 Edit
+	30 View
+	31 Window
+	32 Help
+
+The focused UI element is 16 button 更新项目位置

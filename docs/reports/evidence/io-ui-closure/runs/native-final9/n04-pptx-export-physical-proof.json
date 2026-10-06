@@ -1,0 +1,52 @@
+{
+  "captured_at_utc": "2026-10-06T11:02:49.085919+00:00",
+  "source_pin": "b09718c0823f170836a223bab79b750722e83c73",
+  "format": "PPTX",
+  "ui_scope": "S01-01, all 3 layout pages, preflight 0 blockers/0 warnings (Native report)",
+  "canonical": {
+    "path": "/private/tmp/workbench-io-ui-native-final/layout/project.json",
+    "bytes": 73780,
+    "sha256": "4957c6e748fa03fe23c495ccb245f85aca012d837f0efb7ec7bb1b46bdfeaf90",
+    "mtime_ns": 1791258004231334237
+  },
+  "expected_frozen_canonical_sha256": "4957c6e748fa03fe23c495ccb245f85aca012d837f0efb7ec7bb1b46bdfeaf90",
+  "artifact": {
+    "path": "/private/tmp/workbench-io-ui-native-final9-exports/native-final9-layout-s01-01.pptx",
+    "bytes": 27624,
+    "sha256": "bb3f100f065b96e5bd130a725748ad719917615cc3ff3b1703bbb203bfe85eb6",
+    "mtime_ns": 1791284454608551094
+  },
+  "zip_test_error": null,
+  "slide_count": 3,
+  "slides": [
+    {
+      "slide": "ppt/slides/slide1.xml",
+      "text_prefix": "Fixture heading 1 renamed-second-qa.png Fixture lesson 1, paragraph 3. The quick brown fox measures canonical project I/O while preserving valid domain structure. The quick brown fox measures canonica",
+      "pictures": 1
+    },
+    {
+      "slide": "ppt/slides/slide2.xml",
+      "text_prefix": "Fixture lesson 1, paragraph 1. The quick brown fox measures canonical project I/O while preserving valid domain structure. The quick brown fox measures canonical project I/O while preserving valid dom",
+      "pictures": 0
+    },
+    {
+      "slide": "ppt/slides/slide3.xml",
+      "text_prefix": "",
+      "pictures": 0
+    }
+  ],
+  "media_parts": [
+    {
+      "part": "ppt/media/image-1.png",
+      "bytes": 1488,
+      "sha256": "0c479466fd0ea052ca693290293b423068552c091e37922de3944ce7eefdf0d3",
+      "pixels_equal_to_canonical_png": true,
+      "decoded_size": [
+        32,
+        32
+      ]
+    }
+  ],
+  "domain_issue_count": 0,
+  "interpretation": "PPTX ZIP structure is valid. Three slides preserve source page order, page 3 remains blank, and the embedded page-1 PNG bytes match the Canonical asset exactly."
+}

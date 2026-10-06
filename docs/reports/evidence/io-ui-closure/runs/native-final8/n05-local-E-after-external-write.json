@@ -1,0 +1,11 @@
+{
+  "external_write_completed_at": "2026-10-06T09:48:18.858871Z",
+  "external_file_sha256": "83e5bd95f3ee69c98bb752f51e5cc3aaee9c37186791e03cfb5fcbf2000d19df",
+  "selection_start_utc": "2026-10-06T09:49:09.698Z",
+  "type_start_utc": "2026-10-06T09:49:09.750Z",
+  "type_return_utc": "2026-10-06T09:49:09.831Z",
+  "ax_return_utc": "2026-10-06T09:49:10.378Z",
+  "local_marker": "N05-LOCAL-20261006-E",
+  "save_indicator_at_ax": "正在保存…",
+  "ui_includes_external_marker": false
+}

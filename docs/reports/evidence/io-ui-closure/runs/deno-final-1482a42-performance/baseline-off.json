@@ -1,0 +1,100 @@
+{
+  "mode": "baseline",
+  "api": "legacy project.save",
+  "measurement_mode": "unprobed_latency_only",
+  "instrumentation": {
+    "file_io_probe": false,
+    "storage_service_diagnostics": false,
+    "counters_when_disabled": null
+  },
+  "source": {
+    "repo_root": "/private/tmp/wb-deno-baseline.tG8YqI",
+    "declared_commit": "dfcb23e",
+    "git_head": null,
+    "modules": {
+      "desktop": {
+        "path": "/private/tmp/wb-deno-baseline.tG8YqI/src/service/desktop.ts",
+        "bytes": 70593,
+        "sha256": "7037b83d684d059db22d6ac414a6f91a2d7177d8619392061715c92c06d76867"
+      },
+      "storage": {
+        "path": "/private/tmp/wb-deno-baseline.tG8YqI/src/service/storage.ts",
+        "bytes": 60056,
+        "sha256": "b707f68760e49f4d461c2f1d8fa0d7a583fef8e50683175086ca1fe88c7b15ee"
+      },
+      "import_export": {
+        "path": "/private/tmp/wb-deno-baseline.tG8YqI/src/service/import_export.ts",
+        "bytes": 73818,
+        "sha256": "f4076777743c9b9dea9a053e510808c9ca543b638314d331e99e10d362d8a307"
+      },
+      "search": {
+        "path": "/private/tmp/wb-deno-baseline.tG8YqI/src/service/search.ts",
+        "bytes": 15865,
+        "sha256": "4b89133372b549fa5eb30370e1006c2833ae5fcbe9836c556ccfaca80a4f10d2"
+      }
+    },
+    "instrumentation_runner": {
+      "path": "/private/tmp/wb-deno-baseline.tG8YqI/scripts/io_benchmark.ts",
+      "bytes": 16671,
+      "sha256": "38529c5ffc60507d02005b736f05ffff30a8ea2f6bc399b727c57826f534ff11"
+    },
+    "instrumentation_patch_scope": "runner copy is added inside the dfcb23e archive; runtime module paths and hashes above identify the unmodified baseline sources"
+  },
+  "fixture": {
+    "path": "/tmp/workbench-large-canonical-fixture.json",
+    "bytes": 7469246,
+    "sha256": "14991258eb33336582280c093d97cc3fc61ba6dab166c1a8970ce542f05509a4",
+    "project_id": "00000000-0000-4000-8000-000000000001"
+  },
+  "unmeasured_warmup_saves": 3,
+  "iterations_per_case": 10,
+  "setup_directory": "/var/folders/fb/x3zpt1kj2_j8jbr0xg6wxft00000gn/T/io-benchmark-baseline-1c1e8d88b9c30e00",
+  "no_op": {
+    "median_ms": 459.03649999999925,
+    "median_conventional_ms": 445.05512499999986,
+    "p95_nearest_rank_ms": 510.7772500000001,
+    "min_ms": 401.810708,
+    "max_ms": 510.7772500000001,
+    "samples_ms": [
+      510.7772500000001,
+      487.34662500000013,
+      422.49633399999993,
+      428.2669589999996,
+      466.4627500000006,
+      401.810708,
+      485.0911249999999,
+      431.0737500000005,
+      459.03649999999925,
+      404.66504199999963
+    ],
+    "file_io": null,
+    "service_metrics": null
+  },
+  "changed": {
+    "median_ms": 417.9709579999999,
+    "median_conventional_ms": 410.6369165000001,
+    "p95_nearest_rank_ms": 435.1170000000002,
+    "min_ms": 382.30975000000035,
+    "max_ms": 435.1170000000002,
+    "samples_ms": [
+      421.8594579999999,
+      417.9709579999999,
+      435.1170000000002,
+      403.3028750000003,
+      432.3388330000007,
+      382.30975000000035,
+      402.2323329999999,
+      386.62362499999836,
+      422.7225419999995,
+      391.42462499999965
+    ],
+    "file_io": null,
+    "service_metrics": null
+  },
+  "limitations": {
+    "process_rss": "not measured",
+    "device_physical_write_amplification": "not measured",
+    "browser_session_io": "measured separately by browser_session_generation_test",
+    "in_process_buffer_peak": "not measured by this save runner"
+  }
+}

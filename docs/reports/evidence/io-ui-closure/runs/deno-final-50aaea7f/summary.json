@@ -1,0 +1,653 @@
+{
+  "artifact": "final fresh paired Deno save benchmark after direct parse of validated canonicalText",
+  "candidate_commit": "50aaea7268164b9fa066425ce4a5ac158ca87352",
+  "baseline": {
+    "declared_commit": "dfcb23e",
+    "archive_root": "/private/tmp/wb-deno-baseline.tG8YqI",
+    "actual_runtime_modules": {
+      "desktop": {
+        "path": "/private/tmp/wb-deno-baseline.tG8YqI/src/service/desktop.ts",
+        "bytes": 70593,
+        "sha256": "7037b83d684d059db22d6ac414a6f91a2d7177d8619392061715c92c06d76867"
+      },
+      "storage": {
+        "path": "/private/tmp/wb-deno-baseline.tG8YqI/src/service/storage.ts",
+        "bytes": 60056,
+        "sha256": "b707f68760e49f4d461c2f1d8fa0d7a583fef8e50683175086ca1fe88c7b15ee"
+      },
+      "import_export": {
+        "path": "/private/tmp/wb-deno-baseline.tG8YqI/src/service/import_export.ts",
+        "bytes": 73818,
+        "sha256": "f4076777743c9b9dea9a053e510808c9ca543b638314d331e99e10d362d8a307"
+      },
+      "search": {
+        "path": "/private/tmp/wb-deno-baseline.tG8YqI/src/service/search.ts",
+        "bytes": 15865,
+        "sha256": "4b89133372b549fa5eb30370e1006c2833ae5fcbe9836c556ccfaca80a4f10d2"
+      }
+    }
+  },
+  "candidate_runtime_modules": {
+    "desktop": {
+      "path": "/Users/youngi/.codex/worktrees/io-ui-closure/workbench/src/service/desktop.ts",
+      "bytes": 132992,
+      "sha256": "eaa33f9b2f65f6edcc7f422f76cbbc62590e222c79c740ef093e9f5661944945"
+    },
+    "storage": {
+      "path": "/Users/youngi/.codex/worktrees/io-ui-closure/workbench/src/service/storage.ts",
+      "bytes": 111351,
+      "sha256": "1719893749310535f942d670379904a5b26fdb563b62d2b33b3612f63981aaee"
+    },
+    "import_export": {
+      "path": "/Users/youngi/.codex/worktrees/io-ui-closure/workbench/src/service/import_export.ts",
+      "bytes": 112547,
+      "sha256": "02d8dc8f78c0de89f44b24c9d41b1349c78297305862bf1bd0a7d31fcf30a8f3"
+    },
+    "search": {
+      "path": "/Users/youngi/.codex/worktrees/io-ui-closure/workbench/src/service/search.ts",
+      "bytes": 15865,
+      "sha256": "4b89133372b549fa5eb30370e1006c2833ae5fcbe9836c556ccfaca80a4f10d2"
+    }
+  },
+  "runner": {
+    "sha256": "38529c5ffc60507d02005b736f05ffff30a8ea2f6bc399b727c57826f534ff11",
+    "baseline_sha256": "38529c5ffc60507d02005b736f05ffff30a8ea2f6bc399b727c57826f534ff11",
+    "baseline_path": "/private/tmp/wb-deno-baseline.tG8YqI/scripts/io_benchmark.ts",
+    "candidate_path": "/Users/youngi/.codex/worktrees/io-ui-closure/workbench/scripts/io_benchmark.ts"
+  },
+  "fixture": {
+    "path": "/tmp/workbench-large-canonical-fixture.json",
+    "bytes": 7469246,
+    "sha256": "14991258eb33336582280c093d97cc3fc61ba6dab166c1a8970ce542f05509a4",
+    "project_id": "00000000-0000-4000-8000-000000000001"
+  },
+  "sequence": [
+    "off_baseline",
+    "off_candidate",
+    "on_baseline",
+    "on_candidate"
+  ],
+  "method": {
+    "warmups_excluded_per_run": 3,
+    "measured_samples_per_case": 10,
+    "cases": [
+      "changed",
+      "no_op"
+    ],
+    "latency": "conventional even-sample median; nearest-rank p95; Tukey median-of-halves IQR; baseline then candidate in stated order",
+    "failures": "all four runner processes exited 0 and emitted 10 samples for each case; candidate outcome assertions passed",
+    "instrumentation": "off runs have null file_io and service_metrics; on runs separately report Deno API probes and service logical counters, not conflated with unprobed latency",
+    "limitations": {
+      "process_rss": "not measured",
+      "device_physical_write_amplification": "not measured",
+      "in_process_buffer_peak": "not measured"
+    }
+  },
+  "runs": {
+    "off_baseline": {
+      "mode": "baseline",
+      "instrumentation": "off",
+      "declared_source_commit": "dfcb23e",
+      "exit_code": 0,
+      "raw_report": "docs/reports/evidence/io-ui-closure/runs/deno-final-50aaea7f/off-baseline.json",
+      "raw_report_bytes": 3423,
+      "raw_report_sha256": "c3bac9cf617303449fa5bcd82ff9570c4d25a3c2fbdafd755a38d430c72798c0",
+      "stdout_log": "docs/reports/evidence/io-ui-closure/runs/deno-final-50aaea7f/off-baseline.stdout.log",
+      "stdout_log_bytes": 338,
+      "stdout_log_sha256": "6ffe0d32f22b27783cdad6bc305d62e0b1b0c8bde2d22240d95a1d8060be3192",
+      "unmeasured_warmup_saves": 3,
+      "iterations_per_case": 10,
+      "changed": {
+        "n": 10,
+        "failures": 0,
+        "median_conventional_ms": 401.1433129999996,
+        "p95_nearest_rank_ms": 451.0944580000014,
+        "min_ms": 379.4299169999995,
+        "max_ms": 451.0944580000014,
+        "sample_range_ms": [
+          379.4299169999995,
+          451.0944580000014
+        ],
+        "q1_tukey_median_of_halves_ms": 399.40750000000025,
+        "q3_tukey_median_of_halves_ms": 416.47412500000064,
+        "iqr_ms": 17.066625000000386
+      },
+      "no_op": {
+        "n": 10,
+        "failures": 0,
+        "median_conventional_ms": 425.33262500000023,
+        "p95_nearest_rank_ms": 509.0980830000003,
+        "min_ms": 392.5518749999992,
+        "max_ms": 509.0980830000003,
+        "sample_range_ms": [
+          392.5518749999992,
+          509.0980830000003
+        ],
+        "q1_tukey_median_of_halves_ms": 407.8703750000004,
+        "q3_tukey_median_of_halves_ms": 456.90995799999973,
+        "iqr_ms": 49.03958299999931
+      },
+      "diagnostics": {
+        "file_io_changed": null,
+        "file_io_no_op": null,
+        "service_metrics_changed": null,
+        "service_metrics_no_op": null
+      }
+    },
+    "off_candidate": {
+      "mode": "candidate",
+      "instrumentation": "off",
+      "declared_source_commit": "50aaea7268164b9fa066425ce4a5ac158ca87352",
+      "exit_code": 0,
+      "raw_report": "docs/reports/evidence/io-ui-closure/runs/deno-final-50aaea7f/off-candidate.json",
+      "raw_report_bytes": 3589,
+      "raw_report_sha256": "46a56f8367779ec9ff1a94dc5cfe67c8dfa0cdd634fbf607b420853ff28d83fe",
+      "stdout_log": "docs/reports/evidence/io-ui-closure/runs/deno-final-50aaea7f/off-candidate.stdout.log",
+      "stdout_log_bytes": 340,
+      "stdout_log_sha256": "3bdc8c20f3296717130600e5ba582c4c9ac5ef54574fd8f3d0127c5ae26a8194",
+      "unmeasured_warmup_saves": 3,
+      "iterations_per_case": 10,
+      "changed": {
+        "n": 10,
+        "failures": 0,
+        "median_conventional_ms": 406.7829164999998,
+        "p95_nearest_rank_ms": 416.3485410000003,
+        "min_ms": 390.38737499999934,
+        "max_ms": 416.3485410000003,
+        "sample_range_ms": [
+          390.38737499999934,
+          416.3485410000003
+        ],
+        "q1_tukey_median_of_halves_ms": 398.6012090000004,
+        "q3_tukey_median_of_halves_ms": 414.9864170000001,
+        "iqr_ms": 16.385207999999693
+      },
+      "no_op": {
+        "n": 10,
+        "failures": 0,
+        "median_conventional_ms": 158.03079150000008,
+        "p95_nearest_rank_ms": 185.6138329999999,
+        "min_ms": 148.88366600000018,
+        "max_ms": 185.6138329999999,
+        "sample_range_ms": [
+          148.88366600000018,
+          185.6138329999999
+        ],
+        "q1_tukey_median_of_halves_ms": 151.68754200000012,
+        "q3_tukey_median_of_halves_ms": 170.29270799999995,
+        "iqr_ms": 18.605165999999826
+      },
+      "diagnostics": {
+        "file_io_changed": null,
+        "file_io_no_op": null,
+        "service_metrics_changed": null,
+        "service_metrics_no_op": null
+      }
+    },
+    "on_baseline": {
+      "mode": "baseline",
+      "instrumentation": "on",
+      "declared_source_commit": "dfcb23e",
+      "exit_code": 0,
+      "raw_report": "docs/reports/evidence/io-ui-closure/runs/deno-final-50aaea7f/on-baseline.json",
+      "raw_report_bytes": 7398,
+      "raw_report_sha256": "21e5b2a32ba297f5db78423250a54ae79a1fed909726b44d6f7b7de655007454",
+      "stdout_log": "docs/reports/evidence/io-ui-closure/runs/deno-final-50aaea7f/on-baseline.stdout.log",
+      "stdout_log_bytes": 349,
+      "stdout_log_sha256": "7120172d376fcb408cf1395d0685a873b76af225928eadf3d9b14ec5d35ecb35",
+      "unmeasured_warmup_saves": 3,
+      "iterations_per_case": 10,
+      "changed": {
+        "n": 10,
+        "failures": 0,
+        "median_conventional_ms": 406.8523124999997,
+        "p95_nearest_rank_ms": 490.2791670000006,
+        "min_ms": 390.30133299999943,
+        "max_ms": 490.2791670000006,
+        "sample_range_ms": [
+          390.30133299999943,
+          490.2791670000006
+        ],
+        "q1_tukey_median_of_halves_ms": 395.0715830000008,
+        "q3_tukey_median_of_halves_ms": 433.0686249999999,
+        "iqr_ms": 37.997041999999055
+      },
+      "no_op": {
+        "n": 10,
+        "failures": 0,
+        "median_conventional_ms": 403.03964599999983,
+        "p95_nearest_rank_ms": 449.38237500000014,
+        "min_ms": 388.13820799999985,
+        "max_ms": 449.38237500000014,
+        "sample_range_ms": [
+          388.13820799999985,
+          449.38237500000014
+        ],
+        "q1_tukey_median_of_halves_ms": 396.20658300000014,
+        "q3_tukey_median_of_halves_ms": 417.391083,
+        "iqr_ms": 21.184499999999844
+      },
+      "diagnostics": {
+        "file_io_changed": {
+          "by_target": {
+            "workspace_sidecar": {
+              "read_operations": 10,
+              "read_bytes": 1890,
+              "write_operations": 0,
+              "write_bytes": 0,
+              "sync_attempts": 0,
+              "sync_successes": 0,
+              "rename_in": 0,
+              "rename_out": 0,
+              "removes": 0
+            },
+            "canonical_project": {
+              "read_operations": 30,
+              "read_bytes": 224077380,
+              "write_operations": 0,
+              "write_bytes": 0,
+              "sync_attempts": 0,
+              "sync_successes": 0,
+              "rename_in": 10,
+              "rename_out": 0,
+              "removes": 0
+            },
+            "owned_temp": {
+              "read_operations": 0,
+              "read_bytes": 0,
+              "write_operations": 30,
+              "write_bytes": 244853840,
+              "sync_attempts": 20,
+              "sync_successes": 20,
+              "rename_in": 0,
+              "rename_out": 30,
+              "removes": 0
+            },
+            "recovery_journal": {
+              "read_operations": 0,
+              "read_bytes": 0,
+              "write_operations": 0,
+              "write_bytes": 0,
+              "sync_attempts": 0,
+              "sync_successes": 0,
+              "rename_in": 10,
+              "rename_out": 0,
+              "removes": 10
+            },
+            "search_index": {
+              "read_operations": 0,
+              "read_bytes": 0,
+              "write_operations": 0,
+              "write_bytes": 0,
+              "sync_attempts": 0,
+              "sync_successes": 0,
+              "rename_in": 10,
+              "rename_out": 0,
+              "removes": 0
+            }
+          },
+          "open_operations": 30,
+          "close_operations": 30,
+          "peak_open_handles": 2,
+          "read_file_operations": 30,
+          "read_file_bytes": 224077380,
+          "read_text_file_operations": 10,
+          "read_text_file_bytes": 1890,
+          "write_file_operations": 0,
+          "write_file_bytes": 0,
+          "write_text_file_operations": 10,
+          "write_text_file_bytes": 101130750,
+          "rename_operations": 30,
+          "remove_operations": 10
+        },
+        "file_io_no_op": {
+          "by_target": {
+            "workspace_sidecar": {
+              "read_operations": 11,
+              "read_bytes": 2079,
+              "write_operations": 1,
+              "write_bytes": 189,
+              "sync_attempts": 1,
+              "sync_successes": 1,
+              "rename_in": 0,
+              "rename_out": 0,
+              "removes": 0
+            },
+            "canonical_project": {
+              "read_operations": 30,
+              "read_bytes": 224077380,
+              "write_operations": 0,
+              "write_bytes": 0,
+              "sync_attempts": 0,
+              "sync_successes": 0,
+              "rename_in": 10,
+              "rename_out": 0,
+              "removes": 0
+            },
+            "owned_temp": {
+              "read_operations": 0,
+              "read_bytes": 0,
+              "write_operations": 30,
+              "write_bytes": 244853700,
+              "sync_attempts": 20,
+              "sync_successes": 20,
+              "rename_in": 0,
+              "rename_out": 30,
+              "removes": 0
+            },
+            "recovery_journal": {
+              "read_operations": 0,
+              "read_bytes": 0,
+              "write_operations": 0,
+              "write_bytes": 0,
+              "sync_attempts": 0,
+              "sync_successes": 0,
+              "rename_in": 10,
+              "rename_out": 0,
+              "removes": 10
+            },
+            "search_index": {
+              "read_operations": 0,
+              "read_bytes": 0,
+              "write_operations": 0,
+              "write_bytes": 0,
+              "sync_attempts": 0,
+              "sync_successes": 0,
+              "rename_in": 10,
+              "rename_out": 0,
+              "removes": 0
+            }
+          },
+          "open_operations": 32,
+          "close_operations": 32,
+          "peak_open_handles": 4,
+          "read_file_operations": 30,
+          "read_file_bytes": 224077380,
+          "read_text_file_operations": 10,
+          "read_text_file_bytes": 1890,
+          "write_file_operations": 0,
+          "write_file_bytes": 0,
+          "write_text_file_operations": 10,
+          "write_text_file_bytes": 101130610,
+          "rename_operations": 30,
+          "remove_operations": 10
+        },
+        "service_metrics_changed": null,
+        "service_metrics_no_op": null
+      }
+    },
+    "on_candidate": {
+      "mode": "candidate",
+      "instrumentation": "on",
+      "declared_source_commit": "50aaea7268164b9fa066425ce4a5ac158ca87352",
+      "exit_code": 0,
+      "raw_report": "docs/reports/evidence/io-ui-closure/runs/deno-final-50aaea7f/on-candidate.json",
+      "raw_report_bytes": 9325,
+      "raw_report_sha256": "edeb531cb73ef4b26be57ed6045088ec3a875b61d85bb96698bccc22fde18ba6",
+      "stdout_log": "docs/reports/evidence/io-ui-closure/runs/deno-final-50aaea7f/on-candidate.stdout.log",
+      "stdout_log_bytes": 351,
+      "stdout_log_sha256": "e8dcbdb0d155f85afbc8e596c7cfa908d795ae8b56ab3f33d4bdd0ed64fa19f3",
+      "unmeasured_warmup_saves": 3,
+      "iterations_per_case": 10,
+      "changed": {
+        "n": 10,
+        "failures": 0,
+        "median_conventional_ms": 419.4909375000002,
+        "p95_nearest_rank_ms": 593.8140829999998,
+        "min_ms": 379.6954999999998,
+        "max_ms": 593.8140829999998,
+        "sample_range_ms": [
+          379.6954999999998,
+          593.8140829999998
+        ],
+        "q1_tukey_median_of_halves_ms": 399.03300000000036,
+        "q3_tukey_median_of_halves_ms": 443.5551669999995,
+        "iqr_ms": 44.52216699999917
+      },
+      "no_op": {
+        "n": 10,
+        "failures": 0,
+        "median_conventional_ms": 155.90504150000015,
+        "p95_nearest_rank_ms": 174.3315829999999,
+        "min_ms": 150.52199999999993,
+        "max_ms": 174.3315829999999,
+        "sample_range_ms": [
+          150.52199999999993,
+          174.3315829999999
+        ],
+        "q1_tukey_median_of_halves_ms": 151.72891600000003,
+        "q3_tukey_median_of_halves_ms": 158.31074999999964,
+        "iqr_ms": 6.581833999999617
+      },
+      "diagnostics": {
+        "file_io_changed": {
+          "by_target": {
+            "workspace_sidecar": {
+              "read_operations": 11,
+              "read_bytes": 2662,
+              "write_operations": 1,
+              "write_bytes": 242,
+              "sync_attempts": 1,
+              "sync_successes": 1,
+              "rename_in": 0,
+              "rename_out": 0,
+              "removes": 0
+            },
+            "canonical_project": {
+              "read_operations": 3450,
+              "read_bytes": 224077380,
+              "write_operations": 0,
+              "write_bytes": 0,
+              "sync_attempts": 0,
+              "sync_successes": 0,
+              "rename_in": 10,
+              "rename_out": 0,
+              "removes": 0
+            },
+            "owned_temp": {
+              "read_operations": 0,
+              "read_bytes": 0,
+              "write_operations": 1170,
+              "write_bytes": 319546130,
+              "sync_attempts": 30,
+              "sync_successes": 30,
+              "rename_in": 0,
+              "rename_out": 40,
+              "removes": 0
+            },
+            "recovery_journal": {
+              "read_operations": 0,
+              "read_bytes": 0,
+              "write_operations": 0,
+              "write_bytes": 0,
+              "sync_attempts": 0,
+              "sync_successes": 0,
+              "rename_in": 10,
+              "rename_out": 0,
+              "removes": 10
+            },
+            "other": {
+              "read_operations": 0,
+              "read_bytes": 0,
+              "write_operations": 0,
+              "write_bytes": 0,
+              "sync_attempts": 30,
+              "sync_successes": 30,
+              "rename_in": 0,
+              "rename_out": 0,
+              "removes": 0
+            },
+            "canonical_backup": {
+              "read_operations": 0,
+              "read_bytes": 0,
+              "write_operations": 0,
+              "write_bytes": 0,
+              "sync_attempts": 0,
+              "sync_successes": 0,
+              "rename_in": 10,
+              "rename_out": 0,
+              "removes": 0
+            },
+            "search_index": {
+              "read_operations": 0,
+              "read_bytes": 0,
+              "write_operations": 0,
+              "write_bytes": 0,
+              "sync_attempts": 0,
+              "sync_successes": 0,
+              "rename_in": 10,
+              "rename_out": 0,
+              "removes": 0
+            }
+          },
+          "open_operations": 102,
+          "close_operations": 102,
+          "peak_open_handles": 4,
+          "read_file_operations": 0,
+          "read_file_bytes": 0,
+          "read_text_file_operations": 10,
+          "read_text_file_bytes": 2420,
+          "write_file_operations": 0,
+          "write_file_bytes": 0,
+          "write_text_file_operations": 10,
+          "write_text_file_bytes": 101130750,
+          "rename_operations": 40,
+          "remove_operations": 10
+        },
+        "file_io_no_op": {
+          "by_target": {
+            "workspace_sidecar": {
+              "read_operations": 10,
+              "read_bytes": 2420,
+              "write_operations": 0,
+              "write_bytes": 0,
+              "sync_attempts": 0,
+              "sync_successes": 0,
+              "rename_in": 0,
+              "rename_out": 0,
+              "removes": 0
+            },
+            "canonical_project": {
+              "read_operations": 1150,
+              "read_bytes": 74692460,
+              "write_operations": 0,
+              "write_bytes": 0,
+              "sync_attempts": 0,
+              "sync_successes": 0,
+              "rename_in": 0,
+              "rename_out": 0,
+              "removes": 0
+            }
+          },
+          "open_operations": 20,
+          "close_operations": 20,
+          "peak_open_handles": 2,
+          "read_file_operations": 0,
+          "read_file_bytes": 0,
+          "read_text_file_operations": 10,
+          "read_text_file_bytes": 2420,
+          "write_file_operations": 0,
+          "write_file_bytes": 0,
+          "write_text_file_operations": 0,
+          "write_text_file_bytes": 0,
+          "rename_operations": 0,
+          "remove_operations": 0
+        },
+        "service_metrics_changed": {
+          "project_full_read_operations": 20,
+          "project_full_read_bytes": 149384920,
+          "project_hash_passes": 20,
+          "project_hash_bytes": 149384920,
+          "project_temp_files_created": 10,
+          "project_temp_write_bytes": 74692460,
+          "project_backup_copy_operations": 10,
+          "project_backup_copy_read_bytes": 74692460,
+          "project_backup_copy_write_bytes": 74692460,
+          "project_file_sync_attempts": 20,
+          "project_file_sync_successes": 20,
+          "project_backup_renames": 10,
+          "project_promotions": 10,
+          "project_directory_sync_attempts": 10,
+          "project_directory_sync_successes": 10,
+          "recovery_journal_temp_files_created": 10,
+          "recovery_journal_temp_write_bytes": 69030460,
+          "recovery_journal_file_sync_attempts": 10,
+          "recovery_journal_file_sync_successes": 10,
+          "recovery_journal_promotions": 10,
+          "recovery_journal_removal_attempts": 10,
+          "recovery_journal_removal_successes": 10,
+          "recovery_directory_sync_attempts": 20,
+          "recovery_directory_sync_successes": 20
+        },
+        "service_metrics_no_op": {
+          "project_full_read_operations": 10,
+          "project_full_read_bytes": 74692460,
+          "project_hash_passes": 10,
+          "project_hash_bytes": 74692460,
+          "project_temp_files_created": 0,
+          "project_temp_write_bytes": 0,
+          "project_backup_copy_operations": 0,
+          "project_backup_copy_read_bytes": 0,
+          "project_backup_copy_write_bytes": 0,
+          "project_file_sync_attempts": 0,
+          "project_file_sync_successes": 0,
+          "project_backup_renames": 0,
+          "project_promotions": 0,
+          "project_directory_sync_attempts": 0,
+          "project_directory_sync_successes": 0,
+          "recovery_journal_temp_files_created": 0,
+          "recovery_journal_temp_write_bytes": 0,
+          "recovery_journal_file_sync_attempts": 0,
+          "recovery_journal_file_sync_successes": 0,
+          "recovery_journal_promotions": 0,
+          "recovery_journal_removal_attempts": 0,
+          "recovery_journal_removal_successes": 0,
+          "recovery_directory_sync_attempts": 0,
+          "recovery_directory_sync_successes": 0
+        }
+      }
+    }
+  },
+  "paired_deltas": {
+    "off_changed_median": {
+      "baseline": 401.1433129999996,
+      "candidate": 406.7829164999998,
+      "percent_change": 1.4058824657511515
+    },
+    "off_changed_p95": {
+      "baseline": 451.0944580000014,
+      "candidate": 416.3485410000003,
+      "percent_change": -7.702581218588367
+    },
+    "off_no_op_median": {
+      "baseline": 425.33262500000023,
+      "candidate": 158.03079150000008,
+      "percent_change": -62.845363320060386
+    },
+    "off_no_op_p95": {
+      "baseline": 509.0980830000003,
+      "candidate": 185.6138329999999,
+      "percent_change": -63.54065371721311
+    },
+    "on_changed_median": {
+      "baseline": 406.8523124999997,
+      "candidate": 419.4909375000002,
+      "percent_change": 3.106440497373475
+    },
+    "on_changed_p95": {
+      "baseline": 490.2791670000006,
+      "candidate": 593.8140829999998,
+      "percent_change": 21.11754342602916
+    },
+    "on_no_op_median": {
+      "baseline": 403.03964599999983,
+      "candidate": 155.90504150000015,
+      "percent_change": -61.31769094001234
+    },
+    "on_no_op_p95": {
+      "baseline": 449.38237500000014,
+      "candidate": 174.3315829999999,
+      "percent_change": -61.206404011728345
+    }
+  }
+}

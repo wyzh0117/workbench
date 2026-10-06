@@ -1,0 +1,68 @@
+Window: "AI Course Workbench", App: AI Course Workbench QA Preview Final6.
+0 standard window AI Course Workbench, Secondary Actions: Raise
+	1 scroll area
+		2 HTML content Description: AI Course Workbench, URL: tauri://localhost
+			3 container
+				4 text AI COURSE WORKBENCH
+				5 heading 把一套课程，从想法做到发布, Value: 1
+					6 text 把一套课程，从想法做到发布
+				7 text 课程内容保存在本机；正文、待补、素材、排版和版本都在同一个工作台里。
+				8 container 继续你上次的工作
+					9 text 当前项目
+					10 heading 继续你上次的工作, Value: 2
+						11 text 继续你上次的工作
+					12 text F-HISTORY RECOVERY CANDIDATE RESTORE FINAL
+					13 heading S01-01｜Fixture lesson 1, Value: 3
+						14 text S01-01｜Fixture lesson 1
+					15 text 还没有排版版本
+					16 text 整门课程 0/4 课完成 · 待补 0 项
+					17 button 继续工作
+				18 container 新建、打开或导入
+					19 text 项目入口
+					20 heading 新建、打开或导入, Value: 2
+						21 text 新建、打开或导入
+					22 text 先选项目入口，再决定要继续编辑的课程内容。
+					23 container 新建课程
+						24 text 01 · 从头开始
+						25 heading 新建课程, Value: 3
+							26 text 新建课程
+						27 text 创建一个本机 Workbench 项目，再从课程地图搭建结构。
+						28 button 新建课程
+					29 container 打开项目文件夹
+						30 text 02 · 已有项目
+						31 heading 打开项目文件夹, Value: 3
+							32 text 打开项目文件夹
+						33 text 继续一个已经创建的 Workbench 项目；不会覆盖其他项目。
+						34 button 选择项目文件夹
+					35 container 从文件夹开始
+						36 text 03 · 导入资料
+						37 heading 从文件夹开始, Value: 3
+							38 text 从文件夹开始
+						39 text 只读扫描原始资料，确认映射后才会导入选中的内容。
+						40 button 选择资料文件夹
+				41 text 项目库
+				42 heading 最近打开, Value: 2
+					43 text 最近打开
+				44 text 2 个项目 · 按最近打开排序
+				45 container
+					46 text F-history recovery candidate restore final 当前 副本 1 小时前打开 …/workbench-io-ui-native-final/history-restore
+					47 button 继续工作
+					48 button 从列表移除
+				49 container
+					50 text F-history incomplete metadata body 当前 副本 1 小时前打开 …/workbench-io-ui-native-final/history
+					51 button 继续工作
+					52 button 从列表移除
+				53 text 「从列表移除」只是把这一条从启动页去掉，不会删除或改写磁盘上的课程文件。 可以选择新建课程、打开已有 Workbench 项目，或导入已有文件夹（只读扫描，确认前不会改写原文件）。 手上已经有课程概论、大纲、教材目录、文章、表格或 AI 对话时：进入课程后打开「课程地图」，粘贴进去先生成课程地图草稿，确认后才创建正式内容。
+	54 close button
+	55 full screen button Help: this button also has an action to zoom the window, Secondary Actions: zoom the window
+	56 minimize button
+	57 text AI Course Workbench
+58 menu bar
+	59 AI Course Workbench QA Preview Final6
+	60 File
+	61 Edit
+	62 View
+	63 Window
+	64 Help
+
+The focused UI element is 2 HTML content Description: AI Course Workbench, URL: tauri://localhost

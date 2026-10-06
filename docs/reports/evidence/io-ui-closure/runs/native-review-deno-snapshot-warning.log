@@ -1,0 +1,5 @@
+running 1 test from ./tests/snapshot_persistence_test.ts
+snapshot create and restore report snapshot-directory sync warnings ... ok (111ms)
+
+ok | 1 passed | 0 failed | 5 filtered out (115ms)
+

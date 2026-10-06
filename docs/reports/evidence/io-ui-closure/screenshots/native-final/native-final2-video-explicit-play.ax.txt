@@ -1,0 +1,125 @@
+Window: "AI Course Workbench", App: AI Course Workbench QA Preview.
+0 standard window AI Course Workbench, Secondary Actions: Raise
+	1 scroll area
+		2 HTML content Description: AI Course Workbench, URL: tauri://localhost
+			3 container
+				4 button 返回项目选择；当前项目不会关闭
+				5 text AI Course Workbench
+				6 button workbench-io-ui-F-mapping-native-final ⌄, Help: 点击修改课程标题
+				7 button 打开上一课
+				8 button S02-01｜03 视频 Lesson, Help: 点击修改当前课程标题
+				9 button (disabled) 打开下一课
+				10 text ✓ 已保存
+				11 button 撤销上一次编辑
+				12 button 恢复上一次编辑
+				13 pop up button 设置
+				14 button 保存
+				15 button 保存版本
+				16 button 预览
+				17 button 导出
+				18 button 项目概览
+				19 button 打开课程：S01-01 01 图文 与 跨目录链接 Lesson
+				20 button 关闭课程标签：S01-01 01 图文 与 跨目录链接 Lesson, Help: 关闭课程标签
+				21 button 打开课程：S02-01 03 视频 Lesson
+				22 button 关闭课程标签：S02-01 03 视频 Lesson, Help: 关闭课程标签
+				23 text 项目导航
+				24 button 收起左栏
+				25 container 项目页面
+					26 button ⌂ 项目概览
+					27 button ▦ 课程地图
+					28 button ✎ 工作台
+					29 button ▧ 自由排版
+					30 button 📂 文件
+					31 button ↓ 收件箱
+					32 button ▤ 制作看板
+					33 button ◈ 媒体库
+					34 button != 待补总览
+					35 button ✦ 更新中心
+					36 button ↗ 发布中心
+					37 button ◷ 版本历史
+					38 button ⚙ 项目设置
+				39 text 本课程 0/2 课完成 S01 01 基础 STAGE
+				40 button S01-01 01 图文 与 跨目录链接 Lesson, Help: 01 图文 与 跨目录链接 Lesson
+				41 text S02 02 进阶 STAGE
+				42 button S02-01 03 视频 Lesson, Help: 03 视频 Lesson
+				43 button ＋ 快速收集 ⌘⇧空格
+				44 button ⌕ 搜索与命令 ⌘K
+				45 text 项目资料 · 2 个已引用
+				46 heading 媒体库 3, Value: 1
+					47 text 媒体库 
+					48 text 3
+				49 text 预览素材、查看引用位置；选中一课后可直接插入，插入会建立真实引用。
+				50 button ＋ 添加素材
+				51 text 添加项目素材 拖入文件，或用上方按钮选择图片、GIF、视频、音频、Markdown 与附件。 素材状态
+				52 text 未引用素材仍保留在媒体库；删除会从课程项目中移除这项素材。
+				53 container
+					54 button 放大查看 跨目录 图片.png, Help: 点击查看大图
+					55 text 跨目录 图片.png 图片 1 KB 已使用 1 处
+					56 button 插入素材：跨目录 图片.png, Help: 插入到当前位置
+					57 summary 更多素材操作：跨目录 图片.png, Help: 更多素材操作, Value: off
+						58 text ⋯
+				59 container
+					60 button 放大查看 动画 参考.gif, Help: 点击查看大图
+					61 text 动画 参考.gif GIF 7 KB 已使用 1 处
+					62 button 插入素材：动画 参考.gif, Help: 插入到当前位置
+					63 summary 更多素材操作：动画 参考.gif, Help: 更多素材操作, Value: off
+						64 text ⋯
+				65 container
+					66 button 放大查看 演示 clip.mp4, Help: 点击查看大图
+					67 text 0:02 演示 clip.mp4 视频 9 KB 尚未引用
+					68 button 插入素材：演示 clip.mp4, Help: 插入到当前位置
+					69 summary 更多素材操作：演示 clip.mp4, Help: 更多素材操作, Value: off
+						70 text ⋯
+				71 button 媒体
+				72 button 待补
+				73 button 状态
+				74 button AI 助手
+				75 button 属性
+				76 button 版本
+				77 button 收起右栏
+				78 container
+					79 text 作用对象： S02-01｜03 视频 Lesson
+				80 text 完成这一课
+				81 heading 待补 0, Value: 2
+					82 text 待补 
+					83 text 0
+				84 button 新增待补占位符
+				85 text 0 内容待补 0 排版待补 0 缺素材
+				86 button ＋ 文字待补
+				87 button ＋ 图片待补
+				88 text 这一课没有未完成的待补内容，可以继续写正文或查看预览。
+				89 text 待补会一直保存，重开项目后仍然可以定位到这里。
+				90 text S02-01｜03 视频 Lesson 正文：待研究 待补：已齐 排版：未开始 完成度：75% 本地优先 · 自动保存
+				91 container 媒体预览：演示 clip.mp4
+					92 text 媒体预览
+					93 heading 演示 clip.mp4, Value: 2
+						94 text 演示 clip.mp4
+					95 button 关闭媒体预览
+					96 container 演示 clip.mp4, URL: asset://localhost/%2Fprivate%2Ftmp%2Fworkbench-io-ui-F-mapping-native-final%2Fassets%2F11b5d32b-466e-4be5-8875-cb4353a9e210-%E6%BC%94%E7%A4%BA%20clip.mp4
+						97 container
+							98 button Enter Picture in Picture
+							99 container Video Controls
+								100 button Skip Back 15 Seconds
+								101 button Play
+								102 button Skip Forward 15 Seconds
+								103 text Elapsed: 2 seconds
+								104 container
+									105 slider (settable, float) Value: 1, Details: 2 seconds
+										106 value indicator 1
+								107 text Duration: 2 seconds
+								108 button Mute
+								109 button More…
+					110 button 播放视频
+	111 close button
+	112 full screen button Help: this button also has an action to zoom the window, Secondary Actions: zoom the window
+	113 minimize button
+	114 text AI Course Workbench
+115 menu bar
+	116 AI Course Workbench QA Preview
+	117 File
+	118 Edit
+	119 View
+	120 Window
+	121 Help
+
+The focused UI element is 2 HTML content Description: AI Course Workbench, URL: tauri://localhost

@@ -1,0 +1,126 @@
+{
+  "schema": "io-ui-closure.native_n06_snapshot_click_content_physical_proof.v1",
+  "captured_at": "2026-10-06T10:34:08Z",
+  "source_pin": "b09718c0823f170836a223bab79b750722e83c73",
+  "fixture": "/private/tmp/workbench-io-ui-F-snapshot-pending-final7",
+  "ui_observation": {
+    "reported_action": "Named Save Version submitted from Native Final9 UI",
+    "reported_result": "toast 已保存历史版本; header ✓已保存",
+    "natural_pending_observed": false,
+    "reported_elapsed_ms": 98
+  },
+  "canonical": {
+    "path": "/private/tmp/workbench-io-ui-F-snapshot-pending-final7/project.json",
+    "bytes": 7500306,
+    "sha256": "b5df33ffc4469ea7da6b2aa28eddb561f6e46fa09e7ea8ed41b5c3fda6d81953",
+    "mtime_utc": "2026-10-06T10:31:53.552084+00:00",
+    "project_id": "015402b7-cd5c-498d-8a46-6ef07471a4fb",
+    "title": "Snapshot timing QA fixture — active lesson stays small",
+    "updated_at": "2026-10-06T10:31:52.844Z",
+    "target_block_id": "00000000-0000-4000-8000-00000000000d",
+    "target_block_content_serialized": "Local conflict draft retained for explicit resolution\\. N06\\-Final9\\-Native\\-20261006\\-A",
+    "marker_present": false
+  },
+  "snapshot": {
+    "id": "c6fcc754-8a2f-4780-a067-7de9fe938d16",
+    "name": "N06 Final9 Native A Snapshot 2026-10-06",
+    "project_id": "015402b7-cd5c-498d-8a46-6ef07471a4fb",
+    "project_dir": "/private/tmp/workbench-io-ui-F-snapshot-pending-final7",
+    "lease_generation": "app-p63103-1791281687673-0-991794f95014f7472a8c4f03afc7be3e9202ad9c9999196b:lease-2",
+    "editor_generation": 4,
+    "operation_id": "aa651911-88a9-40be-9839-1da9dd9f9023",
+    "revision": 77,
+    "created_at_raw": "1791282712693",
+    "created_at_utc": "2026-10-06T10:31:52.693000+00:00",
+    "declared_content_hash": "61c44d450748f8cb6915130f0dbbe7510706814160a971135779a6a141aa8a9f",
+    "envelope_path": "/private/tmp/workbench-io-ui-F-snapshot-pending-final7/.workspace/snapshots/c6fcc754-8a2f-4780-a067-7de9fe938d16.json",
+    "envelope_bytes": 7612708,
+    "envelope_sha256": "0303d20b4b323aa9eddd59c9caff748e7f61dead478b814a039f31598d02d66a",
+    "project_id_matches": true,
+    "target_block_content_serialized": "Local conflict draft retained for explicit resolution\\. N06\\-Final9\\-Native\\-20261006\\-A",
+    "target_block_equals_canonical": true,
+    "marker_present": false,
+    "snapshot_project_updated_at": "2026-10-06T10:31:32.267Z"
+  },
+  "domain_validation": {
+    "issue_count": 0
+  },
+  "counts": {
+    "stages": 2,
+    "lessons": 4,
+    "documents": 4,
+    "blocks": 5022,
+    "assets": 8,
+    "asset_usages": 4,
+    "snapshots": 1
+  },
+  "asset_file_integrity": {
+    "all_match": true,
+    "rows": [
+      {
+        "path": "assets/fixture-000.png",
+        "bytes": 1488,
+        "sha256": "0c479466fd0ea052ca693290293b423068552c091e37922de3944ce7eefdf0d3",
+        "size_matches": true,
+        "checksum_matches": true
+      },
+      {
+        "path": "assets/fixture-001.png",
+        "bytes": 1482,
+        "sha256": "3cced520167601a8cde0af73da82fa6a035f11e14976d3a19733701546d8078e",
+        "size_matches": true,
+        "checksum_matches": true
+      },
+      {
+        "path": "assets/fixture-002.png",
+        "bytes": 1503,
+        "sha256": "e4943822009bebf60c212569ecad21c1fd176fbfb26552974c3e565a931b35aa",
+        "size_matches": true,
+        "checksum_matches": true
+      },
+      {
+        "path": "assets/fixture-003.png",
+        "bytes": 1519,
+        "sha256": "96530624979bf1be2732b5a9b2da93536da71ee9f0cdd99abded5346600dbd80",
+        "size_matches": true,
+        "checksum_matches": true
+      },
+      {
+        "path": "assets/fixture-00.gif",
+        "bytes": 7493,
+        "sha256": "eacfdc6858d34f7c3c299ed7fa75a2a9145981098c24b3900986957b9e94c0d2",
+        "size_matches": true,
+        "checksum_matches": true
+      },
+      {
+        "path": "assets/fixture-00.mp4",
+        "bytes": 8748,
+        "sha256": "697f1b863079014da64bc345296d4671197a4d921341bf11ef71c26dc21cf7c6",
+        "size_matches": true,
+        "checksum_matches": true
+      },
+      {
+        "path": "assets/e7e4ed03-300c-4145-9d97-c3f8b9066fc7-workbench-io-ui-markdown-final.md",
+        "bytes": 122,
+        "sha256": "bb42001daa09abdc0e81897d5f3abc8c1b512c71f81777ecdb482f7aae419fe6",
+        "size_matches": true,
+        "checksum_matches": true
+      },
+      {
+        "path": "assets/7cd8406e-81ab-4270-acc8-ceb54649c601-QA inbox triage item: retain thi.txt",
+        "bytes": 49,
+        "sha256": "e54c217894764ab188d0ddd0b25b2374617abc0b9bb46748fecf92b614f2c164",
+        "size_matches": true,
+        "checksum_matches": true
+      }
+    ]
+  },
+  "active_lock": {
+    "present": true,
+    "pid": 63103,
+    "opened_at": "2026-10-06T10:33:55.354Z",
+    "heartbeat": "2026-10-06T10:37:15.733Z",
+    "app_instance_id": "app-p63103-1791281687673-0-991794f95014f7472a8c4f03afc7be3e9202ad9c9999196b"
+  },
+  "interpretation": "Persisted snapshot's same block string includes the N06 marker and exactly equals the Canonical block read after save. This proves durable content equality, not an in-flight snapshot window; the natural request returned in about 98 ms with no pending state observed."
+}

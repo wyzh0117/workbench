@@ -1,0 +1,125 @@
+Window: "AI Course Workbench", App: AI Course Workbench QA Preview Final6.
+0 standard window AI Course Workbench, Secondary Actions: Raise
+	1 scroll area
+		2 HTML content Description: AI Course Workbench, URL: tauri://localhost
+			3 container
+				4 button 返回项目选择；当前项目不会关闭
+				5 text AI Course Workbench
+				6 button F-history recovery candidate restore final ⌄, Help: 点击修改课程标题
+				7 button (disabled) 打开上一课
+				8 button S01-01｜Fixture lesson 1, Help: 点击修改当前课程标题
+				9 button 打开下一课
+				10 text ✓ 已保存
+				11 button 撤销上一次编辑
+				12 button 恢复上一次编辑
+				13 pop up button 设置
+				14 button 保存
+				15 button 保存版本
+				16 button 预览
+				17 button 导出
+				18 button 项目概览
+				19 button 打开课程：S01-01 Fixture lesson 1
+				20 button 关闭课程标签：S01-01 Fixture lesson 1, Help: 关闭课程标签
+				21 text 项目导航
+				22 button 收起左栏
+				23 container 项目页面
+					24 button ⌂ 项目概览
+					25 button ▦ 课程地图
+					26 button ✎ 工作台
+					27 button ▧ 自由排版
+					28 button 📂 文件
+					29 button ↓ 收件箱
+					30 button ▤ 制作看板
+					31 button ◈ 媒体库
+					32 button != 待补总览
+					33 button ✦ 更新中心
+					34 button ↗ 发布中心
+					35 button ◷ 版本历史
+					36 button ⚙ 项目设置
+				37 text 本课程 0/4 课完成 S01 FIXTURE STAGE
+				38 button S01-01 Fixture lesson 1, Help: Fixture lesson 1
+				39 button S01-02 Fixture lesson 2, Help: Fixture lesson 2
+				40 text S02 FIXTURE STAGE 2
+				41 button S02-01 Fixture lesson 3, Help: Fixture lesson 3
+				42 button S02-02 Fixture lesson 4, Help: Fixture lesson 4
+				43 button ＋ 快速收集 ⌘⇧空格
+				44 button ⌕ 搜索与命令 ⌘K
+				45 text 课程地图 · 阶段与课时
+				46 heading F-history recovery candidate restore final, Value: 1
+					47 button F-history recovery candidate restore final, Help: 点击修改课程标题
+				48 text 按阶段组织课时；拖动课时即可调整顺序或归属。
+				49 button 项目属性
+				50 button 定位当前课
+				51 button ＋ 新阶段
+				52 button ＋ 新建课程内容
+				53 button 继续下一处未完成
+				54 container 课程完成情况
+					55 text 4
+					56 text 课时
+					57 text 0
+					58 text 已完成
+					59 text 0
+					60 text 待补
+					61 text 0
+					62 text 缺素材
+				63 toggle button S01, Help: 查看阶段属性, Value: off
+				64 button Fixture stage, Help: 点击修改阶段名称
+				65 text 2 课 · 完成 0
+				66 button (expanded) 折叠阶段：Fixture stage, Help: 折叠阶段, Secondary Actions: Collapse
+				67 button 重命名阶段：Fixture stage, Help: 重命名阶段
+				68 button (disabled) 上移阶段：Fixture stage, Help: 上移阶段
+				69 button 下移阶段：Fixture stage, Help: 下移阶段
+				70 summary 更多阶段操作：Fixture stage, Help: 更多阶段操作, Value: off
+					71 text ⋯
+				72 button 拖动Fixture lesson 1
+				73 button S01-01 Fixture lesson 1 Fixture heading 1
+无待补 还没有排版版本 ›
+				74 button 重命名课程：Fixture lesson 1, Help: 重命名这一课
+				75 button (disabled) 上移课程：Fixture lesson 1, Help: 上移这一课
+				76 button 下移课程：Fixture lesson 1, Help: 下移这一课
+				77 button 删除课程：Fixture lesson 1, Help: 删除这一课（会先确认；可以用撤销恢复）
+				78 button 拖动Fixture lesson 2
+				79 button S01-02 Fixture lesson 2 Fixture heading 2
+无待补 还没有排版版本 ›
+				80 button 重命名课程：Fixture lesson 2, Help: 重命名这一课
+				81 button 上移课程：Fixture lesson 2, Help: 上移这一课
+				82 button 下移课程：Fixture lesson 2, Help: 下移这一课
+				83 button 删除课程：Fixture lesson 2, Help: 删除这一课（会先确认；可以用撤销恢复）
+				84 toggle button S02, Help: 查看阶段属性, Value: off
+				85 button Fixture stage 2, Help: 点击修改阶段名称
+				86 text 2 课 · 完成 0
+				87 button (expanded) 折叠阶段：Fixture stage 2, Help: 折叠阶段, Secondary Actions: Collapse
+				88 button 重命名阶段：Fixture stage 2, Help: 重命名阶段
+				89 button 上移阶段：Fixture stage 2, Help: 上移阶段
+				90 button (disabled) 下移阶段：Fixture stage 2, Help: 下移阶段
+				91 summary 更多阶段操作：Fixture stage 2, Help: 更多阶段操作, Value: off
+					92 text ⋯
+				93 button 拖动Fixture lesson 3
+				94 button S02-01 Fixture lesson 3 Fixture heading 3
+无待补 还没有排版版本 ›
+				95 button 重命名课程：Fixture lesson 3, Help: 重命名这一课
+				96 button (disabled) 上移课程：Fixture lesson 3, Help: 上移这一课
+				97 button 下移课程：Fixture lesson 3, Help: 下移这一课
+				98 button 删除课程：Fixture lesson 3, Help: 删除这一课（会先确认；可以用撤销恢复）
+				99 button 拖动Fixture lesson 4
+				100 button S02-02 Fixture lesson 4 Fixture heading 4
+无待补 还没有排版版本 ›
+				101 button 重命名课程：Fixture lesson 4, Help: 重命名这一课
+				102 button 上移课程：Fixture lesson 4, Help: 上移这一课
+				103 button 下移课程：Fixture lesson 4, Help: 下移这一课
+				104 button 删除课程：Fixture lesson 4, Help: 删除这一课（会先确认；可以用撤销恢复）
+				105 button 展开右栏
+				106 text S01-01｜Fixture lesson 1 正文：待研究 待补：已齐 排版：未开始 完成度：83% 本地优先 · 自动保存
+	107 close button
+	108 full screen button Help: this button also has an action to zoom the window, Secondary Actions: zoom the window
+	109 minimize button
+	110 text AI Course Workbench
+111 menu bar
+	112 AI Course Workbench QA Preview Final6
+	113 File
+	114 Edit
+	115 View
+	116 Window
+	117 Help
+
+The focused UI element is 2 HTML content Description: AI Course Workbench, URL: tauri://localhost

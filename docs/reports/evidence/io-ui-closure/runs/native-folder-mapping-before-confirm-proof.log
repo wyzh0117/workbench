@@ -1,0 +1,12 @@
+READ-ONLY NATIVE FOLDER MAPPING PREVIEW BEFORE CONFIRM
+Canonical source clone: /tmp/workbench-io-ui-native-final/small/project.json; 74,838 bytes; SHA-256 bd98b19e9407988fcd9fc43437082a792024f9c8bfc53df3de1e4f00ff8c4666; file mtime 2026-10-06T11:11:12+0800. Domain validation issues=0. Mapping preview did not change Canonical; this is before Root's explicit Confirm.
+
+Folder-only source root: /tmp/workbench-io-ui-F-mapping-native-final. It has two stage directories, three lesson Markdown files and three recursively discovered media files, with no project.json. Six source file SHA-256 values:
+01 基础 Stage/01 图文 与 跨目录链接 Lesson.md 500 B 3cc463e94c33fcc1848d980a020dfa91a06bfc6528749af24e714728ebccf448
+01 基础 Stage/02 动图 Lesson.md 156 B 6d164fbbcb5d21d592aeaeb6e8fc1d488de0ce9308361910689f903b1874ec70
+02 进阶 Stage/03 视频 Lesson.md 155 B 183f7b9c94e8ca4c59bc34e270761eeb06cf7ba187f394992154363619b3b26f
+02 进阶 Stage/共享 素材/动画 参考.gif 7,493 B eacfdc6858d34f7c3c299ed7fa75a2a9145981098c24b3900986957b9e94c0d2
+02 进阶 Stage/共享 素材/演示 clip.mp4 8,748 B 697f1b863079014da64bc345296d4671197a4d921341bf11ef71c26dc21cf7c6
+02 进阶 Stage/共享 素材/跨目录 图片.png 1,488 B 0c479466fd0ea052ca693290293b423068552c091e37922de3944ce7eefdf0d3
+
+Validation manifest: /tmp/workbench-io-ui-native-final/folder-mapping-validation.json, SHA-256 781ea5e90e5f70e668b78b083cc61b4627da87c3e9bb2d75d2a4a965f7f6e2e8. It reports four URL-encoded relative references, all status=present: PNG and GIF cross-stage references from lesson 1, GIF from lesson 2, MP4 from stage 2 lesson 3. No project.json exists in the selected source folder.

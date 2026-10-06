@@ -1,0 +1,9 @@
+running 5 tests from ./tests/workbench_ui_test.ts
+Workbench shell keeps one collapse control per local sidebar ... ok (5ms)
+left nav lists 工作台 between 课程地图 and 收件箱 as a real open-workbench entry ... ok (4ms)
+shared controls align core workbench surfaces without losing compact exceptions ... ok (3ms)
+returning to the launcher keeps the project and continue position intact ... ok (81ms)
+user-facing copy explains safety, continuation, and next actions ... ok (3ms)
+
+ok | 5 passed | 0 failed (103ms)
+

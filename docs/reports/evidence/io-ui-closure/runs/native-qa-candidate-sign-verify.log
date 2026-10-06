@@ -1,0 +1,55 @@
+copy_from=/tmp/io-ui-closure-native-qa-prewarm-target/aarch64-apple-darwin/release/bundle/macos/AI Course Workbench QA Preview.app
+copy_to=/tmp/io-ui-closure-native-qa-candidate/AI Course Workbench QA Preview.app
+/tmp/io-ui-closure-native-qa-candidate/AI Course Workbench QA Preview.app: replacing existing signature
+/tmp/io-ui-closure-native-qa-candidate/AI Course Workbench QA Preview.app: valid on disk
+/tmp/io-ui-closure-native-qa-candidate/AI Course Workbench QA Preview.app: satisfies its Designated Requirement
+Executable=/private/tmp/io-ui-closure-native-qa-candidate/AI Course Workbench QA Preview.app/Contents/MacOS/ai-course-workbench
+Identifier=io.github.wyzh0117.ai-course-workbench.qa.io-ui-closure
+Format=app bundle with Mach-O thin (arm64)
+CodeDirectory v=20400 size=38768 flags=0x2(adhoc) hashes=1204+3 location=embedded
+VersionPlatform=1
+VersionMin=720896
+VersionSDK=918528
+Hash type=sha256 size=32
+CandidateCDHash sha256=b7e4ad620ca63fc9f999afeae659aa144e61198d
+CandidateCDHashFull sha256=b7e4ad620ca63fc9f999afeae659aa144e61198d244a93a63d6596e7eedd7ef3
+Hash choices=sha256
+CMSDigest=b7e4ad620ca63fc9f999afeae659aa144e61198d244a93a63d6596e7eedd7ef3
+CMSDigestType=2
+Executable Segment base=0
+Executable Segment limit=13664256
+Executable Segment flags=0x1
+Page size=16384
+CDHash=b7e4ad620ca63fc9f999afeae659aa144e61198d
+Signature=adhoc
+Info.plist entries=16
+TeamIdentifier=not set
+Sealed Resources version=2 rules=13 files=1
+Internal requirements count=0 size=12
+
+Info.plist:
+io.github.wyzh0117.ai-course-workbench.qa.io-ui-closure
+AI Course Workbench QA Preview
+0.2.7
+0.2.7
+
+Executable architecture:
+/tmp/io-ui-closure-native-qa-candidate/AI Course Workbench QA Preview.app/Contents/MacOS/ai-course-workbench: Mach-O 64-bit executable arm64
+arm64
+
+Archive:
+-rwxr-xr-x  1 youngi  wheel    19M Oct  6 08:51 /tmp/io-ui-closure-native-qa-candidate/AI Course Workbench QA Preview.app/Contents/MacOS/ai-course-workbench
+-rw-r--r--  1 youngi  wheel   6.8M Oct  6 08:51 /tmp/io-ui-closure-native-qa-candidate/AI-Course-Workbench-QA-Preview-aarch64-0.2.7.zip
+d5eca8381f146cf620109671cf37bad45c083232692180fb9649d6068633ec43  /tmp/io-ui-closure-native-qa-candidate/AI Course Workbench QA Preview.app/Contents/MacOS/ai-course-workbench
+41efd36a2fc19311df86100937c5a5364117496c0fc4d4668cf6a6bb4e0d273a  /tmp/io-ui-closure-native-qa-candidate/AI-Course-Workbench-QA-Preview-aarch64-0.2.7.zip
+Archive:  /tmp/io-ui-closure-native-qa-candidate/AI-Course-Workbench-QA-Preview-aarch64-0.2.7.zip
+    testing: AI Course Workbench QA Preview.app/   OK
+    testing: AI Course Workbench QA Preview.app/Contents/   OK
+    testing: AI Course Workbench QA Preview.app/Contents/_CodeSignature/   OK
+    testing: AI Course Workbench QA Preview.app/Contents/_CodeSignature/CodeResources   OK
+    testing: AI Course Workbench QA Preview.app/Contents/MacOS/   OK
+    testing: AI Course Workbench QA Preview.app/Contents/MacOS/ai-course-workbench   OK
+    testing: AI Course Workbench QA Preview.app/Contents/Resources/   OK
+    testing: AI Course Workbench QA Preview.app/Contents/Resources/icon.icns   OK
+    testing: AI Course Workbench QA Preview.app/Contents/Info.plist   OK
+No errors detected in compressed data of /tmp/io-ui-closure-native-qa-candidate/AI-Course-Workbench-QA-Preview-aarch64-0.2.7.zip.

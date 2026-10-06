@@ -1,0 +1,86 @@
+{
+  "schema_version": 1,
+  "generated_at_utc": "2026-10-06T15:26:32.803039+00:00",
+  "purpose": "Read-only ownership and shutdown proof for the local completion-report HTTP server; no user app/server was stopped.",
+  "source_commit": "50aaea7268164b9fa066425ce4a5ac158ca87352",
+  "server": {
+    "pid": 25042,
+    "parent_pid": 2004,
+    "command_before": "/Library/Frameworks/Python.framework/Versions/3.11/Resources/Python.app/Contents/MacOS/Python -m http.server 4192 --bind 127.0.0.1 --directory docs/reports",
+    "cwd_before": "/Users/youngi/.codex/worktrees/io-ui-closure/workbench",
+    "ps_lstart_local": "Tue Oct 6 11:53:03 2026",
+    "elapsed_at_pre_stop_check": "11:31:33",
+    "listener_before": "127.0.0.1:4192 (LISTEN), PID 25042, Python, IPv4",
+    "stop_signal": "SIGTERM",
+    "stop_action_result": "PID exited and TCP 4192 had no listener within 0.026 seconds; no force signal used.",
+    "before_after_observation_note": "The pre-stop process/cwd/listener checks were captured immediately before SIGTERM in the same control flow; a separate UTC sub-second timestamp was not recorded. Raw ps start/elapsed values are retained above.",
+    "pid_after": null,
+    "listener_after": "",
+    "port_released": true
+  },
+  "protected_processes": {
+    "23064_user_dev_server": {
+      "command": "23064 23062 youngi Tue Oct  6 03:15:31 2026     20:11:01 /opt/homebrew/Cellar/deno/2.9.5/bin/deno run --allow-net --allow-read --allow-write --allow-run=/usr/bin/security --allow-sys --allow-env scripts/dev_server.ts",
+      "still_live": true
+    },
+    "9832_installed_production_app": {
+      "command": "9832     1 youngi Mon Oct  5 14:54:53 2026     01-08:31:39 /Applications/AI Course Workbench.app/Contents/MacOS/ai-course-workbench",
+      "still_live": true
+    }
+  },
+  "qa_app_processes_after": [],
+  "qa_apps_closed": true,
+  "source_and_report_hashes_at_capture": [
+    {
+      "path": "docs/reports/io-ui-closure-completion-report.html",
+      "bytes": 5398188,
+      "sha256": "97361be47ab0345fddbdfe7597f68d2f5a0c8dd481ebe15500b005187007ab58"
+    },
+    {
+      "path": "docs/reports/evidence/io-ui-closure/metrics.json",
+      "bytes": 32001,
+      "sha256": "34f9100f2ea4e98697225a668d20f66171b4f99a73f5dd6e6a47a3f9cb599b54"
+    },
+    {
+      "path": "docs/reports/evidence/io-ui-closure/requirements.json",
+      "bytes": 119055,
+      "sha256": "de54e0863a7f3eac70dd2eb8c9a19908f2a7ad1e93ceb9aa011a56dc65077b32"
+    },
+    {
+      "path": "docs/reports/evidence/io-ui-closure/ui-matrix.json",
+      "bytes": 61174,
+      "sha256": "8deef7f0e7eab8ed21baa4a478e2469ac54d52b6a0b13f6ce9a730c974b70478"
+    },
+    {
+      "path": "docs/reports/evidence/io-ui-closure/artifacts.json",
+      "bytes": 197215,
+      "sha256": "b38443cb11fe6a927d226aeb369239c1e52d7635898a648774ad5257068d5b97"
+    },
+    {
+      "path": "docs/reports/evidence/io-ui-closure/native-qa-candidate-final10.json",
+      "bytes": 5900,
+      "sha256": "052b69b5c5c28a0d6c667ff282a902d5c95c389b16c358ca3287e19866f1fa2f"
+    },
+    {
+      "path": "docs/reports/evidence/io-ui-closure/native-qa-historical-packages-archive-20261006.json",
+      "bytes": 4874,
+      "sha256": "b52ce799f943576c940386116e558c0e2d06b2a8e205ccfcc1efd8279c58dd85"
+    },
+    {
+      "path": "docs/reports/evidence/io-ui-closure/native-save-warm-final10-metrics.json",
+      "bytes": 102700,
+      "sha256": "36df00dbc8e850d5cd85780fc6ca3f0d0a15c78897d6c6f9c9094ca5e97f58a0"
+    },
+    {
+      "path": "docs/reports/evidence/io-ui-closure/runs/root-report-responsive-551-final.json",
+      "bytes": 3134,
+      "sha256": "a57ace09a7b32764a28871e0e07de5ae9e1daaf860fee3c3377a4f2ce7e67c19"
+    }
+  ],
+  "final10_delivery_zip": {
+    "path": "docs/reports/evidence/io-ui-closure/native-qa-candidate-final10-aarch64-0.2.7.zip",
+    "bytes": 7082849,
+    "sha256": "bb3413a4f4f8d7658e69f5e523da514aca034e32f241e2bdc09fe425fadd3822",
+    "note": "Previously independently audited; this stop proof does not rerun ZIP or bundle verification."
+  }
+}

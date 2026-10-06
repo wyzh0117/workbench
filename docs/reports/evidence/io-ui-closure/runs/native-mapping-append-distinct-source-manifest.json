@@ -1,0 +1,67 @@
+{
+  "created_at": "2026-10-06T04:58:49.933+00:00",
+  "source": "synthetic source-only folder for Native N02 duplicate-basename append QA",
+  "root": "/tmp/workbench-io-ui-F-mapping-append-distinct-native-final3",
+  "project_json_present": false,
+  "documents": [
+    {
+      "relative_path": "01 基础 Stage/shared lesson.md",
+      "bytes": 548,
+      "sha256": "e4bcfda3eedff3914fe0cae6413808b22c7a1c1f55b4802bd73a3406c92a3cb6",
+      "basename": "shared lesson.md",
+      "matches_existing_markdown_sha256": false
+    },
+    {
+      "relative_path": "02 进阶 Stage/shared lesson.md",
+      "bytes": 220,
+      "sha256": "52b943d8b2b7bef9b4079a8793c35c5eb76d5945ca5591160a2311798c64ee93",
+      "basename": "shared lesson.md",
+      "matches_existing_markdown_sha256": false
+    }
+  ],
+  "assets": [
+    {
+      "relative_path": "02 进阶 Stage/共享 素材/跨目录 图片.png",
+      "bytes": 1488,
+      "sha256": "0c479466fd0ea052ca693290293b423068552c091e37922de3944ce7eefdf0d3"
+    },
+    {
+      "relative_path": "02 进阶 Stage/共享 素材/动画 参考.gif",
+      "bytes": 7493,
+      "sha256": "eacfdc6858d34f7c3c299ed7fa75a2a9145981098c24b3900986957b9e94c0d2"
+    },
+    {
+      "relative_path": "02 进阶 Stage/共享 素材/演示 clip.mp4",
+      "bytes": 8748,
+      "sha256": "697f1b863079014da64bc345296d4671197a4d921341bf11ef71c26dc21cf7c6"
+    }
+  ],
+  "existing_markdown_sha256_comparisons": [
+    {
+      "path": "/tmp/workbench-io-ui-F-mapping-native-final3/01 基础 Stage/01 图文 与 跨目录链接 Lesson.md",
+      "sha256": "3cc463e94c33fcc1848d980a020dfa91a06bfc6528749af24e714728ebccf448"
+    },
+    {
+      "path": "/tmp/workbench-io-ui-F-mapping-native-final3/01 基础 Stage/02 动图 Lesson.md",
+      "sha256": "6d164fbbcb5d21d592aeaeb6e8fc1d488de0ce9308361910689f903b1874ec70"
+    },
+    {
+      "path": "/tmp/workbench-io-ui-F-mapping-native-final3/02 进阶 Stage/03 视频 Lesson.md",
+      "sha256": "183f7b9c94e8ca4c59bc34e270761eeb06cf7ba187f394992154363619b3b26f"
+    },
+    {
+      "path": "/tmp/workbench-io-ui-F-mapping-append-native-final3/01 基础 Stage/shared lesson.md",
+      "sha256": "79be0334236329f6da0bc039d930dea5fa7082d89edf248791922a424844c24c"
+    },
+    {
+      "path": "/tmp/workbench-io-ui-F-mapping-append-native-final3/02 进阶 Stage/shared lesson.md",
+      "sha256": "183f7b9c94e8ca4c59bc34e270761eeb06cf7ba187f394992154363619b3b26f"
+    }
+  ],
+  "expected": {
+    "distinct_document_hashes": true,
+    "both_hashes_new_vs_current_fixture_docs": true,
+    "asset_count": 3,
+    "relative_cross_folder_links": "A references PNG+GIF and B video; A links to B by ../02 进阶 Stage/shared lesson.md"
+  }
+}

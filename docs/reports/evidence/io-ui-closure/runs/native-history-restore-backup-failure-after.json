@@ -1,0 +1,116 @@
+{
+  "captured_at_utc": "2026-10-06T05:49:27.253100+00:00",
+  "source": "Native UI Recovery Restore was attempted with snapshots directory mode 0555; root reported the actual backup-create permission error and that both recovery choices remain visible.",
+  "fixture_root": "/tmp/workbench-io-ui-native-final/history-restore",
+  "project_id": "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
+  "canonical": {
+    "path": "/tmp/workbench-io-ui-native-final/history-restore/project.json",
+    "bytes": 69270,
+    "sha256": "64b9b83fdbbea3eb2da223c2b368aef031ba644096719a09c9e10643898267be",
+    "mtime_ns": 1791248865756367986
+  },
+  "recovery_journal": {
+    "path": "/tmp/workbench-io-ui-native-final/history-restore/.workspace/recovery.json",
+    "bytes": 63332,
+    "sha256": "610cd93b906bbb0556ac4f6f66fbabc71fe77ca9c8b1817e733d3c6c3219ed9c",
+    "mtime_ns": 1791260474494666261,
+    "transaction_id": "155a152b-0f7e-4d43-a19b-78e1f3ba89ad",
+    "project_id": "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
+    "canonical_revision": "2026-08-15T12:00:00.000Z",
+    "saved_at": "2026-10-06T04:21:14.477Z",
+    "candidate_title": "F-history recovery candidate restore final"
+  },
+  "workspace_search_index": {
+    "path": "/tmp/workbench-io-ui-native-final/history-restore/.workspace/index.json",
+    "bytes": 63110,
+    "sha256": "27261247b315e5ab689652b41c50da72acb030e2002b5c32eba7e2216bd8366f",
+    "mtime_ns": 1791251728523369861,
+    "record_count": 29,
+    "record_types": {
+      "asset": 6,
+      "block": 16,
+      "content": 4,
+      "project": 1,
+      "stage": 2
+    }
+  },
+  "snapshot_inventory": {
+    "directory_mode": "0o555",
+    "file_count": 10,
+    "files": [
+      {
+        "name": "1fd63b8f-6f70-4c57-a614-1652ac2591fa.json",
+        "bytes": 69584,
+        "sha256": "ae2559e8e66fd65757ed0f1004a343ad461a2b09001de590306b13da83148808",
+        "mode": "0o644"
+      },
+      {
+        "name": "1fd63b8f-6f70-4c57-a614-1652ac2591fa.meta.json",
+        "bytes": 265,
+        "sha256": "930a7e2559b1118d61a9bebc28535c07e053afe9deaf1aba865c497afb1ab399",
+        "mode": "0o644"
+      },
+      {
+        "name": "e5b8bafa-6e52-4754-bd0f-69cecafc0ba3.json",
+        "bytes": 68969,
+        "sha256": "ee46a931ad6172928032ae8cf9dbb3c7fa60cb365f46b9e0a16b1203b54ae1be",
+        "mode": "0o644"
+      },
+      {
+        "name": "e5b8bafa-6e52-4754-bd0f-69cecafc0ba3.meta.json",
+        "bytes": 286,
+        "sha256": "e9e23f3fd8107c762ff04888bb1437668bea06f22cd932fe430ee0c405b1bb79",
+        "mode": "0o644"
+      },
+      {
+        "name": "history_corrupt_20261006.json",
+        "bytes": 30,
+        "sha256": "0b2cc6cac164a6170248e19b780455299bc2617a744bbfe4c6b283fe6f4dc51a",
+        "mode": "0o644"
+      },
+      {
+        "name": "history_incomplete_20261006.json",
+        "bytes": 68972,
+        "sha256": "cd31885f33812bc0c9d35464e54c866721457bd2666752af43246506bc6409c3",
+        "mode": "0o644"
+      },
+      {
+        "name": "history_incomplete_20261006.meta.json",
+        "bytes": 174,
+        "sha256": "53a2dac98b14e50bda6bdf55edc21b084bbd3b208817c67e0813f9c8412963f3",
+        "mode": "0o644"
+      },
+      {
+        "name": "history_named_20261006.json",
+        "bytes": 68973,
+        "sha256": "078415fead41496736f495068d35daabd5740c5dc3ca08302acca2919d828396",
+        "mode": "0o644"
+      },
+      {
+        "name": "history_named_20261006.meta.json",
+        "bytes": 293,
+        "sha256": "ae606c19570820c05501ddc33fc2bfa5b7a64c3356bfaaeddac56d1d086d9dc1",
+        "mode": "0o644"
+      },
+      {
+        "name": "history_unindexed_20261006.json",
+        "bytes": 68972,
+        "sha256": "1669e0c858a1d63aeda8be4431a7af1cdfb00859824dc319f521cb6896732a1d",
+        "mode": "0o644"
+      }
+    ]
+  },
+  "domain_validation_issues": [],
+  "active_project_lock_present": true,
+  "checks": {
+    "canonical_matches_seed": true,
+    "journal_matches_seed": true,
+    "search_index_matches_seed": true,
+    "all_10_snapshot_files_match_seed": true,
+    "domain_validation_zero": true,
+    "snapshots_directory_still_readonly": true
+  },
+  "status": "PASS",
+  "permission_restore_pending": true,
+  "original_snapshots_directory_mode": "0o755"
+}

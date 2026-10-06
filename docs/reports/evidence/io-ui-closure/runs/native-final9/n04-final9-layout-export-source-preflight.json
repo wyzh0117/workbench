@@ -1,0 +1,217 @@
+{
+  "captured_at_utc": "2026-10-06T10:53:54.535279+00:00",
+  "source": "Native Final9 / b09718c0823f170836a223bab79b750722e83c73",
+  "fixture_root": "/private/tmp/workbench-io-ui-native-final/layout",
+  "real_project_path": "/private/tmp/workbench-io-ui-native-final/layout/project.json",
+  "canonical": {
+    "bytes": 73780,
+    "sha256": "4957c6e748fa03fe23c495ccb245f85aca012d837f0efb7ec7bb1b46bdfeaf90",
+    "mtime_ns": 1791258004231334237,
+    "project_id": "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+    "title": "File I/O layout-final QA fixture",
+    "updated_at": "2026-10-06T03:39:34.732Z",
+    "domain_issue_count": 0
+  },
+  "counts": {
+    "stages": 2,
+    "lessons": 4,
+    "documents": 4,
+    "blocks": 17,
+    "assets": 6,
+    "asset_usages": 1,
+    "layout_pages": 3,
+    "placements": 5
+  },
+  "flow_lesson1": {
+    "lesson_id": "00000000-0000-4000-8000-000000000004",
+    "title": "Fixture lesson 1",
+    "ordered_blocks": [
+      {
+        "id": "00000000-0000-4000-8000-00000000000c",
+        "type": "heading",
+        "content_prefix": "Fixture heading 1"
+      },
+      {
+        "id": "00000000-0000-4000-8000-00000000000d",
+        "type": "paragraph",
+        "content_prefix": "Fixture lesson 1, paragraph 1. The quick brown fox measures canonical project I/O while preserving v"
+      },
+      {
+        "id": "00000000-0000-4000-8000-00000000000e",
+        "type": "paragraph",
+        "content_prefix": "Fixture long body 1. The quick brown fox measures canonical project I/O while preserving valid domai"
+      },
+      {
+        "id": "00000000-0000-4000-8000-00000000000f",
+        "type": "paragraph",
+        "content_prefix": "Fixture lesson 1, paragraph 3. The quick brown fox measures canonical project I/O while preserving v"
+      },
+      {
+        "id": "00000000-0000-4000-8000-00000000001c",
+        "type": "image",
+        "content_prefix": "renamed-second-qa.png"
+      }
+    ]
+  },
+  "layout": {
+    "instance_id": "00000000-0000-4000-8000-000000000058",
+    "name": "三页排版验收",
+    "mode": "grid",
+    "pagination_mode": "paged",
+    "pages": [
+      {
+        "id": "00000000-0000-4000-8000-000000000059",
+        "order_index": 0,
+        "title": "第 1 页"
+      },
+      {
+        "id": "00000000-0000-4000-8000-00000000005a",
+        "order_index": 1,
+        "title": "跨页文本与图片"
+      },
+      {
+        "id": "00000000-0000-4000-8000-00000000005b",
+        "order_index": 2,
+        "title": "长正文续页"
+      }
+    ],
+    "placements": [
+      {
+        "page_order": 0,
+        "page_id": "00000000-0000-4000-8000-000000000059",
+        "row_start": 0,
+        "row_end": 1,
+        "column_start": 0,
+        "column_end": 1,
+        "column_span": 1,
+        "block_id": "00000000-0000-4000-8000-00000000000c",
+        "block_type": "heading",
+        "block_content_prefix": "Fixture heading 1"
+      },
+      {
+        "page_order": 0,
+        "page_id": "00000000-0000-4000-8000-000000000059",
+        "row_start": 0,
+        "row_end": 1,
+        "column_start": 1,
+        "column_end": 2,
+        "column_span": 1,
+        "block_id": "00000000-0000-4000-8000-00000000001c",
+        "block_type": "image",
+        "block_content_prefix": "renamed-second-qa.png"
+      },
+      {
+        "page_order": 0,
+        "page_id": "00000000-0000-4000-8000-000000000059",
+        "row_start": 1,
+        "row_end": 2,
+        "column_start": 0,
+        "column_end": 2,
+        "column_span": 2,
+        "block_id": "00000000-0000-4000-8000-00000000000f",
+        "block_type": "paragraph",
+        "block_content_prefix": "Fixture lesson 1, paragraph 3. The quick brown fox measures canonical project I/O while preserving v"
+      },
+      {
+        "page_order": 1,
+        "page_id": "00000000-0000-4000-8000-00000000005a",
+        "row_start": 0,
+        "row_end": 1,
+        "column_start": 0,
+        "column_end": 1,
+        "column_span": 1,
+        "block_id": "00000000-0000-4000-8000-00000000000d",
+        "block_type": "paragraph",
+        "block_content_prefix": "Fixture lesson 1, paragraph 1. The quick brown fox measures canonical project I/O while preserving v"
+      },
+      {
+        "page_order": 1,
+        "page_id": "00000000-0000-4000-8000-00000000005a",
+        "row_start": 0,
+        "row_end": 1,
+        "column_start": 1,
+        "column_end": 2,
+        "column_span": 1,
+        "block_id": "00000000-0000-4000-8000-00000000000e",
+        "block_type": "paragraph",
+        "block_content_prefix": "Fixture long body 1. The quick brown fox measures canonical project I/O while preserving valid domai"
+      }
+    ],
+    "paragraph3_final_location": {
+      "block_id": "00000000-0000-4000-8000-00000000000f",
+      "page_order": 0,
+      "row_start": 1,
+      "column_start": 0,
+      "column_span": 2
+    }
+  },
+  "assets": [
+    {
+      "id": "00000000-0000-4000-8000-00000000001d",
+      "path": "assets/00000000-0000-4000-8000-00000000001d-renamed-second-qa.png",
+      "type": "image",
+      "mime_type": "image/png",
+      "size": 1488,
+      "canonical_size": 1488,
+      "sha256": "0c479466fd0ea052ca693290293b423068552c091e37922de3944ce7eefdf0d3",
+      "canonical_checksum": "0c479466fd0ea052ca693290293b423068552c091e37922de3944ce7eefdf0d3",
+      "checksum_matches": true
+    },
+    {
+      "id": "00000000-0000-4000-8000-00000000001e",
+      "path": "assets/fixture-001.png",
+      "type": "image",
+      "mime_type": "image/png",
+      "size": 1482,
+      "canonical_size": 1482,
+      "sha256": "3cced520167601a8cde0af73da82fa6a035f11e14976d3a19733701546d8078e",
+      "canonical_checksum": "3cced520167601a8cde0af73da82fa6a035f11e14976d3a19733701546d8078e",
+      "checksum_matches": true
+    },
+    {
+      "id": "00000000-0000-4000-8000-00000000001f",
+      "path": "assets/fixture-002.png",
+      "type": "image",
+      "mime_type": "image/png",
+      "size": 1503,
+      "canonical_size": 1503,
+      "sha256": "e4943822009bebf60c212569ecad21c1fd176fbfb26552974c3e565a931b35aa",
+      "canonical_checksum": "e4943822009bebf60c212569ecad21c1fd176fbfb26552974c3e565a931b35aa",
+      "checksum_matches": true
+    },
+    {
+      "id": "00000000-0000-4000-8000-000000000020",
+      "path": "assets/fixture-003.png",
+      "type": "image",
+      "mime_type": "image/png",
+      "size": 1519,
+      "canonical_size": 1519,
+      "sha256": "96530624979bf1be2732b5a9b2da93536da71ee9f0cdd99abded5346600dbd80",
+      "canonical_checksum": "96530624979bf1be2732b5a9b2da93536da71ee9f0cdd99abded5346600dbd80",
+      "checksum_matches": true
+    },
+    {
+      "id": "00000000-0000-4000-8000-000000000021",
+      "path": "assets/fixture-00.gif",
+      "type": "gif",
+      "mime_type": "image/gif",
+      "size": 7493,
+      "canonical_size": 7493,
+      "sha256": "eacfdc6858d34f7c3c299ed7fa75a2a9145981098c24b3900986957b9e94c0d2",
+      "canonical_checksum": "eacfdc6858d34f7c3c299ed7fa75a2a9145981098c24b3900986957b9e94c0d2",
+      "checksum_matches": true
+    },
+    {
+      "id": "00000000-0000-4000-8000-000000000022",
+      "path": "assets/fixture-00.mp4",
+      "type": "video",
+      "mime_type": "video/mp4",
+      "size": 8748,
+      "canonical_size": 8748,
+      "sha256": "697f1b863079014da64bc345296d4671197a4d921341bf11ef71c26dc21cf7c6",
+      "canonical_checksum": "697f1b863079014da64bc345296d4671197a4d921341bf11ef71c26dc21cf7c6",
+      "checksum_matches": true
+    }
+  ],
+  "export_freeze_rule": "Use this exact project.json SHA for all four export runs; verify it remains unchanged between exports."
+}

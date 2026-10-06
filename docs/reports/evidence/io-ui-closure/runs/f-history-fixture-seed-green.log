@@ -1,0 +1,104 @@
+{
+  "root": "/tmp/workbench-io-ui-F-history-denoio-20261006",
+  "port": 4191,
+  "project_id": "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
+  "project_dir": "/tmp/workbench-io-ui-F-history-denoio-20261006",
+  "lease_generation": "e3e940fe-59a9-4f64-8128-f79c6dac345d",
+  "canonical_sha256": "ee46a931ad6172928032ae8cf9dbb3c7fa60cb365f46b9e0a16b1203b54ae1be",
+  "canonical_size": 68969,
+  "canonical_title": "File I/O small-final QA fixture",
+  "named_snapshot_ack": {
+    "id": "history_named_20261006",
+    "snapshot_id": "history_named_20261006",
+    "persisted": true,
+    "outcome": "written",
+    "content_hash": "078415fead41496736f495068d35daabd5740c5dc3ca08302acca2919d828396",
+    "created_at": "2026-10-06T00:59:03.554Z",
+    "durability_warning": null,
+    "project_id": "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
+    "project_dir": "/tmp/workbench-io-ui-F-history-denoio-20261006",
+    "lease_generation": "e3e940fe-59a9-4f64-8128-f79c6dac345d",
+    "editor_generation": 1,
+    "operation_id": "fhistory-snapshot-create-20261006",
+    "revision": 1
+  },
+  "snapshot_rows": [
+    {
+      "id": "history_unindexed_20261006",
+      "name": "history_unindexed_20261006",
+      "note": "",
+      "created_at": "2026-10-06T00:59:03.577Z",
+      "status": "available",
+      "content_hash": "1669e0c858a1d63aeda8be4431a7af1cdfb00859824dc319f521cb6896732a1d"
+    },
+    {
+      "id": "history_named_20261006",
+      "name": "Named history checkpoint",
+      "note": "Persisted through the real snapshot.create service command for owned UI QA.",
+      "created_at": "2026-10-06T00:59:03.554Z",
+      "status": "available",
+      "content_hash": "078415fead41496736f495068d35daabd5740c5dc3ca08302acca2919d828396"
+    },
+    {
+      "id": "history_corrupt_20261006",
+      "name": "history_corrupt_20261006",
+      "note": "",
+      "created_at": "",
+      "status": "error",
+      "error": {
+        "code": "snapshot_invalid",
+        "message": "历史版本文件或索引已损坏。"
+      }
+    },
+    {
+      "id": "history_incomplete_20261006",
+      "name": "history_incomplete_20261006",
+      "note": "",
+      "created_at": "",
+      "status": "error",
+      "error": {
+        "code": "snapshot_metadata_invalid",
+        "message": "历史版本文件或索引已损坏。"
+      }
+    }
+  ],
+  "recovery_journal": {
+    "id": "fhistory-recovery-20261006",
+    "saved_at": "2999-01-02T00:00:00.000Z",
+    "canonical_revision": "2026-10-01T00:00:00.000Z",
+    "candidate_title": "F-history recovery candidate"
+  },
+  "recovery_journal_sha256": "9904ed5321c225623ffe60510c9847f295f87fb468af7014be5453ccd66372e9",
+  "snapshot_files": [
+    {
+      "name": "history_corrupt_20261006.json",
+      "size": 30,
+      "sha256": "0b2cc6cac164a6170248e19b780455299bc2617a744bbfe4c6b283fe6f4dc51a"
+    },
+    {
+      "name": "history_incomplete_20261006.json",
+      "size": 68972,
+      "sha256": "cd31885f33812bc0c9d35464e54c866721457bd2666752af43246506bc6409c3"
+    },
+    {
+      "name": "history_incomplete_20261006.meta.json",
+      "size": 174,
+      "sha256": "53a2dac98b14e50bda6bdf55edc21b084bbd3b208817c67e0813f9c8412963f3"
+    },
+    {
+      "name": "history_named_20261006.json",
+      "size": 68973,
+      "sha256": "078415fead41496736f495068d35daabd5740c5dc3ca08302acca2919d828396"
+    },
+    {
+      "name": "history_named_20261006.meta.json",
+      "size": 293,
+      "sha256": "ae606c19570820c05501ddc33fc2bfa5b7a64c3356bfaaeddac56d1d086d9dc1"
+    },
+    {
+      "name": "history_unindexed_20261006.json",
+      "size": 68972,
+      "sha256": "1669e0c858a1d63aeda8be4431a7af1cdfb00859824dc319f521cb6896732a1d"
+    }
+  ]
+}

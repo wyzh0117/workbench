@@ -1,0 +1,82 @@
+Window: "AI Course Workbench", App: AI Course Workbench QA Preview Final6.
+0 standard window AI Course Workbench, Secondary Actions: Raise
+	1 scroll area
+		2 HTML content Description: AI Course Workbench, URL: tauri://localhost
+			3 container
+				4 button 返回项目选择；当前项目不会关闭
+				5 text AI Course Workbench
+				6 button F-history recovery candidate restore final ⌄, Help: 点击修改课程标题
+				7 button (disabled) 打开上一课
+				8 button S01-01｜Fixture lesson 1, Help: 点击修改当前课程标题
+				9 button 打开下一课
+				10 text ✓ 已保存
+				11 button 撤销上一次编辑
+				12 button 恢复上一次编辑
+				13 pop up button 设置
+				14 button 保存
+				15 button 保存版本
+				16 button 预览
+				17 button 导出
+				18 button 项目概览
+				19 button 打开课程：S01-01 Fixture lesson 1
+				20 button 关闭课程标签：S01-01 Fixture lesson 1, Help: 关闭课程标签
+				21 button 展开左栏
+				22 button 课程地图
+				23 text / Fixture stage /
+				24 text S01-01 Fixture lesson 1
+				25 text 工作台 · S01-01
+				26 heading Fixture lesson 1, Value: 1
+					27 text Fixture lesson 1
+				28 text 沿正文写作、检查内容流程，或阅读最终预览。
+				29 text 持续编辑中
+				30 tab group (selectable) 工作台视图
+					31 tab (selected) 01 正文
+					32 tab (selectable) 02 Flow
+					33 tab (selectable) 03 Preview
+				34 text S01-01 · LESSON · 第 1/4 课 这一课还没完成 待补：已齐 下一步：继续写正文
+				35 text 还没有排版版本；正文仍是「待研究」；媒体仍是「未开始」
+				36 summary 插入内容, Value: off
+					37 text 插入内容
+				38 container
+					39 button 在标题下方插入正文区块, Help: 在这块正文下方插入
+					40 summary 更多正文区块操作：标题, Help: 更多操作, Value: off
+						41 text ⋯
+					42 text entry area (settable) 标题, Value: **Fixture heading 1**, Placeholder: 新标题
+						43 text (settable) Fixture heading 1
+				44 container
+					45 button 在正文下方插入正文区块, Help: 在这块正文下方插入
+					46 summary 更多正文区块操作：正文, Help: 更多操作, Value: off
+						47 text ⋯
+					48 text entry area (settable) 正文内容, Placeholder: 开始写点什么…, Value: Fixture lesson 1, paragraph 1. The quick brown fox measures canonical project I/O while preserving valid domain structure. The quick brown fox measures canonical project I/O while preserving valid domain structure. The quick brown fox measures canonical project I/O while preserving valid domain structure. The quick brown fox measures canonical project I/O while preserving valid domain structure. The quick brown fox measures canonical project I/O while preserving valid domain structure. The quick brown fox measures canonical project I/O while preserving valid domain structure. The quick brown fox measures canonical project I/O while preserving valid domain structure. The quick brown fox measures canonical project I/O while preserving valid domain structure. The quick brown fox measures canonical project I/O while preserving valid domain structure. The quick brown fox measures canonical project I/O while preserving valid domain structure. The quick brown fox measures canonical project I/O while preserving valid domain structure. N01 continuous run marker N01-01 N01-02 N01-03 N01-04 N01-05 N01-06 N01-07 N01-08 N01-09 N01-10 N01-11 N01-12 N01-13 N01-14 N01-15 N01-16 N01-17 N01-18 N01-19 N01-20 N01-21 N01-22 N01-23 N01-24 N01-25 N01-26 N01-27 N01-28 N01-29 N01-30 N01-31 N01-32 N01-33 N01-34 N01-35 N01-36 N01-37 N01-38 N01-39 N01-40 N01-41 N01-42 N01-43 N01-44 N01-45 N01-46 N01-47 N01-48 N01-49 N01-50 N01-51 N01-52 N01-53 N01-54 N01-55 N01-56 N01-57 N01-58 N01-59 N01-60 N01-61 N01-62 N06 Save Version marker 2026-10-06 N06 immediate-boundary retry marker 2026-10-06 N06 strict immediate marker 2026-10-06 N06 strict retry marker2 2026-10-06 N06 strict immediate marker3 2026-10-06
+						49 text (settable) Fixture lesson 1, paragraph 1. The quick brown fox measures canonical project I/O while preserving valid domain structure. The quick brown fox measures canonical project I/O while preserving valid domain structure. The quick brown fox measures canonical project I/O while preserving valid domain structure. The quick brown fox measures canonical project I/O while preserving valid domain structure. The quick brown fox measures canonical project I/O while preserving valid domain structure. The quick brown fox m
+				50 container
+					51 button 在正文下方插入正文区块, Help: 在这块正文下方插入
+					52 summary 更多正文区块操作：正文, Help: 更多操作, Value: off
+						53 text ⋯
+					54 text entry area (settable) 正文内容, Placeholder: 开始写点什么…, Value: Fixture long body 1. The quick brown fox measures canonical project I/O while preserving valid domain structure. The quick brown fox measures canonical project I/O while preserving valid domain structure. The quick brown fox measures canonical project I/O while preserving valid domain structure. The quick brown fox measures canonical project I/O while preserving valid domain structure. The quick brown fox measures canonical project I/O while preserving valid domain structure. The quick brown fox measures canonical project I/O while preserving valid domain structure. The quick brown fox measures canonical project I/O while preserving valid domain structure. The quick brown fox measures canonical project I/O while preserving valid domain structure. The quick brown fox measures canonical project I/O while preserving valid domain structure. The quick brown fox measures canonical project I/O while preserving valid domain structure. The quick brown fox measures canonical project I/O while preserving valid domain structure. The quick brown fox measures canonical project I/O while preserving valid domain structure. The quick brown fox measures canonical project I/O while preserving valid domain structure. The quick brown fox measures canonical project I/O while preserving valid domain structure. The quick brown fox measures canonical project I/O while preserving valid domain structure. The quick brown fox measures canonical project I/O while preserving valid domain structure. The quick brown fox measures canonical project I/O while preserving valid domain structure. The quick brown fox measures canonical project I/O while preserving valid domain structure. The quick brown fox measures canonical project I/O while preserving valid domain structure. The quick brown fox measures canonical project I/O while preserving valid domain structure. The quick brown fox measures canonical project I/O while preserving valid domain structure. The quick brown fox measures canonical project I/O while preserving valid domain structure. The quick brown fox measures canonical project I/O while preserving valid domain structure. The quick brown fox measures canonical project I/O while preserving valid domain structure. The quick brown fox measures canonical project I/O while preserving valid domain structure. The quick brown fox measures canonical project I/O while preserving valid domain structure. The quick brown fox measures canonical project I/O while preserving valid domain structure. The quick brown fox measures canonical project I/O while preserving valid domain structure. The quick brown fox measures canonical project I/O while preserving valid domain structure. The quick brown fox measures canonical project I/O while preserving valid domain structure. The quick brown fox measures canonical project I/O while preserving valid domain structure. The quick brown fox measures canonical project I/O while preserving valid domain structure. The quick brown fox measures canonical project I/O while preserving valid domain structure. The quick brown fox measures canonical project I/O while preserving valid domain structure. The quick brown fox measures canonical project I/O while preserving valid domain structure. The quick brown fox measures canonical project I/O while preserving valid domain structure. The quick brown fox measures canonical project I/O while preserving valid domain structure. The quick brown fox measures canonical project I/O while preserving valid domain structure. The quick brown fox measures canonical project I/O while preserving valid domain structure. The quick brown fox measures canonical project I/O while preserving valid domain structure. The quick brown fox measures canonical project I/O while preserving valid domain structure. The quick brown fox measures canonical project I/O while preserving valid domain structure. The quick brown fox measures canonical project I/O while preserving valid domain structure. The quick brown fox measures canonical project I/O while preserving valid domain structure. The quick brown fox measures canonical project I/O while preserving valid domain structure. The quick brown fox measures canonical project I/O while preserving valid domain structure. The quick brown fox measures canonical project I/O while preserving valid domain structure. The quick brown fox measures canonical project I/O while preserving valid domain structure. The quick brown fox measures canonical project I/O while preserving valid domain structure. The quick brown fox measures canonical project I/O while preserving valid domain structure. The quick brown fox measures canonical project I/O while preserving valid domain structure. The quick brown fox measures canonical project I/O while preserving valid domain structure. The quick brown fox measures canonical project I/O while preserving valid domain structure. The quick brown fox measures canonical project I/O while preserving valid domain structure. The quick brown fox measures canonical project I/O while preserving valid domain structure. The quick brown fox measures canonical project I/O while preserving valid domain structure. The quick brown fox measures canonical project I/O while preserving valid domain structure. The quick brown fox measures canonical project I/O while preserving valid domain structure. The quick brown fox measures canonical project I/O while preserving valid domain structure. The quick brown fox measures canonical project I/O while preserving valid domain structure. The quick brown fox measures canonical project I/O while preserving valid domain structure. The quick brown fox measures canonical project I/O while preserving valid domain structure. The quick brown fox measures canonical project I/O while preserving valid domain structure. The quick brown fox measures canonical project I/O while preserving valid domain structure. The quick brown fox measures canonical project I/O while preserving valid domain structure. The quick brown fox measures canonical project I/O while preserving valid domain structure. The quick brown fox measures canonical project I/O while preserving valid domain structure. The quick brown fox measures canonical project I/O while preserving valid domain structure. The quick brown fox measures canonical project I/O while preserving valid domain structure. The quick brown fox measures canonical project I/O while preserving valid domain structure. The quick brown fox measures canonical project I/O while preserving valid domain structure. The quick brown fox measures canonical project I/O while preserving valid domain structure. The quick brown fox measures canonical project I/O while preserving valid domain structure. The quick brown fox measures canonical project I/O while preserving valid domain structure. The quick brown fox measures canonical project I/O while preserving valid domain structure. The quick brown fox measures canonical project I/O while preserving valid domain structure. The quick brown fox measures canonical project I/O while preserving valid domain structure. The quick brown fox measures canonical project I/O while preserving valid domain structure. The quick brown fox measures canonical project I/O while preserving valid domain structure. The quick brown fox measures canonical project I/O while preserving valid domain structure. The quick brown fox measures canonical project I/O while preserving valid domain structure. The quick brown fox measures canonical project I/O while preserving valid domain structure. The quick brown fox measures canonical project I/O while preserving valid domain structure. The quick brown fox measures canonical project I/O while preserving valid domain structure. The quick brown fox measures canonical project I/O while preserving valid domain structure. The quick brown fox measures canonical project I/O while preserving valid domain structure. The quick brown fox measures canonical project I/O while preserving valid domain structure. The quick brown fox measures canonical project I/O while preserving valid domain structure.
+						55 text (settable) Fixture long body 1. The quick brown fox measures canonical project I/O while preserving valid domain structure. The quick brown fox measures canonical project I/O while preserving valid domain structure. The quick brown fox measures canonical project I/O while preserving valid domain structure. The quick brown fox measures canonical project I/O while preserving valid domain structure. The quick brown fox measures canonical project I/O while preserving valid domain structure. The quick brown fox measures ca
+				56 container
+					57 button 在正文下方插入正文区块, Help: 在这块正文下方插入
+					58 summary 更多正文区块操作：正文, Help: 更多操作, Value: off
+						59 text ⋯
+					60 text entry area (settable) 正文内容, Placeholder: 开始写点什么…, Value: Fixture lesson 1, paragraph 3. The quick brown fox measures canonical project I/O while preserving valid domain structure. The quick brown fox measures canonical project I/O while preserving valid domain structure. The quick brown fox measures canonical project I/O while preserving valid domain structure. The quick brown fox measures canonical project I/O while preserving valid domain structure. The quick brown fox measures canonical project I/O while preserving valid domain structure. The quick brown fox measures canonical project I/O while preserving valid domain structure. The quick brown fox measures canonical project I/O while preserving valid domain structure. The quick brown fox measures canonical project I/O while preserving valid domain structure. The quick brown fox measures canonical project I/O while preserving valid domain structure. The quick brown fox measures canonical project I/O while preserving valid domain structure. The quick brown fox measures canonical project I/O while preserving valid domain structure.
+						61 text (settable) Fixture lesson 1, paragraph 3. The quick brown fox measures canonical project I/O while preserving valid domain structure. The quick brown fox measures canonical project I/O while preserving valid domain structure. The quick brown fox measures canonical project I/O while preserving valid domain structure. The quick brown fox measures canonical project I/O while preserving valid domain structure. The quick brown fox measures canonical project I/O while preserving valid domain structure. The quick brown fox m
+				62 button ＋ 继续写作
+				63 button (disabled) ← 上一课
+				64 text 跳课不会丢失未保存内容
+				65 button 下一课 →
+				66 button 展开右栏
+				67 text S01-01｜Fixture lesson 1 正文：待研究 待补：已齐 排版：未开始 完成度：83% 本地优先 · 自动保存
+	68 close button
+	69 full screen button Help: this button also has an action to zoom the window, Secondary Actions: zoom the window
+	70 minimize button
+	71 text AI Course Workbench
+72 menu bar
+	73 AI Course Workbench QA Preview Final6
+	74 File
+	75 Edit
+	76 View
+	77 Window
+	78 Help
+
+The focused UI element is 2 HTML content Description: AI Course Workbench, URL: tauri://localhost

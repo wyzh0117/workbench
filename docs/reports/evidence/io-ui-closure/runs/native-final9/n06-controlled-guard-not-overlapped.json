@@ -1,0 +1,10 @@
+{
+  "source": "Final9 / b09718c0823f170836a223bab79b750722e83c73",
+  "project_id": "015402b7-cd5c-498d-8a46-6ef07471a4fb",
+  "guard_acquired_utc": "2026-10-06T10:42:30.683Z",
+  "guard_released_utc": "2026-10-06T10:42:41.706Z",
+  "cua_click_start_utc": "2026-10-06T10:42:42.431Z",
+  "click_return_ms": 366.099,
+  "outcome": "click happened after lock release; no controlled overlap and no pending observed; workspace showed saved and snapshot row created",
+  "classification": "not a pending/guard-overlap pass"
+}

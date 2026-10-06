@@ -1,0 +1,118 @@
+{
+  "kind": "local_native_qa_candidate",
+  "status": "READY_FOR_NATIVE_CUA; NONZERO_SCROLL_COLD_REOPEN_PENDING",
+  "source_commit": "9bbc8cf3067b6117be8de41e1bd5bef3960a671a",
+  "application_payload_source_pin": "9bbc8cf3067b6117be8de41e1bd5bef3960a671a",
+  "rust_source_commit": "fcefcb106c2cf4e957d54a1ee7e112e2aa83cac0",
+  "version": "0.2.7",
+  "build": {
+    "command": "TAURI_CONFIG={\"productName\":\"AI Course Workbench QA Preview Final10\",\"identifier\":\"io.github.wyzh0117.ai-course-workbench.qa.io-ui-closure.final10\",\"version\":\"0.2.7\"} CARGO_TARGET_DIR=/tmp/io-ui-closure-native-qa-prewarm-target CARGO_BUILD_JOBS=2 cargo tauri build --target aarch64-apple-darwin --bundles app --no-sign --config /tmp/io-ui-closure-native-qa-final10-overlay.json",
+    "profile": "release",
+    "target": "aarch64-apple-darwin",
+    "exit_code": 0,
+    "target_cache": "/tmp/io-ui-closure-native-qa-prewarm-target",
+    "overlay": {
+      "path": "/tmp/io-ui-closure-native-qa-final10-overlay.json",
+      "productName": "AI Course Workbench QA Preview Final10",
+      "identifier": "io.github.wyzh0117.ai-course-workbench.qa.io-ui-closure.final10",
+      "version": "0.2.7",
+      "sha256": "f5996449f482e014d76afc00ca6124585b7dda7788a3f41b1a0432a80f8eb801"
+    },
+    "compile_context": {
+      "build_script_output": "/tmp/io-ui-closure-native-qa-prewarm-target/aarch64-apple-darwin/release/build/ai-course-workbench-313b3101dcd1f675/output",
+      "sha256": "137262090fc5b6aead4b466d244d712ad7af0d57616122dfd24539d9d4fbe14c",
+      "app_name": "final10",
+      "identifier_from_overlay": "io.github.wyzh0117.ai-course-workbench.qa.io-ui-closure.final10"
+    },
+    "log": {
+      "path": "runs/native-9bbc8cf-final10-config-aware-rebuild.log",
+      "sha256": "1b733642510b9903c39a03688fb0b0f690a0f9c7f3d4f603a051e5187d9d3cc2",
+      "bytes": 1877
+    },
+    "warnings": [
+      "unused assignment to total_bytes",
+      "write_project_value_with_warning is unused",
+      "write_project_value is unused"
+    ]
+  },
+  "app": {
+    "path": "/tmp/io-ui-closure-native-qa-final10/AI Course Workbench QA Preview Final10.app",
+    "product_name": "AI Course Workbench QA Preview Final10",
+    "bundle_identifier": "io.github.wyzh0117.ai-course-workbench.qa.io-ui-closure.final10",
+    "short_version": "0.2.7",
+    "bundle_version": "0.2.7",
+    "architecture": "arm64",
+    "signature": "ad-hoc; no Developer ID; not notarized",
+    "codesign_verify_deep_strict": "passed",
+    "executable_sha256": "b145b9407898559e0da5d55c2a0f7364b2ff691f4305e8efe67dce7e74a08824",
+    "app_tree_sha256": "85063542e578dffd9398bb8a029dfc9db9c9e0072d292c51e02f5b3f8b98fb30",
+    "app_tree_algorithm": "sorted relative path + NUL + file SHA-256 hex + LF",
+    "files": 4,
+    "bytes": 20247532,
+    "file_manifest": [
+      {
+        "path": "Contents/Info.plist",
+        "bytes": 1240,
+        "sha256": "509273260f2673d4ea93e8baa052c2dc7d8db8baabbb81ac63e4a50fd4921164"
+      },
+      {
+        "path": "Contents/MacOS/ai-course-workbench",
+        "bytes": 19758832,
+        "sha256": "b145b9407898559e0da5d55c2a0f7364b2ff691f4305e8efe67dce7e74a08824"
+      },
+      {
+        "path": "Contents/Resources/icon.icns",
+        "bytes": 485020,
+        "sha256": "bd08622082555dced600f28e682429eda68eda3e9145a1012fe76816354a75cc"
+      },
+      {
+        "path": "Contents/_CodeSignature/CodeResources",
+        "bytes": 2440,
+        "sha256": "c91f2e976b7fda4651a3cc0170c7b33d9657997fcf47fb2bff0a4145cb95e39d"
+      }
+    ],
+    "sign_log": {
+      "path": "runs/native-9bbc8cf-final10-final-sign-verify.log",
+      "sha256": "ccced6f488fcac74eb2de23baed6892d5a3dded60302edc49cfbb6a4ad3a6e39",
+      "bytes": 2274
+    }
+  },
+  "zip": {
+    "path": "native-qa-candidate-final10-aarch64-0.2.7.zip",
+    "absolute_path": "/Users/youngi/.codex/worktrees/io-ui-closure/workbench/docs/reports/evidence/io-ui-closure/native-qa-candidate-final10-aarch64-0.2.7.zip",
+    "bytes": 7082849,
+    "sha256": "bb3413a4f4f8d7658e69f5e523da514aca034e32f241e2bdc09fe425fadd3822",
+    "integrity": "unzip -t passed",
+    "verification_log": {
+      "path": "runs/native-9bbc8cf-final10-package-verify.log",
+      "sha256": "c1b3639dd573301ac58da47a06df103df7735388277dc85eeb7988e9b4068ccc",
+      "bytes": 1107
+    }
+  },
+  "initial_build_package": {
+    "path": "/Users/youngi/.codex/worktrees/io-ui-closure/workbench/docs/reports/evidence/io-ui-closure/native-qa-candidate-final10-initial-build.zip",
+    "sha256": "f52f99a6b1e12b148229be9b957b29156dc92fb8117285bbea383f7eb68b4b75",
+    "bytes": 7082849,
+    "note": "Preserved for provenance. The first audit inspected the older 00b935 build context by mistake; the actual linked 313b Final10 executable was subsequently verified against the exact 9bbc assets. This initial package is not classified as stale or invalid."
+  },
+  "embedded_frontend": {
+    "verification_json": "native-9bbc8cf-final10-embedded-assets.json",
+    "verification_json_sha256": "e2fc0507a128e0212e41873021afddf4001a6cb8990d38eee5c7a728fef085db",
+    "source_file_count": 18,
+    "exact_source_byte_matches": 17,
+    "transformed_index_dom_events_equal": true,
+    "all_matched_payloads_found_in_signed_executable": true,
+    "verification_exit_code": 0
+  },
+  "runtime_data_scope": "Not yet inspected in a launched Final10 process. Compile context and Info.plist both carry the distinct Final10 identifier; app-local session path will be captured from the live process. No user installation was touched.",
+  "launched_by_builder": false,
+  "installed": false,
+  "published": false,
+  "native_gui_qa": {
+    "status": "pending nonzero center-scroll persistence and cold reopen on this exact Final10 path",
+    "app_path": "/tmp/io-ui-closure-native-qa-final10/AI Course Workbench QA Preview Final10.app"
+  },
+  "limitations": [
+    "Ad-hoc signing only; no Developer ID signing or notarization."
+  ]
+}

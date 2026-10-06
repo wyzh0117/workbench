@@ -1,0 +1,205 @@
+{
+  "captured_at_utc": "2026-10-06T05:57:24.426158+00:00",
+  "source_pin": "77993519e31cb3c780a77af319ce3033acecccf2",
+  "ui_operation": "Root reported Native Final5 Recovery Restore retry succeeded after restoring snapshots mode to 0755; separate original-history snapshot restore also succeeded, then no further edits requested.",
+  "original_canonical_before_restore": {
+    "path": "/tmp/workbench-io-ui-native-final/history-restore/project.json",
+    "sha256_before_seed": "64b9b83fdbbea3eb2da223c2b368aef031ba644096719a09c9e10643898267be",
+    "bytes_before_seed": 69270,
+    "project_id": "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
+    "title_before_seed": "F-history unindexed prior snapshot",
+    "updated_at_before_seed": "2026-08-15T12:00:00.000Z"
+  },
+  "history_snapshot_restore": {
+    "canonical": {
+      "path": "/tmp/workbench-io-ui-native-final/history/project.json",
+      "bytes": 69309,
+      "sha256": "eed2f395c3288103329c1be6c39ef39b4399f7b84125287cc8e105d377af6874",
+      "mtime_ns": 1791266102790693090,
+      "project_id": "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
+      "title": "F-history incomplete metadata body",
+      "updated_at": "2026-08-20T12:00:00.000Z",
+      "snapshot_row_count": 1
+    },
+    "recovery_paths": [],
+    "active_recovery_json_absent": true,
+    "recovery_bak_absent": true,
+    "snapshot_directory_file_count": 11,
+    "restore_before_snapshot": {
+      "path": "/tmp/workbench-io-ui-native-final/history/.workspace/snapshots/restore-before-0b5efdd7d3461063233abe2b.json",
+      "bytes": 71582,
+      "sha256": "74a38a087b9bc69ff77344c69062ec3784df9f053e51b1b76fc978c924c58e60",
+      "mtime_ns": 1791266102771871816,
+      "id": "restore-before-0b5efdd7d3461063233abe2b",
+      "name": "恢复前备份",
+      "note": "恢复旧版本前自动创建",
+      "created_at": "1791266102765",
+      "content_hash": "98e835aeb11ba464a7817dc5e061f46cc544a4f0e0d6c2b7294e23f91557c7f4",
+      "project_id": "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
+      "project_dir": "/private/tmp/workbench-io-ui-native-final/history",
+      "lease_generation": "app-p40150-1791265625598-0-ff1a75325f48744aac0b50a3c896cf703ed8451f68396c5d:lease-2",
+      "editor_generation": 2,
+      "operation_id": "32f5bf67-5461-409e-8295-f250f9867123",
+      "revision": 1,
+      "embedded_project_id": "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
+      "embedded_title": "F-history unindexed prior snapshot",
+      "embedded_updated_at": "2026-08-15T12:00:00.000Z"
+    },
+    "canonical_snapshot_row": {
+      "content_hash": "98e835aeb11ba464a7817dc5e061f46cc544a4f0e0d6c2b7294e23f91557c7f4",
+      "created_at": "1791266102765",
+      "id": "restore-before-0b5efdd7d3461063233abe2b",
+      "name": "恢复前备份",
+      "note": "恢复旧版本前自动创建",
+      "project_id": "dddddddd-dddd-4ddd-8ddd-dddddddddddd"
+    },
+    "backup_embedded_project_deep_equals_recovery_restore_backup_project": true,
+    "snapshot_wrapper_content_hash_matches_recovery_restore_backup": true,
+    "assets": [
+      {
+        "path": "assets/fixture-00.gif",
+        "exists": true,
+        "bytes": 7493,
+        "sha256": "eacfdc6858d34f7c3c299ed7fa75a2a9145981098c24b3900986957b9e94c0d2",
+        "matches_fixture": true
+      },
+      {
+        "path": "assets/fixture-00.mp4",
+        "exists": true,
+        "bytes": 8748,
+        "sha256": "697f1b863079014da64bc345296d4671197a4d921341bf11ef71c26dc21cf7c6",
+        "matches_fixture": true
+      },
+      {
+        "path": "assets/fixture-000.png",
+        "exists": true,
+        "bytes": 1488,
+        "sha256": "0c479466fd0ea052ca693290293b423068552c091e37922de3944ce7eefdf0d3",
+        "matches_fixture": true
+      },
+      {
+        "path": "assets/fixture-001.png",
+        "exists": true,
+        "bytes": 1482,
+        "sha256": "3cced520167601a8cde0af73da82fa6a035f11e14976d3a19733701546d8078e",
+        "matches_fixture": true
+      },
+      {
+        "path": "assets/fixture-002.png",
+        "exists": true,
+        "bytes": 1503,
+        "sha256": "e4943822009bebf60c212569ecad21c1fd176fbfb26552974c3e565a931b35aa",
+        "matches_fixture": true
+      },
+      {
+        "path": "assets/fixture-003.png",
+        "exists": true,
+        "bytes": 1519,
+        "sha256": "96530624979bf1be2732b5a9b2da93536da71ee9f0cdd99abded5346600dbd80",
+        "matches_fixture": true
+      }
+    ]
+  },
+  "recovery_restore": {
+    "canonical": {
+      "path": "/tmp/workbench-io-ui-native-final/history-restore/project.json",
+      "bytes": 69554,
+      "sha256": "cc4b2cd296c406856354ff0d2e135074839675f0b8bd342839e9ac35ee8edbf5",
+      "mtime_ns": 1791265820313679672,
+      "project_id": "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
+      "title": "F-history recovery candidate restore final",
+      "updated_at": "2026-10-06T05:50:20.250Z",
+      "snapshot_row_count": 2
+    },
+    "journal_paths": [
+      "recovery.bak"
+    ],
+    "recovery_json_absent": true,
+    "recovery_bak": {
+      "path": "/tmp/workbench-io-ui-native-final/history-restore/.workspace/recovery.bak",
+      "bytes": 63332,
+      "sha256": "610cd93b906bbb0556ac4f6f66fbabc71fe77ca9c8b1817e733d3c6c3219ed9c",
+      "mtime_ns": 1791260474494666261
+    },
+    "recovery_bak_transaction_id": "155a152b-0f7e-4d43-a19b-78e1f3ba89ad",
+    "restore_before_snapshot": {
+      "path": "/tmp/workbench-io-ui-native-final/history-restore/.workspace/snapshots/6df78a1d-bacc-4cc5-9247-8ff48123fa85.json",
+      "bytes": 71590,
+      "sha256": "eac4f3ed9dd2bc62ec30f5d85c9b848d9f0e553378f048ee79b97858d3451585",
+      "mtime_ns": 1791265820171247293,
+      "id": "6df78a1d-bacc-4cc5-9247-8ff48123fa85",
+      "name": "恢复前备份",
+      "note": "恢复自动保存前自动创建",
+      "created_at": "1791265820165",
+      "content_hash": "98e835aeb11ba464a7817dc5e061f46cc544a4f0e0d6c2b7294e23f91557c7f4",
+      "project_id": "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
+      "project_dir": "/private/tmp/workbench-io-ui-native-final/history-restore",
+      "lease_generation": "app-p40150-1791265625598-0-ff1a75325f48744aac0b50a3c896cf703ed8451f68396c5d:lease-1",
+      "editor_generation": 1,
+      "operation_id": "54df32b5-9b05-463f-a15f-c83bbb3f5502",
+      "revision": 1
+    },
+    "assets": [
+      {
+        "path": "assets/fixture-00.gif",
+        "exists": true,
+        "bytes": 7493,
+        "sha256": "eacfdc6858d34f7c3c299ed7fa75a2a9145981098c24b3900986957b9e94c0d2",
+        "matches_fixture": true
+      },
+      {
+        "path": "assets/fixture-00.mp4",
+        "exists": true,
+        "bytes": 8748,
+        "sha256": "697f1b863079014da64bc345296d4671197a4d921341bf11ef71c26dc21cf7c6",
+        "matches_fixture": true
+      },
+      {
+        "path": "assets/fixture-000.png",
+        "exists": true,
+        "bytes": 1488,
+        "sha256": "0c479466fd0ea052ca693290293b423068552c091e37922de3944ce7eefdf0d3",
+        "matches_fixture": true
+      },
+      {
+        "path": "assets/fixture-001.png",
+        "exists": true,
+        "bytes": 1482,
+        "sha256": "3cced520167601a8cde0af73da82fa6a035f11e14976d3a19733701546d8078e",
+        "matches_fixture": true
+      },
+      {
+        "path": "assets/fixture-002.png",
+        "exists": true,
+        "bytes": 1503,
+        "sha256": "e4943822009bebf60c212569ecad21c1fd176fbfb26552974c3e565a931b35aa",
+        "matches_fixture": true
+      },
+      {
+        "path": "assets/fixture-003.png",
+        "exists": true,
+        "bytes": 1519,
+        "sha256": "96530624979bf1be2732b5a9b2da93536da71ee9f0cdd99abded5346600dbd80",
+        "matches_fixture": true
+      }
+    ]
+  },
+  "domain_validation_issues": {
+    "history_canonical": [],
+    "history_backup": [],
+    "recovery_restore_canonical": [],
+    "recovery_restore_backup": []
+  },
+  "checks": {
+    "history_canonical_is_restored_snapshot_title": true,
+    "history_restore_backup_project_equals_original_state_backup": true,
+    "history_restore_backup_row_bound_to_same_project": true,
+    "history_restore_backup_content_hash_agrees_across_both_restore_paths": true,
+    "all_assets_match_original_clone_manifest": true,
+    "all_four_domain_validations_zero": true,
+    "recovery_restore_current_project_candidate": true,
+    "recovery_journal_active_files_absent": true
+  },
+  "known_recovery_backup_retention": "On history-restore, recovery.json is absent but recovery.bak remains with the original txn 155a... bytes/hash. It was not deleted; this is reported as retained sidecar, not claimed cleared.",
+  "status": "PASS"
+}

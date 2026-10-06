@@ -1,0 +1,35 @@
+SOURCE_COMMIT=77993519e31cb3c780a77af319ce3033acecccf2
+SIGN_COMMAND=codesign --force --deep --sign - "/tmp/io-ui-closure-native-qa-final5/AI Course Workbench QA Preview Final5.app"
+/tmp/io-ui-closure-native-qa-final5/AI Course Workbench QA Preview Final5.app: replacing existing signature
+SIGN_EXIT_CODE=0
+/tmp/io-ui-closure-native-qa-final5/AI Course Workbench QA Preview Final5.app: valid on disk
+/tmp/io-ui-closure-native-qa-final5/AI Course Workbench QA Preview Final5.app: satisfies its Designated Requirement
+VERIFY_EXIT_CODE=0
+Executable=/private/tmp/io-ui-closure-native-qa-final5/AI Course Workbench QA Preview Final5.app/Contents/MacOS/ai-course-workbench
+Identifier=io.github.wyzh0117.ai-course-workbench.qa.io-ui-closure.final5
+Format=app bundle with Mach-O thin (arm64)
+CodeDirectory v=20400 size=38743 flags=0x2(adhoc) hashes=1203+3 location=embedded
+VersionPlatform=1
+VersionMin=720896
+VersionSDK=918528
+Hash type=sha256 size=32
+CandidateCDHash sha256=3b70ef884da9bb7d29e5db4b9d383f13d5dcd95e
+CandidateCDHashFull sha256=3b70ef884da9bb7d29e5db4b9d383f13d5dcd95e2999c71121756a23f3fdc8ad
+Hash choices=sha256
+CMSDigest=3b70ef884da9bb7d29e5db4b9d383f13d5dcd95e2999c71121756a23f3fdc8ad
+CMSDigestType=2
+Executable Segment base=0
+Executable Segment limit=13647872
+Executable Segment flags=0x1
+Page size=16384
+CDHash=3b70ef884da9bb7d29e5db4b9d383f13d5dcd95e
+Signature=adhoc
+Info.plist entries=16
+TeamIdentifier=not set
+Sealed Resources version=2 rules=13 files=1
+Internal requirements count=0 size=12
+BUNDLE_IDENTIFIER=io.github.wyzh0117.ai-course-workbench.qa.io-ui-closure.final5
+BUNDLE_SHORT_VERSION=0.2.7
+BUNDLE_VERSION=0.2.7
+EXECUTABLE_ARCHS=arm64
+EXECUTABLE_SHA256=a2703f7945194efa5a5a55145bc048cb63c4bfda13765ab85f0bc44fc18b5d92  /tmp/io-ui-closure-native-qa-final5/AI Course Workbench QA Preview Final5.app/Contents/MacOS/ai-course-workbench

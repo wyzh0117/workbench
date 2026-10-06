@@ -1,0 +1,36 @@
+captured_at=2026-10-06T04:29:38Z
+label=opened
+source_pin=7555f02fdbdad1c3aa558b2b85e3cfe6fb8fa3be
+project_root=/tmp/workbench-io-ui-native-final/small
+
+[qa_processes]
+pid=29533 command=/private/tmp/io-ui-closure-native-qa-final3/AI Course Workbench QA Preview Final3.app/Contents/MacOS/ai-course-workbench
+
+[canonical]
+file=/tmp/workbench-io-ui-native-final/small/project.json
+bytes=74838 mtime_epoch=1791256272 mtime=Oct  6 11:11:12 2026 mode=-rw-r--r--
+bd98b19e9407988fcd9fc43437082a792024f9c8bfc53df3de1e4f00ff8c4666  /tmp/workbench-io-ui-native-final/small/project.json
+{"project_id":"aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa","title":"External canonical title QA","updated_at":"2026-10-06T03:11:11.965Z"}
+
+[canonical_backup]
+file=/tmp/workbench-io-ui-native-final/small/project.json.bak absent
+
+[recovery_journal]
+file=/tmp/workbench-io-ui-native-final/small/.workspace/recovery.json absent
+
+[recovery_backup]
+file=/tmp/workbench-io-ui-native-final/small/.workspace/recovery.json.bak absent
+
+[lease]
+file=/tmp/workbench-io-ui-native-final/small/.workspace/project.lock
+bytes=206 mtime_epoch=1791260978 mtime=Oct  6 12:29:38 2026 mode=-rw-r--r--
+eb338e231f69e9602d8ef847db2451ea7eece3e8edc897dedef70fcd4afea77e  /tmp/workbench-io-ui-native-final/small/.workspace/project.lock
+{"pid":29533,"host":"localhost","app_instance_id":"app-p29533-1791260953269-0-157d89e2f784476642a6eee0236a198b56d57e064b8fb58a","opened_at":"2026-10-06T04:29:13.271Z","heartbeat":"2026-10-06T04:29:38.360Z","generation":null}
+file=/tmp/workbench-io-ui-native-final/small/.workspace/project.lock.guard
+bytes=0 mtime_epoch=1791255702 mtime=Oct  6 11:01:42 2026 mode=-rw-r--r--
+e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855  /tmp/workbench-io-ui-native-final/small/.workspace/project.lock.guard
+guard_holders=
+[qa_appdata_session]
+file=/Users/youngi/Library/Application Support/io.github.wyzh0117.ai-course-workbench/.workspace/session.json
+bytes=10731 mtime_epoch=1791210009 mtime=Oct  5 22:20:09 2026 mode=-rw-r--r--
+5c506dba39f27a5c89f05b7189f9952410481b0f1c308aad8ee4cca2c1bbc47f  /Users/youngi/Library/Application Support/io.github.wyzh0117.ai-course-workbench/.workspace/session.json

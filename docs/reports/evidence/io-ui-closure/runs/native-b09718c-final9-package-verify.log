@@ -1,0 +1,13 @@
+Archive:  docs/reports/evidence/io-ui-closure/native-qa-candidate-final9-aarch64-0.2.7.zip
+    testing: AI Course Workbench QA Preview Final9.app/   OK
+    testing: AI Course Workbench QA Preview Final9.app/Contents/   OK
+    testing: AI Course Workbench QA Preview Final9.app/Contents/_CodeSignature/   OK
+    testing: AI Course Workbench QA Preview Final9.app/Contents/_CodeSignature/CodeResources   OK
+    testing: AI Course Workbench QA Preview Final9.app/Contents/MacOS/   OK
+    testing: AI Course Workbench QA Preview Final9.app/Contents/MacOS/ai-course-workbench   OK
+    testing: AI Course Workbench QA Preview Final9.app/Contents/Resources/   OK
+    testing: AI Course Workbench QA Preview Final9.app/Contents/Resources/icon.icns   OK
+    testing: AI Course Workbench QA Preview Final9.app/Contents/Info.plist   OK
+No errors detected in compressed data of docs/reports/evidence/io-ui-closure/native-qa-candidate-final9-aarch64-0.2.7.zip.
+bd9fb785bc1adaafaca74cdec34b69bbf75da36a665945e1b5100250713f21aa  docs/reports/evidence/io-ui-closure/native-qa-candidate-final9-aarch64-0.2.7.zip
+zip_bytes=7082150

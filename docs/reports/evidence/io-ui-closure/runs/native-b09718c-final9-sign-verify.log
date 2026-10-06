@@ -1,0 +1,31 @@
+/tmp/io-ui-closure-native-qa-final9/AI Course Workbench QA Preview Final9.app: replacing existing signature
+/tmp/io-ui-closure-native-qa-final9/AI Course Workbench QA Preview Final9.app: valid on disk
+/tmp/io-ui-closure-native-qa-final9/AI Course Workbench QA Preview Final9.app: satisfies its Designated Requirement
+Executable=/private/tmp/io-ui-closure-native-qa-final9/AI Course Workbench QA Preview Final9.app/Contents/MacOS/ai-course-workbench
+Identifier=io.github.wyzh0117.ai-course-workbench.qa.io-ui-closure.final9
+Format=app bundle with Mach-O thin (arm64)
+CodeDirectory v=20400 size=38743 flags=0x2(adhoc) hashes=1203+3 location=embedded
+VersionPlatform=1
+VersionMin=720896
+VersionSDK=918528
+Hash type=sha256 size=32
+CandidateCDHash sha256=33ea048bb8f17c06201ed07832c07f5e02d458c2
+CandidateCDHashFull sha256=33ea048bb8f17c06201ed07832c07f5e02d458c2d73ae99778ec7721bf773813
+Hash choices=sha256
+CMSDigest=33ea048bb8f17c06201ed07832c07f5e02d458c2d73ae99778ec7721bf773813
+CMSDigestType=2
+Executable Segment base=0
+Executable Segment limit=13647872
+Executable Segment flags=0x1
+Page size=16384
+CDHash=33ea048bb8f17c06201ed07832c07f5e02d458c2
+Signature=adhoc
+Info.plist entries=16
+TeamIdentifier=not set
+Sealed Resources version=2 rules=13 files=1
+Internal requirements count=0 size=12
+io.github.wyzh0117.ai-course-workbench.qa.io-ui-closure.final9
+0.2.7
+/tmp/io-ui-closure-native-qa-final9/AI Course Workbench QA Preview Final9.app/Contents/MacOS/ai-course-workbench: Mach-O 64-bit executable arm64
+arm64
+a7511217e44f9c8c28653ea91a1d58310124307787d323da18d9412014696f96  /tmp/io-ui-closure-native-qa-final9/AI Course Workbench QA Preview Final9.app/Contents/MacOS/ai-course-workbench

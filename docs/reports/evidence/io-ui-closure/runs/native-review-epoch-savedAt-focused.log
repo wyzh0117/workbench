@@ -1,0 +1,5 @@
+running 1 test from ./tests/authoring_ui_test.ts
+version history formats ISO and native epoch-millisecond timestamps ... ok (42ms)
+
+ok | 1 passed | 0 failed | 80 filtered out (48ms)
+

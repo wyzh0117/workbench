@@ -1,0 +1,56 @@
+Window: "AI Course Workbench", App: AI Course Workbench QA Preview Final3.
+0 standard window AI Course Workbench, Secondary Actions: Raise
+	1 scroll area
+		2 HTML content Description: AI Course Workbench, URL: tauri://localhost
+			3 container
+				4 text AI COURSE WORKBENCH
+				5 heading 把一套课程，从想法做到发布, Value: 1
+					6 text 把一套课程，从想法做到发布
+				7 text 课程内容保存在本机；正文、待补、素材、排版和版本都在同一个工作台里。
+				8 container 继续你上次的工作
+					9 text 当前项目
+					10 heading 继续你上次的工作, Value: 2
+						11 text 继续你上次的工作
+					12 text 未命名课程
+					13 heading 课程内容尚未开始, Value: 3
+						14 text 课程内容尚未开始
+					15 text 新建课程或导入资料后，当前工作会显示在这里。
+					16 button 继续工作
+				17 container 新建、打开或导入
+					18 text 项目入口
+					19 heading 新建、打开或导入, Value: 2
+						20 text 新建、打开或导入
+					21 text 先选项目入口，再决定要继续编辑的课程内容。
+					22 container 新建课程
+						23 text 01 · 从头开始
+						24 heading 新建课程, Value: 3
+							25 text 新建课程
+						26 text 创建一个本机 Workbench 项目，再从课程地图搭建结构。
+						27 button 新建课程
+					28 container 打开项目文件夹
+						29 text 02 · 已有项目
+						30 heading 打开项目文件夹, Value: 3
+							31 text 打开项目文件夹
+						32 text 继续一个已经创建的 Workbench 项目；不会覆盖其他项目。
+						33 button 选择项目文件夹
+					34 container 从文件夹开始
+						35 text 03 · 导入资料
+						36 heading 从文件夹开始, Value: 3
+							37 text 从文件夹开始
+						38 text 只读扫描原始资料，确认映射后才会导入选中的内容。
+						39 button 选择资料文件夹
+				40 text 项目库
+				41 heading 最近打开, Value: 2
+					42 text 最近打开
+				43 text 本机项目 还没有最近项目 新建课程，或打开一个已有的 Workbench 项目文件夹。项目文件始终保存在本机。 可以选择新建课程、打开已有 Workbench 项目，或导入已有文件夹（只读扫描，确认前不会改写原文件）。 手上已经有课程概论、大纲、教材目录、文章、表格或 AI 对话时：进入课程后打开「课程地图」，粘贴进去先生成课程地图草稿，确认后才创建正式内容。
+	44 close button
+	45 full screen button Help: this button also has an action to zoom the window, Secondary Actions: zoom the window
+	46 minimize button
+	47 text AI Course Workbench
+48 menu bar
+	49 AI Course Workbench QA Preview Final3
+	50 File
+	51 Edit
+	52 View
+	53 Window
+	54 Help

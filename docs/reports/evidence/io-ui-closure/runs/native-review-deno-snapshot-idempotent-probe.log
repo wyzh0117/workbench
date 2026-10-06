@@ -1,0 +1,34 @@
+{
+  "first_error": null,
+  "first": {
+    "id": "same-snapshot-id",
+    "snapshot_id": "same-snapshot-id",
+    "persisted": true,
+    "outcome": "written",
+    "content_hash": "18ce7b9ab01c80a40a911055812a073fbb89d44ce7219267f25db82add562f5c",
+    "created_at": "2026-10-05T23:57:34.742Z",
+    "durability_warning": "文件已写入，但目录元数据同步失败。",
+    "project_id": "84cce2ba-f4bb-4cac-831c-3d6972228b72",
+    "project_dir": "/var/folders/fb/x3zpt1kj2_j8jbr0xg6wxft00000gn/T/native-snapshot-idempotent-review-ca594c2fdf047ab1",
+    "lease_generation": "73520a7f-b60c-4c91-8082-3cd08b10db8d",
+    "editor_generation": 7,
+    "operation_id": "same-snapshot-operation",
+    "revision": 3
+  },
+  "second_error": null,
+  "second": {
+    "id": "same-snapshot-id",
+    "snapshot_id": "same-snapshot-id",
+    "persisted": true,
+    "outcome": "unchanged",
+    "content_hash": "18ce7b9ab01c80a40a911055812a073fbb89d44ce7219267f25db82add562f5c",
+    "created_at": "2026-10-05T23:57:34.742Z",
+    "durability_warning": "文件已写入，但目录元数据同步失败。",
+    "project_id": "84cce2ba-f4bb-4cac-831c-3d6972228b72",
+    "project_dir": "/var/folders/fb/x3zpt1kj2_j8jbr0xg6wxft00000gn/T/native-snapshot-idempotent-review-ca594c2fdf047ab1",
+    "lease_generation": "73520a7f-b60c-4c91-8082-3cd08b10db8d",
+    "editor_generation": 7,
+    "operation_id": "same-snapshot-operation",
+    "revision": 3
+  }
+}

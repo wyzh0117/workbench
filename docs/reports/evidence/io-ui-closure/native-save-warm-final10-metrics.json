@@ -1,0 +1,2926 @@
+{
+  "schema_version": 1,
+  "generated_at_utc": "2026-10-06T13:24:53.076364Z",
+  "scope": "Current Rust project_save backend paired warm benchmark; debug test binaries only.",
+  "method": {
+    "command": "<cached test binary> --ignored --exact tests::manual_native_project_save_warm_metrics --nocapture",
+    "environment": "WORKBENCH_NATIVE_IO_FIXTURE=/private/tmp/workbench-large-canonical-fixture.json",
+    "profile": "Rust lib unit-test executable, dev/unoptimized profile on macOS arm64; not release.",
+    "samples": "Baseline then candidate; each run: one excluded warm changed/no-op pair, then 10 alternating changed/no-op saves.",
+    "timing": "std::time::Instant around the project_save save closure; operation medians/p95 are separate from whole test-harness runtime.",
+    "p95": "nearest-rank percentile sorted[ceil(0.95*n)-1]; for n=10 this is the largest sample.",
+    "counters": "Logical Rust file-API calls/bytes from in-memory counters. Per-target counts include project.json, .workspace/recovery.json, project.bak, and .workspace/recovery.bak.",
+    "limitations": [
+      "Not Tauri IPC or GUI latency.",
+      "Not release-build performance.",
+      "No physical-device bytes, cold-cache latency, RSS, or WebKit memory measured.",
+      "sync_ops are reported as the helper emits them; they are logical sync calls, not storage-device durability timing."
+    ]
+  },
+  "fixture": {
+    "path": "/private/tmp/workbench-large-canonical-fixture.json",
+    "bytes": 7469246,
+    "sha256": "14991258eb33336582280c093d97cc3fc61ba6dab166c1a8970ce542f05509a4",
+    "blocks": 5000,
+    "asset_metadata_rows": 1000,
+    "canonical_initial_bytes": 7469246,
+    "canonical_initial_sha256": "e5e49bd7db7bfd57e79e9facf35864b665b470d3ea4b8cfaad9b71ae40b85358"
+  },
+  "runs": {
+    "baseline": {
+      "log": "native-warm-final10-baseline.log",
+      "source_commit": "dfcb23e88b08b246e03b1576eb9471627e510548",
+      "source_lib_sha256": "e7295a3cbd3627db0494f0e3f48a8427f2aac285941ed579a9bb1b617ca02ba8",
+      "instrumented_lib_sha256": "e834822a99bac416087d83cd4fd8c7e389e3231b560575a5b336790cbba39d33",
+      "instrumentation_patch": "runs/native-metrics-baseline-instrumentation.patch",
+      "instrumentation_patch_sha256": "36fac527918853ab444c220c0248ab3848141727fcd54471d13831f81e4bbbc6",
+      "binary_path": "/private/tmp/io-ui-closure-rust-baseline.Bugvel/cargo-target/debug/deps/ai_course_workbench_lib-cc28423643d1bb57",
+      "binary_sha256": "fd7a5e2f972812f4930f93a97f8585932b135513c650f8038100166b3ae61616",
+      "log_path": "runs/native-warm-final10-baseline.log",
+      "log_sha256": "a4213adb85bdadaa48cc981e6fc1144dc77c3198e6973f0edeccb7ac794e548d",
+      "log_bytes": 20415,
+      "log_created_at_utc": "2026-10-06T13:16:29.535273Z",
+      "log_completed_at_utc": "2026-10-06T13:17:38.527814Z",
+      "command_exit": 0,
+      "test_harness_runtime_seconds": 68.9,
+      "test_result": "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 222 filtered out; finished in 68.90s",
+      "warmup_pairs_excluded": 1,
+      "sample_count_per_kind": 10,
+      "worker_registrations_during_samples": 0,
+      "active_lease_handle_before": true,
+      "active_lease_handle_after": true,
+      "initial_canonical_bytes": 7469246,
+      "initial_canonical_sha256": "e5e49bd7db7bfd57e79e9facf35864b665b470d3ea4b8cfaad9b71ae40b85358",
+      "canonical_size_delta_from_fixture": 0,
+      "operations": {
+        "changed": {
+          "sample_count": 10,
+          "elapsed_us": [
+            3028615,
+            3022700,
+            3033640,
+            3025696,
+            3031959,
+            3024951,
+            3025200,
+            3062217,
+            3035747,
+            3039921
+          ],
+          "median_elapsed_us": 3030287.0,
+          "p95_nearest_rank_elapsed_us": 3062217,
+          "aggregate": {
+            "copy_bytes": 74692388,
+            "copy_ops": 10,
+            "full_read_bytes": 373461942,
+            "full_reads": 50,
+            "hash_bytes": 373461942,
+            "rename_ops": 20,
+            "sync_ops": 20,
+            "write_bytes": 143722840,
+            "write_ops": 20
+          },
+          "per_target": {
+            ".workspace/recovery.bak": {
+              "read_ops": 0,
+              "read_bytes": 0,
+              "hash_bytes": 0,
+              "write_ops": 0,
+              "write_bytes": 0,
+              "copy_ops": 0,
+              "copy_bytes": 0,
+              "sync_ops": 0,
+              "rename_ops": 0
+            },
+            ".workspace/recovery.json": {
+              "read_ops": 0,
+              "read_bytes": 0,
+              "hash_bytes": 0,
+              "write_ops": 10,
+              "write_bytes": 69030450,
+              "copy_ops": 0,
+              "copy_bytes": 0,
+              "sync_ops": 10,
+              "rename_ops": 10
+            },
+            "project.bak": {
+              "read_ops": 0,
+              "read_bytes": 0,
+              "hash_bytes": 0,
+              "write_ops": 0,
+              "write_bytes": 0,
+              "copy_ops": 10,
+              "copy_bytes": 74692388,
+              "sync_ops": 0,
+              "rename_ops": 0
+            },
+            "project.json": {
+              "read_ops": 50,
+              "read_bytes": 373461942,
+              "hash_bytes": 373461942,
+              "write_ops": 10,
+              "write_bytes": 74692390,
+              "copy_ops": 0,
+              "copy_bytes": 0,
+              "sync_ops": 10,
+              "rename_ops": 10
+            }
+          },
+          "samples": [
+            {
+              "sample": 1,
+              "committed_sha256": "eec3737b6489252a1839872b5f8366d1aa32bcfc2fbbbe77d40559c1a64d9886",
+              "committed_size": 7469239,
+              "elapsed_us": 3028615,
+              "io": {
+                "copy_bytes": 7469237,
+                "copy_ops": 1,
+                "files": {
+                  ".workspace/recovery.bak": {
+                    "copy_bytes": 0,
+                    "copy_ops": 0,
+                    "hash_bytes": 0,
+                    "read_bytes": 0,
+                    "read_ops": 0,
+                    "rename_ops": 0,
+                    "sync_ops": 0,
+                    "write_bytes": 0,
+                    "write_ops": 0
+                  },
+                  ".workspace/recovery.json": {
+                    "copy_bytes": 0,
+                    "copy_ops": 0,
+                    "hash_bytes": 0,
+                    "read_bytes": 0,
+                    "read_ops": 0,
+                    "rename_ops": 1,
+                    "sync_ops": 1,
+                    "write_bytes": 6903045,
+                    "write_ops": 1
+                  },
+                  "project.bak": {
+                    "copy_bytes": 7469237,
+                    "copy_ops": 1,
+                    "hash_bytes": 0,
+                    "read_bytes": 0,
+                    "read_ops": 0,
+                    "rename_ops": 0,
+                    "sync_ops": 0,
+                    "write_bytes": 0,
+                    "write_ops": 0
+                  },
+                  "project.json": {
+                    "copy_bytes": 0,
+                    "copy_ops": 0,
+                    "hash_bytes": 37346187,
+                    "read_bytes": 37346187,
+                    "read_ops": 5,
+                    "rename_ops": 1,
+                    "sync_ops": 1,
+                    "write_bytes": 7469239,
+                    "write_ops": 1
+                  }
+                },
+                "full_read_bytes": 37346187,
+                "full_reads": 5,
+                "hash_bytes": 37346187,
+                "rename_ops": 2,
+                "sync_ops": 2,
+                "write_bytes": 14372284,
+                "write_ops": 2
+              }
+            },
+            {
+              "sample": 2,
+              "committed_sha256": "60a87214454dd49d11097298d42e2ba9c14faa91efb1ada6a6c0d5ef86c317d4",
+              "committed_size": 7469239,
+              "elapsed_us": 3022700,
+              "io": {
+                "copy_bytes": 7469239,
+                "copy_ops": 1,
+                "files": {
+                  ".workspace/recovery.bak": {
+                    "copy_bytes": 0,
+                    "copy_ops": 0,
+                    "hash_bytes": 0,
+                    "read_bytes": 0,
+                    "read_ops": 0,
+                    "rename_ops": 0,
+                    "sync_ops": 0,
+                    "write_bytes": 0,
+                    "write_ops": 0
+                  },
+                  ".workspace/recovery.json": {
+                    "copy_bytes": 0,
+                    "copy_ops": 0,
+                    "hash_bytes": 0,
+                    "read_bytes": 0,
+                    "read_ops": 0,
+                    "rename_ops": 1,
+                    "sync_ops": 1,
+                    "write_bytes": 6903045,
+                    "write_ops": 1
+                  },
+                  "project.bak": {
+                    "copy_bytes": 7469239,
+                    "copy_ops": 1,
+                    "hash_bytes": 0,
+                    "read_bytes": 0,
+                    "read_ops": 0,
+                    "rename_ops": 0,
+                    "sync_ops": 0,
+                    "write_bytes": 0,
+                    "write_ops": 0
+                  },
+                  "project.json": {
+                    "copy_bytes": 0,
+                    "copy_ops": 0,
+                    "hash_bytes": 37346195,
+                    "read_bytes": 37346195,
+                    "read_ops": 5,
+                    "rename_ops": 1,
+                    "sync_ops": 1,
+                    "write_bytes": 7469239,
+                    "write_ops": 1
+                  }
+                },
+                "full_read_bytes": 37346195,
+                "full_reads": 5,
+                "hash_bytes": 37346195,
+                "rename_ops": 2,
+                "sync_ops": 2,
+                "write_bytes": 14372284,
+                "write_ops": 2
+              }
+            },
+            {
+              "sample": 3,
+              "committed_sha256": "8892a4b779bc7ff5fdc57b7c72ef0187f156a7c15115e3eee2f644e4eedfc1cf",
+              "committed_size": 7469239,
+              "elapsed_us": 3033640,
+              "io": {
+                "copy_bytes": 7469239,
+                "copy_ops": 1,
+                "files": {
+                  ".workspace/recovery.bak": {
+                    "copy_bytes": 0,
+                    "copy_ops": 0,
+                    "hash_bytes": 0,
+                    "read_bytes": 0,
+                    "read_ops": 0,
+                    "rename_ops": 0,
+                    "sync_ops": 0,
+                    "write_bytes": 0,
+                    "write_ops": 0
+                  },
+                  ".workspace/recovery.json": {
+                    "copy_bytes": 0,
+                    "copy_ops": 0,
+                    "hash_bytes": 0,
+                    "read_bytes": 0,
+                    "read_ops": 0,
+                    "rename_ops": 1,
+                    "sync_ops": 1,
+                    "write_bytes": 6903045,
+                    "write_ops": 1
+                  },
+                  "project.bak": {
+                    "copy_bytes": 7469239,
+                    "copy_ops": 1,
+                    "hash_bytes": 0,
+                    "read_bytes": 0,
+                    "read_ops": 0,
+                    "rename_ops": 0,
+                    "sync_ops": 0,
+                    "write_bytes": 0,
+                    "write_ops": 0
+                  },
+                  "project.json": {
+                    "copy_bytes": 0,
+                    "copy_ops": 0,
+                    "hash_bytes": 37346195,
+                    "read_bytes": 37346195,
+                    "read_ops": 5,
+                    "rename_ops": 1,
+                    "sync_ops": 1,
+                    "write_bytes": 7469239,
+                    "write_ops": 1
+                  }
+                },
+                "full_read_bytes": 37346195,
+                "full_reads": 5,
+                "hash_bytes": 37346195,
+                "rename_ops": 2,
+                "sync_ops": 2,
+                "write_bytes": 14372284,
+                "write_ops": 2
+              }
+            },
+            {
+              "sample": 4,
+              "committed_sha256": "26ee0b82bfabe921a82c907806dfbb6bb41f86bd3c012e9ec6f1fcfadc84ccdf",
+              "committed_size": 7469239,
+              "elapsed_us": 3025696,
+              "io": {
+                "copy_bytes": 7469239,
+                "copy_ops": 1,
+                "files": {
+                  ".workspace/recovery.bak": {
+                    "copy_bytes": 0,
+                    "copy_ops": 0,
+                    "hash_bytes": 0,
+                    "read_bytes": 0,
+                    "read_ops": 0,
+                    "rename_ops": 0,
+                    "sync_ops": 0,
+                    "write_bytes": 0,
+                    "write_ops": 0
+                  },
+                  ".workspace/recovery.json": {
+                    "copy_bytes": 0,
+                    "copy_ops": 0,
+                    "hash_bytes": 0,
+                    "read_bytes": 0,
+                    "read_ops": 0,
+                    "rename_ops": 1,
+                    "sync_ops": 1,
+                    "write_bytes": 6903045,
+                    "write_ops": 1
+                  },
+                  "project.bak": {
+                    "copy_bytes": 7469239,
+                    "copy_ops": 1,
+                    "hash_bytes": 0,
+                    "read_bytes": 0,
+                    "read_ops": 0,
+                    "rename_ops": 0,
+                    "sync_ops": 0,
+                    "write_bytes": 0,
+                    "write_ops": 0
+                  },
+                  "project.json": {
+                    "copy_bytes": 0,
+                    "copy_ops": 0,
+                    "hash_bytes": 37346195,
+                    "read_bytes": 37346195,
+                    "read_ops": 5,
+                    "rename_ops": 1,
+                    "sync_ops": 1,
+                    "write_bytes": 7469239,
+                    "write_ops": 1
+                  }
+                },
+                "full_read_bytes": 37346195,
+                "full_reads": 5,
+                "hash_bytes": 37346195,
+                "rename_ops": 2,
+                "sync_ops": 2,
+                "write_bytes": 14372284,
+                "write_ops": 2
+              }
+            },
+            {
+              "sample": 5,
+              "committed_sha256": "973cc88cbc07e413c1cbcb55902cb91e51b358af94efd807a7a823466f5c20d5",
+              "committed_size": 7469239,
+              "elapsed_us": 3031959,
+              "io": {
+                "copy_bytes": 7469239,
+                "copy_ops": 1,
+                "files": {
+                  ".workspace/recovery.bak": {
+                    "copy_bytes": 0,
+                    "copy_ops": 0,
+                    "hash_bytes": 0,
+                    "read_bytes": 0,
+                    "read_ops": 0,
+                    "rename_ops": 0,
+                    "sync_ops": 0,
+                    "write_bytes": 0,
+                    "write_ops": 0
+                  },
+                  ".workspace/recovery.json": {
+                    "copy_bytes": 0,
+                    "copy_ops": 0,
+                    "hash_bytes": 0,
+                    "read_bytes": 0,
+                    "read_ops": 0,
+                    "rename_ops": 1,
+                    "sync_ops": 1,
+                    "write_bytes": 6903045,
+                    "write_ops": 1
+                  },
+                  "project.bak": {
+                    "copy_bytes": 7469239,
+                    "copy_ops": 1,
+                    "hash_bytes": 0,
+                    "read_bytes": 0,
+                    "read_ops": 0,
+                    "rename_ops": 0,
+                    "sync_ops": 0,
+                    "write_bytes": 0,
+                    "write_ops": 0
+                  },
+                  "project.json": {
+                    "copy_bytes": 0,
+                    "copy_ops": 0,
+                    "hash_bytes": 37346195,
+                    "read_bytes": 37346195,
+                    "read_ops": 5,
+                    "rename_ops": 1,
+                    "sync_ops": 1,
+                    "write_bytes": 7469239,
+                    "write_ops": 1
+                  }
+                },
+                "full_read_bytes": 37346195,
+                "full_reads": 5,
+                "hash_bytes": 37346195,
+                "rename_ops": 2,
+                "sync_ops": 2,
+                "write_bytes": 14372284,
+                "write_ops": 2
+              }
+            },
+            {
+              "sample": 6,
+              "committed_sha256": "8405dece1b76626f934fff9784cde2e918b0e393869549ab1228c3ce0d4fa3b7",
+              "committed_size": 7469239,
+              "elapsed_us": 3024951,
+              "io": {
+                "copy_bytes": 7469239,
+                "copy_ops": 1,
+                "files": {
+                  ".workspace/recovery.bak": {
+                    "copy_bytes": 0,
+                    "copy_ops": 0,
+                    "hash_bytes": 0,
+                    "read_bytes": 0,
+                    "read_ops": 0,
+                    "rename_ops": 0,
+                    "sync_ops": 0,
+                    "write_bytes": 0,
+                    "write_ops": 0
+                  },
+                  ".workspace/recovery.json": {
+                    "copy_bytes": 0,
+                    "copy_ops": 0,
+                    "hash_bytes": 0,
+                    "read_bytes": 0,
+                    "read_ops": 0,
+                    "rename_ops": 1,
+                    "sync_ops": 1,
+                    "write_bytes": 6903045,
+                    "write_ops": 1
+                  },
+                  "project.bak": {
+                    "copy_bytes": 7469239,
+                    "copy_ops": 1,
+                    "hash_bytes": 0,
+                    "read_bytes": 0,
+                    "read_ops": 0,
+                    "rename_ops": 0,
+                    "sync_ops": 0,
+                    "write_bytes": 0,
+                    "write_ops": 0
+                  },
+                  "project.json": {
+                    "copy_bytes": 0,
+                    "copy_ops": 0,
+                    "hash_bytes": 37346195,
+                    "read_bytes": 37346195,
+                    "read_ops": 5,
+                    "rename_ops": 1,
+                    "sync_ops": 1,
+                    "write_bytes": 7469239,
+                    "write_ops": 1
+                  }
+                },
+                "full_read_bytes": 37346195,
+                "full_reads": 5,
+                "hash_bytes": 37346195,
+                "rename_ops": 2,
+                "sync_ops": 2,
+                "write_bytes": 14372284,
+                "write_ops": 2
+              }
+            },
+            {
+              "sample": 7,
+              "committed_sha256": "7c7b8144e3830c458ee6fe7fc86af9f77c4d550659928fb4e076932ce3bcb760",
+              "committed_size": 7469239,
+              "elapsed_us": 3025200,
+              "io": {
+                "copy_bytes": 7469239,
+                "copy_ops": 1,
+                "files": {
+                  ".workspace/recovery.bak": {
+                    "copy_bytes": 0,
+                    "copy_ops": 0,
+                    "hash_bytes": 0,
+                    "read_bytes": 0,
+                    "read_ops": 0,
+                    "rename_ops": 0,
+                    "sync_ops": 0,
+                    "write_bytes": 0,
+                    "write_ops": 0
+                  },
+                  ".workspace/recovery.json": {
+                    "copy_bytes": 0,
+                    "copy_ops": 0,
+                    "hash_bytes": 0,
+                    "read_bytes": 0,
+                    "read_ops": 0,
+                    "rename_ops": 1,
+                    "sync_ops": 1,
+                    "write_bytes": 6903045,
+                    "write_ops": 1
+                  },
+                  "project.bak": {
+                    "copy_bytes": 7469239,
+                    "copy_ops": 1,
+                    "hash_bytes": 0,
+                    "read_bytes": 0,
+                    "read_ops": 0,
+                    "rename_ops": 0,
+                    "sync_ops": 0,
+                    "write_bytes": 0,
+                    "write_ops": 0
+                  },
+                  "project.json": {
+                    "copy_bytes": 0,
+                    "copy_ops": 0,
+                    "hash_bytes": 37346195,
+                    "read_bytes": 37346195,
+                    "read_ops": 5,
+                    "rename_ops": 1,
+                    "sync_ops": 1,
+                    "write_bytes": 7469239,
+                    "write_ops": 1
+                  }
+                },
+                "full_read_bytes": 37346195,
+                "full_reads": 5,
+                "hash_bytes": 37346195,
+                "rename_ops": 2,
+                "sync_ops": 2,
+                "write_bytes": 14372284,
+                "write_ops": 2
+              }
+            },
+            {
+              "sample": 8,
+              "committed_sha256": "9d946ad3fa3f04aaeada714c80a9616be520169edc7c5638a85b9ae68063193c",
+              "committed_size": 7469239,
+              "elapsed_us": 3062217,
+              "io": {
+                "copy_bytes": 7469239,
+                "copy_ops": 1,
+                "files": {
+                  ".workspace/recovery.bak": {
+                    "copy_bytes": 0,
+                    "copy_ops": 0,
+                    "hash_bytes": 0,
+                    "read_bytes": 0,
+                    "read_ops": 0,
+                    "rename_ops": 0,
+                    "sync_ops": 0,
+                    "write_bytes": 0,
+                    "write_ops": 0
+                  },
+                  ".workspace/recovery.json": {
+                    "copy_bytes": 0,
+                    "copy_ops": 0,
+                    "hash_bytes": 0,
+                    "read_bytes": 0,
+                    "read_ops": 0,
+                    "rename_ops": 1,
+                    "sync_ops": 1,
+                    "write_bytes": 6903045,
+                    "write_ops": 1
+                  },
+                  "project.bak": {
+                    "copy_bytes": 7469239,
+                    "copy_ops": 1,
+                    "hash_bytes": 0,
+                    "read_bytes": 0,
+                    "read_ops": 0,
+                    "rename_ops": 0,
+                    "sync_ops": 0,
+                    "write_bytes": 0,
+                    "write_ops": 0
+                  },
+                  "project.json": {
+                    "copy_bytes": 0,
+                    "copy_ops": 0,
+                    "hash_bytes": 37346195,
+                    "read_bytes": 37346195,
+                    "read_ops": 5,
+                    "rename_ops": 1,
+                    "sync_ops": 1,
+                    "write_bytes": 7469239,
+                    "write_ops": 1
+                  }
+                },
+                "full_read_bytes": 37346195,
+                "full_reads": 5,
+                "hash_bytes": 37346195,
+                "rename_ops": 2,
+                "sync_ops": 2,
+                "write_bytes": 14372284,
+                "write_ops": 2
+              }
+            },
+            {
+              "sample": 9,
+              "committed_sha256": "c930c68ccc4412ad8cd549860e77d4d05e97397d659f2b01a15e006cab27c466",
+              "committed_size": 7469239,
+              "elapsed_us": 3035747,
+              "io": {
+                "copy_bytes": 7469239,
+                "copy_ops": 1,
+                "files": {
+                  ".workspace/recovery.bak": {
+                    "copy_bytes": 0,
+                    "copy_ops": 0,
+                    "hash_bytes": 0,
+                    "read_bytes": 0,
+                    "read_ops": 0,
+                    "rename_ops": 0,
+                    "sync_ops": 0,
+                    "write_bytes": 0,
+                    "write_ops": 0
+                  },
+                  ".workspace/recovery.json": {
+                    "copy_bytes": 0,
+                    "copy_ops": 0,
+                    "hash_bytes": 0,
+                    "read_bytes": 0,
+                    "read_ops": 0,
+                    "rename_ops": 1,
+                    "sync_ops": 1,
+                    "write_bytes": 6903045,
+                    "write_ops": 1
+                  },
+                  "project.bak": {
+                    "copy_bytes": 7469239,
+                    "copy_ops": 1,
+                    "hash_bytes": 0,
+                    "read_bytes": 0,
+                    "read_ops": 0,
+                    "rename_ops": 0,
+                    "sync_ops": 0,
+                    "write_bytes": 0,
+                    "write_ops": 0
+                  },
+                  "project.json": {
+                    "copy_bytes": 0,
+                    "copy_ops": 0,
+                    "hash_bytes": 37346195,
+                    "read_bytes": 37346195,
+                    "read_ops": 5,
+                    "rename_ops": 1,
+                    "sync_ops": 1,
+                    "write_bytes": 7469239,
+                    "write_ops": 1
+                  }
+                },
+                "full_read_bytes": 37346195,
+                "full_reads": 5,
+                "hash_bytes": 37346195,
+                "rename_ops": 2,
+                "sync_ops": 2,
+                "write_bytes": 14372284,
+                "write_ops": 2
+              }
+            },
+            {
+              "sample": 10,
+              "committed_sha256": "3b0fc0da182849df52b02f19c5ea6299864644c9ac06d8702c2271fef515d4ac",
+              "committed_size": 7469239,
+              "elapsed_us": 3039921,
+              "io": {
+                "copy_bytes": 7469239,
+                "copy_ops": 1,
+                "files": {
+                  ".workspace/recovery.bak": {
+                    "copy_bytes": 0,
+                    "copy_ops": 0,
+                    "hash_bytes": 0,
+                    "read_bytes": 0,
+                    "read_ops": 0,
+                    "rename_ops": 0,
+                    "sync_ops": 0,
+                    "write_bytes": 0,
+                    "write_ops": 0
+                  },
+                  ".workspace/recovery.json": {
+                    "copy_bytes": 0,
+                    "copy_ops": 0,
+                    "hash_bytes": 0,
+                    "read_bytes": 0,
+                    "read_ops": 0,
+                    "rename_ops": 1,
+                    "sync_ops": 1,
+                    "write_bytes": 6903045,
+                    "write_ops": 1
+                  },
+                  "project.bak": {
+                    "copy_bytes": 7469239,
+                    "copy_ops": 1,
+                    "hash_bytes": 0,
+                    "read_bytes": 0,
+                    "read_ops": 0,
+                    "rename_ops": 0,
+                    "sync_ops": 0,
+                    "write_bytes": 0,
+                    "write_ops": 0
+                  },
+                  "project.json": {
+                    "copy_bytes": 0,
+                    "copy_ops": 0,
+                    "hash_bytes": 37346195,
+                    "read_bytes": 37346195,
+                    "read_ops": 5,
+                    "rename_ops": 1,
+                    "sync_ops": 1,
+                    "write_bytes": 7469239,
+                    "write_ops": 1
+                  }
+                },
+                "full_read_bytes": 37346195,
+                "full_reads": 5,
+                "hash_bytes": 37346195,
+                "rename_ops": 2,
+                "sync_ops": 2,
+                "write_bytes": 14372284,
+                "write_ops": 2
+              }
+            }
+          ]
+        },
+        "unchanged": {
+          "sample_count": 10,
+          "elapsed_us": [
+            3037467,
+            3042987,
+            3032603,
+            3027374,
+            3021121,
+            3039545,
+            3040529,
+            3322058,
+            3032048,
+            3036256
+          ],
+          "median_elapsed_us": 3036861.5,
+          "p95_nearest_rank_elapsed_us": 3322058,
+          "aggregate": {
+            "copy_bytes": 74692390,
+            "copy_ops": 10,
+            "full_read_bytes": 373461950,
+            "full_reads": 50,
+            "hash_bytes": 373461950,
+            "rename_ops": 20,
+            "sync_ops": 20,
+            "write_bytes": 143722820,
+            "write_ops": 20
+          },
+          "per_target": {
+            ".workspace/recovery.bak": {
+              "read_ops": 0,
+              "read_bytes": 0,
+              "hash_bytes": 0,
+              "write_ops": 0,
+              "write_bytes": 0,
+              "copy_ops": 0,
+              "copy_bytes": 0,
+              "sync_ops": 0,
+              "rename_ops": 0
+            },
+            ".workspace/recovery.json": {
+              "read_ops": 0,
+              "read_bytes": 0,
+              "hash_bytes": 0,
+              "write_ops": 10,
+              "write_bytes": 69030430,
+              "copy_ops": 0,
+              "copy_bytes": 0,
+              "sync_ops": 10,
+              "rename_ops": 10
+            },
+            "project.bak": {
+              "read_ops": 0,
+              "read_bytes": 0,
+              "hash_bytes": 0,
+              "write_ops": 0,
+              "write_bytes": 0,
+              "copy_ops": 10,
+              "copy_bytes": 74692390,
+              "sync_ops": 0,
+              "rename_ops": 0
+            },
+            "project.json": {
+              "read_ops": 50,
+              "read_bytes": 373461950,
+              "hash_bytes": 373461950,
+              "write_ops": 10,
+              "write_bytes": 74692390,
+              "copy_ops": 0,
+              "copy_bytes": 0,
+              "sync_ops": 10,
+              "rename_ops": 10
+            }
+          },
+          "samples": [
+            {
+              "sample": 1,
+              "committed_sha256": "eec3737b6489252a1839872b5f8366d1aa32bcfc2fbbbe77d40559c1a64d9886",
+              "committed_size": 7469239,
+              "elapsed_us": 3037467,
+              "io": {
+                "copy_bytes": 7469239,
+                "copy_ops": 1,
+                "files": {
+                  ".workspace/recovery.bak": {
+                    "copy_bytes": 0,
+                    "copy_ops": 0,
+                    "hash_bytes": 0,
+                    "read_bytes": 0,
+                    "read_ops": 0,
+                    "rename_ops": 0,
+                    "sync_ops": 0,
+                    "write_bytes": 0,
+                    "write_ops": 0
+                  },
+                  ".workspace/recovery.json": {
+                    "copy_bytes": 0,
+                    "copy_ops": 0,
+                    "hash_bytes": 0,
+                    "read_bytes": 0,
+                    "read_ops": 0,
+                    "rename_ops": 1,
+                    "sync_ops": 1,
+                    "write_bytes": 6903043,
+                    "write_ops": 1
+                  },
+                  "project.bak": {
+                    "copy_bytes": 7469239,
+                    "copy_ops": 1,
+                    "hash_bytes": 0,
+                    "read_bytes": 0,
+                    "read_ops": 0,
+                    "rename_ops": 0,
+                    "sync_ops": 0,
+                    "write_bytes": 0,
+                    "write_ops": 0
+                  },
+                  "project.json": {
+                    "copy_bytes": 0,
+                    "copy_ops": 0,
+                    "hash_bytes": 37346195,
+                    "read_bytes": 37346195,
+                    "read_ops": 5,
+                    "rename_ops": 1,
+                    "sync_ops": 1,
+                    "write_bytes": 7469239,
+                    "write_ops": 1
+                  }
+                },
+                "full_read_bytes": 37346195,
+                "full_reads": 5,
+                "hash_bytes": 37346195,
+                "rename_ops": 2,
+                "sync_ops": 2,
+                "write_bytes": 14372282,
+                "write_ops": 2
+              }
+            },
+            {
+              "sample": 2,
+              "committed_sha256": "60a87214454dd49d11097298d42e2ba9c14faa91efb1ada6a6c0d5ef86c317d4",
+              "committed_size": 7469239,
+              "elapsed_us": 3042987,
+              "io": {
+                "copy_bytes": 7469239,
+                "copy_ops": 1,
+                "files": {
+                  ".workspace/recovery.bak": {
+                    "copy_bytes": 0,
+                    "copy_ops": 0,
+                    "hash_bytes": 0,
+                    "read_bytes": 0,
+                    "read_ops": 0,
+                    "rename_ops": 0,
+                    "sync_ops": 0,
+                    "write_bytes": 0,
+                    "write_ops": 0
+                  },
+                  ".workspace/recovery.json": {
+                    "copy_bytes": 0,
+                    "copy_ops": 0,
+                    "hash_bytes": 0,
+                    "read_bytes": 0,
+                    "read_ops": 0,
+                    "rename_ops": 1,
+                    "sync_ops": 1,
+                    "write_bytes": 6903043,
+                    "write_ops": 1
+                  },
+                  "project.bak": {
+                    "copy_bytes": 7469239,
+                    "copy_ops": 1,
+                    "hash_bytes": 0,
+                    "read_bytes": 0,
+                    "read_ops": 0,
+                    "rename_ops": 0,
+                    "sync_ops": 0,
+                    "write_bytes": 0,
+                    "write_ops": 0
+                  },
+                  "project.json": {
+                    "copy_bytes": 0,
+                    "copy_ops": 0,
+                    "hash_bytes": 37346195,
+                    "read_bytes": 37346195,
+                    "read_ops": 5,
+                    "rename_ops": 1,
+                    "sync_ops": 1,
+                    "write_bytes": 7469239,
+                    "write_ops": 1
+                  }
+                },
+                "full_read_bytes": 37346195,
+                "full_reads": 5,
+                "hash_bytes": 37346195,
+                "rename_ops": 2,
+                "sync_ops": 2,
+                "write_bytes": 14372282,
+                "write_ops": 2
+              }
+            },
+            {
+              "sample": 3,
+              "committed_sha256": "8892a4b779bc7ff5fdc57b7c72ef0187f156a7c15115e3eee2f644e4eedfc1cf",
+              "committed_size": 7469239,
+              "elapsed_us": 3032603,
+              "io": {
+                "copy_bytes": 7469239,
+                "copy_ops": 1,
+                "files": {
+                  ".workspace/recovery.bak": {
+                    "copy_bytes": 0,
+                    "copy_ops": 0,
+                    "hash_bytes": 0,
+                    "read_bytes": 0,
+                    "read_ops": 0,
+                    "rename_ops": 0,
+                    "sync_ops": 0,
+                    "write_bytes": 0,
+                    "write_ops": 0
+                  },
+                  ".workspace/recovery.json": {
+                    "copy_bytes": 0,
+                    "copy_ops": 0,
+                    "hash_bytes": 0,
+                    "read_bytes": 0,
+                    "read_ops": 0,
+                    "rename_ops": 1,
+                    "sync_ops": 1,
+                    "write_bytes": 6903043,
+                    "write_ops": 1
+                  },
+                  "project.bak": {
+                    "copy_bytes": 7469239,
+                    "copy_ops": 1,
+                    "hash_bytes": 0,
+                    "read_bytes": 0,
+                    "read_ops": 0,
+                    "rename_ops": 0,
+                    "sync_ops": 0,
+                    "write_bytes": 0,
+                    "write_ops": 0
+                  },
+                  "project.json": {
+                    "copy_bytes": 0,
+                    "copy_ops": 0,
+                    "hash_bytes": 37346195,
+                    "read_bytes": 37346195,
+                    "read_ops": 5,
+                    "rename_ops": 1,
+                    "sync_ops": 1,
+                    "write_bytes": 7469239,
+                    "write_ops": 1
+                  }
+                },
+                "full_read_bytes": 37346195,
+                "full_reads": 5,
+                "hash_bytes": 37346195,
+                "rename_ops": 2,
+                "sync_ops": 2,
+                "write_bytes": 14372282,
+                "write_ops": 2
+              }
+            },
+            {
+              "sample": 4,
+              "committed_sha256": "26ee0b82bfabe921a82c907806dfbb6bb41f86bd3c012e9ec6f1fcfadc84ccdf",
+              "committed_size": 7469239,
+              "elapsed_us": 3027374,
+              "io": {
+                "copy_bytes": 7469239,
+                "copy_ops": 1,
+                "files": {
+                  ".workspace/recovery.bak": {
+                    "copy_bytes": 0,
+                    "copy_ops": 0,
+                    "hash_bytes": 0,
+                    "read_bytes": 0,
+                    "read_ops": 0,
+                    "rename_ops": 0,
+                    "sync_ops": 0,
+                    "write_bytes": 0,
+                    "write_ops": 0
+                  },
+                  ".workspace/recovery.json": {
+                    "copy_bytes": 0,
+                    "copy_ops": 0,
+                    "hash_bytes": 0,
+                    "read_bytes": 0,
+                    "read_ops": 0,
+                    "rename_ops": 1,
+                    "sync_ops": 1,
+                    "write_bytes": 6903043,
+                    "write_ops": 1
+                  },
+                  "project.bak": {
+                    "copy_bytes": 7469239,
+                    "copy_ops": 1,
+                    "hash_bytes": 0,
+                    "read_bytes": 0,
+                    "read_ops": 0,
+                    "rename_ops": 0,
+                    "sync_ops": 0,
+                    "write_bytes": 0,
+                    "write_ops": 0
+                  },
+                  "project.json": {
+                    "copy_bytes": 0,
+                    "copy_ops": 0,
+                    "hash_bytes": 37346195,
+                    "read_bytes": 37346195,
+                    "read_ops": 5,
+                    "rename_ops": 1,
+                    "sync_ops": 1,
+                    "write_bytes": 7469239,
+                    "write_ops": 1
+                  }
+                },
+                "full_read_bytes": 37346195,
+                "full_reads": 5,
+                "hash_bytes": 37346195,
+                "rename_ops": 2,
+                "sync_ops": 2,
+                "write_bytes": 14372282,
+                "write_ops": 2
+              }
+            },
+            {
+              "sample": 5,
+              "committed_sha256": "973cc88cbc07e413c1cbcb55902cb91e51b358af94efd807a7a823466f5c20d5",
+              "committed_size": 7469239,
+              "elapsed_us": 3021121,
+              "io": {
+                "copy_bytes": 7469239,
+                "copy_ops": 1,
+                "files": {
+                  ".workspace/recovery.bak": {
+                    "copy_bytes": 0,
+                    "copy_ops": 0,
+                    "hash_bytes": 0,
+                    "read_bytes": 0,
+                    "read_ops": 0,
+                    "rename_ops": 0,
+                    "sync_ops": 0,
+                    "write_bytes": 0,
+                    "write_ops": 0
+                  },
+                  ".workspace/recovery.json": {
+                    "copy_bytes": 0,
+                    "copy_ops": 0,
+                    "hash_bytes": 0,
+                    "read_bytes": 0,
+                    "read_ops": 0,
+                    "rename_ops": 1,
+                    "sync_ops": 1,
+                    "write_bytes": 6903043,
+                    "write_ops": 1
+                  },
+                  "project.bak": {
+                    "copy_bytes": 7469239,
+                    "copy_ops": 1,
+                    "hash_bytes": 0,
+                    "read_bytes": 0,
+                    "read_ops": 0,
+                    "rename_ops": 0,
+                    "sync_ops": 0,
+                    "write_bytes": 0,
+                    "write_ops": 0
+                  },
+                  "project.json": {
+                    "copy_bytes": 0,
+                    "copy_ops": 0,
+                    "hash_bytes": 37346195,
+                    "read_bytes": 37346195,
+                    "read_ops": 5,
+                    "rename_ops": 1,
+                    "sync_ops": 1,
+                    "write_bytes": 7469239,
+                    "write_ops": 1
+                  }
+                },
+                "full_read_bytes": 37346195,
+                "full_reads": 5,
+                "hash_bytes": 37346195,
+                "rename_ops": 2,
+                "sync_ops": 2,
+                "write_bytes": 14372282,
+                "write_ops": 2
+              }
+            },
+            {
+              "sample": 6,
+              "committed_sha256": "8405dece1b76626f934fff9784cde2e918b0e393869549ab1228c3ce0d4fa3b7",
+              "committed_size": 7469239,
+              "elapsed_us": 3039545,
+              "io": {
+                "copy_bytes": 7469239,
+                "copy_ops": 1,
+                "files": {
+                  ".workspace/recovery.bak": {
+                    "copy_bytes": 0,
+                    "copy_ops": 0,
+                    "hash_bytes": 0,
+                    "read_bytes": 0,
+                    "read_ops": 0,
+                    "rename_ops": 0,
+                    "sync_ops": 0,
+                    "write_bytes": 0,
+                    "write_ops": 0
+                  },
+                  ".workspace/recovery.json": {
+                    "copy_bytes": 0,
+                    "copy_ops": 0,
+                    "hash_bytes": 0,
+                    "read_bytes": 0,
+                    "read_ops": 0,
+                    "rename_ops": 1,
+                    "sync_ops": 1,
+                    "write_bytes": 6903043,
+                    "write_ops": 1
+                  },
+                  "project.bak": {
+                    "copy_bytes": 7469239,
+                    "copy_ops": 1,
+                    "hash_bytes": 0,
+                    "read_bytes": 0,
+                    "read_ops": 0,
+                    "rename_ops": 0,
+                    "sync_ops": 0,
+                    "write_bytes": 0,
+                    "write_ops": 0
+                  },
+                  "project.json": {
+                    "copy_bytes": 0,
+                    "copy_ops": 0,
+                    "hash_bytes": 37346195,
+                    "read_bytes": 37346195,
+                    "read_ops": 5,
+                    "rename_ops": 1,
+                    "sync_ops": 1,
+                    "write_bytes": 7469239,
+                    "write_ops": 1
+                  }
+                },
+                "full_read_bytes": 37346195,
+                "full_reads": 5,
+                "hash_bytes": 37346195,
+                "rename_ops": 2,
+                "sync_ops": 2,
+                "write_bytes": 14372282,
+                "write_ops": 2
+              }
+            },
+            {
+              "sample": 7,
+              "committed_sha256": "7c7b8144e3830c458ee6fe7fc86af9f77c4d550659928fb4e076932ce3bcb760",
+              "committed_size": 7469239,
+              "elapsed_us": 3040529,
+              "io": {
+                "copy_bytes": 7469239,
+                "copy_ops": 1,
+                "files": {
+                  ".workspace/recovery.bak": {
+                    "copy_bytes": 0,
+                    "copy_ops": 0,
+                    "hash_bytes": 0,
+                    "read_bytes": 0,
+                    "read_ops": 0,
+                    "rename_ops": 0,
+                    "sync_ops": 0,
+                    "write_bytes": 0,
+                    "write_ops": 0
+                  },
+                  ".workspace/recovery.json": {
+                    "copy_bytes": 0,
+                    "copy_ops": 0,
+                    "hash_bytes": 0,
+                    "read_bytes": 0,
+                    "read_ops": 0,
+                    "rename_ops": 1,
+                    "sync_ops": 1,
+                    "write_bytes": 6903043,
+                    "write_ops": 1
+                  },
+                  "project.bak": {
+                    "copy_bytes": 7469239,
+                    "copy_ops": 1,
+                    "hash_bytes": 0,
+                    "read_bytes": 0,
+                    "read_ops": 0,
+                    "rename_ops": 0,
+                    "sync_ops": 0,
+                    "write_bytes": 0,
+                    "write_ops": 0
+                  },
+                  "project.json": {
+                    "copy_bytes": 0,
+                    "copy_ops": 0,
+                    "hash_bytes": 37346195,
+                    "read_bytes": 37346195,
+                    "read_ops": 5,
+                    "rename_ops": 1,
+                    "sync_ops": 1,
+                    "write_bytes": 7469239,
+                    "write_ops": 1
+                  }
+                },
+                "full_read_bytes": 37346195,
+                "full_reads": 5,
+                "hash_bytes": 37346195,
+                "rename_ops": 2,
+                "sync_ops": 2,
+                "write_bytes": 14372282,
+                "write_ops": 2
+              }
+            },
+            {
+              "sample": 8,
+              "committed_sha256": "9d946ad3fa3f04aaeada714c80a9616be520169edc7c5638a85b9ae68063193c",
+              "committed_size": 7469239,
+              "elapsed_us": 3322058,
+              "io": {
+                "copy_bytes": 7469239,
+                "copy_ops": 1,
+                "files": {
+                  ".workspace/recovery.bak": {
+                    "copy_bytes": 0,
+                    "copy_ops": 0,
+                    "hash_bytes": 0,
+                    "read_bytes": 0,
+                    "read_ops": 0,
+                    "rename_ops": 0,
+                    "sync_ops": 0,
+                    "write_bytes": 0,
+                    "write_ops": 0
+                  },
+                  ".workspace/recovery.json": {
+                    "copy_bytes": 0,
+                    "copy_ops": 0,
+                    "hash_bytes": 0,
+                    "read_bytes": 0,
+                    "read_ops": 0,
+                    "rename_ops": 1,
+                    "sync_ops": 1,
+                    "write_bytes": 6903043,
+                    "write_ops": 1
+                  },
+                  "project.bak": {
+                    "copy_bytes": 7469239,
+                    "copy_ops": 1,
+                    "hash_bytes": 0,
+                    "read_bytes": 0,
+                    "read_ops": 0,
+                    "rename_ops": 0,
+                    "sync_ops": 0,
+                    "write_bytes": 0,
+                    "write_ops": 0
+                  },
+                  "project.json": {
+                    "copy_bytes": 0,
+                    "copy_ops": 0,
+                    "hash_bytes": 37346195,
+                    "read_bytes": 37346195,
+                    "read_ops": 5,
+                    "rename_ops": 1,
+                    "sync_ops": 1,
+                    "write_bytes": 7469239,
+                    "write_ops": 1
+                  }
+                },
+                "full_read_bytes": 37346195,
+                "full_reads": 5,
+                "hash_bytes": 37346195,
+                "rename_ops": 2,
+                "sync_ops": 2,
+                "write_bytes": 14372282,
+                "write_ops": 2
+              }
+            },
+            {
+              "sample": 9,
+              "committed_sha256": "c930c68ccc4412ad8cd549860e77d4d05e97397d659f2b01a15e006cab27c466",
+              "committed_size": 7469239,
+              "elapsed_us": 3032048,
+              "io": {
+                "copy_bytes": 7469239,
+                "copy_ops": 1,
+                "files": {
+                  ".workspace/recovery.bak": {
+                    "copy_bytes": 0,
+                    "copy_ops": 0,
+                    "hash_bytes": 0,
+                    "read_bytes": 0,
+                    "read_ops": 0,
+                    "rename_ops": 0,
+                    "sync_ops": 0,
+                    "write_bytes": 0,
+                    "write_ops": 0
+                  },
+                  ".workspace/recovery.json": {
+                    "copy_bytes": 0,
+                    "copy_ops": 0,
+                    "hash_bytes": 0,
+                    "read_bytes": 0,
+                    "read_ops": 0,
+                    "rename_ops": 1,
+                    "sync_ops": 1,
+                    "write_bytes": 6903043,
+                    "write_ops": 1
+                  },
+                  "project.bak": {
+                    "copy_bytes": 7469239,
+                    "copy_ops": 1,
+                    "hash_bytes": 0,
+                    "read_bytes": 0,
+                    "read_ops": 0,
+                    "rename_ops": 0,
+                    "sync_ops": 0,
+                    "write_bytes": 0,
+                    "write_ops": 0
+                  },
+                  "project.json": {
+                    "copy_bytes": 0,
+                    "copy_ops": 0,
+                    "hash_bytes": 37346195,
+                    "read_bytes": 37346195,
+                    "read_ops": 5,
+                    "rename_ops": 1,
+                    "sync_ops": 1,
+                    "write_bytes": 7469239,
+                    "write_ops": 1
+                  }
+                },
+                "full_read_bytes": 37346195,
+                "full_reads": 5,
+                "hash_bytes": 37346195,
+                "rename_ops": 2,
+                "sync_ops": 2,
+                "write_bytes": 14372282,
+                "write_ops": 2
+              }
+            },
+            {
+              "sample": 10,
+              "committed_sha256": "3b0fc0da182849df52b02f19c5ea6299864644c9ac06d8702c2271fef515d4ac",
+              "committed_size": 7469239,
+              "elapsed_us": 3036256,
+              "io": {
+                "copy_bytes": 7469239,
+                "copy_ops": 1,
+                "files": {
+                  ".workspace/recovery.bak": {
+                    "copy_bytes": 0,
+                    "copy_ops": 0,
+                    "hash_bytes": 0,
+                    "read_bytes": 0,
+                    "read_ops": 0,
+                    "rename_ops": 0,
+                    "sync_ops": 0,
+                    "write_bytes": 0,
+                    "write_ops": 0
+                  },
+                  ".workspace/recovery.json": {
+                    "copy_bytes": 0,
+                    "copy_ops": 0,
+                    "hash_bytes": 0,
+                    "read_bytes": 0,
+                    "read_ops": 0,
+                    "rename_ops": 1,
+                    "sync_ops": 1,
+                    "write_bytes": 6903043,
+                    "write_ops": 1
+                  },
+                  "project.bak": {
+                    "copy_bytes": 7469239,
+                    "copy_ops": 1,
+                    "hash_bytes": 0,
+                    "read_bytes": 0,
+                    "read_ops": 0,
+                    "rename_ops": 0,
+                    "sync_ops": 0,
+                    "write_bytes": 0,
+                    "write_ops": 0
+                  },
+                  "project.json": {
+                    "copy_bytes": 0,
+                    "copy_ops": 0,
+                    "hash_bytes": 37346195,
+                    "read_bytes": 37346195,
+                    "read_ops": 5,
+                    "rename_ops": 1,
+                    "sync_ops": 1,
+                    "write_bytes": 7469239,
+                    "write_ops": 1
+                  }
+                },
+                "full_read_bytes": 37346195,
+                "full_reads": 5,
+                "hash_bytes": 37346195,
+                "rename_ops": 2,
+                "sync_ops": 2,
+                "write_bytes": 14372282,
+                "write_ops": 2
+              }
+            }
+          ]
+        }
+      }
+    },
+    "candidate": {
+      "log": "native-warm-final10-candidate.log",
+      "source_commit": "fcefcb106c2cf4e957d54a1ee7e112e2aa83cac0",
+      "source_lib_sha256": "cc7129f12a460571d5a5b762a11fc46ded6d6142b3f6a88c7f7b9f6751d6aa5d",
+      "binary_path": "/private/tmp/io-ui-closure-candidate-seeded/debug/deps/ai_course_workbench_lib-7ed887973fc21486",
+      "binary_sha256": "fc08e00a1c4400d80dc439047117487f8d743fbedfa96e273d3cbf3a5aa74337",
+      "log_path": "runs/native-warm-final10-candidate.log",
+      "log_sha256": "5739e25d63fcee2eaa96d19f33c7c2333614f1b98c7c83d3e90b7fdf8ee530dc",
+      "log_bytes": 19966,
+      "log_created_at_utc": "2026-10-06T13:18:33.982621Z",
+      "log_completed_at_utc": "2026-10-06T13:19:16.789911Z",
+      "command_exit": 0,
+      "test_harness_runtime_seconds": 42.5,
+      "test_result": "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 258 filtered out; finished in 42.50s",
+      "warmup_pairs_excluded": 1,
+      "sample_count_per_kind": 10,
+      "worker_registrations_during_samples": 0,
+      "active_lease_handle_before": true,
+      "active_lease_handle_after": true,
+      "initial_canonical_bytes": 7469246,
+      "initial_canonical_sha256": "e5e49bd7db7bfd57e79e9facf35864b665b470d3ea4b8cfaad9b71ae40b85358",
+      "canonical_size_delta_from_fixture": 0,
+      "operations": {
+        "changed": {
+          "sample_count": 10,
+          "elapsed_us": [
+            2802555,
+            2816732,
+            2816876,
+            2808325,
+            2825630,
+            2811116,
+            2809942,
+            2795640,
+            2782040,
+            2781669
+          ],
+          "median_elapsed_us": 2809133.5,
+          "p95_nearest_rank_elapsed_us": 2825630,
+          "aggregate": {
+            "copy_bytes": 74692388,
+            "copy_ops": 10,
+            "full_read_bytes": 149384776,
+            "full_reads": 20,
+            "hash_bytes": 149384776,
+            "rename_ops": 30,
+            "sync_ops": 50,
+            "write_bytes": 143722840,
+            "write_ops": 20
+          },
+          "per_target": {
+            ".workspace/recovery.bak": {
+              "read_ops": 0,
+              "read_bytes": 0,
+              "hash_bytes": 0,
+              "write_ops": 0,
+              "write_bytes": 0,
+              "copy_ops": 0,
+              "copy_bytes": 0,
+              "sync_ops": 0,
+              "rename_ops": 0
+            },
+            ".workspace/recovery.json": {
+              "read_ops": 0,
+              "read_bytes": 0,
+              "hash_bytes": 0,
+              "write_ops": 10,
+              "write_bytes": 69030450,
+              "copy_ops": 0,
+              "copy_bytes": 0,
+              "sync_ops": 20,
+              "rename_ops": 10
+            },
+            "project.bak": {
+              "read_ops": 0,
+              "read_bytes": 0,
+              "hash_bytes": 0,
+              "write_ops": 0,
+              "write_bytes": 0,
+              "copy_ops": 10,
+              "copy_bytes": 74692388,
+              "sync_ops": 10,
+              "rename_ops": 10
+            },
+            "project.json": {
+              "read_ops": 20,
+              "read_bytes": 149384776,
+              "hash_bytes": 149384776,
+              "write_ops": 10,
+              "write_bytes": 74692390,
+              "copy_ops": 0,
+              "copy_bytes": 0,
+              "sync_ops": 20,
+              "rename_ops": 10
+            }
+          },
+          "samples": [
+            {
+              "sample": 1,
+              "committed_sha256": "eec3737b6489252a1839872b5f8366d1aa32bcfc2fbbbe77d40559c1a64d9886",
+              "committed_size": 7469239,
+              "elapsed_us": 2802555,
+              "io": {
+                "copy_bytes": 7469237,
+                "copy_ops": 1,
+                "files": {
+                  ".workspace/recovery.bak": {
+                    "copy_bytes": 0,
+                    "copy_ops": 0,
+                    "hash_bytes": 0,
+                    "read_bytes": 0,
+                    "read_ops": 0,
+                    "rename_ops": 0,
+                    "sync_ops": 0,
+                    "write_bytes": 0,
+                    "write_ops": 0
+                  },
+                  ".workspace/recovery.json": {
+                    "copy_bytes": 0,
+                    "copy_ops": 0,
+                    "hash_bytes": 0,
+                    "read_bytes": 0,
+                    "read_ops": 0,
+                    "rename_ops": 1,
+                    "sync_ops": 2,
+                    "write_bytes": 6903045,
+                    "write_ops": 1
+                  },
+                  "project.bak": {
+                    "copy_bytes": 7469237,
+                    "copy_ops": 1,
+                    "hash_bytes": 0,
+                    "read_bytes": 0,
+                    "read_ops": 0,
+                    "rename_ops": 1,
+                    "sync_ops": 1,
+                    "write_bytes": 0,
+                    "write_ops": 0
+                  },
+                  "project.json": {
+                    "copy_bytes": 0,
+                    "copy_ops": 0,
+                    "hash_bytes": 14938474,
+                    "read_bytes": 14938474,
+                    "read_ops": 2,
+                    "rename_ops": 1,
+                    "sync_ops": 2,
+                    "write_bytes": 7469239,
+                    "write_ops": 1
+                  }
+                },
+                "full_read_bytes": 14938474,
+                "full_reads": 2,
+                "hash_bytes": 14938474,
+                "rename_ops": 3,
+                "sync_ops": 5,
+                "write_bytes": 14372284,
+                "write_ops": 2
+              }
+            },
+            {
+              "sample": 2,
+              "committed_sha256": "60a87214454dd49d11097298d42e2ba9c14faa91efb1ada6a6c0d5ef86c317d4",
+              "committed_size": 7469239,
+              "elapsed_us": 2816732,
+              "io": {
+                "copy_bytes": 7469239,
+                "copy_ops": 1,
+                "files": {
+                  ".workspace/recovery.bak": {
+                    "copy_bytes": 0,
+                    "copy_ops": 0,
+                    "hash_bytes": 0,
+                    "read_bytes": 0,
+                    "read_ops": 0,
+                    "rename_ops": 0,
+                    "sync_ops": 0,
+                    "write_bytes": 0,
+                    "write_ops": 0
+                  },
+                  ".workspace/recovery.json": {
+                    "copy_bytes": 0,
+                    "copy_ops": 0,
+                    "hash_bytes": 0,
+                    "read_bytes": 0,
+                    "read_ops": 0,
+                    "rename_ops": 1,
+                    "sync_ops": 2,
+                    "write_bytes": 6903045,
+                    "write_ops": 1
+                  },
+                  "project.bak": {
+                    "copy_bytes": 7469239,
+                    "copy_ops": 1,
+                    "hash_bytes": 0,
+                    "read_bytes": 0,
+                    "read_ops": 0,
+                    "rename_ops": 1,
+                    "sync_ops": 1,
+                    "write_bytes": 0,
+                    "write_ops": 0
+                  },
+                  "project.json": {
+                    "copy_bytes": 0,
+                    "copy_ops": 0,
+                    "hash_bytes": 14938478,
+                    "read_bytes": 14938478,
+                    "read_ops": 2,
+                    "rename_ops": 1,
+                    "sync_ops": 2,
+                    "write_bytes": 7469239,
+                    "write_ops": 1
+                  }
+                },
+                "full_read_bytes": 14938478,
+                "full_reads": 2,
+                "hash_bytes": 14938478,
+                "rename_ops": 3,
+                "sync_ops": 5,
+                "write_bytes": 14372284,
+                "write_ops": 2
+              }
+            },
+            {
+              "sample": 3,
+              "committed_sha256": "8892a4b779bc7ff5fdc57b7c72ef0187f156a7c15115e3eee2f644e4eedfc1cf",
+              "committed_size": 7469239,
+              "elapsed_us": 2816876,
+              "io": {
+                "copy_bytes": 7469239,
+                "copy_ops": 1,
+                "files": {
+                  ".workspace/recovery.bak": {
+                    "copy_bytes": 0,
+                    "copy_ops": 0,
+                    "hash_bytes": 0,
+                    "read_bytes": 0,
+                    "read_ops": 0,
+                    "rename_ops": 0,
+                    "sync_ops": 0,
+                    "write_bytes": 0,
+                    "write_ops": 0
+                  },
+                  ".workspace/recovery.json": {
+                    "copy_bytes": 0,
+                    "copy_ops": 0,
+                    "hash_bytes": 0,
+                    "read_bytes": 0,
+                    "read_ops": 0,
+                    "rename_ops": 1,
+                    "sync_ops": 2,
+                    "write_bytes": 6903045,
+                    "write_ops": 1
+                  },
+                  "project.bak": {
+                    "copy_bytes": 7469239,
+                    "copy_ops": 1,
+                    "hash_bytes": 0,
+                    "read_bytes": 0,
+                    "read_ops": 0,
+                    "rename_ops": 1,
+                    "sync_ops": 1,
+                    "write_bytes": 0,
+                    "write_ops": 0
+                  },
+                  "project.json": {
+                    "copy_bytes": 0,
+                    "copy_ops": 0,
+                    "hash_bytes": 14938478,
+                    "read_bytes": 14938478,
+                    "read_ops": 2,
+                    "rename_ops": 1,
+                    "sync_ops": 2,
+                    "write_bytes": 7469239,
+                    "write_ops": 1
+                  }
+                },
+                "full_read_bytes": 14938478,
+                "full_reads": 2,
+                "hash_bytes": 14938478,
+                "rename_ops": 3,
+                "sync_ops": 5,
+                "write_bytes": 14372284,
+                "write_ops": 2
+              }
+            },
+            {
+              "sample": 4,
+              "committed_sha256": "26ee0b82bfabe921a82c907806dfbb6bb41f86bd3c012e9ec6f1fcfadc84ccdf",
+              "committed_size": 7469239,
+              "elapsed_us": 2808325,
+              "io": {
+                "copy_bytes": 7469239,
+                "copy_ops": 1,
+                "files": {
+                  ".workspace/recovery.bak": {
+                    "copy_bytes": 0,
+                    "copy_ops": 0,
+                    "hash_bytes": 0,
+                    "read_bytes": 0,
+                    "read_ops": 0,
+                    "rename_ops": 0,
+                    "sync_ops": 0,
+                    "write_bytes": 0,
+                    "write_ops": 0
+                  },
+                  ".workspace/recovery.json": {
+                    "copy_bytes": 0,
+                    "copy_ops": 0,
+                    "hash_bytes": 0,
+                    "read_bytes": 0,
+                    "read_ops": 0,
+                    "rename_ops": 1,
+                    "sync_ops": 2,
+                    "write_bytes": 6903045,
+                    "write_ops": 1
+                  },
+                  "project.bak": {
+                    "copy_bytes": 7469239,
+                    "copy_ops": 1,
+                    "hash_bytes": 0,
+                    "read_bytes": 0,
+                    "read_ops": 0,
+                    "rename_ops": 1,
+                    "sync_ops": 1,
+                    "write_bytes": 0,
+                    "write_ops": 0
+                  },
+                  "project.json": {
+                    "copy_bytes": 0,
+                    "copy_ops": 0,
+                    "hash_bytes": 14938478,
+                    "read_bytes": 14938478,
+                    "read_ops": 2,
+                    "rename_ops": 1,
+                    "sync_ops": 2,
+                    "write_bytes": 7469239,
+                    "write_ops": 1
+                  }
+                },
+                "full_read_bytes": 14938478,
+                "full_reads": 2,
+                "hash_bytes": 14938478,
+                "rename_ops": 3,
+                "sync_ops": 5,
+                "write_bytes": 14372284,
+                "write_ops": 2
+              }
+            },
+            {
+              "sample": 5,
+              "committed_sha256": "973cc88cbc07e413c1cbcb55902cb91e51b358af94efd807a7a823466f5c20d5",
+              "committed_size": 7469239,
+              "elapsed_us": 2825630,
+              "io": {
+                "copy_bytes": 7469239,
+                "copy_ops": 1,
+                "files": {
+                  ".workspace/recovery.bak": {
+                    "copy_bytes": 0,
+                    "copy_ops": 0,
+                    "hash_bytes": 0,
+                    "read_bytes": 0,
+                    "read_ops": 0,
+                    "rename_ops": 0,
+                    "sync_ops": 0,
+                    "write_bytes": 0,
+                    "write_ops": 0
+                  },
+                  ".workspace/recovery.json": {
+                    "copy_bytes": 0,
+                    "copy_ops": 0,
+                    "hash_bytes": 0,
+                    "read_bytes": 0,
+                    "read_ops": 0,
+                    "rename_ops": 1,
+                    "sync_ops": 2,
+                    "write_bytes": 6903045,
+                    "write_ops": 1
+                  },
+                  "project.bak": {
+                    "copy_bytes": 7469239,
+                    "copy_ops": 1,
+                    "hash_bytes": 0,
+                    "read_bytes": 0,
+                    "read_ops": 0,
+                    "rename_ops": 1,
+                    "sync_ops": 1,
+                    "write_bytes": 0,
+                    "write_ops": 0
+                  },
+                  "project.json": {
+                    "copy_bytes": 0,
+                    "copy_ops": 0,
+                    "hash_bytes": 14938478,
+                    "read_bytes": 14938478,
+                    "read_ops": 2,
+                    "rename_ops": 1,
+                    "sync_ops": 2,
+                    "write_bytes": 7469239,
+                    "write_ops": 1
+                  }
+                },
+                "full_read_bytes": 14938478,
+                "full_reads": 2,
+                "hash_bytes": 14938478,
+                "rename_ops": 3,
+                "sync_ops": 5,
+                "write_bytes": 14372284,
+                "write_ops": 2
+              }
+            },
+            {
+              "sample": 6,
+              "committed_sha256": "8405dece1b76626f934fff9784cde2e918b0e393869549ab1228c3ce0d4fa3b7",
+              "committed_size": 7469239,
+              "elapsed_us": 2811116,
+              "io": {
+                "copy_bytes": 7469239,
+                "copy_ops": 1,
+                "files": {
+                  ".workspace/recovery.bak": {
+                    "copy_bytes": 0,
+                    "copy_ops": 0,
+                    "hash_bytes": 0,
+                    "read_bytes": 0,
+                    "read_ops": 0,
+                    "rename_ops": 0,
+                    "sync_ops": 0,
+                    "write_bytes": 0,
+                    "write_ops": 0
+                  },
+                  ".workspace/recovery.json": {
+                    "copy_bytes": 0,
+                    "copy_ops": 0,
+                    "hash_bytes": 0,
+                    "read_bytes": 0,
+                    "read_ops": 0,
+                    "rename_ops": 1,
+                    "sync_ops": 2,
+                    "write_bytes": 6903045,
+                    "write_ops": 1
+                  },
+                  "project.bak": {
+                    "copy_bytes": 7469239,
+                    "copy_ops": 1,
+                    "hash_bytes": 0,
+                    "read_bytes": 0,
+                    "read_ops": 0,
+                    "rename_ops": 1,
+                    "sync_ops": 1,
+                    "write_bytes": 0,
+                    "write_ops": 0
+                  },
+                  "project.json": {
+                    "copy_bytes": 0,
+                    "copy_ops": 0,
+                    "hash_bytes": 14938478,
+                    "read_bytes": 14938478,
+                    "read_ops": 2,
+                    "rename_ops": 1,
+                    "sync_ops": 2,
+                    "write_bytes": 7469239,
+                    "write_ops": 1
+                  }
+                },
+                "full_read_bytes": 14938478,
+                "full_reads": 2,
+                "hash_bytes": 14938478,
+                "rename_ops": 3,
+                "sync_ops": 5,
+                "write_bytes": 14372284,
+                "write_ops": 2
+              }
+            },
+            {
+              "sample": 7,
+              "committed_sha256": "7c7b8144e3830c458ee6fe7fc86af9f77c4d550659928fb4e076932ce3bcb760",
+              "committed_size": 7469239,
+              "elapsed_us": 2809942,
+              "io": {
+                "copy_bytes": 7469239,
+                "copy_ops": 1,
+                "files": {
+                  ".workspace/recovery.bak": {
+                    "copy_bytes": 0,
+                    "copy_ops": 0,
+                    "hash_bytes": 0,
+                    "read_bytes": 0,
+                    "read_ops": 0,
+                    "rename_ops": 0,
+                    "sync_ops": 0,
+                    "write_bytes": 0,
+                    "write_ops": 0
+                  },
+                  ".workspace/recovery.json": {
+                    "copy_bytes": 0,
+                    "copy_ops": 0,
+                    "hash_bytes": 0,
+                    "read_bytes": 0,
+                    "read_ops": 0,
+                    "rename_ops": 1,
+                    "sync_ops": 2,
+                    "write_bytes": 6903045,
+                    "write_ops": 1
+                  },
+                  "project.bak": {
+                    "copy_bytes": 7469239,
+                    "copy_ops": 1,
+                    "hash_bytes": 0,
+                    "read_bytes": 0,
+                    "read_ops": 0,
+                    "rename_ops": 1,
+                    "sync_ops": 1,
+                    "write_bytes": 0,
+                    "write_ops": 0
+                  },
+                  "project.json": {
+                    "copy_bytes": 0,
+                    "copy_ops": 0,
+                    "hash_bytes": 14938478,
+                    "read_bytes": 14938478,
+                    "read_ops": 2,
+                    "rename_ops": 1,
+                    "sync_ops": 2,
+                    "write_bytes": 7469239,
+                    "write_ops": 1
+                  }
+                },
+                "full_read_bytes": 14938478,
+                "full_reads": 2,
+                "hash_bytes": 14938478,
+                "rename_ops": 3,
+                "sync_ops": 5,
+                "write_bytes": 14372284,
+                "write_ops": 2
+              }
+            },
+            {
+              "sample": 8,
+              "committed_sha256": "9d946ad3fa3f04aaeada714c80a9616be520169edc7c5638a85b9ae68063193c",
+              "committed_size": 7469239,
+              "elapsed_us": 2795640,
+              "io": {
+                "copy_bytes": 7469239,
+                "copy_ops": 1,
+                "files": {
+                  ".workspace/recovery.bak": {
+                    "copy_bytes": 0,
+                    "copy_ops": 0,
+                    "hash_bytes": 0,
+                    "read_bytes": 0,
+                    "read_ops": 0,
+                    "rename_ops": 0,
+                    "sync_ops": 0,
+                    "write_bytes": 0,
+                    "write_ops": 0
+                  },
+                  ".workspace/recovery.json": {
+                    "copy_bytes": 0,
+                    "copy_ops": 0,
+                    "hash_bytes": 0,
+                    "read_bytes": 0,
+                    "read_ops": 0,
+                    "rename_ops": 1,
+                    "sync_ops": 2,
+                    "write_bytes": 6903045,
+                    "write_ops": 1
+                  },
+                  "project.bak": {
+                    "copy_bytes": 7469239,
+                    "copy_ops": 1,
+                    "hash_bytes": 0,
+                    "read_bytes": 0,
+                    "read_ops": 0,
+                    "rename_ops": 1,
+                    "sync_ops": 1,
+                    "write_bytes": 0,
+                    "write_ops": 0
+                  },
+                  "project.json": {
+                    "copy_bytes": 0,
+                    "copy_ops": 0,
+                    "hash_bytes": 14938478,
+                    "read_bytes": 14938478,
+                    "read_ops": 2,
+                    "rename_ops": 1,
+                    "sync_ops": 2,
+                    "write_bytes": 7469239,
+                    "write_ops": 1
+                  }
+                },
+                "full_read_bytes": 14938478,
+                "full_reads": 2,
+                "hash_bytes": 14938478,
+                "rename_ops": 3,
+                "sync_ops": 5,
+                "write_bytes": 14372284,
+                "write_ops": 2
+              }
+            },
+            {
+              "sample": 9,
+              "committed_sha256": "c930c68ccc4412ad8cd549860e77d4d05e97397d659f2b01a15e006cab27c466",
+              "committed_size": 7469239,
+              "elapsed_us": 2782040,
+              "io": {
+                "copy_bytes": 7469239,
+                "copy_ops": 1,
+                "files": {
+                  ".workspace/recovery.bak": {
+                    "copy_bytes": 0,
+                    "copy_ops": 0,
+                    "hash_bytes": 0,
+                    "read_bytes": 0,
+                    "read_ops": 0,
+                    "rename_ops": 0,
+                    "sync_ops": 0,
+                    "write_bytes": 0,
+                    "write_ops": 0
+                  },
+                  ".workspace/recovery.json": {
+                    "copy_bytes": 0,
+                    "copy_ops": 0,
+                    "hash_bytes": 0,
+                    "read_bytes": 0,
+                    "read_ops": 0,
+                    "rename_ops": 1,
+                    "sync_ops": 2,
+                    "write_bytes": 6903045,
+                    "write_ops": 1
+                  },
+                  "project.bak": {
+                    "copy_bytes": 7469239,
+                    "copy_ops": 1,
+                    "hash_bytes": 0,
+                    "read_bytes": 0,
+                    "read_ops": 0,
+                    "rename_ops": 1,
+                    "sync_ops": 1,
+                    "write_bytes": 0,
+                    "write_ops": 0
+                  },
+                  "project.json": {
+                    "copy_bytes": 0,
+                    "copy_ops": 0,
+                    "hash_bytes": 14938478,
+                    "read_bytes": 14938478,
+                    "read_ops": 2,
+                    "rename_ops": 1,
+                    "sync_ops": 2,
+                    "write_bytes": 7469239,
+                    "write_ops": 1
+                  }
+                },
+                "full_read_bytes": 14938478,
+                "full_reads": 2,
+                "hash_bytes": 14938478,
+                "rename_ops": 3,
+                "sync_ops": 5,
+                "write_bytes": 14372284,
+                "write_ops": 2
+              }
+            },
+            {
+              "sample": 10,
+              "committed_sha256": "3b0fc0da182849df52b02f19c5ea6299864644c9ac06d8702c2271fef515d4ac",
+              "committed_size": 7469239,
+              "elapsed_us": 2781669,
+              "io": {
+                "copy_bytes": 7469239,
+                "copy_ops": 1,
+                "files": {
+                  ".workspace/recovery.bak": {
+                    "copy_bytes": 0,
+                    "copy_ops": 0,
+                    "hash_bytes": 0,
+                    "read_bytes": 0,
+                    "read_ops": 0,
+                    "rename_ops": 0,
+                    "sync_ops": 0,
+                    "write_bytes": 0,
+                    "write_ops": 0
+                  },
+                  ".workspace/recovery.json": {
+                    "copy_bytes": 0,
+                    "copy_ops": 0,
+                    "hash_bytes": 0,
+                    "read_bytes": 0,
+                    "read_ops": 0,
+                    "rename_ops": 1,
+                    "sync_ops": 2,
+                    "write_bytes": 6903045,
+                    "write_ops": 1
+                  },
+                  "project.bak": {
+                    "copy_bytes": 7469239,
+                    "copy_ops": 1,
+                    "hash_bytes": 0,
+                    "read_bytes": 0,
+                    "read_ops": 0,
+                    "rename_ops": 1,
+                    "sync_ops": 1,
+                    "write_bytes": 0,
+                    "write_ops": 0
+                  },
+                  "project.json": {
+                    "copy_bytes": 0,
+                    "copy_ops": 0,
+                    "hash_bytes": 14938478,
+                    "read_bytes": 14938478,
+                    "read_ops": 2,
+                    "rename_ops": 1,
+                    "sync_ops": 2,
+                    "write_bytes": 7469239,
+                    "write_ops": 1
+                  }
+                },
+                "full_read_bytes": 14938478,
+                "full_reads": 2,
+                "hash_bytes": 14938478,
+                "rename_ops": 3,
+                "sync_ops": 5,
+                "write_bytes": 14372284,
+                "write_ops": 2
+              }
+            }
+          ]
+        },
+        "unchanged": {
+          "sample_count": 10,
+          "elapsed_us": [
+            859941,
+            859196,
+            859014,
+            859426,
+            865899,
+            868051,
+            859784,
+            863363,
+            852166,
+            866049
+          ],
+          "median_elapsed_us": 859862.5,
+          "p95_nearest_rank_elapsed_us": 868051,
+          "aggregate": {
+            "copy_bytes": 0,
+            "copy_ops": 0,
+            "full_read_bytes": 74692390,
+            "full_reads": 10,
+            "hash_bytes": 74692390,
+            "rename_ops": 0,
+            "sync_ops": 0,
+            "write_bytes": 0,
+            "write_ops": 0
+          },
+          "per_target": {
+            ".workspace/recovery.bak": {
+              "read_ops": 0,
+              "read_bytes": 0,
+              "hash_bytes": 0,
+              "write_ops": 0,
+              "write_bytes": 0,
+              "copy_ops": 0,
+              "copy_bytes": 0,
+              "sync_ops": 0,
+              "rename_ops": 0
+            },
+            ".workspace/recovery.json": {
+              "read_ops": 0,
+              "read_bytes": 0,
+              "hash_bytes": 0,
+              "write_ops": 0,
+              "write_bytes": 0,
+              "copy_ops": 0,
+              "copy_bytes": 0,
+              "sync_ops": 0,
+              "rename_ops": 0
+            },
+            "project.bak": {
+              "read_ops": 0,
+              "read_bytes": 0,
+              "hash_bytes": 0,
+              "write_ops": 0,
+              "write_bytes": 0,
+              "copy_ops": 0,
+              "copy_bytes": 0,
+              "sync_ops": 0,
+              "rename_ops": 0
+            },
+            "project.json": {
+              "read_ops": 10,
+              "read_bytes": 74692390,
+              "hash_bytes": 74692390,
+              "write_ops": 0,
+              "write_bytes": 0,
+              "copy_ops": 0,
+              "copy_bytes": 0,
+              "sync_ops": 0,
+              "rename_ops": 0
+            }
+          },
+          "samples": [
+            {
+              "sample": 1,
+              "committed_sha256": "eec3737b6489252a1839872b5f8366d1aa32bcfc2fbbbe77d40559c1a64d9886",
+              "committed_size": 7469239,
+              "elapsed_us": 859941,
+              "io": {
+                "copy_bytes": 0,
+                "copy_ops": 0,
+                "files": {
+                  ".workspace/recovery.bak": {
+                    "copy_bytes": 0,
+                    "copy_ops": 0,
+                    "hash_bytes": 0,
+                    "read_bytes": 0,
+                    "read_ops": 0,
+                    "rename_ops": 0,
+                    "sync_ops": 0,
+                    "write_bytes": 0,
+                    "write_ops": 0
+                  },
+                  ".workspace/recovery.json": {
+                    "copy_bytes": 0,
+                    "copy_ops": 0,
+                    "hash_bytes": 0,
+                    "read_bytes": 0,
+                    "read_ops": 0,
+                    "rename_ops": 0,
+                    "sync_ops": 0,
+                    "write_bytes": 0,
+                    "write_ops": 0
+                  },
+                  "project.bak": {
+                    "copy_bytes": 0,
+                    "copy_ops": 0,
+                    "hash_bytes": 0,
+                    "read_bytes": 0,
+                    "read_ops": 0,
+                    "rename_ops": 0,
+                    "sync_ops": 0,
+                    "write_bytes": 0,
+                    "write_ops": 0
+                  },
+                  "project.json": {
+                    "copy_bytes": 0,
+                    "copy_ops": 0,
+                    "hash_bytes": 7469239,
+                    "read_bytes": 7469239,
+                    "read_ops": 1,
+                    "rename_ops": 0,
+                    "sync_ops": 0,
+                    "write_bytes": 0,
+                    "write_ops": 0
+                  }
+                },
+                "full_read_bytes": 7469239,
+                "full_reads": 1,
+                "hash_bytes": 7469239,
+                "rename_ops": 0,
+                "sync_ops": 0,
+                "write_bytes": 0,
+                "write_ops": 0
+              }
+            },
+            {
+              "sample": 2,
+              "committed_sha256": "60a87214454dd49d11097298d42e2ba9c14faa91efb1ada6a6c0d5ef86c317d4",
+              "committed_size": 7469239,
+              "elapsed_us": 859196,
+              "io": {
+                "copy_bytes": 0,
+                "copy_ops": 0,
+                "files": {
+                  ".workspace/recovery.bak": {
+                    "copy_bytes": 0,
+                    "copy_ops": 0,
+                    "hash_bytes": 0,
+                    "read_bytes": 0,
+                    "read_ops": 0,
+                    "rename_ops": 0,
+                    "sync_ops": 0,
+                    "write_bytes": 0,
+                    "write_ops": 0
+                  },
+                  ".workspace/recovery.json": {
+                    "copy_bytes": 0,
+                    "copy_ops": 0,
+                    "hash_bytes": 0,
+                    "read_bytes": 0,
+                    "read_ops": 0,
+                    "rename_ops": 0,
+                    "sync_ops": 0,
+                    "write_bytes": 0,
+                    "write_ops": 0
+                  },
+                  "project.bak": {
+                    "copy_bytes": 0,
+                    "copy_ops": 0,
+                    "hash_bytes": 0,
+                    "read_bytes": 0,
+                    "read_ops": 0,
+                    "rename_ops": 0,
+                    "sync_ops": 0,
+                    "write_bytes": 0,
+                    "write_ops": 0
+                  },
+                  "project.json": {
+                    "copy_bytes": 0,
+                    "copy_ops": 0,
+                    "hash_bytes": 7469239,
+                    "read_bytes": 7469239,
+                    "read_ops": 1,
+                    "rename_ops": 0,
+                    "sync_ops": 0,
+                    "write_bytes": 0,
+                    "write_ops": 0
+                  }
+                },
+                "full_read_bytes": 7469239,
+                "full_reads": 1,
+                "hash_bytes": 7469239,
+                "rename_ops": 0,
+                "sync_ops": 0,
+                "write_bytes": 0,
+                "write_ops": 0
+              }
+            },
+            {
+              "sample": 3,
+              "committed_sha256": "8892a4b779bc7ff5fdc57b7c72ef0187f156a7c15115e3eee2f644e4eedfc1cf",
+              "committed_size": 7469239,
+              "elapsed_us": 859014,
+              "io": {
+                "copy_bytes": 0,
+                "copy_ops": 0,
+                "files": {
+                  ".workspace/recovery.bak": {
+                    "copy_bytes": 0,
+                    "copy_ops": 0,
+                    "hash_bytes": 0,
+                    "read_bytes": 0,
+                    "read_ops": 0,
+                    "rename_ops": 0,
+                    "sync_ops": 0,
+                    "write_bytes": 0,
+                    "write_ops": 0
+                  },
+                  ".workspace/recovery.json": {
+                    "copy_bytes": 0,
+                    "copy_ops": 0,
+                    "hash_bytes": 0,
+                    "read_bytes": 0,
+                    "read_ops": 0,
+                    "rename_ops": 0,
+                    "sync_ops": 0,
+                    "write_bytes": 0,
+                    "write_ops": 0
+                  },
+                  "project.bak": {
+                    "copy_bytes": 0,
+                    "copy_ops": 0,
+                    "hash_bytes": 0,
+                    "read_bytes": 0,
+                    "read_ops": 0,
+                    "rename_ops": 0,
+                    "sync_ops": 0,
+                    "write_bytes": 0,
+                    "write_ops": 0
+                  },
+                  "project.json": {
+                    "copy_bytes": 0,
+                    "copy_ops": 0,
+                    "hash_bytes": 7469239,
+                    "read_bytes": 7469239,
+                    "read_ops": 1,
+                    "rename_ops": 0,
+                    "sync_ops": 0,
+                    "write_bytes": 0,
+                    "write_ops": 0
+                  }
+                },
+                "full_read_bytes": 7469239,
+                "full_reads": 1,
+                "hash_bytes": 7469239,
+                "rename_ops": 0,
+                "sync_ops": 0,
+                "write_bytes": 0,
+                "write_ops": 0
+              }
+            },
+            {
+              "sample": 4,
+              "committed_sha256": "26ee0b82bfabe921a82c907806dfbb6bb41f86bd3c012e9ec6f1fcfadc84ccdf",
+              "committed_size": 7469239,
+              "elapsed_us": 859426,
+              "io": {
+                "copy_bytes": 0,
+                "copy_ops": 0,
+                "files": {
+                  ".workspace/recovery.bak": {
+                    "copy_bytes": 0,
+                    "copy_ops": 0,
+                    "hash_bytes": 0,
+                    "read_bytes": 0,
+                    "read_ops": 0,
+                    "rename_ops": 0,
+                    "sync_ops": 0,
+                    "write_bytes": 0,
+                    "write_ops": 0
+                  },
+                  ".workspace/recovery.json": {
+                    "copy_bytes": 0,
+                    "copy_ops": 0,
+                    "hash_bytes": 0,
+                    "read_bytes": 0,
+                    "read_ops": 0,
+                    "rename_ops": 0,
+                    "sync_ops": 0,
+                    "write_bytes": 0,
+                    "write_ops": 0
+                  },
+                  "project.bak": {
+                    "copy_bytes": 0,
+                    "copy_ops": 0,
+                    "hash_bytes": 0,
+                    "read_bytes": 0,
+                    "read_ops": 0,
+                    "rename_ops": 0,
+                    "sync_ops": 0,
+                    "write_bytes": 0,
+                    "write_ops": 0
+                  },
+                  "project.json": {
+                    "copy_bytes": 0,
+                    "copy_ops": 0,
+                    "hash_bytes": 7469239,
+                    "read_bytes": 7469239,
+                    "read_ops": 1,
+                    "rename_ops": 0,
+                    "sync_ops": 0,
+                    "write_bytes": 0,
+                    "write_ops": 0
+                  }
+                },
+                "full_read_bytes": 7469239,
+                "full_reads": 1,
+                "hash_bytes": 7469239,
+                "rename_ops": 0,
+                "sync_ops": 0,
+                "write_bytes": 0,
+                "write_ops": 0
+              }
+            },
+            {
+              "sample": 5,
+              "committed_sha256": "973cc88cbc07e413c1cbcb55902cb91e51b358af94efd807a7a823466f5c20d5",
+              "committed_size": 7469239,
+              "elapsed_us": 865899,
+              "io": {
+                "copy_bytes": 0,
+                "copy_ops": 0,
+                "files": {
+                  ".workspace/recovery.bak": {
+                    "copy_bytes": 0,
+                    "copy_ops": 0,
+                    "hash_bytes": 0,
+                    "read_bytes": 0,
+                    "read_ops": 0,
+                    "rename_ops": 0,
+                    "sync_ops": 0,
+                    "write_bytes": 0,
+                    "write_ops": 0
+                  },
+                  ".workspace/recovery.json": {
+                    "copy_bytes": 0,
+                    "copy_ops": 0,
+                    "hash_bytes": 0,
+                    "read_bytes": 0,
+                    "read_ops": 0,
+                    "rename_ops": 0,
+                    "sync_ops": 0,
+                    "write_bytes": 0,
+                    "write_ops": 0
+                  },
+                  "project.bak": {
+                    "copy_bytes": 0,
+                    "copy_ops": 0,
+                    "hash_bytes": 0,
+                    "read_bytes": 0,
+                    "read_ops": 0,
+                    "rename_ops": 0,
+                    "sync_ops": 0,
+                    "write_bytes": 0,
+                    "write_ops": 0
+                  },
+                  "project.json": {
+                    "copy_bytes": 0,
+                    "copy_ops": 0,
+                    "hash_bytes": 7469239,
+                    "read_bytes": 7469239,
+                    "read_ops": 1,
+                    "rename_ops": 0,
+                    "sync_ops": 0,
+                    "write_bytes": 0,
+                    "write_ops": 0
+                  }
+                },
+                "full_read_bytes": 7469239,
+                "full_reads": 1,
+                "hash_bytes": 7469239,
+                "rename_ops": 0,
+                "sync_ops": 0,
+                "write_bytes": 0,
+                "write_ops": 0
+              }
+            },
+            {
+              "sample": 6,
+              "committed_sha256": "8405dece1b76626f934fff9784cde2e918b0e393869549ab1228c3ce0d4fa3b7",
+              "committed_size": 7469239,
+              "elapsed_us": 868051,
+              "io": {
+                "copy_bytes": 0,
+                "copy_ops": 0,
+                "files": {
+                  ".workspace/recovery.bak": {
+                    "copy_bytes": 0,
+                    "copy_ops": 0,
+                    "hash_bytes": 0,
+                    "read_bytes": 0,
+                    "read_ops": 0,
+                    "rename_ops": 0,
+                    "sync_ops": 0,
+                    "write_bytes": 0,
+                    "write_ops": 0
+                  },
+                  ".workspace/recovery.json": {
+                    "copy_bytes": 0,
+                    "copy_ops": 0,
+                    "hash_bytes": 0,
+                    "read_bytes": 0,
+                    "read_ops": 0,
+                    "rename_ops": 0,
+                    "sync_ops": 0,
+                    "write_bytes": 0,
+                    "write_ops": 0
+                  },
+                  "project.bak": {
+                    "copy_bytes": 0,
+                    "copy_ops": 0,
+                    "hash_bytes": 0,
+                    "read_bytes": 0,
+                    "read_ops": 0,
+                    "rename_ops": 0,
+                    "sync_ops": 0,
+                    "write_bytes": 0,
+                    "write_ops": 0
+                  },
+                  "project.json": {
+                    "copy_bytes": 0,
+                    "copy_ops": 0,
+                    "hash_bytes": 7469239,
+                    "read_bytes": 7469239,
+                    "read_ops": 1,
+                    "rename_ops": 0,
+                    "sync_ops": 0,
+                    "write_bytes": 0,
+                    "write_ops": 0
+                  }
+                },
+                "full_read_bytes": 7469239,
+                "full_reads": 1,
+                "hash_bytes": 7469239,
+                "rename_ops": 0,
+                "sync_ops": 0,
+                "write_bytes": 0,
+                "write_ops": 0
+              }
+            },
+            {
+              "sample": 7,
+              "committed_sha256": "7c7b8144e3830c458ee6fe7fc86af9f77c4d550659928fb4e076932ce3bcb760",
+              "committed_size": 7469239,
+              "elapsed_us": 859784,
+              "io": {
+                "copy_bytes": 0,
+                "copy_ops": 0,
+                "files": {
+                  ".workspace/recovery.bak": {
+                    "copy_bytes": 0,
+                    "copy_ops": 0,
+                    "hash_bytes": 0,
+                    "read_bytes": 0,
+                    "read_ops": 0,
+                    "rename_ops": 0,
+                    "sync_ops": 0,
+                    "write_bytes": 0,
+                    "write_ops": 0
+                  },
+                  ".workspace/recovery.json": {
+                    "copy_bytes": 0,
+                    "copy_ops": 0,
+                    "hash_bytes": 0,
+                    "read_bytes": 0,
+                    "read_ops": 0,
+                    "rename_ops": 0,
+                    "sync_ops": 0,
+                    "write_bytes": 0,
+                    "write_ops": 0
+                  },
+                  "project.bak": {
+                    "copy_bytes": 0,
+                    "copy_ops": 0,
+                    "hash_bytes": 0,
+                    "read_bytes": 0,
+                    "read_ops": 0,
+                    "rename_ops": 0,
+                    "sync_ops": 0,
+                    "write_bytes": 0,
+                    "write_ops": 0
+                  },
+                  "project.json": {
+                    "copy_bytes": 0,
+                    "copy_ops": 0,
+                    "hash_bytes": 7469239,
+                    "read_bytes": 7469239,
+                    "read_ops": 1,
+                    "rename_ops": 0,
+                    "sync_ops": 0,
+                    "write_bytes": 0,
+                    "write_ops": 0
+                  }
+                },
+                "full_read_bytes": 7469239,
+                "full_reads": 1,
+                "hash_bytes": 7469239,
+                "rename_ops": 0,
+                "sync_ops": 0,
+                "write_bytes": 0,
+                "write_ops": 0
+              }
+            },
+            {
+              "sample": 8,
+              "committed_sha256": "9d946ad3fa3f04aaeada714c80a9616be520169edc7c5638a85b9ae68063193c",
+              "committed_size": 7469239,
+              "elapsed_us": 863363,
+              "io": {
+                "copy_bytes": 0,
+                "copy_ops": 0,
+                "files": {
+                  ".workspace/recovery.bak": {
+                    "copy_bytes": 0,
+                    "copy_ops": 0,
+                    "hash_bytes": 0,
+                    "read_bytes": 0,
+                    "read_ops": 0,
+                    "rename_ops": 0,
+                    "sync_ops": 0,
+                    "write_bytes": 0,
+                    "write_ops": 0
+                  },
+                  ".workspace/recovery.json": {
+                    "copy_bytes": 0,
+                    "copy_ops": 0,
+                    "hash_bytes": 0,
+                    "read_bytes": 0,
+                    "read_ops": 0,
+                    "rename_ops": 0,
+                    "sync_ops": 0,
+                    "write_bytes": 0,
+                    "write_ops": 0
+                  },
+                  "project.bak": {
+                    "copy_bytes": 0,
+                    "copy_ops": 0,
+                    "hash_bytes": 0,
+                    "read_bytes": 0,
+                    "read_ops": 0,
+                    "rename_ops": 0,
+                    "sync_ops": 0,
+                    "write_bytes": 0,
+                    "write_ops": 0
+                  },
+                  "project.json": {
+                    "copy_bytes": 0,
+                    "copy_ops": 0,
+                    "hash_bytes": 7469239,
+                    "read_bytes": 7469239,
+                    "read_ops": 1,
+                    "rename_ops": 0,
+                    "sync_ops": 0,
+                    "write_bytes": 0,
+                    "write_ops": 0
+                  }
+                },
+                "full_read_bytes": 7469239,
+                "full_reads": 1,
+                "hash_bytes": 7469239,
+                "rename_ops": 0,
+                "sync_ops": 0,
+                "write_bytes": 0,
+                "write_ops": 0
+              }
+            },
+            {
+              "sample": 9,
+              "committed_sha256": "c930c68ccc4412ad8cd549860e77d4d05e97397d659f2b01a15e006cab27c466",
+              "committed_size": 7469239,
+              "elapsed_us": 852166,
+              "io": {
+                "copy_bytes": 0,
+                "copy_ops": 0,
+                "files": {
+                  ".workspace/recovery.bak": {
+                    "copy_bytes": 0,
+                    "copy_ops": 0,
+                    "hash_bytes": 0,
+                    "read_bytes": 0,
+                    "read_ops": 0,
+                    "rename_ops": 0,
+                    "sync_ops": 0,
+                    "write_bytes": 0,
+                    "write_ops": 0
+                  },
+                  ".workspace/recovery.json": {
+                    "copy_bytes": 0,
+                    "copy_ops": 0,
+                    "hash_bytes": 0,
+                    "read_bytes": 0,
+                    "read_ops": 0,
+                    "rename_ops": 0,
+                    "sync_ops": 0,
+                    "write_bytes": 0,
+                    "write_ops": 0
+                  },
+                  "project.bak": {
+                    "copy_bytes": 0,
+                    "copy_ops": 0,
+                    "hash_bytes": 0,
+                    "read_bytes": 0,
+                    "read_ops": 0,
+                    "rename_ops": 0,
+                    "sync_ops": 0,
+                    "write_bytes": 0,
+                    "write_ops": 0
+                  },
+                  "project.json": {
+                    "copy_bytes": 0,
+                    "copy_ops": 0,
+                    "hash_bytes": 7469239,
+                    "read_bytes": 7469239,
+                    "read_ops": 1,
+                    "rename_ops": 0,
+                    "sync_ops": 0,
+                    "write_bytes": 0,
+                    "write_ops": 0
+                  }
+                },
+                "full_read_bytes": 7469239,
+                "full_reads": 1,
+                "hash_bytes": 7469239,
+                "rename_ops": 0,
+                "sync_ops": 0,
+                "write_bytes": 0,
+                "write_ops": 0
+              }
+            },
+            {
+              "sample": 10,
+              "committed_sha256": "3b0fc0da182849df52b02f19c5ea6299864644c9ac06d8702c2271fef515d4ac",
+              "committed_size": 7469239,
+              "elapsed_us": 866049,
+              "io": {
+                "copy_bytes": 0,
+                "copy_ops": 0,
+                "files": {
+                  ".workspace/recovery.bak": {
+                    "copy_bytes": 0,
+                    "copy_ops": 0,
+                    "hash_bytes": 0,
+                    "read_bytes": 0,
+                    "read_ops": 0,
+                    "rename_ops": 0,
+                    "sync_ops": 0,
+                    "write_bytes": 0,
+                    "write_ops": 0
+                  },
+                  ".workspace/recovery.json": {
+                    "copy_bytes": 0,
+                    "copy_ops": 0,
+                    "hash_bytes": 0,
+                    "read_bytes": 0,
+                    "read_ops": 0,
+                    "rename_ops": 0,
+                    "sync_ops": 0,
+                    "write_bytes": 0,
+                    "write_ops": 0
+                  },
+                  "project.bak": {
+                    "copy_bytes": 0,
+                    "copy_ops": 0,
+                    "hash_bytes": 0,
+                    "read_bytes": 0,
+                    "read_ops": 0,
+                    "rename_ops": 0,
+                    "sync_ops": 0,
+                    "write_bytes": 0,
+                    "write_ops": 0
+                  },
+                  "project.json": {
+                    "copy_bytes": 0,
+                    "copy_ops": 0,
+                    "hash_bytes": 7469239,
+                    "read_bytes": 7469239,
+                    "read_ops": 1,
+                    "rename_ops": 0,
+                    "sync_ops": 0,
+                    "write_bytes": 0,
+                    "write_ops": 0
+                  }
+                },
+                "full_read_bytes": 7469239,
+                "full_reads": 1,
+                "hash_bytes": 7469239,
+                "rename_ops": 0,
+                "sync_ops": 0,
+                "write_bytes": 0,
+                "write_ops": 0
+              }
+            }
+          ]
+        }
+      }
+    }
+  },
+  "timing_comparison": {
+    "changed": {
+      "baseline_median_us": 3030287.0,
+      "candidate_median_us": 2809133.5,
+      "median_reduction_percent": 7.3,
+      "baseline_p95_nearest_rank_us": 3062217,
+      "candidate_p95_nearest_rank_us": 2825630,
+      "p95_reduction_percent": 7.73
+    },
+    "unchanged": {
+      "baseline_median_us": 3036861.5,
+      "candidate_median_us": 859862.5,
+      "median_reduction_percent": 71.69,
+      "baseline_p95_nearest_rank_us": 3322058,
+      "candidate_p95_nearest_rank_us": 868051,
+      "p95_reduction_percent": 73.87
+    }
+  }
+}

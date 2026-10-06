@@ -1,0 +1,24 @@
+{
+  "captured_at_utc": "2026-10-06T10:13:18.250277Z",
+  "action": "Native Final8 normal Quit completed; read-only ownership and fixture check",
+  "project_path": "/private/tmp/workbench-io-ui-F-external-conflict-final7/project.json",
+  "project_id": "fb45a2d4-fbcb-4095-9d10-76f18fa98a14",
+  "project_size": 74936,
+  "project_sha256": "83e5bd95f3ee69c98bb752f51e5cc3aaee9c37186791e03cfb5fcbf2000d19df",
+  "project_updated_at": "2026-10-06T09:48:18.856Z",
+  "visible_markers": {
+    "N05-LOCAL-20261006-A": true,
+    "N05-LOCAL-CONTINUED-20261006-C": true,
+    "N05-LOCAL-20261006-D": true,
+    "N05-EXTERNAL-20261006-B": true,
+    "N05-LOCAL-20261006-E": false
+  },
+  "domain_validation_issue_count": 0,
+  "project_lock_present": false,
+  "recovery_journal_present": false,
+  "recovery_backup_variants_present": false,
+  "native_pid_59640_absent": true,
+  "limitations": [
+    "Local E had been manually preserved from AX evidence and was explicitly discarded from the old Final8 editor via Reload Disk before quit; no automatic recovery was claimed."
+  ]
+}

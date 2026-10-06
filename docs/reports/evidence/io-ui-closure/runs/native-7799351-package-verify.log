@@ -1,0 +1,20 @@
+SOURCE_COMMIT=77993519e31cb3c780a77af319ce3033acecccf2
+APP=/tmp/io-ui-closure-native-qa-final5/AI Course Workbench QA Preview Final5.app
+ZIP=docs/reports/evidence/io-ui-closure/native-qa-candidate-final5-aarch64-0.2.7.zip
+COMMAND=ditto -c -k --sequesterRsrc --keepParent APP ZIP
+DITTO_EXIT_CODE=0
+Archive:  docs/reports/evidence/io-ui-closure/native-qa-candidate-final5-aarch64-0.2.7.zip
+    testing: AI Course Workbench QA Preview Final5.app/   OK
+    testing: AI Course Workbench QA Preview Final5.app/Contents/   OK
+    testing: AI Course Workbench QA Preview Final5.app/Contents/_CodeSignature/   OK
+    testing: AI Course Workbench QA Preview Final5.app/Contents/_CodeSignature/CodeResources   OK
+    testing: AI Course Workbench QA Preview Final5.app/Contents/MacOS/   OK
+    testing: AI Course Workbench QA Preview Final5.app/Contents/MacOS/ai-course-workbench   OK
+    testing: AI Course Workbench QA Preview Final5.app/Contents/Resources/   OK
+    testing: AI Course Workbench QA Preview Final5.app/Contents/Resources/icon.icns   OK
+    testing: AI Course Workbench QA Preview Final5.app/Contents/Info.plist   OK
+No errors detected in compressed data of docs/reports/evidence/io-ui-closure/native-qa-candidate-final5-aarch64-0.2.7.zip.
+UNZIP_TEST_EXIT_CODE=0
+ZIP_BYTES=7079995
+ZIP_SHA256=70d85149609234ee0c210dec23a2a672ea5495718743745ee00dc0600dbd59e7  docs/reports/evidence/io-ui-closure/native-qa-candidate-final5-aarch64-0.2.7.zip
+APP_TREE_SHA256=dcd014cfb34413ddf466e7549f0cb3a7f49ade876b34f99ad6271e7b752166a7

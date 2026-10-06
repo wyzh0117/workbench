@@ -1,0 +1,47 @@
+Window: "AI Course Workbench", App: AI Course Workbench QA Preview Final6.
+0 standard window AI Course Workbench, Secondary Actions: Raise
+	1 scroll area
+		2 HTML content Description: AI Course Workbench, URL: tauri://localhost
+			3 container
+				4 button 返回项目选择；当前项目不会关闭
+				5 text AI Course Workbench
+				6 button F-history recovery candidate restore final ⌄, Help: 点击修改课程标题
+				7 button (disabled) 打开上一课
+				8 button S01-01｜Fixture lesson 1, Help: 点击修改当前课程标题
+				9 button 打开下一课
+				10 text ✓ 已保存
+				11 button 撤销上一次编辑
+				12 button 恢复上一次编辑
+				13 pop up button 设置
+				14 button 保存
+				15 button 保存版本
+				16 button 预览
+				17 button 导出
+				18 button 项目概览
+				19 button 打开课程：S01-01 Fixture lesson 1
+				20 button 关闭课程标签：S01-01 Fixture lesson 1, Help: 关闭课程标签
+				21 button 展开左栏
+				22 text 项目资料
+				23 heading 文件浏览, Value: 1
+					24 text 文件浏览
+				25 text 先选择一个资料文件夹，再预览内容并挑选要导入的材料。
+				26 button 选择资料文件夹
+				27 heading 尚未连接资料文件夹, Value: 2
+					28 text 尚未连接资料文件夹
+				29 text 扫描只读访问所选文件夹。确认导入前，原始文件不会移动或改写。
+				30 button 浏览本机文件夹
+				31 button 展开右栏
+				32 text S01-01｜Fixture lesson 1 正文：待研究 待补：已齐 排版：未开始 完成度：83% 本地优先 · 自动保存
+	33 close button
+	34 full screen button Help: this button also has an action to zoom the window, Secondary Actions: zoom the window
+	35 minimize button
+	36 text AI Course Workbench
+37 menu bar
+	38 AI Course Workbench QA Preview Final6
+	39 File
+	40 Edit
+	41 View
+	42 Window
+	43 Help
+
+The focused UI element is 2 HTML content Description: AI Course Workbench, URL: tauri://localhost

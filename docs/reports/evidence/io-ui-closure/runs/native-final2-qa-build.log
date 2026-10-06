@@ -1,0 +1,25 @@
+        Warn --no-sign flag detected: Signing will be skipped.
+        Info Looking up installed tauri packages to check mismatched versions...
+   Compiling ai-course-workbench v0.2.7 (/Users/youngi/.codex/worktrees/io-ui-closure/workbench/src-tauri)
+warning: function `write_project_value_with_warning` is never used
+    --> src/lib.rs:2302:4
+     |
+2302 | fn write_project_value_with_warning(
+     |    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+     |
+     = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: function `write_project_value` is never used
+    --> src/lib.rs:2314:4
+     |
+2314 | fn write_project_value(project_dir: &Path, project: &Value) -> Result<(), String> {
+     |    ^^^^^^^^^^^^^^^^^^^
+
+warning: `ai-course-workbench` (lib) generated 2 warnings
+    Finished `release` profile [optimized] target(s) in 2m 56s
+       Built application at: /tmp/io-ui-closure-native-qa-prewarm-target/aarch64-apple-darwin/release/ai-course-workbench
+    Bundling AI Course Workbench QA Preview.app (/tmp/io-ui-closure-native-qa-prewarm-target/aarch64-apple-darwin/release/bundle/macos/AI Course Workbench QA Preview.app)
+        Warn Skipping signing due to --no-sign flag.
+    Finished 1 bundle at:
+        /tmp/io-ui-closure-native-qa-prewarm-target/aarch64-apple-darwin/release/bundle/macos/AI Course Workbench QA Preview.app
+

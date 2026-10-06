@@ -1,0 +1,72 @@
+{
+  "captured_at_utc": "2026-10-06T11:16:30.990038Z",
+  "finding": "Reader identity/document position reopened, but persisted tab scroll does not match the viewport shown before quit.",
+  "app_local_session": {
+    "path": "/Users/youngi/Library/Application Support/io.github.wyzh0117.ai-course-workbench.qa.io-ui-closure.final9/.workspace/session.json",
+    "bytes": 3491,
+    "sha256": "6e85b2cb9fcdd2805de3f4e3673c89867c3f5b7c731f3d69dccd0d0fb0034968",
+    "mtime_utc": "2026-10-06T11:03:28.527135Z",
+    "historical_prequit_copy_available": false,
+    "record_at_post_relaunch_capture": {
+      "project_id": "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
+      "project_dir": "/private/tmp/workbench-io-ui-native-final/history-restore",
+      "active_content_item_id": "00000000-0000-4000-8000-000000000004",
+      "mode": "writing",
+      "route": "editor",
+      "selected_block_id": "00000000-0000-4000-8000-00000000000d",
+      "layout_page_id": null,
+      "tabs": [
+        {
+          "content_item_id": "00000000-0000-4000-8000-000000000004",
+          "mode": "writing",
+          "pinned": false,
+          "scroll_top": 0
+        }
+      ]
+    }
+  },
+  "screenshot_evidence": {
+    "cold-relaunch-before.ax.txt": {
+      "path": "docs/reports/evidence/io-ui-closure/runs/native-final9/cold-relaunch-before.ax.txt",
+      "bytes": 19604,
+      "sha256": "b7accceb3c60f3d7ec4a6e15c7f72026bfe19da25674e1738ad4deb6db74be12",
+      "mtime_utc": "2026-10-06T11:03:49.320572Z"
+    },
+    "cold-relaunch-before.jpg": {
+      "path": "docs/reports/evidence/io-ui-closure/runs/native-final9/cold-relaunch-before.jpg",
+      "bytes": 1010463,
+      "sha256": "1aa80bb28b5406b7dac93705fdf62a38050781f9bca7dfee8fde9fb25d5b2a8d",
+      "mtime_utc": "2026-10-06T11:03:49.321156Z"
+    },
+    "cold-relaunch-after.ax.txt": {
+      "path": "docs/reports/evidence/io-ui-closure/runs/native-final9/cold-relaunch-after.ax.txt",
+      "bytes": 17758,
+      "sha256": "76fc547d1e0c03f8b1cb25601e91990d012f7dc3f36d66373846a915a290d0d7",
+      "mtime_utc": "2026-10-06T11:10:23.126284Z"
+    },
+    "cold-relaunch-after.jpg": {
+      "path": "docs/reports/evidence/io-ui-closure/runs/native-final9/cold-relaunch-after.jpg",
+      "bytes": 714462,
+      "sha256": "c051695c52e241585574d47b2945a2e111127f6c0b4091efffbec584aaab571e",
+      "mtime_utc": "2026-10-06T11:10:23.126707Z"
+    }
+  },
+  "time_relation": "The session file mtime 2026-10-06T11:03:28.527Z predates cold-relaunch-before capture 2026-10-06T11:03:49.320Z by about 20.8 seconds and cold-relaunch-after capture 2026-10-06T11:10:23.126Z. No separate pre-quit session file copy was preserved; therefore the hash is for the current unchanged physical file, not an independently captured pre-quit byte snapshot.",
+  "visibility_limits": "AX lists one generic scroll area but exposes no center-scroll offset, clientHeight/scrollHeight, or textarea scroll metrics. Screenshots show viewport difference according to the reviewer, but current evidence cannot distinguish center-scroller position from nested editor/body scrolling. No caret offset or text selection is serialized in this session record.",
+  "session_values": {
+    "project_id": "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
+    "active_content_item_id": "00000000-0000-4000-8000-000000000004",
+    "mode": "writing",
+    "route": "editor",
+    "selected_block_id": "00000000-0000-4000-8000-00000000000d",
+    "tabs": [
+      {
+        "content_item_id": "00000000-0000-4000-8000-000000000004",
+        "mode": "writing",
+        "pinned": false,
+        "scroll_top": 0
+      }
+    ],
+    "layout_page_id": null
+  }
+}

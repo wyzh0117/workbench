@@ -1,0 +1,39 @@
+{
+  "source_commit": "b990d49029333d4bacc46a2f92361779a554545c",
+  "before": [
+    "01标题Fixture heading 1查看正文 ↗",
+    "02正文Final UI media preview check\\. \\!\\[Fixture PNG\\]\\(assets/fixt",
+    "03视频Fixture MP4 1查看正文 ↗",
+    "04正文Fixture long body 1. The quick brown fox measures canonical p",
+    "05正文Fixture lesson 1, paragraph 3. The quick brown fox measures c",
+    "06图片Fixture image 0查看正文 ↗",
+    "07GIFFixture GIF 1查看正文 ↗"
+  ],
+  "moved": [
+    "01标题Fixture heading 1查看正文 ↗",
+    "02正文Final UI media preview check\\. \\!\\[Fixture PNG\\]\\(assets/fixt",
+    "03视频Fixture MP4 1查看正文 ↗",
+    "04正文Fixture long body 1. The quick brown fox measures canonical p",
+    "05正文Fixture lesson 1, paragraph 3. The quick brown fox measures c",
+    "06GIFFixture GIF 1查看正文 ↗",
+    "07图片Fixture image 0查看正文 ↗"
+  ],
+  "undo": [
+    "01标题Fixture heading 1查看正文 ↗",
+    "02正文Final UI media preview check\\. \\!\\[Fixture PNG\\]\\(assets/fixt",
+    "03视频Fixture MP4 1查看正文 ↗",
+    "04正文Fixture long body 1. The quick brown fox measures canonical p",
+    "05正文Fixture lesson 1, paragraph 3. The quick brown fox measures c",
+    "06图片Fixture image 0查看正文 ↗",
+    "07GIFFixture GIF 1查看正文 ↗"
+  ],
+  "redo": [
+    "01标题Fixture heading 1查看正文 ↗",
+    "02正文Final UI media preview check\\. \\!\\[Fixture PNG\\]\\(assets/fixt",
+    "03视频Fixture MP4 1查看正文 ↗",
+    "04正文Fixture long body 1. The quick brown fox measures canonical p",
+    "05正文Fixture lesson 1, paragraph 3. The quick brown fox measures c",
+    "06GIFFixture GIF 1查看正文 ↗",
+    "07图片Fixture image 0查看正文 ↗"
+  ]
+}

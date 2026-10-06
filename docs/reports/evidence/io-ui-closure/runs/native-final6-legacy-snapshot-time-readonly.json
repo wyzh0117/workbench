@@ -1,0 +1,151 @@
+{
+  "captured_at_utc": "2026-10-06T07:01:29.839568+00:00",
+  "scope": "Read-only verification of legacy snapshot timestamps in Native Final6 owned fixtures; no files modified.",
+  "valid_legacy_files_have_created_at": false,
+  "roots": [
+    "/tmp/workbench-io-ui-native-final/history",
+    "/tmp/workbench-io-ui-native-final/history-restore"
+  ],
+  "stable_hashes_across_fixture_clones": true,
+  "files": [
+    {
+      "root": "/tmp/workbench-io-ui-native-final/history",
+      "path": "/tmp/workbench-io-ui-native-final/history/.workspace/snapshots/1fd63b8f-6f70-4c57-a614-1652ac2591fa.json",
+      "file": "1fd63b8f-6f70-4c57-a614-1652ac2591fa.json",
+      "size_bytes": 69584,
+      "sha256": "ae2559e8e66fd65757ed0f1004a343ad461a2b09001de590306b13da83148808",
+      "mtime_ns": 1791248865676684395,
+      "mtime_epoch": 1791248865.6766844,
+      "format": "raw_project",
+      "top_level_created_at_present": false,
+      "project_id": "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
+      "title": "File I/O small-final QA fixture"
+    },
+    {
+      "root": "/tmp/workbench-io-ui-native-final/history",
+      "path": "/tmp/workbench-io-ui-native-final/history/.workspace/snapshots/e5b8bafa-6e52-4754-bd0f-69cecafc0ba3.json",
+      "file": "e5b8bafa-6e52-4754-bd0f-69cecafc0ba3.json",
+      "size_bytes": 68969,
+      "sha256": "ee46a931ad6172928032ae8cf9dbb3c7fa60cb365f46b9e0a16b1203b54ae1be",
+      "mtime_ns": 1791248837426492337,
+      "mtime_epoch": 1791248837.4264925,
+      "format": "raw_project",
+      "top_level_created_at_present": false,
+      "project_id": "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
+      "title": "File I/O small-final QA fixture"
+    },
+    {
+      "root": "/tmp/workbench-io-ui-native-final/history",
+      "path": "/tmp/workbench-io-ui-native-final/history/.workspace/snapshots/history_named_20261006.json",
+      "file": "history_named_20261006.json",
+      "size_bytes": 68973,
+      "sha256": "078415fead41496736f495068d35daabd5740c5dc3ca08302acca2919d828396",
+      "mtime_ns": 1791248343554717320,
+      "mtime_epoch": 1791248343.5547173,
+      "format": "raw_project",
+      "top_level_created_at_present": false,
+      "project_id": "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
+      "title": "F-history named snapshot checkpoint"
+    },
+    {
+      "root": "/tmp/workbench-io-ui-native-final/history",
+      "path": "/tmp/workbench-io-ui-native-final/history/.workspace/snapshots/history_incomplete_20261006.json",
+      "file": "history_incomplete_20261006.json",
+      "size_bytes": 68972,
+      "sha256": "cd31885f33812bc0c9d35464e54c866721457bd2666752af43246506bc6409c3",
+      "mtime_ns": 1791248343578321847,
+      "mtime_epoch": 1791248343.578322,
+      "format": "raw_project",
+      "top_level_created_at_present": false,
+      "project_id": "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
+      "title": "F-history incomplete metadata body"
+    },
+    {
+      "root": "/tmp/workbench-io-ui-native-final/history",
+      "path": "/tmp/workbench-io-ui-native-final/history/.workspace/snapshots/history_unindexed_20261006.json",
+      "file": "history_unindexed_20261006.json",
+      "size_bytes": 68972,
+      "sha256": "1669e0c858a1d63aeda8be4431a7af1cdfb00859824dc319f521cb6896732a1d",
+      "mtime_ns": 1791248343577630981,
+      "mtime_epoch": 1791248343.577631,
+      "format": "raw_project",
+      "top_level_created_at_present": false,
+      "project_id": "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
+      "title": "F-history unindexed prior snapshot"
+    },
+    {
+      "root": "/tmp/workbench-io-ui-native-final/history-restore",
+      "path": "/tmp/workbench-io-ui-native-final/history-restore/.workspace/snapshots/1fd63b8f-6f70-4c57-a614-1652ac2591fa.json",
+      "file": "1fd63b8f-6f70-4c57-a614-1652ac2591fa.json",
+      "size_bytes": 69584,
+      "sha256": "ae2559e8e66fd65757ed0f1004a343ad461a2b09001de590306b13da83148808",
+      "mtime_ns": 1791248865676684395,
+      "mtime_epoch": 1791248865.6766844,
+      "format": "raw_project",
+      "top_level_created_at_present": false,
+      "project_id": "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
+      "title": "File I/O small-final QA fixture"
+    },
+    {
+      "root": "/tmp/workbench-io-ui-native-final/history-restore",
+      "path": "/tmp/workbench-io-ui-native-final/history-restore/.workspace/snapshots/e5b8bafa-6e52-4754-bd0f-69cecafc0ba3.json",
+      "file": "e5b8bafa-6e52-4754-bd0f-69cecafc0ba3.json",
+      "size_bytes": 68969,
+      "sha256": "ee46a931ad6172928032ae8cf9dbb3c7fa60cb365f46b9e0a16b1203b54ae1be",
+      "mtime_ns": 1791248837426492337,
+      "mtime_epoch": 1791248837.4264925,
+      "format": "raw_project",
+      "top_level_created_at_present": false,
+      "project_id": "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
+      "title": "File I/O small-final QA fixture"
+    },
+    {
+      "root": "/tmp/workbench-io-ui-native-final/history-restore",
+      "path": "/tmp/workbench-io-ui-native-final/history-restore/.workspace/snapshots/history_named_20261006.json",
+      "file": "history_named_20261006.json",
+      "size_bytes": 68973,
+      "sha256": "078415fead41496736f495068d35daabd5740c5dc3ca08302acca2919d828396",
+      "mtime_ns": 1791248343554717320,
+      "mtime_epoch": 1791248343.5547173,
+      "format": "raw_project",
+      "top_level_created_at_present": false,
+      "project_id": "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
+      "title": "F-history named snapshot checkpoint"
+    },
+    {
+      "root": "/tmp/workbench-io-ui-native-final/history-restore",
+      "path": "/tmp/workbench-io-ui-native-final/history-restore/.workspace/snapshots/history_incomplete_20261006.json",
+      "file": "history_incomplete_20261006.json",
+      "size_bytes": 68972,
+      "sha256": "cd31885f33812bc0c9d35464e54c866721457bd2666752af43246506bc6409c3",
+      "mtime_ns": 1791248343578321847,
+      "mtime_epoch": 1791248343.578322,
+      "format": "raw_project",
+      "top_level_created_at_present": false,
+      "project_id": "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
+      "title": "F-history incomplete metadata body"
+    },
+    {
+      "root": "/tmp/workbench-io-ui-native-final/history-restore",
+      "path": "/tmp/workbench-io-ui-native-final/history-restore/.workspace/snapshots/history_unindexed_20261006.json",
+      "file": "history_unindexed_20261006.json",
+      "size_bytes": 68972,
+      "sha256": "1669e0c858a1d63aeda8be4431a7af1cdfb00859824dc319f521cb6896732a1d",
+      "mtime_ns": 1791248343577630981,
+      "mtime_epoch": 1791248343.577631,
+      "format": "raw_project",
+      "top_level_created_at_present": false,
+      "project_id": "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
+      "title": "F-history unindexed prior snapshot"
+    }
+  ],
+  "source_spans": {
+    "read_snapshot_envelope": "src-tauri/src/lib.rs:4597-4625",
+    "snapshot_envelope_now_fallback": "src-tauri/src/lib.rs:4282-4298",
+    "list_snapshots": "src-tauri/src/lib.rs:4637-4715",
+    "native_bridge_list_snapshots": "app/main.js:1370-1383",
+    "display_savedAt": "app/views.js:2325-2331"
+  },
+  "observed_mechanism": "Legacy raw files are wrapped on each read with a newly generated unix_millis created_at; list_snapshots returns it and versionsView formats the 13-digit epoch.",
+  "recommendation": "When the raw legacy project has no reliable creation timestamp, preserve created_at as empty so the UI shows “保存时间未知”; filesystem mtime would be an explicitly approximate alternative."
+}

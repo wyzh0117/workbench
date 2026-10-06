@@ -1,0 +1,16 @@
+SOURCE 04e9fdf4276fe37b79d7a1ee87656c28865d0fac
+UNDO
+The following is a diff from the previous accessibility tree for Window: "AI Course Workbench" with ~ and + representing changed and added elements, respectively. Removed elements are summarized by ID range.
+~				130 text 正在保存…
+~					195 button 正文，![跨目录 PNG](../02%20%E8%BF%9B%E9%98%B6%20Stage/%E5%85%B1%E4%BA%AB%20%E7%B4%A0%E6%9D%90/%E8%B7%A8%E7%9B%AE%E5%BD%95%20%E5%9B%BE%E7%89%87.png)，点击跳转到正文
+~					200 button 正文，![跨目录 GIF](../02%20%E8%BF%9B%E9%98%B6%20Stage/%E5%85%B1%E4%BA%AB%20%E7%B4%A0%E6%9D%90/%E5%8A%A8%E7%94%BB%20%E5%8F%82%E8%80%83.gif)，点击跳转到正文
++				233 container
++					234 text 已撤销：调整正文顺序
++					235 button 关闭提示
+The focused UI element is 2 HTML content Description: AI Course Workbench, URL: tauri://localhost
+REDO
+The following is a diff from the previous accessibility tree for Window: "AI Course Workbench" with ~ and + representing changed and added elements, respectively. Removed elements are summarized by ID range.
+~					195 button 正文，![跨目录 GIF](../02%20%E8%BF%9B%E9%98%B6%20Stage/%E5%85%B1%E4%BA%AB%20%E7%B4%A0%E6%9D%90/%E5%8A%A8%E7%94%BB%20%E5%8F%82%E8%80%83.gif)，点击跳转到正文
+~					200 button 正文，![跨目录 PNG](../02%20%E8%BF%9B%E9%98%B6%20Stage/%E5%85%B1%E4%BA%AB%20%E7%B4%A0%E6%9D%90/%E8%B7%A8%E7%9B%AE%E5%BD%95%20%E5%9B%BE%E7%89%87.png)，点击跳转到正文
+~					234 text 已恢复：调整正文顺序
+The focused UI element is 2 HTML content Description: AI Course Workbench, URL: tauri://localhost

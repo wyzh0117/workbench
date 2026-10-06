@@ -1,0 +1,6 @@
+Check tests/snapshot_persistence_test.ts
+running 1 test from ./tests/snapshot_persistence_test.ts
+snapshot.create binds a persisted copy, is idempotent, and lists bad rows separately ... ok (67ms)
+
+ok | 1 passed | 0 failed | 5 filtered out (71ms)
+
