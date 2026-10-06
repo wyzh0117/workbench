@@ -1013,6 +1013,85 @@ serialNativeBootTest("native close immediately flushes and releases the committe
   }
 });
 
+serialNativeBootTest(
+  "native close keeps a leased project open when flush is blocked by external changes",
+  async () => {
+    const { store, state, restore } = await bootNative({
+      project: seededProject(),
+      launchProjectDir: "/tmp/native-close-conflict-project",
+      persistedSession: null,
+    });
+    try {
+      await until(
+        () => store.data.content_items.length >= 2,
+        "冲突关闭测试载入课程",
+      );
+      assert(
+        store.saveIdentity().expected_project_id === store.data.project.id,
+        "关闭测试必须绑定当前项目身份",
+      );
+      assert(store.hasNativeLease(), "关闭测试必须持有当前项目租约");
+      const closeRequested = state.closeRequested;
+      assert(closeRequested, "Native close handler must be installed");
+      const saveCallsBefore = state.calls.filter((call) =>
+        call.command === "project_save"
+      ).length;
+      state.invokeOverrides.set("project_save", () => {
+        throw Object.assign(new Error("external_modification_conflict"), {
+          code: "external_modification_conflict",
+        });
+      });
+
+      let prevented = false;
+      closeRequested({
+        preventDefault: () => {
+          prevented = true;
+        },
+      });
+      await until(
+        () =>
+          state.calls.some((call) =>
+            call.command === "project_external_status"
+          ),
+        "冲突关闭读取外部状态",
+      );
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      assert(
+        prevented,
+        "Native close event must be prevented while its save is unresolved",
+      );
+      assertEquals(
+        store.saveStatus,
+        "外部修改冲突",
+        "failed flush must retain the external-conflict state",
+      );
+      assert(
+        store.hasNativeLease(),
+        "failed flush must keep the project's lease for recovery",
+      );
+      assertEquals(
+        state.calls.filter((call) => call.command === "project_save").length -
+          saveCallsBefore,
+        1,
+        "close must attempt one canonical save before refusing to exit",
+      );
+      assertEquals(
+        state.calls.filter((call) => call.command === "project_close").length,
+        0,
+        "failed flush must not release the project lease",
+      );
+      assertEquals(
+        state.calls.filter((call) => call.command === "confirm_close").length,
+        0,
+        "failed flush must not confirm application close",
+      );
+    } finally {
+      restore();
+    }
+  },
+);
+
 serialNativeBootTest("native rich-editor duplicate input does not revise or queue an unchanged body", async () => {
   const { store, state, richEditor, restore } = await bootNative({
     project: seededProject(),
