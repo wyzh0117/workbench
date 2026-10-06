@@ -1,3 +1,30 @@
+   Compiling objc2-exception-helper v0.1.1
+   Compiling ring v0.17.14
+   Compiling objc2 v0.6.4
+   Compiling objc2-core-foundation v0.3.2
+   Compiling block2 v0.6.2
+   Compiling objc2-foundation v0.3.2
+   Compiling objc2-app-kit v0.3.2
+   Compiling dispatch2 v0.3.1
+   Compiling rustls v0.21.12
+   Compiling rustls-webpki v0.101.7
+   Compiling objc2-web-kit v0.3.2
+   Compiling tauri-runtime v2.11.3
+   Compiling wry v0.55.1
+   Compiling tao v0.35.3
+   Compiling sct v0.7.1
+   Compiling tauri-runtime-wry v2.11.4
+   Compiling window-vibrancy v0.6.0
+   Compiling muda v0.19.3
+   Compiling tauri v2.11.6
+   Compiling tokio-rustls v0.24.1
+   Compiling hyper-rustls v0.24.2
+   Compiling tauri-plugin-fs v2.5.2
+   Compiling rfd v0.16.0
+   Compiling reqwest v0.11.27
+   Compiling ai-course-workbench v0.2.7 (/Users/youngi/.codex/worktrees/io-ui-closure/workbench/src-tauri)
+   Compiling tauri-plugin-dialog v2.7.3
+   Compiling jsonwebtoken v9.3.1
 warning: function `write_project_value_with_warning` is never used
     --> src/lib.rs:2302:4
      |
@@ -13,5 +40,4 @@ warning: function `write_project_value` is never used
      |    ^^^^^^^^^^^^^^^^^^^
 
 warning: `ai-course-workbench` (lib) generated 2 warnings
-   Compiling ai-course-workbench v0.2.7 (/Users/youngi/.codex/worktrees/io-ui-closure/workbench/src-tauri)
-    Finished `dev` profile [unoptimized + debuginfo] target(s) in 1.82s
+    Finished `release` profile [optimized] target(s) in 1m 32s

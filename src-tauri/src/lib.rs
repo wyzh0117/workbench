@@ -12260,6 +12260,19 @@ fn resolve_asset_preview_file(
             "素材已归档，无法读取",
         ));
     }
+    let asset_type = asset.get("type").and_then(Value::as_str).unwrap_or("");
+    let declared_mime = asset
+        .get("mime_type")
+        .and_then(Value::as_str)
+        .unwrap_or("application/octet-stream")
+        .trim()
+        .to_ascii_lowercase();
+    if matches!(asset_type, "image" | "gif") && !declared_mime.starts_with("image/") {
+        return Err(asset_preview_problem(
+            "asset_mime_mismatch",
+            "图片素材的 MIME 类型与素材类型不一致",
+        ));
+    }
     let storage_path = asset
         .get("storage_path")
         .and_then(Value::as_str)
@@ -21479,6 +21492,57 @@ mod tests {
         .expect_err("more than eight ids must be rejected");
         let too_many: Value = serde_json::from_str(&too_many).expect("structured limit error");
         assert_eq!(too_many["error"]["code"], json!("preview_batch_limit"));
+
+        let _ = project_close(project_dir);
+        let _ = fs::remove_dir_all(directory);
+    }
+
+    #[test]
+    fn asset_preview_batch_rejects_image_with_non_image_mime_and_keeps_valid_peer() {
+        let directory = test_directory("asset-preview-mime-mismatch");
+        let project_dir = directory.to_string_lossy().into_owned();
+        project_create(
+            project_dir.clone(),
+            json!({ "project": { "id": "mime-p1", "title": "mime" }, "assets": [], "items": [] }),
+        )
+        .expect("project should be created");
+        fs::create_dir_all(directory.join("assets")).expect("assets directory");
+        let png = BASE64
+            .decode("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jvtcAAAAASUVORK5CYII=")
+            .expect("fixture PNG should decode");
+        fs::write(directory.join("assets/valid.png"), &png).expect("valid PNG asset");
+        fs::write(directory.join("assets/mislabeled.png"), &png).expect("mislabeled PNG asset");
+        let mut project = read_project_value(&directory).expect("project should read");
+        project["assets"] = json!([
+            { "id": "valid", "filename": "valid.png", "storage_path": "assets/valid.png", "mime_type": "image/png", "type": "image", "archived": false },
+            { "id": "mislabeled", "filename": "mislabeled.png", "storage_path": "assets/mislabeled.png", "mime_type": "text/plain", "type": "image", "archived": false }
+        ]);
+        fs::write(
+            directory.join("project.json"),
+            serde_json::to_vec_pretty(&project).expect("manifest JSON"),
+        )
+        .expect("updated manifest");
+        let (_, fingerprint) = read_project_state(&directory).expect("manifest state");
+
+        let result = asset_preview_batch(json!({
+            "project_dir": project_dir,
+            "project_id": "mime-p1",
+            "fingerprint": fingerprint,
+            "request_generation": 1,
+            "asset_ids": ["valid", "mislabeled"]
+        }))
+        .expect("a bad item must not fail its valid peer");
+
+        assert_eq!(result["items"][0]["status"], json!("ok"));
+        assert_eq!(
+            result["items"][0]["bytes_base64"],
+            json!(BASE64.encode(&png))
+        );
+        assert_eq!(result["items"][1]["status"], json!("error"));
+        assert_eq!(
+            result["items"][1]["error"]["code"],
+            json!("asset_mime_mismatch")
+        );
 
         let _ = project_close(project_dir);
         let _ = fs::remove_dir_all(directory);
