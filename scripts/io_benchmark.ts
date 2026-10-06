@@ -20,12 +20,17 @@ const outputPath = resolve(
 );
 const iterations = Number(args.get("iterations") ?? "10");
 const declaredSourceCommit = args.get("source-commit") ?? null;
+const instrumentation = args.get("instrumentation") ?? "on";
 if (mode !== "baseline" && mode !== "candidate") {
   throw new Error("--mode must be baseline or candidate");
+}
+if (instrumentation !== "on" && instrumentation !== "off") {
+  throw new Error("--instrumentation must be on or off");
 }
 if (!Number.isSafeInteger(iterations) || iterations < 10) {
   throw new Error("--iterations must be an integer of at least 10");
 }
+const instrumentationEnabled = instrumentation === "on";
 
 type FileIoTarget = {
   read_operations: number;
@@ -234,8 +239,14 @@ function installFileIoProbe() {
 
 function percentiles(samples: number[]) {
   const sorted = samples.slice().sort((a, b) => a - b);
+  const middle = Math.floor(sorted.length / 2);
   return {
+    // Keep the original upper-middle field for historical report readers.
     median_ms: sorted[Math.floor(sorted.length / 2)] ?? null,
+    median_conventional_ms: sorted.length % 2 === 0
+      ? ((sorted[middle - 1] ?? 0) + (sorted[middle] ?? 0)) / 2
+      : sorted[middle] ?? null,
+    p95_nearest_rank_ms: sorted[Math.ceil(sorted.length * 0.95) - 1] ?? null,
     min_ms: sorted[0] ?? null,
     max_ms: sorted.at(-1) ?? null,
     samples_ms: samples,
@@ -367,7 +378,7 @@ try {
   const samples = async (kind: "noop" | "changed") => {
     io = emptyCounters();
     activeHandles = 0;
-    storageModule.setStorageIoDiagnosticsEnabled?.(true);
+    storageModule.setStorageIoDiagnosticsEnabled?.(instrumentationEnabled);
     const durations: number[] = [];
     for (let index = 0; index < iterations; index += 1) {
       const next = structuredClone(project);
@@ -399,17 +410,25 @@ try {
     const serviceMetrics = storageModule.getStorageIoMetrics?.() ?? null;
     return {
       ...percentiles(durations),
-      file_io: structuredClone(io),
-      service_metrics: serviceMetrics,
+      file_io: instrumentationEnabled ? structuredClone(io) : null,
+      service_metrics: instrumentationEnabled ? serviceMetrics : null,
     };
   };
 
-  restoreProbe = installFileIoProbe();
+  if (instrumentationEnabled) restoreProbe = installFileIoProbe();
   const noOp = await samples("noop");
   const changed = await samples("changed");
   const report = {
     mode,
     api: mode === "candidate" ? "bound project.save" : "legacy project.save",
+    measurement_mode: instrumentationEnabled
+      ? "instrumented_latency_and_counters"
+      : "unprobed_latency_only",
+    instrumentation: {
+      file_io_probe: instrumentationEnabled,
+      storage_service_diagnostics: instrumentationEnabled,
+      counters_when_disabled: null,
+    },
     source: {
       repo_root: repoRoot,
       declared_commit: declaredSourceCommit,
@@ -450,6 +469,9 @@ try {
       {
         output: outputPath,
         mode,
+        measurement_mode: instrumentationEnabled
+          ? "instrumented_latency_and_counters"
+          : "unprobed_latency_only",
         fixture_sha256: fixtureHash,
         iterations_per_case: iterations,
       },
