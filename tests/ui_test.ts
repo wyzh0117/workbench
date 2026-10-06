@@ -115,3 +115,25 @@ Deno.test("requirement panel CSS forbids horizontal scroll", async () => {
     "requirement text must wrap",
   );
 });
+
+Deno.test("version history rows keep notes readable beside the restore action", async () => {
+  const css = await Deno.readTextFile(
+    new URL("../app/styles.css", import.meta.url),
+  );
+  const card = css.match(/\.versions-page\s+\.version-card\s*\{([^}]*)\}/s)?.[1] || "";
+  const main = css.match(/\.versions-page\s+\.version-card\s*>\s*\.version-main\s*\{([^}]*)\}/s)?.[1] || "";
+  const title = css.match(/\.versions-page\s+\.version-row-title\s*\{([^}]*)\}/s)?.[1] || "";
+  assert(
+    /display:\s*grid/.test(card) &&
+      /grid-template-columns:\s*auto\s+minmax\(0,\s*1fr\)\s+max-content/.test(card),
+    "version cards must reserve only the icon, readable content, and action widths",
+  );
+  assert(
+    /flex-direction:\s*column/.test(main) && /min-width:\s*0/.test(main),
+    "snapshot title, note, and date must stack in a shrinkable content column",
+  );
+  assert(
+    /display:\s*flex/.test(title),
+    "the title and status remain a single flexible row",
+  );
+});

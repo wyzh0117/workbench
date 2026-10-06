@@ -1401,6 +1401,80 @@ Deno.test("modal keyboard trap wraps Tab, skips hidden controls and Escape resto
   }
 });
 
+Deno.test("Escape safely dismisses rename, locked-project and duplicate-project dialogs", async () => {
+  const { store, document, registered, fireDocument, setActiveDialog, createNode, restore } = await bootDom();
+  try {
+    const data = projectWith("Escape 取消");
+    const assetId = "escape-rename-asset";
+    data.assets.push({
+      id: assetId,
+      project_id: data.project.id,
+      filename: "photo.png",
+      title: "Photo",
+      type: "image",
+      mime_type: "image/png",
+      storage_path: "assets/photo.png",
+      file_size: 8,
+      checksum: "0".repeat(64),
+      archived: false,
+      created_at: now(),
+      updated_at: now(),
+    } as any);
+    const opener: any = createNode({ focusKey: "asset-menu-summary" });
+    const renameInput: any = createNode({ focusKey: "asset-title" });
+    registered.set('[data-focus-key="asset-menu-summary"]', opener);
+    setActiveDialog({
+      contains: (node: unknown) => node === renameInput,
+      querySelector: () => renameInput,
+      querySelectorAll: () => [renameInput],
+      focus: () => {},
+    });
+
+    store.data = data;
+    store.ui.screen = "project";
+    store.ui.route = "media";
+    opener.focus();
+    store.ui.editingAssetId = assetId;
+    store.ui.assetRenameValue = "photo.png";
+    store.notify();
+    assert(document.activeElement === renameInput, "the rename modal must receive focus");
+    let prevented = false;
+    fireDocument("keydown", { key: "Escape", preventDefault: () => { prevented = true; } });
+    assert(prevented, "Escape must consume the modal key");
+    assert(store.ui.editingAssetId === null, "Escape must cancel the rename without writing");
+    assert(document.activeElement === opener, "Escape must return focus to the rename opener");
+    assert(store.data.assets.find((asset: any) => asset.id === assetId)?.filename === "photo.png", "cancelling must preserve the asset filename");
+
+    store.ui.projectProblem = {
+      status: "locked",
+      dir: "/tmp/locked-project",
+      problem: { code: "project_locked", message: "另一个窗口正在使用。" },
+    };
+    store.notify();
+    fireDocument("keydown", { key: "Escape", preventDefault: () => {} });
+    assert(store.ui.projectProblem === null, "Escape must use the safe return path for a locked-project dialog");
+
+    store.ui.registryCopy = {
+      project_id: data.project.id,
+      project_title: data.project.title,
+      existing_path: "/tmp/registered-project",
+      opened_path: "/tmp/opened-copy",
+    };
+    store.notify();
+    fireDocument("keydown", { key: "Escape", preventDefault: () => {} });
+    assert(store.ui.registryCopy === null, "Escape must choose the non-mutating duplicate-project dismissal");
+
+    store.externalConflict = { external_diff: { entries: [] }, local_diff: { entries: [] }, merge: { conflicts: [] } };
+    store.ui.editingAssetId = assetId;
+    store.notify();
+    fireDocument("keydown", { key: "Escape", preventDefault: () => {} });
+    assert(store.externalConflict, "Escape must not make a conflict decision");
+    assert(store.ui.editingAssetId === assetId, "Escape must not cancel a dialog hidden behind the conflict decision");
+  } finally {
+    restore();
+  }
+});
+
 Deno.test("a single lesson reports gaps instead of a made-up percentage", async () => {
   const data = projectWith("完成度");
   const { bridge } = nativeBridge({ "/tmp/a": data }, "/tmp/a", { next: null });

@@ -2074,3 +2074,70 @@ Deno.test("the 重试预览 button the real patch paints is bound by the real bi
     cache.clear();
   }
 });
+
+Deno.test("batched media errors settle visibly and typed images never decode as text", async () => {
+  const assets = [imageAsset(0), imageAsset(1), imageAsset(2)];
+  const [missing, oversize, wrongMime] = assets;
+  missing!.id = "missing-image";
+  oversize!.id = "oversize-image";
+  wrongMime!.id = "wrong-mime-image";
+  wrongMime!.mime_type = "text/plain";
+  wrongMime!.filename = "wrong-mime.png";
+  const fingerprint = { exists: true, size: 1, mtime_ms: null, hash: "preview-hash" };
+  let requests = 0;
+  const bridge = {
+    currentProject: () => ({ id: "project", assets }),
+    previewRequestContext: () => ({
+      project_dir: "/owned/course",
+      project_id: "project",
+      fingerprint,
+      lease_generation: "lease",
+      editor_generation: 1,
+    }),
+    readAssetBatch: async (request: { request_generation: number; asset_ids: string[] }) => {
+      requests += 1;
+      const bytes = btoa(String.fromCharCode(...PNG_BYTES));
+      return {
+        project_id: "project",
+        fingerprint,
+        request_generation: request.request_generation,
+        items: request.asset_ids.map((assetId) => assetId === wrongMime!.id
+          // A stale/older backend might still return bytes for inconsistent
+          // metadata; the renderer must honor the Canonical media type.
+          ? { asset_id: assetId, status: "ok", bytes_base64: bytes }
+          : {
+            asset_id: assetId,
+            status: "error",
+            error: {
+              code: assetId === missing!.id ? "asset_missing" : "asset_too_large",
+              message: assetId === missing!.id ? "素材文件不存在。" : "素材超过单文件预览上限。",
+            },
+          }),
+      };
+    },
+  };
+  const cache = new AssetPreviewCache(bridge as never, { maxConcurrentLoads: 2 });
+  const views = createViews({ assetPreview: cache } as never) as unknown as {
+    assetPreviewFrameInner: (asset: Asset, surface: string, block?: unknown) => string | null;
+  };
+  try {
+    await Promise.all(assets.map((asset) => cache.load(asset)));
+    assert(requests === 1, `the visible rows use one preview batch, got ${requests}`);
+    for (const asset of [missing!, oversize!, wrongMime!]) {
+      const preview = cache.get(asset.id, asset);
+      assert(preview?.failed, `${asset.id} must settle as a failed preview, not wait forever`);
+      const html = views.assetPreviewFrameInner(asset, "card") || "";
+      assert(html.includes("预览失败"), `${asset.id} must show a visible failure state`);
+      assert(
+        !html.includes("等待加载") && !html.includes("正在读取"),
+        `${asset.id} must not fall back to a loading placeholder`,
+      );
+    }
+    assert(
+      cache.get(wrongMime!.id, wrongMime)?.error?.includes("图片文件格式不匹配"),
+      "an image with text/plain metadata must fail the image MIME check instead of decoding PNG bytes as text",
+    );
+  } finally {
+    cache.clear();
+  }
+});

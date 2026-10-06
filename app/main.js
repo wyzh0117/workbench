@@ -4839,7 +4839,9 @@ class WorkbenchStore {
             throw new Error(describeProjectOpenFailure(null, { notObject: true }));
           }
         }
-        recovery = await this.bridge.readRecoveryJournal();
+        recovery = persistedState && Object.hasOwn(persistedState, "recovery_journal")
+          ? persistedState.recovery_journal
+          : await this.bridge.readRecoveryJournal();
       }
     } catch (error) {
       if (this.bridge.isNative() && !this.hasNativeLease()) {
@@ -12502,7 +12504,19 @@ document.addEventListener("keydown", (event) => {
     store.ui.focusField = "capture";
     store.notify();
   }
+  if (event.key === "Escape" && store.ui.projectProblem) {
+    event.preventDefault();
+    store.dismissProjectProblem();
+    return;
+  }
+  if (event.key === "Escape" && store.ui.registryCopy) {
+    event.preventDefault();
+    store.ui.registryCopy = null;
+    store.notify();
+    return;
+  }
   if (event.key === "Escape" && store.ui.pendingDeleteConfirmation) {
+    event.preventDefault();
     store.ui.pendingDeleteConfirmation = null;
     store.notify();
     return;
@@ -12510,7 +12524,14 @@ document.addEventListener("keydown", (event) => {
   if (event.key === "Escape" && store.ui.documentImportDialog) {
     // §18 — Escape is the 取消 button: nothing gets adopted, and the mapping page
     // says out loud that no course content was written.
+    event.preventDefault();
     store.cancelDocumentImportSelection();
+    return;
+  }
+  if (event.key === "Escape" && (store.externalConflict || store.pendingRecovery)) return;
+  if (event.key === "Escape" && store.ui.editingAssetId) {
+    event.preventDefault();
+    store.cancelAssetRename();
     return;
   }
   if (event.key === "Escape" && store.ui.assetImagePreviewId) {
@@ -12520,6 +12541,7 @@ document.addEventListener("keydown", (event) => {
     stopMediaPreview();
     store.releaseAssetViewerSource();
     store.ui.assetImagePreviewId = null;
+    event.preventDefault();
     store.notify();
     return;
   }

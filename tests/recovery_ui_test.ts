@@ -671,6 +671,74 @@ Deno.test("pending recovery keeps canonical data until restore snapshots it", as
   }
 });
 
+Deno.test("browser startup keeps the recovery journal returned with open state", async () => {
+  const runtime = globalThis as typeof globalThis & { document?: unknown; __TAURI__?: unknown };
+  const previousDocument = runtime.document;
+  const previousTauri = runtime.__TAURI__;
+  const previousFetch = globalThis.fetch;
+  const root = {
+    innerHTML: "",
+    querySelector: () => null,
+    querySelectorAll: () => [],
+    addEventListener: () => undefined,
+  };
+  runtime.document = { querySelector: () => root, addEventListener: () => undefined };
+  runtime.__TAURI__ = undefined;
+  globalThis.fetch = async () => { throw new Error("test fetch disabled"); };
+  try {
+    const { WorkbenchStore } = await import("../app/main.js?browser-open-recovery-state-test");
+    const canonical = switchProject("浏览器磁盘版本");
+    const recovered = structuredClone(canonical);
+    recovered.project.title = "浏览器暂存版本";
+    const journal = {
+      project_id: canonical.project.id,
+      canonical_revision: canonical.project.updated_at,
+      saved_at: "2999-09-21T00:00:00.000Z",
+      project: recovered,
+    };
+    let recoveryFallbackCalls = 0;
+    const bridge: any = {
+      projectDir: "/tmp/browser-recovery-project",
+      isNative: () => false,
+      openProjectState: async () => ({
+        project: structuredClone(canonical),
+        project_id: canonical.project.id,
+        project_dir: "/tmp/browser-recovery-project",
+        lease_generation: "browser-lease",
+        fingerprint: fingerprintFor(canonical, 1),
+        recovery_journal: structuredClone(journal),
+      }),
+      openSession: async () => ({ session: null, session_generation: 1, revision: 0 }),
+      loadSession: async () => null,
+      readRecoveryJournal: async () => {
+        recoveryFallbackCalls += 1;
+        return null;
+      },
+      command: async (name: string) => {
+        if (name === "registry.list") return { projects: [] };
+        if (name === "ai.connection.list") return { providers: [] };
+        if (name === "ai.execution.list") return [];
+        return {};
+      },
+    };
+    const store: any = new WorkbenchStore(bridge);
+    await store.initialize();
+    assert(store.data.project.title === "浏览器磁盘版本", "startup must keep the canonical project visible");
+    assert(
+      store.pendingRecovery?.project.project.title === "浏览器暂存版本",
+      "startup must retain the recovery journal from the same open-state snapshot",
+    );
+    assert(recoveryFallbackCalls === 0, "a returned recovery_journal must not be replaced by a second read");
+    assert(!(await store.flush()), "the visible recovery choice must block an ordinary save");
+    clearTimeout(store.saveTimer);
+    clearTimeout(store.sessionTimer);
+  } finally {
+    runtime.document = previousDocument;
+    runtime.__TAURI__ = previousTauri;
+    globalThis.fetch = previousFetch;
+  }
+});
+
 Deno.test("native startup clears a persisted project path when opening loses its lease", async () => {
   const runtime = globalThis as typeof globalThis & { document?: unknown; __TAURI__?: unknown };
   const previousDocument = runtime.document;

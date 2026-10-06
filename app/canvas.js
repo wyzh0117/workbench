@@ -721,6 +721,7 @@ export class AssetPreviewCache {
     const generation = this.generation;
     const token = this.bumpToken(key);
     let acquired = false;
+    let batchRead = false;
     const task = (async () => {
       let entry;
       let sourceRelease = null;
@@ -746,6 +747,7 @@ export class AssetPreviewCache {
         } else {
           const batched = this.enqueuePreviewRead(asset, key, token, generation);
           if (batched) {
+            batchRead = true;
             const result = await batched;
             if (result?.stale || result?.deferred) return;
             bytes = result?.bytes;
@@ -780,7 +782,7 @@ export class AssetPreviewCache {
             failed: true,
             error: `素材超过单文件预览上限（${this.mediaLimit / BYTES_PER_MEGABYTE} MiB）`,
           };
-        } else if (isTextAsset(asset)) {
+        } else if (isTextAsset(asset) && asset.type !== "image" && asset.type !== "gif") {
           const text = new TextDecoder().decode(bytes);
           entry = { text, loaded: true };
         } else if (asset.type === "image" || asset.type === "gif") {
@@ -849,7 +851,7 @@ export class AssetPreviewCache {
         for (const url of ownedUrls) this.releaseEntry({ url });
         try { sourceRelease?.(); } catch { /* source token may already be gone */ }
         sourceRelease = null;
-        if (!acquired || generation !== this.generation ||
+        if ((!acquired && !batchRead) || generation !== this.generation ||
           this.tokenFor(key) !== token) return;
         this.failures += 1;
         entry = {
