@@ -4617,13 +4617,17 @@ fn read_snapshot_envelope(project_dir: &Path, snapshot_id: &str) -> Result<Optio
     }
     // Accept the earlier raw-project snapshot format for migration/restore.
     validate_project(&value)?;
-    Ok(Some(snapshot_envelope(
+    let mut envelope = snapshot_envelope(
         snapshot_id.to_owned(),
         "历史版本".into(),
         "".into(),
         value,
         None,
-    )?))
+    )?;
+    // A legacy raw-project snapshot has no trustworthy creation timestamp.
+    // Keep it unknown rather than manufacturing a new time on every read.
+    envelope["created_at"] = json!("");
+    Ok(Some(envelope))
 }
 
 #[tauri::command]
@@ -20652,6 +20656,70 @@ mod tests {
                 && entry["error"]["code"] == "snapshot_unreadable"
                 && entry["error"]["message"].is_string()
         }));
+        project_close(project_dir).unwrap();
+        let _ = fs::remove_dir_all(directory);
+    }
+
+    #[test]
+    fn legacy_raw_snapshot_time_stays_unknown_and_restore_still_works() {
+        let directory = test_directory("legacy-snapshot-time");
+        let project_dir = directory.to_string_lossy().into_owned();
+        let current = json!({ "project": { "id": "p1", "title": "current" }, "items": [] });
+        project_create(project_dir.clone(), current).unwrap();
+        let lease_generation = active_lease_generation(&directory).unwrap();
+        let (mut legacy, current_fingerprint) = read_project_state(&directory).unwrap();
+        legacy["project"]["title"] = json!("legacy snapshot target");
+        let snapshot_path = directory.join(".workspace/snapshots/legacy-raw-target.json");
+        fs::create_dir_all(snapshot_path.parent().unwrap()).unwrap();
+        let legacy_bytes = serde_json::to_vec_pretty(&legacy).unwrap();
+        fs::write(&snapshot_path, &legacy_bytes).unwrap();
+        let source_mtime = fs::metadata(&snapshot_path).unwrap().modified().unwrap();
+
+        for _ in 0..2 {
+            let listing = list_snapshots(project_dir.clone()).unwrap();
+            let row = listing
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|row| row["id"] == "legacy-raw-target")
+                .expect("legacy raw snapshot should remain listed");
+            assert_eq!(row["status"], json!("available"));
+            assert_eq!(row["created_at"], json!(""));
+        }
+        assert_eq!(fs::read(&snapshot_path).unwrap(), legacy_bytes);
+        assert_eq!(
+            fs::metadata(&snapshot_path).unwrap().modified().unwrap(),
+            source_mtime,
+            "listing must not rewrite the legacy snapshot to invent a time"
+        );
+
+        let operation_id = "legacy-restore-op";
+        let restored = restore_snapshot(
+            project_dir.clone(),
+            "legacy-raw-target".into(),
+            Some("p1".into()),
+            Some(lease_generation),
+            Some(7),
+            Some(operation_id.into()),
+            Some(7),
+            Some(current_fingerprint),
+        )
+        .expect("legacy raw snapshot should still restore");
+        assert_eq!(restored["commit_state"], json!("committed"));
+        assert_eq!(
+            restored["project"]["project"]["title"],
+            json!("legacy snapshot target")
+        );
+        let backup_id = restored["backup_snapshot_id"].as_str().unwrap().to_owned();
+        let backup = read_snapshot(project_dir.clone(), backup_id.clone())
+            .unwrap()
+            .expect("restore-before snapshot should remain readable");
+        assert_eq!(backup["project"]["title"], json!("current"));
+        let backup_envelope = read_snapshot_envelope(&directory, &backup_id)
+            .unwrap()
+            .expect("restore-before envelope should remain readable");
+        assert_eq!(backup_envelope["created_at"].as_str().unwrap().len(), 13);
+
         project_close(project_dir).unwrap();
         let _ = fs::remove_dir_all(directory);
     }
