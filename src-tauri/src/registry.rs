@@ -15,8 +15,8 @@
 //! compares what is on disk with what it stored.
 
 use crate::{
-    app_local_path, atomic_write_path, inspect_project_directory, project_lock_path,
-    reject_sensitive, reject_symlink, rfc3339_now,
+    app_local_path, atomic_write_path, inspect_project_directory, reject_sensitive, reject_symlink,
+    rfc3339_now,
 };
 use serde_json::{json, Value};
 use std::fs;
@@ -272,26 +272,23 @@ fn save_rows(path: &Path, rows: Vec<Value>) -> Result<(), String> {
 
 /// What the launcher may offer for a row (§4.3 / §5).
 ///
-/// The registry is the only place that knows a project used to live here, so the
-/// cheap, side-effect-free question the row can answer is "is this still a
-/// Workbench project root" — which is exactly what `<project>/.workbench.lock`
-/// means, the same test `open_workspace` applies when it reads `project.json`.
-/// A folder that is gone, or that exists but is not a Workbench root (a moved
-/// course, a hand-edited file, a re-used folder), reads as *not available* and
-/// offers 「选择项目文件夹」 instead of an open button. The full classification —
-/// schema version, canonical validity, whether the id still matches — runs when
-/// the row is actually opened, by the same code the folder picker runs.
+/// A closed project's lease file is removed, so it cannot indicate whether the
+/// folder still exists. Keep this launcher probe read-only and cheap: require a
+/// real directory and a regular `project.json`; opening performs full validation.
 fn registry_project_available(path: &str) -> bool {
-    let trimmed = path.trim();
-    if trimmed.is_empty() || !Path::new(trimmed).is_absolute() {
+    if path.is_empty() || !Path::new(path).is_absolute() {
         return false;
     }
-    match project_lock_path(Path::new(trimmed)) {
-        Ok(lock_file) => fs::symlink_metadata(lock_file)
-            .map(|metadata| metadata.is_file())
-            .unwrap_or(false),
-        Err(_) => false,
+    let root = Path::new(path);
+    if !fs::symlink_metadata(root)
+        .map(|metadata| metadata.is_dir())
+        .unwrap_or(false)
+    {
+        return false;
     }
+    fs::symlink_metadata(root.join("project.json"))
+        .map(|metadata| metadata.is_file())
+        .unwrap_or(false)
 }
 
 // ---------------------------------------------------------------------------
@@ -1227,6 +1224,62 @@ mod tests {
             "distinct ids are not copies"
         );
         let _ = dead_every_path("/unused");
+    }
+
+    #[test]
+    fn a_closed_native_project_remains_available_and_missing_canonical_does_not() {
+        let registry_path = temp_registry("availability-after-close");
+        let parent = registry_path.parent().expect("fixture parent");
+        let project_dir = parent.join("course");
+        let project_path = project_dir.to_string_lossy().into_owned();
+        crate::project_create(
+            project_path.clone(),
+            json!({ "project": { "id": "registry-p1", "title": "最近项目" }, "items": [] }),
+        )
+        .expect("native open should create the Canonical project and acquire its lease");
+        assert!(registry_project_available(&project_path));
+
+        crate::project_close(project_path.clone()).expect("native close should release its lease");
+        assert!(
+            !crate::project_lock_path(&project_dir)
+                .expect("lock path")
+                .exists(),
+            "close must remove the active lease marker"
+        );
+        assert!(
+            registry_project_available(&project_path),
+            "an existing Canonical project remains available after its writer lease closes"
+        );
+
+        let missing = parent.join("missing").to_string_lossy().into_owned();
+        assert!(!registry_project_available(&missing));
+        let empty_dir = parent.join("no-canonical");
+        fs::create_dir_all(&empty_dir).expect("empty fixture directory");
+        assert!(!registry_project_available(&empty_dir.to_string_lossy()));
+
+        let spaced_dir = parent.join(" project root with edge spaces ");
+        fs::create_dir_all(&spaced_dir).expect("spaced fixture directory");
+        fs::write(spaced_dir.join("project.json"), "{}").expect("fixture Canonical file");
+        assert!(registry_project_available(&spaced_dir.to_string_lossy()));
+
+        #[cfg(unix)]
+        {
+            let root_symlink = parent.join("project-link");
+            std::os::unix::fs::symlink(&spaced_dir, &root_symlink).expect("root symlink");
+            assert!(!registry_project_available(&root_symlink.to_string_lossy()));
+
+            let canonical_link_dir = parent.join("canonical-link");
+            fs::create_dir_all(&canonical_link_dir).expect("Canonical symlink directory");
+            std::os::unix::fs::symlink(
+                spaced_dir.join("project.json"),
+                canonical_link_dir.join("project.json"),
+            )
+            .expect("Canonical symlink");
+            assert!(!registry_project_available(
+                &canonical_link_dir.to_string_lossy()
+            ));
+        }
+        let _ = fs::remove_dir_all(parent);
     }
 
     #[test]
