@@ -19188,6 +19188,27 @@ mod tests {
         assert_eq!(fs::read(&journal_path).unwrap(), journal_bytes);
         fs::write(&canonical_path, &canonical_bytes).unwrap();
 
+        let foreign_journal = json!({
+            "project_id": "foreign-project",
+            "transaction_id": "visible-tx-01",
+            "project": project,
+        });
+        let foreign_journal_bytes = serde_json::to_vec(&foreign_journal).unwrap();
+        fs::write(&journal_path, &foreign_journal_bytes).unwrap();
+        let foreign_journal_error = clear(
+            &project_id,
+            fingerprint.clone(),
+            "visible-tx-01",
+            "clear-foreign-journal",
+        )
+        .expect_err("a foreign on-disk journal must be preserved");
+        assert_eq!(
+            serde_json::from_str::<Value>(&foreign_journal_error).unwrap()["error"]["code"],
+            json!("recovery_journal_mismatch")
+        );
+        assert_eq!(fs::read(&journal_path).unwrap(), foreign_journal_bytes);
+        fs::write(&journal_path, &journal_bytes).unwrap();
+
         let cleared = clear(
             &project_id,
             fingerprint.clone(),
