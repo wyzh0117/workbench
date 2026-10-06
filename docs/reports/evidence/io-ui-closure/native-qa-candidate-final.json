@@ -1,0 +1,291 @@
+{
+  "kind": "superseded_local_native_qa_candidate",
+  "source_commit": "dab26b7b09dcde37eba2f59b018b9ac11e7f73e0",
+  "source_paths_clean": true,
+  "source_worktree_diff_in_paths": [],
+  "version": "0.2.7",
+  "build": {
+    "command": "cargo tauri build --target aarch64-apple-darwin --features custom-protocol --config /tmp/workbench-io-ui-closure-qa-overlay.json --bundles app --no-sign",
+    "environment": {
+      "CARGO_TARGET_DIR": "/tmp/io-ui-closure-native-qa-prewarm-target",
+      "CARGO_BUILD_JOBS": "2"
+    },
+    "profile": "release",
+    "exit_code": 0,
+    "log": "docs/reports/evidence/io-ui-closure/runs/native-final-qa-build.log",
+    "overlay_path": "/tmp/workbench-io-ui-closure-qa-overlay.json",
+    "overlay_sha256": "7fe6471be8ce87a40151bf931016d5d1c7bb369b64b25f570f37b8fceea21024",
+    "overlay": {
+      "productName": "AI Course Workbench QA Preview",
+      "identifier": "io.github.wyzh0117.ai-course-workbench.qa.io-ui-closure"
+    }
+  },
+  "app": {
+    "path": "/tmp/io-ui-closure-native-qa-final/AI Course Workbench QA Preview.app",
+    "product_name": "AI Course Workbench QA Preview",
+    "bundle_identifier": "io.github.wyzh0117.ai-course-workbench.qa.io-ui-closure",
+    "short_version": "0.2.7",
+    "bundle_version": "0.2.7",
+    "target": "aarch64-apple-darwin",
+    "mach_o_architecture": "arm64",
+    "signature": "ad-hoc; no Team ID; not Developer ID notarized",
+    "codesign_verify_deep_strict": "passed",
+    "verification_log": "docs/reports/evidence/io-ui-closure/runs/native-final-qa-sign-verify.log",
+    "executable_sha256_after_signing": "e1faed4b8034c2431801e95462f44bbc60c73ccddb0b2a9ac7883bcb861c8c2d",
+    "bundle_tree_sha256": "fed905b8abc165eb9fd103f17f685c05a02b03acd0788f1e36e9cf13dfdbb2a1",
+    "bundle_tree_sha256_algorithm": "SHA-256 over sorted relative paths, each followed by NUL, raw file SHA-256 hex, and LF",
+    "bundle_files": [
+      {
+        "path": "Contents/_CodeSignature/CodeResources",
+        "size_bytes": 2440,
+        "sha256": "c91f2e976b7fda4651a3cc0170c7b33d9657997fcf47fb2bff0a4145cb95e39d"
+      },
+      {
+        "path": "Contents/Info.plist",
+        "size_bytes": 1216,
+        "sha256": "7ee98aab257bac386792e36eab6c4efbc313e83631c54f9ce8167ce01f91dbb8"
+      },
+      {
+        "path": "Contents/MacOS/ai-course-workbench",
+        "size_bytes": 19771200,
+        "sha256": "e1faed4b8034c2431801e95462f44bbc60c73ccddb0b2a9ac7883bcb861c8c2d"
+      },
+      {
+        "path": "Contents/Resources/icon.icns",
+        "size_bytes": 485020,
+        "sha256": "bd08622082555dced600f28e682429eda68eda3e9145a1012fe76816354a75cc"
+      }
+    ],
+    "bundle_total_file_bytes": 20259876
+  },
+  "zip": {
+    "path": "/tmp/io-ui-closure-native-qa-final/AI-Course-Workbench-QA-Preview-aarch64-0.2.7.zip",
+    "size_bytes": 7080732,
+    "sha256": "5ae8d14c4d75985d47af3bd84433d23e6f56420608b77bd410780817db0126b5",
+    "format_integrity_checked": true,
+    "verification_log": "docs/reports/evidence/io-ui-closure/runs/native-final-qa-zip-verify.log"
+  },
+  "embedded_frontend": {
+    "codegen_output": "/tmp/io-ui-closure-native-qa-prewarm-target/aarch64-apple-darwin/release/build/ai-course-workbench-00b935aaf37638a4/out/tauri-codegen-assets",
+    "source_file_count": 18,
+    "codegen_directory_file_count": 21,
+    "embedded_asset_count": 18,
+    "exact_source_byte_matches": 17,
+    "index_html_normalized_dom_event_stream_equal": true,
+    "index_html_dom_check": "Python HTMLParser: 18 source events == 18 embedded events",
+    "all_embedded_compressed_payloads_present_in_final_signed_executable": true,
+    "stale_codegen_files_excluded_from_binary": [
+      "48a05c775a9e07f0e3e83ab6c8782a571e386f0143fa58e64c6df2203fca85d1.css",
+      "8bd72b71cb363f647780269c5bf4bb200105d1e75566054780d324f5d7d65194.js",
+      "8f3b7e272ab4f381ff0f193907a8c1232870e518662fed3441d1799f00438e2d.js"
+    ],
+    "verification_log": "docs/reports/evidence/io-ui-closure/runs/native-final-qa-asset-check.log",
+    "assets": [
+      {
+        "tauri_asset_key": "1226067165963ae3ec12ea97d47c457f9bae87cc8807dd77a3e6c5ad07e137a2.js",
+        "compressed_sha256": "8ea0e575e4d438960317119d81f1c27977389710e49db940c9440cf93af5c8bf",
+        "compressed_bytes": 16336,
+        "decoded_sha256": "aae766e171a003676dda3b55906d315593d07befe7dc8adf29a3ea7da053d38f",
+        "decoded_bytes": 63831,
+        "exact_source_match": true,
+        "source_relative_path": "canvas.js",
+        "compressed_payload_present_in_final_executable": true
+      },
+      {
+        "tauri_asset_key": "1274882b0a69c88c8bb1bb4fdfb41134ee5c59e00d571d17ec9352b523334d8a.js",
+        "compressed_sha256": "3434a73547809102e93ad6027ddc9e85b2777d38ab487068ab31fd283df98c08",
+        "compressed_bytes": 59802,
+        "decoded_sha256": "239f0cc84e59ac291052f0792e9275831e615a52dfe9d85ad50402f50a56ec1e",
+        "decoded_bytes": 270916,
+        "exact_source_match": true,
+        "source_relative_path": "views.js",
+        "compressed_payload_present_in_final_executable": true
+      },
+      {
+        "tauri_asset_key": "487787e39db9dde2b241d31b047b5924c3f76e29761cd2d03461845a8d051c1b.js",
+        "compressed_sha256": "986eaaf5470cf2f4b59243836306281f743f089c839866e86fe13f0475f74931",
+        "compressed_bytes": 1282,
+        "decoded_sha256": "82ef0e4146b39979d82a3ed7dce301c8384db7b49881b5717c8612eb7d38a69b",
+        "decoded_bytes": 3464,
+        "exact_source_match": true,
+        "source_relative_path": "boot.js",
+        "compressed_payload_present_in_final_executable": true
+      },
+      {
+        "tauri_asset_key": "4a9dfe18bdafe14f1fdd65641765ec2c5a4bf29a7fb0a1e5f1463b32fb24410f.js",
+        "compressed_sha256": "05d7201966bfdddd6ceadb1b402096515c4c411fb00667ba749c69b817971ff6",
+        "compressed_bytes": 4019,
+        "decoded_sha256": "279102ba24866a563b94aba103e41943f67dec4110a70aae970ee2b191c78164",
+        "decoded_bytes": 17718,
+        "exact_source_match": true,
+        "source_relative_path": "layout_pages.js",
+        "compressed_payload_present_in_final_executable": true
+      },
+      {
+        "tauri_asset_key": "5aa9bcd42fa29b052397d4851ca95a6fe044648a1d0db26e7a1f02f796ed9b0b.txt",
+        "compressed_sha256": "fa5301a5bd550ea613a3369cff7701e0a981f5a9bc09fa28912351822c567719",
+        "compressed_bytes": 1357,
+        "decoded_sha256": "8e3a3f82f59a60958f56ca08f445647c32a4733dc7ca6c2c46f6eb898471ab9c",
+        "decoded_bytes": 2942,
+        "exact_source_match": true,
+        "source_relative_path": "vendor/MARKED-LICENSE.txt",
+        "compressed_payload_present_in_final_executable": true
+      },
+      {
+        "tauri_asset_key": "6d3a832965b424f2406794425e4d0a7dfd827e84a899efc57cd4a3ff010c3bd4.html",
+        "compressed_sha256": "387e3c8713c2e62bbea7f9f222a0d8f6f9402d2c2a1c0f27b3d031d020ef694a",
+        "compressed_bytes": 197,
+        "decoded_sha256": "13dc4d05d906f9c5075caec01c2a2eeb810aaf266fccc2a97e5c08e5902a37d3",
+        "decoded_bytes": 395,
+        "exact_source_match": false,
+        "source_relative_path": "index.html",
+        "compressed_payload_present_in_final_executable": true
+      },
+      {
+        "tauri_asset_key": "77eda8e48c09c53e6c26350c91d8eba54a1628608e7944b19a07657ca8cccc8f.js",
+        "compressed_sha256": "aa18b0979c748e9ad0bb758f99a4f7e55faf2c9ae74d599df2d59de461597d33",
+        "compressed_bytes": 11402,
+        "decoded_sha256": "00b3d0ab273a595df7c81c049a3adfd4f81550c824b4059fae7b325f5261debc",
+        "decoded_bytes": 45112,
+        "exact_source_match": true,
+        "source_relative_path": "authoring.js",
+        "compressed_payload_present_in_final_executable": true
+      },
+      {
+        "tauri_asset_key": "8062e977d166555d023752d5608ca893ffdba344376ff4ede2bc7479d0e74dff.js",
+        "compressed_sha256": "f0f2e5475138718ed6e320d55630610362c9e7ddddee3bbe488ed7d9aec03e8f",
+        "compressed_bytes": 9498,
+        "decoded_sha256": "64f75e5a7ddb99b5f1e5afb75dfbf7a6698899bfaadc863886f4aa4b38702d58",
+        "decoded_bytes": 34349,
+        "exact_source_match": true,
+        "source_relative_path": "markdown.js",
+        "compressed_payload_present_in_final_executable": true
+      },
+      {
+        "tauri_asset_key": "83daf00a88dcd84d8091a23bb6e21b269366b0f8c807a116f399c805a88fa5bc.ts",
+        "compressed_sha256": "940bba9f752a3f2fc12538043a73635e7b9ee3d525f50a314da98bd96e8708e4",
+        "compressed_bytes": 1499,
+        "decoded_sha256": "9f0569e1454933ee9404301a3b2036210b8a8a1a2c8ad01823c530c9feef0429",
+        "decoded_bytes": 5606,
+        "exact_source_match": true,
+        "source_relative_path": "publication.d.ts",
+        "compressed_payload_present_in_final_executable": true
+      },
+      {
+        "tauri_asset_key": "9c2ef82776395841f09ee995dbae244d4acbbb84454a4e298fd5c1c1e465160d.css",
+        "compressed_sha256": "03a87edbc413e9cde235186028d0e19ff12562d91e28a858355976d2483debf6",
+        "compressed_bytes": 25010,
+        "decoded_sha256": "807b840e69a705c8b69824573703920aec1cdcecbc43192dc46817cf3b56ecb4",
+        "decoded_bytes": 146816,
+        "exact_source_match": true,
+        "source_relative_path": "styles.css",
+        "compressed_payload_present_in_final_executable": true
+      },
+      {
+        "tauri_asset_key": "b6c4600db207aaf77845754570b0a9ab77fc460273a66ffb511e46d72e4475e7.js",
+        "compressed_sha256": "d096ecc515f7dc576ec7bb2f1f4c4d498aa34c930b48929d27f8065a3f04e35f",
+        "compressed_bytes": 7343,
+        "decoded_sha256": "1b8d917296603bee40056b427a1a6fe6db65e59b6fbf1395a6318a5ae78a39d4",
+        "decoded_bytes": 30261,
+        "exact_source_match": true,
+        "source_relative_path": "publication.js",
+        "compressed_payload_present_in_final_executable": true
+      },
+      {
+        "tauri_asset_key": "bbe7e9a5916a9aa700acdab982c334510367bc1c3d58b0c0cc5d49d14c3c7e52.ts",
+        "compressed_sha256": "dcbc70c1403f0a22b7424a0282d43e1f9ad7b13bb8c632492e8e4242d85f51f9",
+        "compressed_bytes": 384,
+        "decoded_sha256": "d4a60f26879c322fb9f88de8db4f4f556f94326c9613dfc02066c5a7809050f1",
+        "decoded_bytes": 1363,
+        "exact_source_match": true,
+        "source_relative_path": "layout_pages.d.ts",
+        "compressed_payload_present_in_final_executable": true
+      },
+      {
+        "tauri_asset_key": "c2da073eedbe0960ff7cbd05be5f0643acfa27b1aa8753c9749d69c5aa9cacd1.js",
+        "compressed_sha256": "9dbe2b1baf3dc063d86f3dc0905a48bfd42e2dc0b44fddc195743d96fa82b30b",
+        "compressed_bytes": 4373,
+        "decoded_sha256": "5bb543a5b09a98796b306a7b2e4843088ddcf6c55ee3652e790ab5ab35c56b95",
+        "decoded_bytes": 19976,
+        "exact_source_match": true,
+        "source_relative_path": "persistence.js",
+        "compressed_payload_present_in_final_executable": true
+      },
+      {
+        "tauri_asset_key": "cfbc3a56a9f36512d2bad7f32ea61a365c171c05192be9e88d09d5e2bce6e3f4.js",
+        "compressed_sha256": "8875e1ca4802f2957bf5b5d88a8c562e694d494d30bd53f56767b98abd9dbf05",
+        "compressed_bytes": 2863,
+        "decoded_sha256": "0c8449d776a4d476316cfa6391b64e441be70883112b7e97e00e809dc47e80b2",
+        "decoded_bytes": 7674,
+        "exact_source_match": true,
+        "source_relative_path": "constants.js",
+        "compressed_payload_present_in_final_executable": true
+      },
+      {
+        "tauri_asset_key": "d4e849fb059e8b13b1690effd74d58ead52c5b6dcd592654043f4a1d2fd53c2b.js",
+        "compressed_sha256": "1b36253b90269b90c654ecbf7db698880d21a89217a56028ee66c7ca6c99cb69",
+        "compressed_bytes": 515,
+        "decoded_sha256": "93796bf2f711869268a301cd1c04b66d82ffdfb1e1121d568d8ee1e9124fca6b",
+        "decoded_bytes": 1510,
+        "exact_source_match": true,
+        "source_relative_path": "recovery.js",
+        "compressed_payload_present_in_final_executable": true
+      },
+      {
+        "tauri_asset_key": "e0550a629b1bc15b6141545d7652e1b1b8775d73532bb8d8d63f8934ad53604f.js",
+        "compressed_sha256": "b10c2a3bfab376d9b3e37e94ec0a8567141853e76aef3a7fe9b0a603735067d0",
+        "compressed_bytes": 114699,
+        "decoded_sha256": "ec367eac55f46df11e59a1cf1733a3b6c4207a72568c1cd89737631b929c6188",
+        "decoded_bytes": 558087,
+        "exact_source_match": true,
+        "source_relative_path": "main.js",
+        "compressed_payload_present_in_final_executable": true
+      },
+      {
+        "tauri_asset_key": "e3ad45f2b5ce342a4c0f53ac2a7a0a10881a40c0d17d2b18b5c89b608a06eca7.js",
+        "compressed_sha256": "c035d07b6705679a2a830aa7269b15b3d5a44bf639de8503abb0be56906bb030",
+        "compressed_bytes": 34706,
+        "decoded_sha256": "d7fe9938a6fb00edce222fab75f8b6d7c14ad4b3e8a6fb96e281212412e7968f",
+        "decoded_bytes": 148474,
+        "exact_source_match": true,
+        "source_relative_path": "ai.js",
+        "compressed_payload_present_in_final_executable": true
+      },
+      {
+        "tauri_asset_key": "fec5b462cd30e03e18aa63e4c34971a1d9473e444a283a2e8c7f1752ada6f5eb.js",
+        "compressed_sha256": "8d8c7c8f78cf7c3a67c961acbf19276965fd46761c0ef695a286a8ffc4d95df3",
+        "compressed_bytes": 12380,
+        "decoded_sha256": "fd52a4d9a8eb652477ec1ddea2c48677bf46fcfc82e3801e46ca54359c57164f",
+        "decoded_bytes": 41878,
+        "exact_source_match": true,
+        "source_relative_path": "vendor/marked-18.0.7.esm.js",
+        "compressed_payload_present_in_final_executable": true
+      }
+    ]
+  },
+  "isolation_and_execution": {
+    "qa_identifier_distinct_from_production": true,
+    "expected_macos_app_local_data_dir": "/Users/youngi/Library/Application Support/io.github.wyzh0117.ai-course-workbench.qa.io-ui-closure",
+    "app_local_data_dir_runtime_verified": false,
+    "launched": false,
+    "installed": false,
+    "published": false,
+    "native_gui_qa": "BLOCKED: at 2026-10-06 approximately 01:37 UTC macOS reported the host locked and automatic unlock could not unlock; no launch attempt made."
+  },
+  "candidate_status": "superseded_pending_browser_recovery_clear_fix",
+  "superseded_at_utc": "2026-10-06T01:59:07Z",
+  "superseded_reason": {
+    "finding": "Browser recovery discard/keep-disk clears the in-memory prompt but DesktopBridge.clearRecoveryJournal is a no-op outside Tauri, so the on-disk recovery journal remains and is offered again after reopening.",
+    "observed_source_commit": "dab26b7b09dcde37eba2f59b018b9ac11e7f73e0",
+    "evidence": "docs/reports/evidence/io-ui-closure/screenshots/final/browser-dab26-recovery-kept-disk-red.jpg",
+    "fix_owner": "Deno service + Front bridge integration; Native Rust path is unchanged.",
+    "required_retest": "Fresh Browser recovery fixture: keep disk, close/reopen, confirm no stale prompt; preserve transaction binding and protect a changed foreign journal."
+  },
+  "native_gui_status": {
+    "status": "BLOCKED",
+    "reason": "Mac locked; app inventory returned apps=[] and automatic unlock failed.",
+    "last_observed_utc": "2026-10-06T01:37:00Z",
+    "candidate_launched": false,
+    "native_ipc_smoke": "NOT_RUN"
+  }
+}
