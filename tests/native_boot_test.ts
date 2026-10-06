@@ -1050,6 +1050,8 @@ serialNativeBootTest("native rich-editor duplicate input does not revise or queu
     assert(store.saveRevision > saveRevision, "真实正文变化仍排入新一代自动保存");
   } finally {
     clearTimeout(store.saveTimer);
+    // Keep the fake document alive through the rich-editor's 600 ms compile callback.
+    await new Promise((resolve) => setTimeout(resolve, 650));
     restore();
   }
 });

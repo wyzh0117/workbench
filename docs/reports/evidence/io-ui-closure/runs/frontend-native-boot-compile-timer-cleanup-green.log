@@ -1,0 +1,5 @@
+Date: 2026-10-06 (Asia/Shanghai)
+Production source pin: 52862b4ab0fe8386cc1dd6ac937d46721e9cca4d (unchanged)
+Test-only change: tests/native_boot_test.ts keeps its fake document alive through the rich-editor 600 ms compile callback; pending save timer is cleared before teardown.
+Command: deno test -A --filter 'native rich-editor duplicate input does not revise or queue an unchanged body' tests/native_boot_test.ts
+Result: 1 passed, 0 failed, 21 filtered out.
