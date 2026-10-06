@@ -1,0 +1,56 @@
+warning: function `write_project_value_with_warning` is never used
+    --> src/lib.rs:2302:4
+     |
+2302 | fn write_project_value_with_warning(
+     |    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+     |
+     = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: function `write_project_value` is never used
+    --> src/lib.rs:2314:4
+     |
+2314 | fn write_project_value(project_dir: &Path, project: &Value) -> Result<(), String> {
+     |    ^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `super::*`
+ --> src/documents/docx/tests.rs:5:5
+  |
+5 | use super::*;
+  |     ^^^^^^^^
+  |
+  = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: function `xml_text` is never used
+  --> src/documents/fixtures.rs:54:15
+   |
+54 | pub(crate) fn xml_text(value: &str) -> String {
+   |               ^^^^^^^^
+
+warning: function `pdf_literal` is never used
+  --> src/documents/fixtures.rs:62:15
+   |
+62 | pub(crate) fn pdf_literal(value: &str) -> String {
+   |               ^^^^^^^^^^^
+
+warning: `ai-course-workbench` (lib) generated 2 warnings
+warning: `ai-course-workbench` (lib test) generated 5 warnings (2 duplicates) (run `cargo fix --lib -p ai-course-workbench --tests` to apply 1 suggestion)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 1.24s
+     Running unittests src/lib.rs (/tmp/io-ui-closure-candidate-seeded/debug/deps/ai_course_workbench_lib-7ed887973fc21486)
+
+running 1 test
+
+thread 'tests::native_static_web_export_ack_lists_nested_files_and_actual_bytes' (1603379) panicked at src/lib.rs:22287:9:
+assertion `left == right` failed
+  left: {"manifest.json", "assets", "index.html"}
+ right: {"index.html", "assets/asset-1791257512766-3-first.png", "assets/asset-1791257512826-8-second.png", "manifest.json"}
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+test tests::native_static_web_export_ack_lists_nested_files_and_actual_bytes ... FAILED
+
+failures:
+
+failures:
+    tests::native_static_web_export_ack_lists_nested_files_and_actual_bytes
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 254 filtered out; finished in 0.23s
+
+error: test failed, to rerun pass `--lib`

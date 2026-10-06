@@ -7402,6 +7402,16 @@ struct AdoptAccumulator {
     staged_pairs: Vec<(String, String)>,
 }
 
+impl AdoptAccumulator {
+    fn record_created_asset(&mut self, asset_id: &str) {
+        if !self.asset_ids.iter().any(|value| value == asset_id)
+            && !self.reused_asset_ids.iter().any(|value| value == asset_id)
+        {
+            self.asset_ids.push(asset_id.to_owned());
+        }
+    }
+}
+
 /// Everything a single file item may append, captured before it is processed so a
 /// failure leaves no half-imported lesson, asset, usage or provenance record.
 struct AdoptItemSnapshot {
@@ -7675,9 +7685,7 @@ fn adopt_keep_source_reference(
         &mut acc.staged_pairs,
         roots.staging_relative_root,
     )? {
-        if !acc.asset_ids.contains(&id) {
-            acc.asset_ids.push(id.clone());
-        }
+        acc.record_created_asset(&id);
         asset_id = Value::String(id);
     }
     let inbox_id = adopt_source_inbox(
@@ -7874,9 +7882,7 @@ fn adopt_native_document_lesson(
                     unresolved.push(href.to_owned());
                     continue;
                 };
-                if !acc.asset_ids.contains(&asset_id) {
-                    acc.asset_ids.push(asset_id.clone());
-                }
+                acc.record_created_asset(&asset_id);
                 managed.insert(href.to_owned(), (storage_path, asset_id));
                 let _ = block_index;
             }
@@ -7928,9 +7934,7 @@ fn adopt_native_document_lesson(
         };
         match asset_storage_path(project, &asset_id) {
             Some(storage_path) => {
-                if !acc.asset_ids.contains(&asset_id) {
-                    acc.asset_ids.push(asset_id.clone());
-                }
+                acc.record_created_asset(&asset_id);
                 managed.insert(image.ref_name.clone(), (storage_path, asset_id));
             }
             None => {
@@ -8813,9 +8817,7 @@ fn folder_apply_import_with_documents(
                                     &staging_relative_root,
                                 )?
                                 .ok_or("Markdown图片依赖没有生成素材")?;
-                                if !acc.asset_ids.contains(&asset_id) {
-                                    acc.asset_ids.push(asset_id.clone());
-                                }
+                                acc.record_created_asset(&asset_id);
                                 assets_by_block.entry(block_index).or_default().push(json!({
                                     "href": href,
                                     "asset_id": asset_id,
@@ -8920,7 +8922,7 @@ fn folder_apply_import_with_documents(
                             &mut acc.staged_pairs,
                             &staging_relative_root,
                         )? {
-                            acc.asset_ids.push(asset_id);
+                            acc.record_created_asset(&asset_id);
                         }
                     }
                     "reference" | "source" => {
@@ -8953,7 +8955,7 @@ fn folder_apply_import_with_documents(
                                 &mut acc.staged_pairs,
                                 &staging_relative_root,
                             )? {
-                                acc.asset_ids.push(id.clone());
+                                acc.record_created_asset(&id);
                                 asset_id = Value::String(id);
                             }
                         }
@@ -9340,6 +9342,7 @@ fn blank_adopt_project(title: &str) -> Result<Value, String> {
         "layout_templates": [],
         "layout_instances": [],
         "layout_sections": [],
+        "layout_pages": [],
         "placements": [],
         "inbox_items": [],
         "export_presets": [],
@@ -9412,6 +9415,7 @@ fn adopt_add_lesson(
         .push(json!({
             "id": document_id,
             "content_item_id": content_id,
+            "schema_version": CURRENT_PROJECT_SCHEMA_VERSION,
             "created_at": rfc3339_now(),
             "updated_at": rfc3339_now(),
         }));
@@ -11373,6 +11377,87 @@ fn unique_export_staging(target: &Path) -> Result<PathBuf, String> {
     Ok(parent.join(format!(".{name}.acw-{}.tmp", native_id("export"))))
 }
 
+fn collect_export_tree_files(
+    staging_root: &Path,
+    output_root: &Path,
+) -> Result<(Vec<Value>, u64), String> {
+    let metadata = fs::symlink_metadata(staging_root)
+        .map_err(|error| format!("无法检查导出临时目录：{error}"))?;
+    if metadata.file_type().is_symlink() || !metadata.is_dir() {
+        return Err("导出临时目录不是安全的普通目录".into());
+    }
+    let root =
+        fs::canonicalize(staging_root).map_err(|error| format!("无法解析导出临时目录：{error}"))?;
+    let mut pending = vec![PathBuf::new()];
+    let mut visited = HashSet::new();
+    let mut files = Vec::new();
+    let mut total_bytes = 0_u64;
+    while let Some(relative_dir) = pending.pop() {
+        let directory = root.join(&relative_dir);
+        let directory_metadata = fs::symlink_metadata(&directory)
+            .map_err(|error| format!("无法检查导出目录：{error}"))?;
+        if directory_metadata.file_type().is_symlink() || !directory_metadata.is_dir() {
+            return Err("导出临时目录不能包含符号链接或非目录路径".into());
+        }
+        let real_directory =
+            fs::canonicalize(&directory).map_err(|error| format!("无法解析导出目录：{error}"))?;
+        if !real_directory.starts_with(&root) {
+            return Err("导出路径超出临时目录".into());
+        }
+        if !visited.insert(real_directory.clone()) {
+            return Err("导出临时目录包含重复或循环目录".into());
+        }
+        let mut entries = fs::read_dir(&real_directory)
+            .map_err(|error| format!("无法读取导出目录：{error}"))?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|error| format!("无法读取导出条目：{error}"))?;
+        entries.sort_by_key(|entry| entry.file_name());
+        for entry in entries {
+            let path = entry.path();
+            let metadata = fs::symlink_metadata(&path)
+                .map_err(|error| format!("无法检查导出条目：{error}"))?;
+            if metadata.file_type().is_symlink() {
+                return Err("导出临时目录不能包含符号链接".into());
+            }
+            let relative = relative_dir.join(entry.file_name());
+            if relative.is_absolute()
+                || relative
+                    .components()
+                    .any(|component| !matches!(component, Component::Normal(_)))
+            {
+                return Err("导出条目路径不安全".into());
+            }
+            if metadata.is_dir() {
+                pending.push(relative);
+                continue;
+            }
+            if !metadata.is_file() {
+                return Err("导出临时目录包含非普通文件".into());
+            }
+            total_bytes = total_bytes
+                .checked_add(metadata.len())
+                .ok_or("导出文件总大小超出可表示范围")?;
+            let relative_path = relative.to_string_lossy().replace('\\', "/");
+            let filename = path
+                .file_name()
+                .and_then(|name| name.to_str())
+                .unwrap_or("");
+            files.push(json!({
+                "relative_path": relative_path,
+                "path": output_root.join(&relative),
+                "mime_type": mime_for_filename(filename),
+                "size": metadata.len(),
+            }));
+        }
+    }
+    files.sort_by(|left: &Value, right: &Value| {
+        left["relative_path"]
+            .as_str()
+            .cmp(&right["relative_path"].as_str())
+    });
+    Ok((files, total_bytes))
+}
+
 fn sanitized_project_package(project: &Value) -> Value {
     let mut value = project.clone();
     if let Some(object) = value.as_object_mut() {
@@ -11656,22 +11741,23 @@ fn export_run(preset: Value, options: Option<Value>) -> Result<Value, String> {
                 let _ = fs::remove_dir_all(&staging);
                 return Err(error);
             }
+            let (files, package_bytes) = match collect_export_tree_files(&staging, &output_path) {
+                Ok(report) => report,
+                Err(error) => {
+                    let _ = fs::remove_dir_all(&staging);
+                    return Err(error);
+                }
+            };
             fs::rename(&staging, &output_path).map_err(|error| {
                 let _ = fs::remove_dir_all(&staging);
                 format!("无法提交导出目录: {error}")
             })?;
-            for entry in
-                fs::read_dir(&output_path).map_err(|error| format!("无法检查导出目录: {error}"))?
-            {
-                let entry = entry.map_err(|error| format!("无法检查导出文件: {error}"))?;
-                exported_files.push(json!({
-                    "relative_path": entry.file_name().to_string_lossy(),
-                    "path": entry.path(),
-                }));
-            }
+            exported_files = files;
+            total_bytes = package_bytes;
         }
         _ => return Err("不支持的导出格式".into()),
     }
+    let file_count = exported_files.len();
     Ok(json!({
         "status": "completed",
         "format": format,
@@ -11679,6 +11765,7 @@ fn export_run(preset: Value, options: Option<Value>) -> Result<Value, String> {
         "output_path": output_path,
         "target_path": output_path,
         "bytes": total_bytes,
+        "file_count": file_count,
         "files": exported_files,
         "preflight": report,
     }))
@@ -22197,6 +22284,150 @@ mod tests {
     }
 
     #[test]
+    fn native_static_web_export_ack_lists_nested_files_and_actual_bytes() {
+        let directory = test_directory("static-web-file-manifest");
+        let project_dir = directory.to_string_lossy().into_owned();
+        let mut project = blank_adopt_project("静态网页导出").expect("canonical project");
+        let project_id = project["project"]["id"]
+            .as_str()
+            .expect("project id")
+            .to_owned();
+        project["documents"] = json!([{
+            "id": "doc-1",
+            "content_item_id": "lesson-1",
+            "schema_version": CURRENT_PROJECT_SCHEMA_VERSION,
+            "created_at": "2026-10-06T00:00:00.000Z",
+            "updated_at": "2026-10-06T00:00:00.000Z"
+        }]);
+        project["content_items"] = json!([{
+            "id": "lesson-1",
+            "project_id": project_id,
+            "document_id": "doc-1",
+            "code": "C01",
+            "title": "Lesson",
+            "type": "lesson",
+            "order_index": 0,
+            "archived": false,
+            "created_at": "2026-10-06T00:00:00.000Z",
+            "updated_at": "2026-10-06T00:00:00.000Z"
+        }]);
+        project_create(project_dir.clone(), project).expect("project should be created");
+
+        let first = asset_import(json!({
+            "input": {
+                "project_dir": project_dir,
+                "filename": "first.png",
+                "mime_type": "image/png",
+                "type": "image",
+                "content_item_id": "lesson-1",
+                "bytes_base64": BASE64.encode(b"first nested asset"),
+            }
+        }))
+        .expect("first nested asset should be imported");
+        let second = asset_import(json!({
+            "input": {
+                "project_dir": project_dir,
+                "filename": "second.png",
+                "mime_type": "image/png",
+                "type": "image",
+                "content_item_id": "lesson-1",
+                "bytes_base64": BASE64.encode(b"second nested asset"),
+            }
+        }))
+        .expect("second nested asset should be imported");
+
+        let output_path = directory.join("static-web");
+        let preset = json!({
+            "project_dir": project_dir,
+            "output_path": output_path,
+            "output_type": "web",
+        });
+        let preflight = export_preflight(preset.clone(), None).expect("preflight");
+        assert_eq!(preflight["ok"], json!(true), "{preflight}");
+        let acknowledgements = preflight["warnings"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|warning| warning.get("code").and_then(Value::as_str))
+            .collect::<Vec<_>>();
+        let result = export_run(
+            preset,
+            Some(json!({ "acknowledged_warnings": acknowledgements })),
+        )
+        .expect("static web directory should commit");
+
+        let first_path = first["asset"]["storage_path"].as_str().unwrap();
+        let second_path = second["asset"]["storage_path"].as_str().unwrap();
+        let expected = HashSet::from([
+            "index.html".to_owned(),
+            "manifest.json".to_owned(),
+            first_path.to_owned(),
+            second_path.to_owned(),
+        ]);
+        let rows = result["files"].as_array().expect("file rows");
+        let actual = rows
+            .iter()
+            .map(|row| row["relative_path"].as_str().unwrap().to_owned())
+            .collect::<HashSet<_>>();
+        assert_eq!(actual, expected);
+        assert_eq!(result["file_count"], json!(4));
+        assert_eq!(rows.len(), 4, "directories must not count as files");
+        let manifest: Value = serde_json::from_slice(
+            &fs::read(output_path.join("manifest.json")).expect("web manifest"),
+        )
+        .expect("manifest should be JSON");
+        let manifest_assets = manifest["assets"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|path| path.as_str().unwrap().to_owned())
+            .collect::<HashSet<_>>();
+        assert_eq!(
+            manifest_assets,
+            HashSet::from([first_path.to_owned(), second_path.to_owned()])
+        );
+        let actual_bytes = rows
+            .iter()
+            .map(|row| {
+                let path = row["path"].as_str().expect("final file path");
+                fs::metadata(path).expect("listed output exists").len()
+            })
+            .sum::<u64>();
+        let reported_bytes = rows
+            .iter()
+            .map(|row| row["size"].as_u64().expect("reported file size"))
+            .sum::<u64>();
+        assert_eq!(reported_bytes, actual_bytes);
+        assert_eq!(result["bytes"], json!(actual_bytes));
+
+        project_close(project_dir).expect("project should close");
+        let _ = fs::remove_dir_all(directory);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn native_export_tree_manifest_rejects_symlinks_without_following_them() {
+        use std::os::unix::fs::symlink;
+
+        let directory = test_directory("export-tree-symlink");
+        let staging = directory.join("staging");
+        let outside = directory.join("outside.txt");
+        fs::create_dir_all(staging.join("assets")).expect("staging assets directory");
+        fs::write(&outside, b"outside target").expect("outside target");
+        symlink(&outside, staging.join("assets/escape.txt")).expect("fixture symlink");
+
+        let error = collect_export_tree_files(&staging, &directory.join("committed"))
+            .expect_err("symlinks must not be followed or included");
+        assert!(error.contains("符号链接"), "{error}");
+        assert_eq!(
+            fs::read(&outside).expect("outside remains unchanged"),
+            b"outside target"
+        );
+        assert!(!directory.join("committed").exists());
+        let _ = fs::remove_dir_all(directory);
+    }
+
+    #[test]
     fn native_preflight_requires_target_for_mixed_course_page_sizes() {
         let directory = test_directory("mixed-course-page-sizes");
         let project_dir = directory.to_string_lossy().into_owned();
@@ -25489,6 +25720,13 @@ mod tests {
         let result = folder_adopt(plan, None, None, None).expect("adopt");
         assert!(root.join("project.json").exists());
         assert!(root.join(".workspace").exists());
+        let canonical = read_project_value(&root).expect("adopted Canonical");
+        assert!(canonical["layout_pages"].is_array());
+        assert!(canonical["documents"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|document| document["schema_version"] == json!(CURRENT_PROJECT_SCHEMA_VERSION)));
         assert_eq!(
             fs::read(root.join("01-基础/intro.png")).unwrap(),
             original_png,
@@ -27108,10 +27346,18 @@ mod tests {
             .as_array()
             .cloned()
             .unwrap_or_default();
-        assert!(
-            !reused.is_empty() || second["asset_ids"].as_array().map(|v| v.len()).unwrap_or(0) == 1,
-            "identical checksum within one adopt must reuse one Asset id"
+        let created = second["asset_ids"].as_array().expect("created asset ids");
+        assert_eq!(
+            created.len(),
+            1,
+            "a reused asset is not counted as newly created"
         );
+        assert_eq!(reused.len(), 1, "checksum reuse is counted separately");
+        assert_eq!(
+            created[0], reused[0],
+            "reuse references the existing asset id"
+        );
+        assert_eq!(second["data"]["assets"].as_array().unwrap().len(), 1);
         let warnings = second["warnings"].as_array().cloned().unwrap_or_default();
         assert!(
             warnings.iter().any(|w| {
