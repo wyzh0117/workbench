@@ -1056,13 +1056,15 @@ class DesktopBridge {
     };
   }
   async openProjectState() {
+    const requestedProjectDir = normalizeProjectDir(this.projectDir);
     const value = await this.invoke("project.open_state", {});
     if (
       value && typeof value === "object" && value.project &&
       typeof value.project_id === "string" && value.project_id &&
       (typeof value.lease_generation === "string" || Number.isSafeInteger(value.lease_generation))
     ) {
-      const projectDir = normalizeProjectDir(value.project_dir ?? this.projectDir);
+      const projectDir = normalizeProjectDir(value.project_dir ?? requestedProjectDir);
+      if (normalizeProjectDir(this.projectDir) !== requestedProjectDir) return value;
       if (projectDir) {
         this.projectDir = projectDir;
         this.projectDirFromUrl = false;
@@ -1070,7 +1072,9 @@ class DesktopBridge {
       this.lastOpenedProjectState = { ...value, project_dir: projectDir };
       return value;
     }
-    this.lastOpenedProjectState = null;
+    if (normalizeProjectDir(this.projectDir) === requestedProjectDir) {
+      this.lastOpenedProjectState = null;
+    }
     return value;
   }
   bindActiveLease(state) {
@@ -4978,6 +4982,37 @@ class WorkbenchStore {
     return true;
   }
 
+  offerPendingRecovery(recovery) {
+    if (!this.isProjectData(this.data)) return false;
+    const projectId = this.data.project.id;
+    const existingRecovery = this.pendingRecovery;
+    if (
+      recovery?.transaction_id && existingRecovery?.transaction_id === recovery.transaction_id &&
+      (existingRecovery.project_id || existingRecovery.project?.project?.id) === projectId
+    ) {
+      // Repeated acknowledgements for one transaction must retain its retry state.
+      return true;
+    }
+    const journalProject = this.isProjectData(recovery?.project) ? recovery.project : null;
+    if (!journalProject) return false;
+    const savedAt = typeof recovery.saved_at === "string" ? recovery.saved_at : "";
+    if (
+      (recovery.project_id && recovery.project_id !== projectId) ||
+      journalProject.project.id !== projectId ||
+      !(savedAt > (this.data.project.updated_at || ""))
+    ) return false;
+    this.pendingRecovery = {
+      project: migrateUiProject(journalProject),
+      canonical: clone(this.data),
+      saved_at: savedAt,
+      transaction_id: recovery.transaction_id,
+      project_id: recovery.project_id,
+      canonical_revision: recovery.canonical_revision,
+    };
+    this.ui.toast = "发现未完成的保存；磁盘版本没有改变，请选择恢复暂存内容或保留磁盘版本。";
+    return true;
+  }
+
   async persistProjectSnapshot(request, expectedFingerprint = this.projectFingerprint, recoveryJournal = null) {
     if (request && Object.hasOwn(request, "expected_fingerprint")) {
       return await this.bridge.writeProject(request);
@@ -5097,19 +5132,9 @@ class WorkbenchStore {
     }
     const project = this.isProjectData(persisted) ? persisted : null;
     const journalProject = this.isProjectData(recovery?.project) ? recovery.project : null;
-    const projectUpdatedAt = project?.project?.updated_at || "";
-    const journalSavedAt = typeof recovery?.saved_at === "string" ? recovery.saved_at : "";
-    if (journalProject && project && journalSavedAt > projectUpdatedAt) {
+    if (journalProject && project) {
       this.adoptProjectSnapshot(persistedState || { project });
-      this.pendingRecovery = {
-        project: migrateUiProject(journalProject),
-        canonical: clone(this.data),
-        saved_at: journalSavedAt,
-        transaction_id: recovery.transaction_id,
-        project_id: recovery.project_id,
-        canonical_revision: recovery.canonical_revision,
-      };
-      this.ui.toast = "发现未完成的保存；磁盘版本没有改变，请选择恢复暂存内容或保留磁盘版本。";
+      this.offerPendingRecovery(recovery);
     } else if (journalProject && !project) {
       this.data = migrateUiProject(journalProject);
       this.trackProjectIdentity();
@@ -6552,9 +6577,15 @@ class WorkbenchStore {
       // below rejects its project payload; rollback must track that lease.
       this.markNativeLease(projectDir);
       if (!this.isProjectData(opened)) throw new Error(describeProjectOpenFailure(null, { notObject: true }));
-      const openedState = await this.readProjectSnapshot();
+      const openedState = this.bridge.lastOpenedProjectState;
       const targetProject = openedState?.project;
-      if (!this.isProjectData(targetProject)) throw new Error(describeProjectOpenFailure(null, { notObject: true }));
+      if (
+        !this.isProjectData(targetProject) ||
+        targetProject.project.id !== opened.project.id ||
+        openedState.project_id !== targetProject.project.id ||
+        normalizeProjectDir(openedState.project_dir) !== normalizeProjectDir(projectDir) ||
+        !this.isFileFingerprint(openedState.fingerprint)
+      ) throw new Error("项目打开确认与当前目录不匹配；请重新打开项目后重试。");
       const targetData = migrateUiProject(targetProject);
       const targetSession = this.targetSession(targetData, projectDir, "overview");
       // Save only a fully constructed target identity.  In particular, this
@@ -6568,7 +6599,9 @@ class WorkbenchStore {
         this.normalizeReaderState(targetData, targetSession, "overview"),
         openedState?.fingerprint,
       );
-      this.ui.toast = `已打开《${this.data.project.title}》`;
+      if (!this.offerPendingRecovery(openedState.recovery_journal)) {
+        this.ui.toast = `已打开《${this.data.project.title}》`;
+      }
       this.notify();
     } catch (error) {
       if (!targetOpened) {
@@ -6651,11 +6684,15 @@ class WorkbenchStore {
           }),
         );
       }
-      const openedState = await this.readProjectSnapshot();
+      const openedState = this.bridge.lastOpenedProjectState;
       const targetProject = openedState?.project;
-      if (!this.isProjectData(targetProject)) {
-        throw new Error("重新读取的项目内容无效。当前项目没有改变，请重试。");
-      }
+      if (
+        !this.isProjectData(targetProject) ||
+        targetProject.project.id !== opened.project.id ||
+        openedState.project_id !== targetProject.project.id ||
+        normalizeProjectDir(openedState.project_dir) !== normalizeProjectDir(projectDir) ||
+        !this.isFileFingerprint(openedState.fingerprint)
+      ) throw new Error("重新打开项目确认与当前目录不匹配。当前项目没有改变，请重试。");
       const targetData = migrateUiProject(targetProject);
       const targetSession = this.targetSession(targetData, projectDir, "project");
       await this.persistSession(targetSession);
@@ -6664,7 +6701,9 @@ class WorkbenchStore {
         this.normalizeReaderState(targetData, targetSession, "project"),
         openedState?.fingerprint,
       );
-      this.ui.toast = `已打开《${this.data.project.title}》`;
+      if (!this.offerPendingRecovery(openedState.recovery_journal)) {
+        this.ui.toast = `已打开《${this.data.project.title}》`;
+      }
       this.notify();
       return true;
     } catch (error) {

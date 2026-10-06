@@ -61,6 +61,7 @@ interface NativeStore {
   editorGeneration: number;
   saveStatus: string;
   snapshotRows: Array<Record<string, unknown>>;
+  pendingRecovery?: { project: ProjectData; canonical: ProjectData; transaction_id: string } | null;
   snapshotError: string;
   snapshotSaving: boolean;
   snapshotRestoringId: string | null;
@@ -180,6 +181,13 @@ async function bootNative(options: {
   bindRichEditor?: boolean;
   /** When set, the native open-state command fails with this shell message. */
   openError?: string;
+  recoveryJournal?: {
+    transaction_id: string;
+    project_id: string;
+    canonical_revision: string;
+    saved_at: string;
+    project: ProjectData;
+  } | null;
 }) {
   let fingerprintRevision = 1;
   const fingerprintFor = (project: ProjectData): FileFingerprint => ({
@@ -263,6 +271,9 @@ async function bootNative(options: {
               fingerprint: structuredClone(state.fingerprint),
               project_id: state.project.project.id,
               lease_generation: "native-lease-1",
+              ...(options.recoveryJournal === undefined
+                ? {}
+                : { recovery_journal: structuredClone(options.recoveryJournal) }),
             };
           case "project_read_state":
             return {
@@ -471,6 +482,108 @@ serialNativeBootTest("native launch opens the --project-dir project and persists
     assertEquals(state.session?.project_dir, "/tmp/native-boot-project", "会话必须记录新项目目录");
     assert(state.sessionWrites > 0, "启动流程必须把会话写回磁盘");
   } finally {
+    restore();
+  }
+});
+
+serialNativeBootTest("opening a project retains recovery_journal from its open-state acknowledgment", async () => {
+  const canonical = seededProject();
+  canonical.project.updated_at = "2026-08-15T12:00:00.000Z";
+  const candidate = structuredClone(canonical);
+  candidate.project.title = "Native recovery candidate";
+  candidate.project.updated_at = "2026-10-06T05:30:00.000Z";
+  const recoveryJournal = {
+    transaction_id: "native-open-recovery-transaction",
+    project_id: canonical.project.id,
+    canonical_revision: canonical.project.updated_at,
+    saved_at: candidate.project.updated_at,
+    project: candidate,
+  };
+  const projectDir = "/tmp/native-open-recovery-project";
+  const { store, state, root, restore } = await bootNative({
+    project: canonical,
+    launchProjectDir: null,
+    recoveryJournal,
+  });
+  try {
+    await store.openProject(projectDir);
+    assertEquals(store.data.project.title, canonical.project.title, "opening must keep the durable Canonical active");
+    assertEquals(store.pendingRecovery?.project.project.title, candidate.project.title, "the newer recovery candidate must remain available");
+    assertEquals(store.pendingRecovery?.transaction_id, recoveryJournal.transaction_id, "the exact open-state transaction must reach the recovery decision");
+    assert(root.innerHTML.includes('data-action="recovery-restore"'), "the recovery choice must render after the explicit folder open");
+    const pending = store.pendingRecovery;
+    assert(pending, "the open-state transaction should create one pending recovery decision");
+    const restoreAttempt = { operation_id: "recovery-retry-1", project_json: "frozen candidate" };
+    Object.assign(pending, { restore_attempt: restoreAttempt });
+    const offerRecovery = (store as unknown as { offerPendingRecovery: (value: unknown) => boolean })
+      .offerPendingRecovery.bind(store);
+    assert(offerRecovery(recoveryJournal), "a duplicate ACK for the same transaction remains acknowledged");
+    assert(store.pendingRecovery === pending, "duplicate ACK must preserve the pending recovery object");
+    assert(
+      (store.pendingRecovery as unknown as { restore_attempt?: unknown }).restore_attempt === restoreAttempt,
+      "duplicate ACK must retain the immutable restore retry attempt",
+    );
+    const conflictingJournal = structuredClone(recoveryJournal);
+    conflictingJournal.project.project.title = "same transaction with different candidate bytes";
+    assert(offerRecovery(conflictingJournal), "a repeated transaction id must not replace the accepted candidate");
+    assert(store.pendingRecovery === pending, "mismatched duplicate payload must leave the accepted recovery intact");
+    assert(
+      state.calls.some((call) => call.command === "project_open_state") &&
+        !state.calls.some((call) => call.command === "project_read_state"),
+      "the caller must preserve the bound open-state snapshot instead of replacing it with a pure reread",
+    );
+  } finally {
+    restore();
+  }
+});
+
+serialNativeBootTest("a late native open-state reply cannot relabel the active bridge directory", async () => {
+  const { store, state, restore } = await bootNative({
+    project: seededProject(),
+    launchProjectDir: null,
+    persistedSession: null,
+  });
+  let finishOpen!: (value: unknown) => void;
+  const openAck = new Promise<unknown>((resolve) => { finishOpen = resolve; });
+  const bridge = store.bridge as unknown as {
+    projectDir: string | null;
+    lastOpenedProjectState: Record<string, unknown> | null;
+    setProjectDir: (value: string) => void;
+    openProjectState: () => Promise<Record<string, unknown>>;
+  };
+  const activeDir = "/tmp/native-open-ack-current-project";
+  const requestedDir = "/tmp/native-open-ack-requested-project";
+  const activeState = {
+    project: structuredClone(state.project),
+    fingerprint: structuredClone(state.fingerprint),
+    project_id: state.project.project.id,
+    project_dir: activeDir,
+    lease_generation: "native-lease-current",
+  };
+  try {
+    state.invokeOverrides.set("project_open_state", () => openAck);
+    bridge.setProjectDir(requestedDir);
+    const opening = bridge.openProjectState();
+    await until(() => state.calls.some((call) => call.command === "project_open_state"), "迟到的项目打开响应");
+    bridge.setProjectDir(activeDir);
+    bridge.lastOpenedProjectState = activeState;
+    finishOpen({
+      project: structuredClone(state.project),
+      fingerprint: structuredClone(state.fingerprint),
+      project_id: state.project.project.id,
+      lease_generation: "native-lease-requested",
+    });
+    const returned = await opening;
+    assertEquals(returned.project_id, state.project.project.id, "迟到调用仍收到其原始 ACK 供调用者回滚租约");
+    assertEquals(bridge.projectDir, activeDir, "迟到 ACK 不得改写当前目录");
+    assert(bridge.lastOpenedProjectState === activeState, "迟到 ACK 不得替换当前项目的 lease 缓存");
+  } finally {
+    finishOpen({
+      project: structuredClone(state.project),
+      fingerprint: structuredClone(state.fingerprint),
+      project_id: state.project.project.id,
+      lease_generation: "native-lease-requested",
+    });
     restore();
   }
 });
@@ -1024,18 +1137,29 @@ serialNativeBootTest("native close waits for a first project switch before relea
     launchProjectDir: null,
     persistedSession: null,
   });
-  let finishRead!: (value: unknown) => void;
-  const readState = new Promise<unknown>((resolve) => { finishRead = resolve; });
+  let finishSession!: () => void;
+  const sessionAck = new Promise<void>((resolve) => { finishSession = resolve; });
   let opening: Promise<void> | null = null;
   try {
-    state.invokeOverrides.set("project_read_state", () => readState);
+    const initialProjectId = store.data.project.id;
+    state.invokeOverrides.set("save_session", async (args) => {
+      await sessionAck;
+      state.session = structuredClone(args.session as SessionShape);
+      state.sessionWrites += 1;
+      return null;
+    });
     opening = store.openProject("/tmp/native-close-switch-project");
     await until(
-      () => state.calls.some((call) => call.command === "project_read_state"),
-      "目标租约取得后进入只读快照",
+      () => state.calls.some((call) => call.command === "save_session"),
+      "目标租约取得后等待目标会话写入确认",
     );
-    assert((store as unknown as { nativeSwitching: boolean }).nativeSwitching, "目标读取期间切换必须仍处于保护状态");
+    const targetSessionCall = state.calls.findLast((call) => call.command === "save_session");
+    const targetSession = targetSessionCall?.args.session as SessionShape | undefined;
+    assertEquals(targetSession?.project_id, state.project.project.id, "屏障应等待新项目的会话确认");
+    assertEquals(targetSession?.project_dir, "/tmp/native-close-switch-project", "会话确认必须绑定新项目目录");
+    assert((store as unknown as { nativeSwitching: boolean }).nativeSwitching, "目标会话确认期间切换必须仍处于保护状态");
     assert(store.hasNativeLease(), "project_open_state 返回后目标租约已由当前窗口持有");
+    assertEquals(store.data.project.id, initialProjectId, "目标会话确认前不得提交新项目数据");
 
     state.closeRequested?.({ preventDefault: () => {} });
     await new Promise((resolve) => setTimeout(resolve, 0));
@@ -1050,16 +1174,14 @@ serialNativeBootTest("native close waits for a first project switch before relea
       "切换未完成时不得确认退出",
     );
 
-    finishRead({
-      project: structuredClone(state.project),
-      fingerprint: structuredClone(state.fingerprint),
-      project_id: state.project.project.id,
-      lease_generation: null,
-    });
+    finishSession();
     await opening;
     assertEquals((store as unknown as { nativeSwitching: boolean }).nativeSwitching, false, "完成打开后才解除切换保护");
     assertEquals(store.saveIdentity().expected_project_id, state.project.project.id, "完成打开后应提交目标身份");
+    assertEquals(state.session?.project_id, state.project.project.id, "目标切换会话应先得到持久化确认");
 
+    store.data.project.title = "关闭屏障顺序验证";
+    store.scheduleSave();
     state.closeRequested?.({ preventDefault: () => {} });
     await until(() => state.calls.some((call) => call.command === "confirm_close"), "切换完成后允许关闭");
     const closeOrder = state.calls
@@ -1069,12 +1191,7 @@ serialNativeBootTest("native close waits for a first project switch before relea
     assert(closeOrder.indexOf("project_close") > closeOrder.indexOf("project_save"), "稳定目标身份后先保存再释放租约");
     assert(closeOrder.indexOf("confirm_close") > closeOrder.indexOf("project_close"), "稳定目标身份后先释放租约再确认退出");
   } finally {
-    finishRead({
-      project: structuredClone(state.project),
-      fingerprint: structuredClone(state.fingerprint),
-      project_id: state.project.project.id,
-      lease_generation: null,
-    });
+    finishSession();
     await opening?.catch(() => {});
     restore();
   }
