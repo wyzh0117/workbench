@@ -8,9 +8,9 @@
 
 ## Download
 
-> **当前状态：v0.2.6 已公开。** 仓库为 **public**，下面的 latest 页面、固定下载链接与校验 sidecar 对匿名访问者可用。
+> **当前状态：v0.2.7 已公开。** 仓库为 **public**，下面的 latest 页面、固定下载链接与校验 sidecar 对匿名访问者可用。
 
-v0.2.6 于 2026-10-05（+0800）发布并成为 `releases/latest`。最终源码 gate 为 Deno 602/602、Rust 222/222；公开 Universal DMG 已匿名下载核验，SHA-256 为 `08ecebe9ea20d848244c750598d2cf1e4f921e942532bd9126f395b1487cc27e`，sidecar SHA-256 为 `0577fc8af02e661cea7d3b831409c0d5f805efa56d9b16579e31d3b63123b8eb`。`hdiutil verify` 为 VALID，挂载 App 为 0.2.6、`x86_64 arm64`。该包为 ad-hoc signed，未做 Developer ID 签名或 Apple 公证；native UI smoke 因 Mac 锁屏为 BLOCKED。只有 Overview 在四种宽度通过测量；其余页面与部分交互仍按报告标记 PARTIAL。详见 [v0.2.6 completion report](docs/reports/v0.2.6-ui-redesign-completion-report.html)、[feature history](docs/feature-history/v0.2.6.md)、[公开资产验证](docs/reports/evidence/v0.2.6/public-release-verification.md) 与 [本地候选构建证据](docs/reports/evidence/v0.2.6/candidate-build-final.md)。
+v0.2.7 于 2026-10-07（+0800）发布并成为 `releases/latest`，tag 指向源码提交 `fb050b121c2014ac3226e90d3683b7c6c26391b0`，workflow [37508824350](https://github.com/wyzh0117/workbench/actions/runs/37508824350) 成功。公开 Universal DMG（14,670,698 bytes）SHA-256 为 `d8758cd674b75e6c26ecc42317d383c2c227adabf046aef9a3deb75b8ed820d6`，与 `.sha256` sidecar 及 GitHub asset digest 一致；`hdiutil verify` 为 VALID。App 版本为 0.2.7、架构 `x86_64 arm64`。公开包为 ad-hoc signed，未做 Developer ID 签名或 Apple 公证；File I/O / UI 验收仍为 PARTIAL。详见 [v0.2.7 feature history](docs/feature-history/v0.2.7.md) 与 [本轮验收报告](docs/reports/io-ui-closure-completion-report.html)。
 
 **下载最新 macOS 安装包（DMG）：**
 
@@ -90,15 +90,15 @@ DISTRIBUTION STATE = PARTIAL
 BLOCKER            = 缺正式 macOS signing / notarization credentials
 ```
 
-- **已有公开版**：最新正式 Release 为 v0.2.6。匿名下载的 Universal DMG（14,414,435 bytes）SHA-256 `08ecebe9ea20d848244c750598d2cf1e4f921e942532bd9126f395b1487cc27e` 与 96-byte sidecar 内容一致，GitHub asset digest 一致，`hdiutil verify` 为 VALID，架构为 `x86_64 arm64`。
+- **已有公开版**：最新正式 Release 为 v0.2.7。匿名下载的 Universal DMG（14,670,698 bytes）SHA-256 `d8758cd674b75e6c26ecc42317d383c2c227adabf046aef9a3deb75b8ed820d6` 与 96-byte sidecar 内容及 GitHub asset digest 一致，`hdiutil verify` 为 VALID，架构为 `x86_64 arm64`。
 - **当前可见性**：仓库为 **public**，Release 页面与 latest 直链对匿名访问者可用。
-- **未完成**：Developer ID Application 签名与 Apple 公证（notarization / stapling）。v0.2.6 公开包为 ad-hoc signed、无 `TeamIdentifier`；公开 CI 的 `spctl --assess --type execute` 为 `rejected`。
+- **未完成**：Developer ID Application 签名与 Apple 公证（notarization / stapling）。v0.2.7 公开包为 ad-hoc signed、无 `TeamIdentifier`；公开 CI 与独立包检查的 `spctl --assess --type execute` 为 `rejected`，且没有 stapled ticket。
   本机 `security find-identity -v -p codesigning` 返回 0 valid identities，没有可用的
   Apple Developer Program 分发凭据，因此**不能宣称「普通用户无安全阻碍安装」**，
   也不宣称 `PUBLIC RELEASE READY`。
 - 拿到正确的 Apple Developer 分发资格后，只需要补做签名、公证、重新上传 Release 与
   一次安装 smoke，**不需要重新开发 Workbench 本体**（见 `.github/workflows/release.yml`）。
-- **实测**：v0.2.6 公开资产已匿名下载并验证；CI 的 `spctl --assess --type execute` 判定 `rejected` —— 上面「首次打开说明」写的就是用户真实会遇到的状态。公开 App 的签名验证报告有效（ad-hoc，无 Developer ID）；本机 `spctl` 返回 subsystem internal error，该条结果不作额外推断。
+- **实测**：v0.2.7 公开资产已匿名下载并验证；`codesign --verify --deep --strict` 通过，签名为 ad-hoc、无 Developer ID，`spctl --assess --type execute` 判定 `rejected` —— 上面「首次打开说明」写的就是用户真实会遇到的状态。
 - **一处未实测项**：「右键 → 打开」放行**之后**的首次启动没有在自动化环境里实测过
   （无法自动投递右键菜单操作），只实测了放行**之前**的拦截状态。
 
@@ -107,29 +107,18 @@ BLOCKER            = 缺正式 macOS signing / notarization credentials
 ## 当前开发位置
 
 - 最新公开版本与校验文件通过上方 `releases/latest` 链接动态查看；已发布版本及资产保持冻结。
-- 当前版本：**V1（ACTIVE）**
-- V1-T01 — V0 Hardening & UX Polish：**VERIFIED**
-- V1-T02 — Dogfooding Critical Fixes & Authoring UX Refinement：**VERIFIED**
-- V1-T03 — Course Authoring & Project Structure Closure：**VERIFIED**
-- V1-T04 — Workspace Explorer & Existing-Folder Adoption：**VERIFIED**
-- V1-T05 — Paged Canvas & Pagination：**VERIFIED**
-- V1-T06 — Layout-aware Export & PPTX：**VERIFIED**
-- 当前交接：**v0.2.6 仍是最新公开版本并保持冻结**；v0.2.7 发布准备已授权，尚未合并、打 tag 或发布。
-- 当前状态：**Latest public = v0.2.6；release source commit = `223a5944e50ffdc6f4bdd09509eacf8f09c47b0e`**。V1 ACTIVE；V1-T01–T06 的 VERIFIED 为历史任务结论，不因本轮新增任务改写。
-- 当前合并 Deno source pin 为 `50aaea7268164b9fa066425ce4a5ac158ca87352`：`deno task check` exit 0、完整测试 716/0、bound-save focused 17/17。Native10 使用的 UI source pin 是 `9bbc8cf3067b6117be8de41e1bd5bef3960a671a`，Rust pin 是 `fcefcb106c2cf4e957d54a1ee7e112e2aa83cac0`（258/0/1 ignored）；Deno-only commit 未改 app/Rust payload。Final10 QA ZIP 为 7,082,849 B，SHA-256 `bb3413a4f4f8d7658e69f5e523da514aca034e32f241e2bdc09fe425fadd3822`；独立审核确认签名有效、18 项资源解码（17 项字节精确匹配，`index.html` 经路径/索引规范化核对）。QA 包不是公开发布资产。
-- Final10 真实冷重开将已保存阅读区位置 `scroll_top=836` 恢复；Canon 和 session 字节未变，`selected_block_id=null`，不主张光标恢复。Final10 还对被正文引用的 PNG 实测了改名→Undo→Redo→Undo 四态，资产 ID、内容 hash、引用计数和物理字节均保持预期。Final9 N04 同一个 S01-01 fixture 的 Semantic HTML、Static Web、PDF、PPTX 输出，及 N05 同字段 Keep Local 和异字段自动合并，都有分项 UI/物理证据。完整矩阵与未观察项仍按报告标记 PARTIAL。
-- 最新配对保存性能见 [指标](docs/reports/evidence/io-ui-closure/metrics.json) 与 [Deno T7/T8 复核](docs/reports/evidence/io-ui-closure/deno-t7-t8-review.md)：Deno changed-save unprobed median +1.41%、p95 −7.70%；instrumented median +3.11%、p95 +21.12%（10 样本 nearest-rank tail 未定位，性能状态 PARTIAL/BLOCKED）。no-op median/p95 在 off/on 两组都改善；仅 diagnostics-on candidate logical counters 证明目标文件无写入，off 组计数为 null。Native 只有一次 Main-process RSS 点样本 29,536 KB；WebKit 总量、设备级物理写放大与进程内峰值未测。整体仍 PARTIAL；[File I/O / UI 收尾报告](docs/reports/io-ui-closure-completion-report.html) 与 [证据索引](docs/reports/evidence/io-ui-closure/artifacts.json) 列出当前来源和边界。v0.2.7 发布准备已获授权，实际发布仍待合并和 tag-triggered workflow。
-- [Completion Report](docs/V0.2.5_Closure_2026-10-03_Completion_Report.md) · [Master Control §45](PROJECT_MASTER_CONTROL.md)：§33 19 项验收矩阵、自动化 gate、真实 UI 证据与未闭合通道；媒体库闪烁的大白话根因见 [docs/v0.2.5_media_flicker_root_cause.md](docs/v0.2.5_media_flicker_root_cause.md)。
-- [v0.2.6 feature history](docs/feature-history/v0.2.6.md) · [rolling UNRELEASED record](docs/feature-history/UNRELEASED.md) · [UI redesign completion report](docs/reports/v0.2.6-ui-redesign-completion-report.html)：列出已发布版本的用户可见变化、真实证据和未闭合限制。
-- [v0.2.7 release-preparation notes](.github/release-notes/v0.2.7.md) · [feature-history draft](docs/feature-history/v0.2.7.md)：候选版本的用户变化与 PARTIAL 限制；尚无公开 tag 或 Release。
-- 公开版与源码态的区别：v0.2.6 已包含 Mapping / Preview / Flow / Free Layout / 全局 UI 重设计；v0.2.5 及更早的公开包不含这些改动。v0.2.6 的公开 DMG、校验值与签名状态见 [公开资产验证](docs/reports/evidence/v0.2.6/public-release-verification.md)。已发布版本一律冻结，不会被重建或覆盖。
-- v0.2.5 的用户改动清单见 [Feature Update Manual / v0.2.5](docs/feature-history/v0.2.5.md)；最新用户功能清单见 [Feature Update Manual / v0.2.6](docs/feature-history/v0.2.6.md)。
-- 产品状态：**v0.2.6 已公开并冻结**；验收限制按 [v0.2.6 completion report](docs/reports/v0.2.6-ui-redesign-completion-report.html) 如实标记，不作整体 VERIFIED 或 DOGFOOD READY 结论。
-- 分发状态：**PARTIAL / 公开下载可用**（v0.2.6 Universal DMG 与 sidecar 已匿名下载校验；制品为 ad-hoc signed，无 `TeamIdentifier`，CI `spctl --assess --type execute` 为 `rejected`，未做 Developer ID 签名或公证）
-- V0 状态：**V0 CLOSED；V0-T01 / V0-T02 / V0-T03 / V0-T04 全部 VERIFIED**
-- 最新公开版本为 [`v0.2.6`](https://github.com/wyzh0117/workbench/releases/tag/v0.2.6)（发布于 2026-10-05 04:31:39 +0800；tag/source commit `223a5944e50ffdc6f4bdd09509eacf8f09c47b0e`，workflow run `37231984095`）。公开 Universal DMG 与 sidecar 的下载和校验事实见 [public verification](docs/reports/evidence/v0.2.6/public-release-verification.md)；v0.2.5 的 frozen DMG / sidecar digest 保持不变，详见 §45.4 与该验证页。
-- NEXT ACTION：补测仍未观察到的保存中继续编辑/点击时快照冻结与 A→B→A 迟到响应；当前 Native P/O 矩阵及 N06 复合验收仍为 PARTIAL。Final10 已通过非零阅读位置冷重开和被引用 PNG 改名→Undo→Redo→Undo；Final9 的 N04 四格式输出及 N05 同字段 Keep Local、异字段自动合并有分项 UI/物理证据。150%/200% 真实文字缩放未运行，Reduced motion 当前实测 OFF 且未切换，RSS/解码内存/object URL 留存未测。见[本轮验收报告](docs/reports/io-ui-closure-completion-report.html)。v0.2.6 保持已发布并冻结；v0.2.7 进入准备阶段，只有候选提交通过门禁后才执行 tag-triggered 发布；V1 保持 ACTIVE，不创建 V1-T07。
-- 发版本身怎么操作（版本字段三处联动、Release Notes 规则、tag 与 workflow、发布后验证与回写、只有用户能做的部分）见 [docs/release-playbook.md](docs/release-playbook.md)。
+- 当前版本：**V1（ACTIVE）**；V1-T01–T06 的 VERIFIED 为历史任务结论，不因本轮发布改写。
+- 最新公开版：[`v0.2.7`](https://github.com/wyzh0117/workbench/releases/tag/v0.2.7)，发布于 2026-10-06 18:16:28 UTC（2026-10-07 02:16:28 +0800）。tag/source commit 为 `fb050b121c2014ac3226e90d3683b7c6c26391b0`，workflow [37508824350](https://github.com/wyzh0117/workbench/actions/runs/37508824350) 成功。公开 Universal DMG 为 14,670,698 bytes，SHA-256 `d8758cd674b75e6c26ecc42317d383c2c227adabf046aef9a3deb75b8ed820d6`；96-byte sidecar SHA-256 `06fc9d19b377d23cdf61f4e685ffdaa0e601decb7103c8928ee71e1d83fe676c`，`hdiutil verify` 为 VALID。公开包 ad-hoc signed、无 Team ID，未做 Developer ID 签名或公证。
+- 发布前门禁：Deno `check` exit 0、`test` 716/0；Native Rust `fmt` 与 build 通过、`test` 258/0/1 ignored。生产代码来源分别为 Deno `50aaea7268164b9fa066425ce4a5ac158ca87352`、Native UI `9bbc8cf3067b6117be8de41e1bd5bef3960a671a`、Rust `fcefcb106c2cf4e957d54a1ee7e112e2aa83cac0`；tag 提交后的跟进只改测试和文档，没有改应用或 Rust 生产源码。
+- Final10 arm64 ZIP 是 QA 包而非正式 DMG：7,082,849 B，SHA-256 `bb3413a4f4f8d7658e69f5e523da514aca034e32f241e2bdc09fe425fadd3822`；独立审核确认 18 项嵌入资源中 17 项字节精确匹配，`index.html` 经路径/索引规范化核对。
+- Native Final10 实测非零阅读区位置 `scroll_top=836` 在正常退出与冷重开后保持，Canonical/session 字节未变；`selected_block_id=null`，不主张光标恢复。被正文引用 PNG 的改名→Undo→Redo→Undo 四态符合资产、引用和磁盘路径预期；Final9 N04 同一 S01-01 fixture 的四格式输出及 N05 两种冲突分支有分项 UI/物理证据。完整矩阵与复合 N06 未观察项仍按报告标记 PARTIAL。
+- 最新配对保存性能见 [指标](docs/reports/evidence/io-ui-closure/metrics.json) 与 [Deno T7/T8 复核](docs/reports/evidence/io-ui-closure/deno-t7-t8-review.md)：Deno changed-save 未插桩 median +1.41%、p95 −7.70%；instrumented median +3.11%、p95 +21.12%（10 样本尾部未定位，性能状态 PARTIAL/BLOCKED）。no-op 两组 median/p95 均改善；仅 diagnostics-on candidate logical counters 证明目标文件无写入，off 组计数为 null。Native debug backend changed median −7.30%、no-op −71.69%，不代表 GUI/IPC。Main process 仅有单点 RSS 29,536 KB；WebKit 总量、设备级物理写放大与进程内峰值未测。整体仍 PARTIAL；[验收报告](docs/reports/io-ui-closure-completion-report.html) 与[证据索引](docs/reports/evidence/io-ui-closure/artifacts.json)保留逐项来源与边界。
+- [Feature Update Manual / v0.2.5](docs/feature-history/v0.2.5.md) · [v0.2.6](docs/feature-history/v0.2.6.md) · [v0.2.7](docs/feature-history/v0.2.7.md) 记录各版用户变化与限制；[UNRELEASED](docs/feature-history/UNRELEASED.md) 已重置为下一周期滚动记录。
+- 产品状态：**v0.2.7 已公开并冻结**；File I/O / UI 总体验收仍 PARTIAL，不作整体 VERIFIED 或 DOGFOOD READY 结论。
+- 分发状态：**PARTIAL / 公开下载可用**（Universal DMG 与 sidecar 已校验；ad-hoc signed，无 `TeamIdentifier`，`spctl --assess --type execute` 为 `rejected`，未做 Developer ID 签名或公证）。
+- V0 状态：**V0 CLOSED；V0-T01 / V0-T02 / V0-T03 / V0-T04 全部 VERIFIED**。
+- NEXT ACTION：按验收报告继续处理保存中编辑时的点击时快照冻结与 A→B→A 迟到响应；Native P/O 矩阵和 N06 复合项仍 PARTIAL。150%/200% 真实文字缩放及 reduced-motion 行为未运行；WebKit RSS、解码内存、object URL 留存与物理写放大未测。v0.2.7 已发布并冻结，后续修复使用新版本；V1 保持 ACTIVE，不创建 V1-T07。
+- 发版流程与只能由用户完成的事项见 [docs/release-playbook.md](docs/release-playbook.md)。
 
 2026-10-03 v0.2.5 发布：用户授权「开发完成后同步 GitHub 以及 tag、release 页」后，源码提交 `d16b622c082720c3c386613df187deec3b7ec469` 推送 `main`，附注 tag `v0.2.5` 触发 workflow `37100286505`（`success`，8m4s），Release 为当前 Latest（`isDraft=false`）。公开 Universal DMG（14,293,951 bytes）与 `.sha256` sidecar 匿名下载校验一致：SHA-256 `a84884466b084cd674a4d0d32a52b3284863a9adb9706c11283009fb14b7f9fd`、`hdiutil verify` VALID、`lipo -archs` = `x86_64 arm64`、包内版本 0.2.5。发布前与 tag 所在源码状态的自动化 gate 全绿：`deno task check`、Deno 584/584、`cargo fmt --check`、Rust 216/216、`cargo build`。三条验收通道带着「未闭合」发布而非记成通过：原生窗口指针 / 面板手势 smoke、真实在线 AI 调用（`api.openai.com` 60 秒超时）、媒体库真实触控板 / 滚轮滚动；逐条清单见 `PROJECT_MASTER_CONTROL.md` §45.3。正式 DMG 为 ad-hoc signed、无 `TeamIdentifier`、未公证，`spctl --assess --type execute` 返回 `rejected`。`v0.2.4` 及更早 tag / DMG / sidecar 未移动、未覆盖。
 

@@ -2027,6 +2027,12 @@ YYYY-MM-DD | Task | From → To | Summary
 当前：
 
 ```text
+2026-10-07 | v0.2.7 发布 | 已授权准备 → 已公开发布，资产与限制经独立核验（RELEASED / PARTIAL）
+tag `v0.2.7`（object `d44b727aa4ac0c8bf3606c13a4dcb565f720defb`）peels to
+`fb050b121c2014ac3226e90d3683b7c6c26391b0`；run 37508824350 success。公开 Universal DMG
+14,670,698 B，SHA-256 d8758cd674b75e6c26ecc42317d383c2c227adabf046aef9a3deb75b8ed820d6，
+与 sidecar / GitHub digest 匹配；hdiutil verify VALID，架构 x86_64 arm64；签名 ad-hoc、无 Team ID、
+未公证、无 stapled ticket，spctl rejected。验收保持 PARTIAL，性能与未观察项见 §47–§48。
 2026-10-03 | v0.2.5 发布 | 实现完成 → 已发布，公开产物验证完成（RELEASED）
 commit d16b622c082720c3c386613df187deec3b7ec469 推送 origin/main；附注 tag v0.2.5（tag 对象
 9d9507999eb3b46a1bf58fd87e04c743aafd15ba）指向该 commit；release workflow run 37100286505
@@ -2518,22 +2524,20 @@ V1 ACTIVE
 V1-T01 / V1-T02 / V1-T03 / V1-T04  VERIFIED
 V1-T05 Paged Canvas                VERIFIED
 V1-T06 Layout-aware Export & PPTX  VERIFIED
-CURRENT CLOSURE   v0.2.5 四块收口（项目身份 / 多项目入口、素材滚动稳定性、九类文本·文档导入、
-                  映射后二次选择）：已实现并随 v0.2.5 公开（§45）
-CURRENT HANDOFF  v0.2.5 已发布并完成公开产物验证（§45.4）；待用户在真实窗口做原生验收（§45.3）
-CURRENT STATUS  RELEASED v0.2.5，SELF-VERIFIED；用户原生验收 + 真实在线 AI + 真实滚动 = PENDING
-PRODUCT STATE   公开最新版 = v0.2.5（tag d16b622，DMG SHA-256 a8488446…f9fd）；v0.2.4 及更早冻结
-DISTRIBUTION    PARTIAL；Apple Developer ID signing / notarization not configured（CI 走 ad-hoc 分支）
-OPEN BLOCKERS   NONE（在线 AI smoke、原生指针 smoke 与真实滚动 = 环境限制，见 §45.3；用户选择先发布）
-BACKLOG         Tauri WebView pointer-reorder；原生 folder picker / invalid-folder toast（Tauri）；
-                Tauri WebView Explorer/Adopt smoke；不创建 V1-T07
+CURRENT CLOSURE   File I/O / UI 收尾 v0.2.7 已公开（§47–§48）；总体验收 PARTIAL
+CURRENT HANDOFF  v0.2.7 公开产物已独立核验（§48）；未闭合的真实验收和性能项仍保留
+CURRENT STATUS  RELEASED v0.2.7；N06 in-flight/A→B→A、缩放/Reduced Motion 与 diagnostics-on p95 tail 未闭合
+PRODUCT STATE   最新公开版 v0.2.7，tag/source fb050b1；v0.2.6 及更早版本冻结
+DISTRIBUTION    PARTIAL；公开包 ad-hoc signed，未做 Developer ID signing / notarization
+OPEN BLOCKERS   验收矩阵及 changed-save diagnostics-on p95 回退仍 PARTIAL/BLOCKED（§47–§48）
+BACKLOG         按验收报告继续复核未观察的保存中编辑/迟到 ACK 路径与 UI/性能边界；不创建 V1-T07
 ```
 
 下一步唯一动作：
 
 ```text
-用户侧：下载 v0.2.5 DMG，跑 §45.3 列出的三条未闭合通道（原生手势、真实在线 AI、媒体库真实滚动）
-新问题 → 按 docs/release-playbook.md 走 v0.2.6；不覆盖 v0.2.5 及更早的已发布资产
+后续验收：按 §47–§48 和 completion report 补做未观察的交互/环境项目；性能 tail 仍需单独定位
+新问题 → 按 docs/release-playbook.md 使用新版本；不覆盖 v0.2.7 及更早的已发布资产
 ```
 
 T05/T06 已 VERIFIED；v0.2.1 已按授权发布，v0.2.0 失败 tag 冻结且无 Release / 资产。严格保护 §0.4，不覆盖已发布 tag / Release / 资产。
@@ -2559,17 +2563,15 @@ CURRENT VERSION
 V1（ACTIVE）
 
 CURRENT TASK
-v0.2.5 已发布（§45.4）；收口内容见 §45；V1-T05 / V1-T06 已 VERIFIED，不新增 V1-T07
+v0.2.7 File I/O / UI 收尾已发布（§48）；整体验收仍 PARTIAL，不新增 V1-T07
 
 CURRENT STATUS
-RELEASED v0.2.5，SELF-VERIFIED — 用户原生验收、真实在线 AI 与真实滚动验证仍 PENDING；V1 ACTIVE
-PRODUCT STATE = v0.2.5 四块收口已公开：项目身份 / 多项目入口（Project Registry）、素材滚动稳定性
-（消闭环 + 钉住在页卡片 + 有界淘汰）、九类文本 / 文档导入（逐份选择 + §28 回执 + 来源原地不动）、
-映射后二次正文选择；证据见 §45 与 Completion Report
-NEXT ACTION = 用户下载 v0.2.5 按 §45.3 清单做原生手势 / 真实滚动验收并发起第一次真实 AI 调用；
-新问题按 docs/release-playbook.md 走 v0.2.6；不创建 V1-T07，不关闭 V1
-DISTRIBUTION STATE = PARTIAL（ad-hoc 签名；Apple Developer ID / 公证未配置）；
-v0.2.5 tag / Universal DMG / .sha256 已由 CI 发布并匿名下载校验（§45.4）
+RELEASED v0.2.7 — 未观察的 UI/环境项目及 diagnostics-on changed-save p95 tail 仍未闭合；V1 ACTIVE
+PRODUCT STATE = File I/O / UI 收尾随 v0.2.7 公开；功能范围、阶段证据和未闭合项见 §47–§48 与验收报告
+NEXT ACTION = 后续按验收报告补测未观察路径并定位 diagnostics-on p95 tail；修复使用新版本；
+保持 V1 ACTIVE，不创建 V1-T07
+DISTRIBUTION STATE = PARTIAL（ad-hoc 签名；无 Developer ID / Apple 公证）；
+v0.2.7 tag / Universal DMG / .sha256 已由 CI 发布并独立下载核验（§48）
 V0 = CLOSED；V0-T01 / V0-T02 / V0-T03 / V0-T04 全部 VERIFIED
 V1-T01 = VERIFIED（§33）；V1-T02 = VERIFIED（§29 / §35 第一次实施 / §36 第二次实施）；
 V1-T03 = VERIFIED（ego-browser §21 26/27 PASS + 1 N-A；§9.3 page.mouse Drag Handle PASS）；
@@ -4251,9 +4253,9 @@ v0.2.5 及更早 tag / DMG / sidecar 永久冻结；v0.2.5 的 DMG digest `a8488
 
 ---
 
-# 47. File I/O 与 UI 收尾（2026-10-06，本地验收进行中）
+# 47. File I/O 与 UI 收尾（2026-10-06，发布前验收快照）
 
-> 本节记录 v0.2.6 之后的本地验收；用户于 2026-10-07 授权准备并发布 v0.2.7，但本节对应工作树尚未合并、打 tag 或发布。最终 Deno source pin 为 `50aaea7268164b9fa066425ce4a5ac158ca87352`；`deno task check` exit 0、完整测试 716/0、bound-save focused 17/17。Native UI source 为 `9bbc8cf3067b6117be8de41e1bd5bef3960a671a`，Rust pin `fcefcb106c2cf4e957d54a1ee7e112e2aa83cac0` 的 fmt 与测试结果为 258/0/1 ignored。Deno-only source commit 未修改 Native app/Rust payload。
+> 本节是 v0.2.7 发布前的验收快照，其中“尚未发布”等状态仅描述当时；实际发布结果见 §48。最终 Deno source pin 为 `50aaea7268164b9fa066425ce4a5ac158ca87352`；`deno task check` exit 0、完整测试 716/0、bound-save focused 17/17。Native UI source 为 `9bbc8cf3067b6117be8de41e1bd5bef3960a671a`，Rust pin `fcefcb106c2cf4e957d54a1ee7e112e2aa83cac0` 的 fmt 与测试结果为 258/0/1 ignored。Deno-only source commit 未修改 Native app/Rust payload。
 
 Final10 arm64 QA 包独立审计通过：签名有效，18 项嵌入资源中 17 项字节精确匹配，`index.html` 经路径/索引规范化核对；ZIP 为 7,082,849 B，SHA-256 `bb3413a4f4f8d7658e69f5e523da514aca034e32f241e2bdc09fe425fadd3822`。该包仅为未发布 QA 制品。
 
@@ -4298,8 +4300,36 @@ Native 最新 warm pair 是单独的 debug backend profile，不代表 GUI/IPC�
 
 证据入口：[`HTML completion report`](docs/reports/io-ui-closure-completion-report.html)、[`requirements.json`](docs/reports/evidence/io-ui-closure/requirements.json)、[`ui-matrix.json`](docs/reports/evidence/io-ui-closure/ui-matrix.json)、[`metrics.json`](docs/reports/evidence/io-ui-closure/metrics.json)、[`artifacts.json`](docs/reports/evidence/io-ui-closure/artifacts.json)。
 
-## 48. v0.2.7 发布准备（2026-10-07，尚未发布）
+## 48. v0.2.7 发布与核验（2026-10-07）
 
-v0.2.7 已获发布授权，候选说明见 [release notes](.github/release-notes/v0.2.7.md) 与 [feature history draft](docs/feature-history/v0.2.7.md)。仓库应用版本已为 0.2.7；当前公开最新版本仍是 v0.2.6，尚无 v0.2.7 tag、Release 或公开资产。候选内容沿用 §47 的 PARTIAL 验收结论，包括未观察的 N06 in-flight/A→B→A 交互、真实 150%/200% 缩放与 reduced-motion 行为，以及 diagnostics-on changed-save p95 +21.12% 的未定位尾部回退。
+> 本节记录 v0.2.7 的实际公开发布，不把发布等同于整体验收完成。§47 保留发布前的 File I/O / UI 验收快照；该快照对应的生产源码与公开 tag 一致，后续主线提交只包含文档/测试。
 
-发布应由 `.github/workflows/release.yml` 的 tag-triggered workflow 生成 Universal DMG；`workflow_dispatch` 仅构建，不发布。Final10 arm64 ZIP 是 QA 制品，不是正式 DMG。最近一次检查确认 GitHub 仓库级 Actions secrets 列表为空；organization-level secrets 未验证。若发布时 repository-level `APPLE_CERTIFICATE` 仍未配置，workflow 会走 ad-hoc 回退。以实际 workflow 产物与校验结果更新本节和 feature history。发布准备 commit 不等于公开发布，只有 tag workflow 成功且 Release/资产经核验后，才能将 v0.2.7 记为 latest public。
+## 48.1 Tag、workflow 与公开资产
+
+```text
+Published at       = 2026-10-06T18:16:28Z (2026-10-07 02:16:28 +0800)
+Annotated tag      = v0.2.7
+Tag object         = d44b727aa4ac0c8bf3606c13a4dcb565f720defb
+Peeled source      = fb050b121c2014ac3226e90d3683b7c6c26391b0
+Workflow           = 37508824350; push; completed / success
+Release            = https://github.com/wyzh0117/workbench/releases/tag/v0.2.7
+isDraft / prerelease = false / false; /releases/latest = v0.2.7
+```
+
+公开 Universal DMG `AI-Course-Workbench-macOS.dmg` 为 14,670,698 bytes，SHA-256 `d8758cd674b75e6c26ecc42317d383c2c227adabf046aef9a3deb75b8ed820d6`。该值与匿名下载件、96-byte `.sha256` sidecar 内容及 GitHub asset digest 一致；sidecar 自身 SHA-256 为 `06fc9d19b377d23cdf61f4e685ffdaa0e601decb7103c8928ee71e1d83fe676c`。`hdiutil verify` 为 VALID。只读挂载核对 Info.plist 版本 0.2.7、bundle ID `io.github.wyzh0117.ai-course-workbench`、架构 `x86_64 arm64`；`codesign --verify --deep --strict` 通过。签名为 ad-hoc、无 Team ID；无 Developer ID 签名、无 Apple 公证或 stapled ticket，`spctl --assess --type execute` 为 `rejected`，与发布说明一致。独立核验未安装或启动该 App。
+
+Final10 arm64 QA ZIP（7,082,849 bytes，SHA-256 `bb3413a4f4f8d7658e69f5e523da514aca034e32f241e2bdc09fe425fadd3822`）是独立 QA 制品，不是公开 DMG。公开发布使用固定资产名；tag、DMG 与 sidecar 发布后冻结。
+
+## 48.2 Source、门禁与验收状态
+
+Release tag 的应用/Rust 生产源分别来自 Deno `50aaea7268164b9fa066425ce4a5ac158ca87352`、Native UI `9bbc8cf3067b6117be8de41e1bd5bef3960a671a` 和 Rust `fcefcb106c2cf4e957d54a1ee7e112e2aa83cac0`。最终 Deno gate 在 `fb050b121c2014ac3226e90d3683b7c6c26391b0` 上 `deno task check` exit 0、`deno task test` 716/0；Native Rust 对应生产源码的 `cargo fmt --check` 与 `cargo build` 通过，`cargo test` 258/0/1 ignored。tag 后续准备提交只改变测试/发布文档，不改变 `app/`、`src/` 或 `src-tauri/` 生产源码。workflow 本身成功完成版本/tag 一致性检查、Universal ad-hoc 构建、签名状态校验与资产上传。
+
+验收总状态仍为 **PARTIAL**，见 §47 与 [File I/O / UI completion report](docs/reports/io-ui-closure-completion-report.html)：N06 保存期间继续编辑时的点击时快照冻结及 A→B→A 迟到 ACK 重叠没有真实 UI 观察；150%/200% 文字缩放与 reduced-motion 行为未运行；WebKit 总内存、解码图像留存、设备级物理写放大和峰值 RSS 未测。Deno diagnostics-on changed-save 的 nearest-rank p95 比基线高 21.12%，10 样本尾部仍未定位；该性能项保持 PARTIAL/BLOCKED，no-op 改善不抵消它。公开发布不把这些限制标成已完成。
+
+## 48.3 文档、公开状态与分支处置
+
+- [v0.2.7 release notes](.github/release-notes/v0.2.7.md)、[Feature Update Manual](docs/feature-history/README.md) 与 [v0.2.7 feature history](docs/feature-history/v0.2.7.md) 已回填公开日期、source/tag、workflow、资产和真实签名状态；`UNRELEASED.md` 已按 playbook 重置为下一周期空白滚动记录。
+- `README.md` 与本节切换到最新公开 v0.2.7。报告和证据索引仍保留其冻结的 `generated_for_source_commit=50aaea7268164b9fa066425ce4a5ac158ca87352`，描述验收快照；发布 tag `fb050b121c2014ac3226e90d3683b7c6c26391b0` 与发布后文档提交是另外的版本记录。
+- 分支审计发现删除所有其他分支的前提不成立：远端 `v1-paged-canvas-layout-export` 相对 main 仍有两个独有提交 `309338e51387be4e78739e36ca069b45bf3cdc5e` 与 `8d0a0a653d9e8f412747925b8b7ad829b3f87dc8`。其他 live 分支与 main 的相应改动 patch-equivalent；陈旧 tracking ref 不代表远端分支。没有删除、prune 或改写任何分支/tag。
+- GitHub 仓库级 Actions secrets 查询当时为空；organization-level secrets 未核实。实际 workflow 跳过 Developer ID 路径，成功采用 ad-hoc 构建；不据此推断组织级 secret 状态。
+- 本节的发布后回写仅推进 `main` 文档状态，不移动 v0.2.7 tag。后续修复使用新提交和新版本，遵守 `docs/release-playbook.md`。

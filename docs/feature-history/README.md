@@ -18,8 +18,8 @@
 | v0.2.3 | 2026-10-01 | `0ce229a` | [v0.2.3](https://github.com/wyzh0117/workbench/releases/tag/v0.2.3) | 公开可用（历史版本） | 可以把一批 Markdown 文件或多个文件夹，带着**看得见、可修改的映射计划**导入并追加到已有课程，整个导入能一次撤销；正文里的 Markdown 按语义呈现；AI 设置把 OpenAI Chat Completions、OpenAI Responses、Anthropic Messages 当成三种不同协议处理，并新增原生 Sign in with ChatGPT 订阅登录。 |
 | v0.2.4 | 2026-10-02 | `4db396b` | [v0.2.4](https://github.com/wyzh0117/workbench/releases/tag/v0.2.4) | 公开可用（历史版本） | 编辑器去掉干扰（B/I/S 与 Markdown 源码切换消失，Markdown 语义直接编译且可撤销）、区块工具条与属性改成浮层、Grid 恢复左键落位 / 右键移出、素材改名会真的改磁盘文件、素材支持多选批量导入、打开文件夹会先看懂再说话、子目录图片视频进素材库、PNG 缩略图修好且卡片重做、AI 连接改为自配服务商与真实模型清单、ChatGPT 订阅登录逐阶段报错。 |
 | **v0.2.5** | 2026-10-03 | `d16b622` | [v0.2.5](https://github.com/wyzh0117/workbench/releases/tag/v0.2.5) | **公开可用 / 历史版本 / 冻结** | 打开入口变成项目列表（最近优先、可重新定位）；打开文件夹不再认错项目（旧 schema 先修复、坏文件说具体原因、父目录不顶替子项目）；`.txt .text .md .markdown .tex .latex .docx .epub .pdf` 九类文本 / 文档按原结构导入正文（无 OCR、PDF 只取文本层、LaTeX 公式存代码、编码自动识别）；映射确认后可逐份挑选要导入的文档；媒体库大列表来回滚动不再闪屏 / UI 抽搐 / 卡片卡住。 |
-| **v0.2.6** | **2026-10-05** | `223a594` | [v0.2.6](https://github.com/wyzh0117/workbench/releases/tag/v0.2.6) | **公开 / Latest / 冻结** | [中文 feature history](./v0.2.6.md)：Mapping 稳定化与映射后文档选择、带语义图片的跨格式导入、正文 Preview 媒体、Flow 顺序视图、顶层自由排版，以及全局页面重设计。公开 DMG 与 sidecar 已匿名下载和校验；验收限制见 [HTML 报告](../reports/v0.2.6-ui-redesign-completion-report.html) 与[公开资产验证](../reports/evidence/v0.2.6/public-release-verification.md)。 |
-| v0.2.7 | 待发布 | 待 tag | —（尚无公开 Release） | 发布准备中 / 未公开 | [中文 feature-history 准备稿](./v0.2.7.md)：File I/O 与 UI 可靠性收尾。总体验收仍为 PARTIAL；性能尾部与未观察项见准备稿和本地验收报告。 |
+| **v0.2.6** | **2026-10-05** | `223a594` | [v0.2.6](https://github.com/wyzh0117/workbench/releases/tag/v0.2.6) | 公开可用 / 历史版本 / 冻结 | [中文 feature history](./v0.2.6.md)：Mapping 稳定化与映射后文档选择、带语义图片的跨格式导入、正文 Preview 媒体、Flow 顺序视图、顶层自由排版，以及全局页面重设计。公开 DMG 与 sidecar 已匿名下载和校验；验收限制见 [HTML 报告](../reports/v0.2.6-ui-redesign-completion-report.html) 与[公开资产验证](../reports/evidence/v0.2.6/public-release-verification.md)。 |
+| **v0.2.7** | **2026-10-07** | `fb050b1` | [v0.2.7](https://github.com/wyzh0117/workbench/releases/tag/v0.2.7) | **公开 / Latest / 冻结** | [中文 feature history](./v0.2.7.md)：File I/O 与 UI 可靠性收尾。公开 Universal DMG 与 sidecar 已下载校验；总体验收仍为 PARTIAL，性能尾部与未观察项见版本记录和本地验收报告。 |
 
 ### 关于 v0.2.0
 
@@ -61,15 +61,14 @@
 Release 正文与总控冲突时以 Release 正文为准，并在版本文件里注明分歧。
 **没有证据的地方一律写「无记录」，不推测、不补全。**
 
-## 分发状态的长期事实（从 v0.1.0 到 v0.2.6 没有变过）
+## 分发状态的长期事实（v0.1.0 至 v0.2.7 均为同一状态）
 
-所有已发布的 DMG 都是 **ad-hoc 签名**：没有 Apple Developer ID 签名、没有 Apple 公证，
-`spctl --assess --type execute` 判定 **rejected**（v0.2.5 的公开包在 2026-10-03 复测、v0.2.6 的 CI 签名检查均为 `rejected`，分别见总控 §45.4 与 [v0.2.6 public verification](../reports/evidence/v0.2.6/public-release-verification.md)）。每个用户首次打开都需要手动过一次 Gatekeeper 放行。
+截至 v0.2.7 的所有已发布 DMG 都是 **ad-hoc 签名**：没有 Apple Developer ID 签名、没有 Apple 公证，
+`spctl --assess --type execute` 判定 **rejected**（v0.2.5 的公开包在 2026-10-03 复测，v0.2.6 与 v0.2.7 的公开包检查均为 `rejected`；分别见总控 §45.4、[v0.2.6 public verification](../reports/evidence/v0.2.6/public-release-verification.md) 与 [v0.2.7 release verification](./v0.2.7.md#publication-record)）。每个用户首次打开都需要手动过一次 Gatekeeper 放行。
 另外，**放行之后的首次启动从未被实测过**（自动化环境无法投递右键菜单与「系统设置」交互），
 实测到的只是放行**之前**的拦截状态。
 
 ## 当前循环
 
-`v0.2.6` 于 2026-10-05（+0800）公开发布，tag 指向源码提交 `223a5944e50ffdc6f4bdd09509eacf8f09c47b0e`；Release workflow 37231984095 成功，`releases/latest` 指向 v0.2.6。它将 Mapping 稳定化与映射后选择、语义图片导入、正文媒体 Preview、Flow 顺序、顶层 Free Layout 和全局 UI 重设计一并交付。公开 Universal DMG 已匿名下载并验证 SHA-256 与 sidecar 一致、`hdiutil verify` VALID、版本 0.2.6、架构 `x86_64 arm64`。公开包为 ad-hoc signed，未做 Developer ID 签名或公证；native UI smoke 仍因锁屏 BLOCKED，其他 UI 限制见 [`v0.2.6.md`](./v0.2.6.md)。完整公开包信息见 [v0.2.6 public verification](../reports/evidence/v0.2.6/public-release-verification.md) 与总控 §46。
-
+`v0.2.7` 于 2026-10-07 02:16:28（+0800）公开发布，annotated tag 指向源码提交 `fb050b121c2014ac3226e90d3683b7c6c26391b0`；Release workflow [37508824350](https://github.com/wyzh0117/workbench/actions/runs/37508824350) 成功，Release 为非 draft、非 prerelease。公开 Universal DMG 为 14,670,698 bytes，SHA-256 `d8758cd674b75e6c26ecc42317d383c2c227adabf046aef9a3deb75b8ed820d6`，与 96-byte `.sha256` sidecar 内容及 GitHub asset digest 一致；`hdiutil verify` 为 VALID。只读挂载核对版本 0.2.7、架构 `x86_64 arm64`，deep strict signature verification 通过；签名为 ad-hoc、无 Team ID，未做 Developer ID 签名或 Apple 公证，`spctl` 为 `rejected`。总体 File I/O / UI 验收仍为 PARTIAL；未观察项和诊断开启时的 changed-save p95 回退保留在 [v0.2.7 feature history](./v0.2.7.md)、总控 §48 与验收报告。
 **v0.2.5 的公开产物已按 [`docs/release-playbook.md`](../release-playbook.md) §6 校验**：匿名下载的 Universal DMG（14,293,951 bytes）SHA-256 为 `a84884466b084cd674a4d0d32a52b3284863a9adb9706c11283009fb14b7f9fd`，与 `.sha256` sidecar 及 GitHub 自报 digest 一致，`hdiutil verify` 通过；包内 `lipo -archs` 给出 `x86_64 arm64`，版本 0.2.5，签名 ad-hoc（无 `TeamIdentifier`、未公证），`spctl` 为 `rejected`。完整事实块见 `PROJECT_MASTER_CONTROL.md` §45.4。
