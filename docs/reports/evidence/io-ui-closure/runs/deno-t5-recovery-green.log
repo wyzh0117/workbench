@@ -1,0 +1,13 @@
+Check tests/io_failure_recovery_test.ts
+running 8 tests from ./tests/io_failure_recovery_test.ts
+committed recovery journals are suppressed without deleting the journal ... ok (86ms)
+project.open_state returns the filtered recovery journal with its canonical snapshot ... ok (90ms)
+canonical mutation receipt is detached while command context keeps its live project reference ... ok (69ms)
+recovery journal with matching revision but different body stays visible ... ok (189ms)
+backup symlink failure leaves Canonical unchanged and is not retryable ... ok (89ms)
+a bound save after lease closure is not marked retryable ... ok (28ms)
+transient pre-promotion failure is retryable only after disk proves no commit ... ok (48ms)
+lost rename acknowledgement is verified as committed and cleanup failure warns ... ok (44ms)
+
+ok | 8 passed | 0 failed (653ms)
+

@@ -1,0 +1,20 @@
+Check tests/io_failure_recovery_test.ts
+running 1 test from ./tests/io_failure_recovery_test.ts
+asset rename preserves target bytes when canonical commit outcome is uncertain ... FAILED (65ms)
+
+ ERRORS 
+
+asset rename preserves target bytes when canonical commit outcome is uncertain => ./tests/io_failure_recovery_test.ts:439:6
+error: NotFound: No such file or directory (os error 2): readfile '/var/folders/fb/x3zpt1kj2_j8jbr0xg6wxft00000gn/T/io-rename-uncertain-a52d1d2dc25b3e0a/assets/a891658f-3a9f-4e99-8d48-d3fdef346712-after.png'
+      await Deno.readTextFile(newPath) === "payload",
+      ^
+    at async Object.readTextFile (ext:deno_fs/30_fs.js:864:18)
+    at async file:///Users/youngi/.codex/worktrees/io-ui-closure/workbench/tests/io_failure_recovery_test.ts:529:7
+
+ FAILURES 
+
+asset rename preserves target bytes when canonical commit outcome is uncertain => ./tests/io_failure_recovery_test.ts:439:6
+
+FAILED | 0 passed | 1 failed | 9 filtered out (68ms)
+
+error: Test failed

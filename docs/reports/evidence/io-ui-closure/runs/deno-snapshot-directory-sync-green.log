@@ -1,0 +1,11 @@
+Check tests/snapshot_persistence_test.ts
+running 6 tests from ./tests/snapshot_persistence_test.ts
+snapshot.create binds a persisted copy, is idempotent, and lists bad rows separately ... ok (64ms)
+snapshot create and restore report snapshot-directory sync warnings ... ok (88ms)
+snapshot.list is read-only when the snapshot directory is absent ... ok (20ms)
+snapshot.list keeps a persisted orphan visible after canonical index commit fails ... ok (39ms)
+snapshot.restore persists a before-backup and returns the committed fingerprint ... ok (101ms)
+snapshot.restore leaves Canonical intact when its before-backup cannot persist ... ok (74ms)
+
+ok | 6 passed | 0 failed (393ms)
+

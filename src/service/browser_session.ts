@@ -6,6 +6,26 @@ import { error, ServiceError } from "./errors.ts";
 export const BROWSER_SESSION_FILE = ".workspace/browser-session.json";
 const BROWSER_SESSION_VERSION = 1;
 const MAX_BROWSER_SESSION_BYTES = 64 * 1024;
+const browserSessionIoMetrics = {
+  envelope_temp_write_operations: 0,
+  envelope_temp_write_bytes: 0,
+  envelope_atomic_replacements: 0,
+};
+let browserSessionIoDiagnosticsEnabled = false;
+
+export function setBrowserSessionIoDiagnosticsEnabled(enabled: boolean): void {
+  browserSessionIoDiagnosticsEnabled = enabled;
+  if (enabled) {
+    browserSessionIoMetrics.envelope_temp_write_operations = 0;
+    browserSessionIoMetrics.envelope_temp_write_bytes = 0;
+    browserSessionIoMetrics.envelope_atomic_replacements = 0;
+  }
+}
+
+export function getBrowserSessionIoMetrics(): typeof browserSessionIoMetrics {
+  return { ...browserSessionIoMetrics };
+}
+
 const READER_KEYS = [
   "active_content_item_id",
   "mode",
@@ -46,7 +66,27 @@ interface BrowserSessionEnvelope {
   version: number;
   project_root: string;
   project_id: string;
-  session: BrowserReaderSession;
+  session: BrowserReaderSession | null;
+  session_generation?: number;
+  revision?: number;
+}
+
+export interface BrowserSessionCursor {
+  session: BrowserReaderSession | null;
+  session_generation: number;
+  revision: number;
+}
+
+export interface BrowserSessionSaveBinding {
+  operation_id: string;
+  session_generation: number;
+  revision: number;
+}
+
+export interface BrowserSessionSaveResult {
+  outcome: "written" | "unchanged";
+  session_generation: number;
+  revision: number;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -93,6 +133,27 @@ function invalidSession(message: string): ServiceError {
   );
 }
 
+function staleSession(message: string): ServiceError {
+  return error(
+    "browser_session_stale",
+    "阅读位置已被较新的页面更新，请刷新后重试。",
+    message,
+    {
+      recoverable: false,
+      recommended_action: null,
+      details: {
+        stage: "session_ordering",
+        commit_state: "not_committed",
+        retryable: false,
+      },
+    },
+  );
+}
+
+function sameSession(left: unknown, right: unknown): boolean {
+  return JSON.stringify(left ?? null) === JSON.stringify(right ?? null);
+}
+
 /**
  * The browser service owns one configured project root. Keeping this record
  * beside that root avoids a global server-side session shared by projects,
@@ -102,6 +163,8 @@ export class BrowserSessionStore {
   readonly directory: string;
   readonly path: string;
   readonly lockPath: string;
+  private activeGeneration: number | null = null;
+  private acceptedRevision = 0;
 
   constructor(directory: string) {
     this.directory = normalize(directory);
@@ -133,46 +196,170 @@ export class BrowserSessionStore {
   }
 
   /**
-   * Save after the service has identified the canonical project. The caller's
-   * project id is checked again here; this boundary never writes project.json
-   * and never accepts a session for another project root/identity.
+   * Start a new browser page epoch under the sidecar lock. Reads stay pure;
+   * this explicit handshake makes delayed writes from earlier pages stale.
    */
-  async save(value: unknown, projectId: string): Promise<void> {
+  async open(projectId: string): Promise<BrowserSessionCursor> {
     if (!isProjectId(projectId)) throw invalidSession("Missing current project id");
-    const session = normalizeSession(value, projectId);
-    if (!session) throw invalidSession("Session payload is not reader metadata");
-    const envelope: BrowserSessionEnvelope = {
-      version: BROWSER_SESSION_VERSION,
-      project_root: this.directory,
-      project_id: projectId,
-      session,
-    };
-    const contents = `${JSON.stringify(envelope)}\n`;
-    if (new TextEncoder().encode(contents).byteLength > MAX_BROWSER_SESSION_BYTES) {
-      throw invalidSession("Browser session is too large");
-    }
     try {
       await this.ensureSafeDirectory();
-      await this.withLock(true, async () => {
+      return await this.withLock(true, async () => {
         const current = await this.readEnvelope();
-        if (current && `${JSON.stringify(current)}\n` === contents) return;
-        const temporary = `${this.path}.tmp-${id()}`;
-        try {
-          await Deno.writeTextFile(temporary, contents, { createNew: true });
-          await Deno.rename(temporary, this.path);
-        } catch (caught) {
-          await Deno.remove(temporary).catch(() => undefined);
-          throw caught;
-        }
-        // Reader state is not secret, but a restrictive mode keeps the sidecar
-        // consistent with other local metadata on systems that support chmod.
-        if (Deno.build.os !== "windows") {
-          await Deno.chmod(this.path, 0o600).catch(() => undefined);
-        }
+        const session = current?.project_id === projectId
+          ? normalizeSession(current.session, projectId)
+          : null;
+        const previousGeneration = Number.isSafeInteger(current?.session_generation)
+          ? current!.session_generation!
+          : 0;
+        const generation = Math.max(Date.now(), previousGeneration + 1);
+        const envelope: BrowserSessionEnvelope = {
+          version: BROWSER_SESSION_VERSION,
+          project_root: this.directory,
+          project_id: projectId,
+          session,
+          session_generation: generation,
+          revision: 0,
+        };
+        await this.writeEnvelope(envelope);
+        this.activeGeneration = generation;
+        this.acceptedRevision = 0;
+        return { session, session_generation: generation, revision: 0 };
       });
     } catch (caught) {
       if (caught instanceof ServiceError) throw caught;
       throw sessionError("write", caught);
+    }
+  }
+
+  /**
+   * Save after the service has identified the canonical project. The caller's
+   * project id is checked again here; this boundary never writes project.json
+   * and never accepts a session for another project root/identity.
+   */
+  async save(
+    value: unknown,
+    projectId: string,
+    binding?: BrowserSessionSaveBinding,
+  ): Promise<BrowserSessionSaveResult | void> {
+    if (binding) return await this.saveBound(value, projectId, binding);
+    if (!isProjectId(projectId)) throw invalidSession("Missing current project id");
+    const session = normalizeSession(value, projectId);
+    if (!session) throw invalidSession("Session payload is not reader metadata");
+    try {
+      await this.ensureSafeDirectory();
+      await this.withLock(true, async () => {
+        const current = await this.readEnvelope();
+        if (Number.isSafeInteger(current?.session_generation)) {
+          throw sessionError("write", new Error("session bootstrap is required"));
+        }
+        if (current?.project_id === projectId && sameSession(current.session, session)) return;
+        await this.writeEnvelope({
+          version: BROWSER_SESSION_VERSION,
+          project_root: this.directory,
+          project_id: projectId,
+          session,
+        });
+      });
+    } catch (caught) {
+      if (caught instanceof ServiceError) throw caught;
+      throw sessionError("write", caught);
+    }
+  }
+
+  private async saveBound(
+    value: unknown,
+    projectId: string,
+    binding: BrowserSessionSaveBinding,
+  ): Promise<BrowserSessionSaveResult> {
+    if (!isProjectId(projectId)) throw invalidSession("Missing current project id");
+    if (typeof binding.operation_id !== "string" ||
+      !/^[A-Za-z0-9_-]{1,128}$/.test(binding.operation_id) ||
+      !Number.isSafeInteger(binding.session_generation) ||
+      !Number.isSafeInteger(binding.revision) || binding.revision < 1) {
+      throw invalidSession("Invalid browser session operation binding");
+    }
+    const session = normalizeSession(value, projectId);
+    if (!session) throw invalidSession("Session payload is not reader metadata");
+    try {
+      await this.ensureSafeDirectory();
+      return await this.withLock(true, async () => {
+        const current = await this.readEnvelope();
+        if (
+          !current || current.project_root !== this.directory ||
+          current.project_id !== projectId ||
+          current.session_generation !== binding.session_generation ||
+          this.activeGeneration !== binding.session_generation
+        ) {
+          throw staleSession("Browser page generation is no longer active");
+        }
+        const persistedRevision = Number.isSafeInteger(current.revision)
+          ? current.revision!
+          : 0;
+        const highWater = Math.max(this.acceptedRevision, persistedRevision);
+        if (binding.revision < highWater) {
+          throw staleSession("Browser session revision is older than the accepted revision");
+        }
+        const unchanged = sameSession(current.session, session);
+        if (binding.revision === highWater) {
+          if (!unchanged) throw staleSession("Duplicate browser session revision has different content");
+          this.acceptedRevision = highWater;
+          return {
+            outcome: "unchanged",
+            session_generation: binding.session_generation,
+            revision: binding.revision,
+          };
+        }
+        if (unchanged) {
+          // Advance only this active page's cursor: no data-file write or
+          // atomic replacement is needed for identical reader metadata.
+          this.acceptedRevision = binding.revision;
+          return {
+            outcome: "unchanged",
+            session_generation: binding.session_generation,
+            revision: binding.revision,
+          };
+        }
+        await this.writeEnvelope({
+          ...current,
+          session,
+          revision: binding.revision,
+        });
+        this.acceptedRevision = binding.revision;
+        return {
+          outcome: "written",
+          session_generation: binding.session_generation,
+          revision: binding.revision,
+        };
+      });
+    } catch (caught) {
+      if (caught instanceof ServiceError) throw caught;
+      throw sessionError("write", caught);
+    }
+  }
+
+  private async writeEnvelope(envelope: BrowserSessionEnvelope): Promise<void> {
+    const contents = `${JSON.stringify(envelope)}\n`;
+    const byteLength = new TextEncoder().encode(contents).byteLength;
+    if (byteLength > MAX_BROWSER_SESSION_BYTES) {
+      throw invalidSession("Browser session is too large");
+    }
+    const temporary = `${this.path}.tmp-${id()}`;
+    try {
+      await Deno.writeTextFile(temporary, contents, { createNew: true });
+      if (browserSessionIoDiagnosticsEnabled) {
+        browserSessionIoMetrics.envelope_temp_write_operations += 1;
+        browserSessionIoMetrics.envelope_temp_write_bytes += byteLength;
+      }
+      await Deno.rename(temporary, this.path);
+      if (browserSessionIoDiagnosticsEnabled) {
+        browserSessionIoMetrics.envelope_atomic_replacements += 1;
+      }
+    } catch (caught) {
+      await Deno.remove(temporary).catch(() => undefined);
+      throw caught;
+    }
+    if (Deno.build.os !== "windows") {
+      await Deno.chmod(this.path, 0o600).catch(() => undefined);
     }
   }
 
@@ -234,7 +421,15 @@ export class BrowserSessionStore {
     const parsed: unknown = JSON.parse(await Deno.readTextFile(this.path));
     if (!isRecord(parsed)) return null;
     if (typeof parsed.version !== "number" || typeof parsed.project_root !== "string" ||
-      typeof parsed.project_id !== "string" || !isRecord(parsed.session)) return null;
+      typeof parsed.project_id !== "string" ||
+      (parsed.session !== null && !isRecord(parsed.session)) ||
+      (parsed.session_generation !== undefined &&
+        (typeof parsed.session_generation !== "number" ||
+          !Number.isSafeInteger(parsed.session_generation) ||
+          parsed.session_generation < 0)) ||
+      (parsed.revision !== undefined &&
+        (typeof parsed.revision !== "number" ||
+          !Number.isSafeInteger(parsed.revision) || parsed.revision < 0))) return null;
     return parsed as unknown as BrowserSessionEnvelope;
   }
 

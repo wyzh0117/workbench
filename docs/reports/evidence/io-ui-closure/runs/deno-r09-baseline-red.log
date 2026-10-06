@@ -1,0 +1,21 @@
+Check tests/io_failure_recovery_test.ts
+running 2 tests from ./tests/io_failure_recovery_test.ts
+committed recovery journals are suppressed without deleting the journal ... FAILED (25ms)
+recovery journal with matching revision but different body stays visible ... ok (16ms)
+
+ ERRORS 
+
+committed recovery journals are suppressed without deleting the journal => ./tests/io_failure_recovery_test.ts:32:6
+error: Error: a journal exactly matching Canonical project id, revision, and body is already committed
+  if (!condition) throw new Error(message);
+                        ^
+    at assert (file:///private/tmp/wb-deno-baseline.tG8YqI/tests/io_failure_recovery_test.ts:8:25)
+    at file:///private/tmp/wb-deno-baseline.tG8YqI/tests/io_failure_recovery_test.ts:44:5
+
+ FAILURES 
+
+committed recovery journals are suppressed without deleting the journal => ./tests/io_failure_recovery_test.ts:32:6
+
+FAILED | 1 passed | 1 failed (45ms)
+
+error: Test failed

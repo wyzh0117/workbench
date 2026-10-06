@@ -1,0 +1,32 @@
+Check tests/service_test.ts
+Check tests/project_save_protocol_test.ts
+running 22 tests from ./tests/service_test.ts
+high-level command bus rejects raw bridge operations and isolates handler failures ... ok (1ms)
+desktop save accepts the bridge project envelope ... ok (75ms)
+domain, derived and UI event channels stay separate ... ok (154µs)
+same-type domain event recursion is suppressed ... ok (64µs)
+job can be cancelled and reports status ... ok (404µs)
+project storage uses recovery journal, lock and persistent snapshots ... ok (128ms)
+external modification blocks manual save and autosave until reload or merge resolution ... ok (86ms)
+active project lock blocks a second editor ... ok (6ms)
+writable storage APIs require an owned project lock ... ok (2ms)
+project file paths reject traversal before filesystem access ... ok (8ms)
+project file paths reject symlink escapes ... ok (8ms)
+project root symlinks are rejected ... ok (1ms)
+permission path checks reject symlink escapes ... ok (1ms)
+permission path checks reject a symlink project root ... ok (584µs)
+stale takeover cannot be overwritten by the old heartbeat ... ok (30ms)
+malformed stale locks remain recoverable ... ok (23ms)
+fresh malformed locks remain protected and invalid heartbeat uses mtime ... ok (17ms)
+failed migration keeps the original canonical file ... ok (6ms)
+read-only storage never leaves a snapshot side effect ... ok (21ms)
+rejected credentials never enter the recovery journal ... ok (8ms)
+secret-bearing canonical files are rejected on load ... ok (1ms)
+secrets, unsafe HTML and export-only sensitive fields are excluded ... ok (2ms)
+running 3 tests from ./tests/project_save_protocol_test.ts
+project.read_state stays pure and open_state returns the active lease ... ok (40ms)
+bound project saves return compact ack and unchanged saves perform zero writes ... ok (59ms)
+project.save rejects stale lease and wrong owner before changing canonical ... ok (24ms)
+
+ok | 25 passed | 0 failed (647ms)
+

@@ -81,7 +81,22 @@ Deno.test("desktop save accepts the bridge project envelope", async () => {
   project.project.title = "桥接课程已修改";
   const state = await desktop.commands.execute("project.open_state", {});
   assert(!state.error, "project.open_state should expose the save baseline");
-  const expectedFingerprint = (state.value as { fingerprint: unknown }).fingerprint;
+  const expectedFingerprint =
+    (state.value as { fingerprint: unknown }).fingerprint;
+  const canonicalPath = `${directory}/project.json`;
+  const beforeForeignSave = await Deno.readTextFile(canonicalPath);
+  const foreign = createEmptyProjectData("其他课程");
+  const foreignSave = await desktop.commands.execute("project.save", {
+    project: foreign,
+    expected_fingerprint: expectedFingerprint,
+  });
+  assert(
+    foreignSave.error?.code === "project_id_mismatch" &&
+      await Deno.readTextFile(canonicalPath) === beforeForeignSave,
+    `legacy save must preserve the known baseline project identity: ${
+      JSON.stringify(foreignSave.error)
+    }`,
+  );
   const saved = await desktop.commands.execute("project.save", {
     project,
     expected_fingerprint: expectedFingerprint,
@@ -91,6 +106,19 @@ Deno.test("desktop save accepts the bridge project envelope", async () => {
   assert(
     (loaded as typeof project)?.project.title === "桥接课程已修改",
     "wrapped save must update the canonical project",
+  );
+  const external = structuredClone(project);
+  external.project.description = "外部版本";
+  await Deno.writeTextFile(canonicalPath, JSON.stringify(external));
+  const externalBytes = await Deno.readTextFile(canonicalPath);
+  const staleLegacySave = await desktop.commands.execute("project.save", {
+    project,
+    expected_fingerprint: expectedFingerprint,
+  });
+  assert(
+    staleLegacySave.error?.code === "external_modification_conflict" &&
+      await Deno.readTextFile(canonicalPath) === externalBytes,
+    "legacy save must retain fingerprint CAS and preserve external bytes",
   );
   await desktop.close();
 });
@@ -226,7 +254,10 @@ Deno.test("external modification blocks manual save and autosave until reload or
   // conflict because content hash is authoritative.
   const identical = await Deno.readTextFile(`${directory}/project.json`);
   await Deno.writeTextFile(`${directory}/project.json`, identical);
-  assert(!(await store.externalChange()).changed, "same content must not conflict");
+  assert(
+    !(await store.externalChange()).changed,
+    "same content must not conflict",
+  );
 
   const local = structuredClone(base);
   local.project.title = "本地标题";
@@ -234,13 +265,18 @@ Deno.test("external modification blocks manual save and autosave until reload or
   const external = structuredClone(base);
   external.project.description = "外部说明";
   external.project.updated_at = "2030-01-03T00:00:00.000Z";
-  await Deno.writeTextFile(`${directory}/project.json`, JSON.stringify(external));
+  await Deno.writeTextFile(
+    `${directory}/project.json`,
+    JSON.stringify(external),
+  );
   const externalBytes = await Deno.readTextFile(`${directory}/project.json`);
 
-  for (const save of [
-    () => store.writeProject(local),
-    () => store.saveWithRecovery(local),
-  ]) {
+  for (
+    const save of [
+      () => store.writeProject(local),
+      () => store.saveWithRecovery(local),
+    ]
+  ) {
     let code = "";
     try {
       await save();
@@ -258,9 +294,15 @@ Deno.test("external modification blocks manual save and autosave until reload or
   }
 
   const report = await store.inspectExternalModification(local);
-  assert(report.changed && report.current.hash, "conflict report needs a disk fingerprint");
+  assert(
+    report.changed && report.current.hash,
+    "conflict report needs a disk fingerprint",
+  );
   const merged = await store.mergeExternalChanges(local);
-  assert(merged.can_apply, "non-overlapping local and external edits should merge");
+  assert(
+    merged.can_apply,
+    "non-overlapping local and external edits should merge",
+  );
   await store.resolveExternalChanges(merged.merged, report.current);
   const resolved = await store.readProject();
   assert(
@@ -277,7 +319,10 @@ Deno.test("external modification blocks manual save and autosave until reload or
 
   const nextExternal = structuredClone(resolved);
   nextExternal.project.title = "重新载入的磁盘标题";
-  await Deno.writeTextFile(`${directory}/project.json`, JSON.stringify(nextExternal));
+  await Deno.writeTextFile(
+    `${directory}/project.json`,
+    JSON.stringify(nextExternal),
+  );
   const reloaded = await store.readProject();
   reloaded.project.description = "重新载入后继续";
   await store.saveWithRecovery(reloaded);
@@ -320,7 +365,9 @@ Deno.test("writable storage APIs require an owned project lock", async () => {
   }
   assert(denied, "writes must not bypass the project lock");
   assert(
-    !(await Deno.stat(`${directory}/.workspace/project.lock.guard`).catch(() => null)),
+    !(await Deno.stat(`${directory}/.workspace/project.lock.guard`).catch(() =>
+      null
+    )),
     "an unopened write must not create a lock guard",
   );
 });
@@ -468,12 +515,16 @@ Deno.test("fresh malformed locks remain protected and invalid heartbeat uses mti
     app_instance_id: "blocked-fresh",
     stale_after_ms: 30_000,
   });
-  assert(!(await fresh.inspectLock()).stale, "fresh malformed lock must use mtime");
+  assert(
+    !(await fresh.inspectLock()).stale,
+    "fresh malformed lock must use mtime",
+  );
   let blocked = false;
   try {
     await fresh.open();
   } catch (caught) {
-    blocked = caught instanceof ServiceError && caught.error.code === "project_locked";
+    blocked = caught instanceof ServiceError &&
+      caught.error.code === "project_locked";
   }
   assert(blocked, "fresh malformed lock must block takeover");
   await Deno.writeTextFile(
@@ -491,41 +542,55 @@ Deno.test("fresh malformed locks remain protected and invalid heartbeat uses mti
     "invalid heartbeat must fall back to fresh lock mtime",
   );
   assert(
-    !fresh.isLockStale({
-      app_instance_id: "invalid-date",
-      pid: 1,
-      host: "test",
-      opened_at: "2026-02-28T00:00:00.000Z",
-      heartbeat: "2026-02-31T00:00:00.000Z",
-    }, 1_000, 1_000),
-    "impossible calendar dates must be treated as malformed and use mtime",
-  );
-  for (const heartbeat of [
-    " 2026-03-01T00:00:00.000Z ",
-    "1969-12-31T23:59:59.999Z",
-    "2026-3-01T00:00:00.000Z",
-    "2026-03-01T0:00:00.000Z",
-  ]) {
-    assert(
-      !fresh.isLockStale({
-        app_instance_id: "strict-heartbeat",
+    !fresh.isLockStale(
+      {
+        app_instance_id: "invalid-date",
         pid: 1,
         host: "test",
-        opened_at: "2026-03-01T00:00:00.000Z",
-        heartbeat,
-      }, 1_000, 1_000),
+        opened_at: "2026-02-28T00:00:00.000Z",
+        heartbeat: "2026-02-31T00:00:00.000Z",
+      },
+      1_000,
+      1_000,
+    ),
+    "impossible calendar dates must be treated as malformed and use mtime",
+  );
+  for (
+    const heartbeat of [
+      " 2026-03-01T00:00:00.000Z ",
+      "1969-12-31T23:59:59.999Z",
+      "2026-3-01T00:00:00.000Z",
+      "2026-03-01T0:00:00.000Z",
+    ]
+  ) {
+    assert(
+      !fresh.isLockStale(
+        {
+          app_instance_id: "strict-heartbeat",
+          pid: 1,
+          host: "test",
+          opened_at: "2026-03-01T00:00:00.000Z",
+          heartbeat,
+        },
+        1_000,
+        1_000,
+      ),
       `strict heartbeat parser must treat ${heartbeat} as fresh/malformed via mtime`,
     );
   }
   const trimmedAt = Date.parse("2026-03-01T00:00:00.000Z") + 30_001;
   assert(
-    fresh.isLockStale({
-      app_instance_id: "trimmed-heartbeat",
-      pid: 1,
-      host: "test",
-      opened_at: "2026-03-01T00:00:00.000Z",
-      heartbeat: " 2026-03-01T00:00:00.000Z ",
-    }, trimmedAt, trimmedAt),
+    fresh.isLockStale(
+      {
+        app_instance_id: "trimmed-heartbeat",
+        pid: 1,
+        host: "test",
+        opened_at: "2026-03-01T00:00:00.000Z",
+        heartbeat: " 2026-03-01T00:00:00.000Z ",
+      },
+      trimmedAt,
+      trimmedAt,
+    ),
     "trimmed heartbeat must be parsed instead of falling back to fresh mtime",
   );
 });

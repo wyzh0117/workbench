@@ -302,3 +302,40 @@ Deno.test("twenty active confirmation cancels abort before canonical commit", as
     await Deno.remove(directory, { recursive: true });
   }
 });
+
+Deno.test("service close rejects an import preview waiting on cache pruning", async () => {
+  const directory = await Deno.makeTempDir({ prefix: "acw-import-close-race-" });
+  const desktop = new DesktopService(directory);
+  const service = desktop as unknown as {
+    pruneImportPreviews: () => Promise<void>;
+  };
+  const originalPrune = service.pruneImportPreviews;
+  let reachedPrune!: () => void;
+  let releasePrune!: () => void;
+  const pruning = new Promise<void>((resolve) => reachedPrune = resolve);
+  const gate = new Promise<void>((resolve) => releasePrune = resolve);
+  try {
+    service.pruneImportPreviews = async () => {
+      reachedPrune();
+      await gate;
+    };
+    const pending = desktop.commands.execute("import.preview", {
+      preview_id: "close-race-preview",
+      sources: [{ name: "inline.md", bytes: "temporary source" }],
+    });
+    await pruning;
+    await desktop.close();
+    releasePrune();
+    const result = await pending;
+    assert(result.error, "a reservation resumed after close must be rejected");
+    assert(
+      previewSlots(desktop).size === 0,
+      "a preview cannot appear in the cache after service close returns",
+    );
+  } finally {
+    service.pruneImportPreviews = originalPrune;
+    releasePrune();
+    await desktop.close();
+    await Deno.remove(directory, { recursive: true }).catch(() => {});
+  }
+});

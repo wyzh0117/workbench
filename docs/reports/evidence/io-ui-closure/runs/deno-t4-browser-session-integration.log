@@ -1,0 +1,12 @@
+Check tests/browser_session_test.ts
+running 7 tests from ./tests/browser_session_test.ts
+browser page reload restores reader position, then saves canonical edits before the next reload ... ok (1s)
+openWorkbench after reload restores the session authoring subview for the current lesson ... ok (102ms)
+saved snapshot list hydrates when a browser reload restores the versions route ... ok (120ms)
+browser beforeunload drains the latest reader position with a keepalive request ... ok (62ms)
+browser export preflight uses the real query route ... ok (60ms)
+browser session records reject stale, corrupt, credential-shaped, missing, and inaccessible inputs ... ok (3ms)
+missing browser projects still render a usable launcher ... ok (30ms)
+
+ok | 7 passed | 0 failed (1s)
+

@@ -107,14 +107,34 @@ async function createDesktopProject(): Promise<{
 function browserFetch(desktop: DesktopService): typeof fetch {
   return async (input, init = {}) => {
     const url = new URL(String(input), "http://browser.test");
+    if (url.pathname === "/api/session/open" && (init.method || "GET").toUpperCase() === "POST") {
+      const body = JSON.parse(String(init.body || "{}")) as { project_id?: string };
+      try {
+        return response({ value: await desktop.openBrowserSession(String(body.project_id || "")) });
+      } catch (caught) {
+        const error = caught && typeof caught === "object" && "error" in caught
+          ? (caught as { error: unknown }).error
+          : { code: "browser_session_unavailable", user_message: "阅读位置暂时不可用" };
+        return response({ error }, 400);
+      }
+    }
     if (url.pathname === "/api/session") {
       if ((init.method || "GET").toUpperCase() === "GET") {
         return response({ value: await desktop.loadBrowserSession() });
       }
-      const body = JSON.parse(String(init.body || "{}")) as { session?: unknown };
+      const body = JSON.parse(String(init.body || "{}")) as {
+        session?: unknown;
+        operation_id?: string;
+        session_generation?: number;
+        revision?: number;
+      };
       try {
-        await desktop.saveBrowserSession(body.session);
-        return response({ value: null });
+        const value = await desktop.saveBrowserSession(body.session, {
+          operation_id: String(body.operation_id || ""),
+          session_generation: Number(body.session_generation),
+          revision: Number(body.revision),
+        });
+        return response({ value });
       } catch (caught) {
         const error = caught && typeof caught === "object" && "error" in caught
           ? (caught as { error: unknown }).error
@@ -209,6 +229,10 @@ Deno.test("browser page reload restores reader position, then saves canonical ed
     assert(second.ui.mode === "preview", "refresh must restore the reading mode");
     assert(second.ui.rightPanel === "status", "refresh must restore the right panel");
     assert(second.ui.leftCollapsed === true, "refresh must restore panel collapse state");
+    const serviceLease = second.bridge.lastOpenedProjectState?.lease_generation;
+    assert(typeof serviceLease === "string" && serviceLease.length > 0, "browser open_state must carry the DesktopService writer lease");
+    assert(second.saveIdentity().lease_generation === serviceLease, "browser saves must bind the actual service lease returned by open_state");
+    assert(second.saveIdentity().project_dir === directory, "browser save identity must use the service's canonical project directory");
 
     const block = second.data.blocks.find((candidate: any) => candidate.document_id === lesson.document_id);
     assert(block, "fixture must contain a lesson block");
@@ -225,6 +249,109 @@ Deno.test("browser page reload restores reader position, then saves canonical ed
     assert(savedBlock?.content === "刷新后保存的正文", "next refresh must retain the canonical edit");
     assert(third.ui.activeId === lesson.id && third.ui.route === "media", "next refresh must retain reader position");
     assert(third.ui.mode === "preview" && third.ui.rightPanel === "status", "next refresh must retain mode and panel");
+
+    const bridge = third.bridge as any;
+    const durableWrites: Array<{ session: Record<string, unknown>; metadata: Record<string, unknown> }> = [];
+    let nextGate: { started: () => void; wait: Promise<void> } | null = null;
+    let releaseCurrent: (() => void) | null = null;
+    const actualSaveSession = bridge.saveSession.bind(bridge);
+    bridge.saveSession = async (session: Record<string, unknown>, metadata: Record<string, unknown>) => {
+      durableWrites.push({ session: structuredClone(session), metadata: structuredClone(metadata) });
+      if (nextGate) {
+        const gate = nextGate;
+        nextGate = null;
+        gate.started();
+        await gate.wait;
+      }
+      return await actualSaveSession(session, metadata);
+    };
+    const holdNextWrite = () => {
+      let started!: () => void;
+      let release!: () => void;
+      const startedPromise = new Promise<void>((resolve) => started = resolve);
+      const wait = new Promise<void>((resolve) => release = resolve);
+      nextGate = { started, wait };
+      return { started: startedPromise, release: () => release() };
+    };
+
+    // Hold a real Bridge call before it reaches DesktopService. A → B → A
+    // must leave the service with A, never the superseded intermediate B.
+    const abaGate = holdNextWrite();
+    third.ui.route = "editor";
+    third.scheduleSessionSave();
+    await abaGate.started;
+    third.ui.route = "map";
+    third.scheduleSessionSave();
+    third.ui.route = "editor";
+    third.scheduleSessionSave();
+    abaGate.release();
+    await third.sessionScheduler.flush();
+    assert(durableWrites.length === 1, "A-B-A coalesces to the in-flight final A when the exact session payload matches");
+    assert(durableWrites[0]?.session.route === "editor", "the service write carries the latest A reader position");
+    assert((await desktop.loadBrowserSession())?.route === "editor", "DesktopService durably stores A after the A-B-A sequence");
+
+    const burstGate = holdNextWrite();
+    third.ui.route = "map";
+    third.scheduleSessionSave();
+    await burstGate.started;
+    for (let index = 1; index <= 100; index++) {
+      third.ui.route = index % 2 ? "editor" : "media";
+      third.ui.mode = index % 2 ? "structure" : "preview";
+      third.scheduleSessionSave();
+    }
+    burstGate.release();
+    await third.sessionScheduler.flush();
+    assert(Number(durableWrites.length) === 3, "100 real session updates stay within one in-flight write plus one latest write");
+    const finalWrite = durableWrites.at(-1);
+    assert(finalWrite?.session.route === "media", "the final browser route wins the 100-update burst");
+    assert(finalWrite?.session.mode === "preview", "the final browser editor mode wins the 100-update burst");
+    assert(Number.isSafeInteger(finalWrite?.metadata.session_generation), "the service bridge receives a numeric session generation");
+    assert(Number.isSafeInteger(finalWrite?.metadata.revision), "the service bridge receives a numeric session revision");
+    assert(finalWrite?.metadata.session_generation === third.sessionGeneration, "same-page writes retain the server-issued epoch");
+    assert(finalWrite?.metadata.revision === third.sessionRevision, "same-page writes advance the bootstrapped revision");
+    assert((await desktop.loadBrowserSession())?.route === "media", "the final reader state survives the actual service sidecar read");
+  } finally {
+    await desktop.close();
+    (globalThis as typeof globalThis & { document?: unknown }).document = previousDocument;
+    (globalThis as typeof globalThis & { __TAURI__?: unknown }).__TAURI__ = previousTauri;
+    globalThis.fetch = previousFetch;
+  }
+});
+
+Deno.test("a new browser session epoch rejects a delayed save from the previous page", async () => {
+  const previousDocument = (globalThis as typeof globalThis & { document?: unknown }).document;
+  const previousTauri = (globalThis as typeof globalThis & { __TAURI__?: unknown }).__TAURI__;
+  const previousFetch = globalThis.fetch;
+  const { desktop } = await createDesktopProject();
+  try {
+    const first = await bootBrowserPage(desktop);
+    first.ui.route = "editor";
+    await first.persistSessionDirect(first.session());
+    const oldGeneration = first.sessionGeneration;
+
+    const started = Promise.withResolvers<void>();
+    const gate = Promise.withResolvers<void>();
+    const bridge = first.bridge as any;
+    const saveSession = bridge.saveSession.bind(bridge);
+    bridge.saveSession = async (session: Record<string, unknown>, metadata: Record<string, unknown>) => {
+      started.resolve();
+      await gate.promise;
+      return await saveSession(session, metadata);
+    };
+    first.ui.route = "media";
+    const delayed = first.persistSessionDirect(first.session()).then(
+      () => false,
+      () => true,
+    );
+    await started.promise;
+
+    const second = await bootBrowserPage(desktop);
+    assert(second.sessionGeneration > oldGeneration, "reload receives a strictly newer server epoch");
+    second.ui.route = "map";
+    await second.persistSessionDirect(second.session());
+    gate.resolve();
+    assert(await delayed, "the late old-epoch request is rejected by the service");
+    assert((await desktop.loadBrowserSession())?.route === "map", "late response cannot roll back the newer page route");
   } finally {
     await desktop.close();
     (globalThis as typeof globalThis & { document?: unknown }).document = previousDocument;
@@ -257,6 +384,125 @@ Deno.test("openWorkbench after reload restores the session authoring subview for
     assert(second.ui.route === "editor", "工作台 opens the authoring editor");
     assert(second.ui.activeId === lesson.id, "工作台 stays on the session lesson");
     assert(second.ui.mode === "structure", "工作台 restores 结构 from the valid session");
+  } finally {
+    await desktop.close();
+    (globalThis as typeof globalThis & { document?: unknown }).document = previousDocument;
+    (globalThis as typeof globalThis & { __TAURI__?: unknown }).__TAURI__ = previousTauri;
+    globalThis.fetch = previousFetch;
+  }
+});
+
+Deno.test("saved snapshot list hydrates when a browser reload restores the versions route", async () => {
+  const previousDocument = (globalThis as typeof globalThis & { document?: unknown }).document;
+  const previousTauri = (globalThis as typeof globalThis & { __TAURI__?: unknown }).__TAURI__;
+  const previousFetch = globalThis.fetch;
+  const { desktop, project } = await createDesktopProject();
+  try {
+    const first = await bootBrowserPage(desktop);
+    first.enterProject();
+    first.ui.route = "versions";
+    await first.saveVersion("browser reload snapshot", "persisted through DesktopService");
+    assert(first.snapshotRows.length === 1, "the persisted acknowledgement creates one visible row");
+    assert(
+      (await first.bridge.listSnapshots()).snapshots.length === 1,
+      "DesktopService snapshot.list sees the newly persisted sidecar",
+    );
+    await first.persistSession(first.session());
+
+    const second = await bootBrowserPage(desktop);
+    assert(second.data.project.id === project.project.id, "reload restores the same canonical project");
+    assert(second.ui.route === "versions", "reload restores the versions route");
+    assert(
+      second.snapshotRows.length === 1 && second.snapshotRows[0]?.name === "browser reload snapshot",
+      "the versions page hydrates persisted rows after a browser reload",
+    );
+  } finally {
+    await desktop.close();
+    (globalThis as typeof globalThis & { document?: unknown }).document = previousDocument;
+    (globalThis as typeof globalThis & { __TAURI__?: unknown }).__TAURI__ = previousTauri;
+    globalThis.fetch = previousFetch;
+  }
+});
+
+Deno.test("browser beforeunload drains the latest reader position with a keepalive request", async () => {
+  const previousDocument = (globalThis as typeof globalThis & { document?: unknown }).document;
+  const previousTauri = (globalThis as typeof globalThis & { __TAURI__?: unknown }).__TAURI__;
+  const runtime = globalThis as unknown as {
+    addEventListener?: (type: string, listener: (event: unknown) => void) => void;
+  };
+  const previousAddEventListener = runtime.addEventListener;
+  const previousFetch = globalThis.fetch;
+  const { desktop } = await createDesktopProject();
+  const listeners = new Map<string, (event: unknown) => void>();
+  let observedKeepalive: boolean | undefined;
+  let sessionRequests = 0;
+  let resolveSessionWrite!: () => void;
+  const sessionWrite = new Promise<void>((resolve) => resolveSessionWrite = resolve);
+  try {
+    runtime.addEventListener = (type, listener) => {
+      listeners.set(type, listener);
+    };
+    const store = await bootBrowserPage(desktop);
+    const serviceFetch = globalThis.fetch;
+    globalThis.fetch = async (input, init = {}) => {
+      const url = new URL(String(input), "http://browser.test");
+      if (url.pathname === "/api/session" && (init.method || "GET").toUpperCase() === "POST") {
+        sessionRequests += 1;
+        observedKeepalive = init.keepalive;
+        const payload = JSON.parse(String(init.body || "{}")) as {
+          session?: { route?: string };
+          session_generation?: number;
+          revision?: number;
+        };
+        assert(payload.session?.route === "versions", "page-exit handoff must capture the latest visible route");
+        assert(payload.session_generation === store.sessionGeneration, "page-exit handoff keeps the server-issued page epoch");
+        assert(typeof payload.revision === "number" && payload.revision === store.sessionRevision && payload.revision > 0, "page-exit handoff advances its session revision");
+        const response = await serviceFetch(input, init);
+        resolveSessionWrite();
+        return response;
+      }
+      return await serviceFetch(input, init);
+    };
+    store.ui.route = "versions";
+    store.scheduleSessionSave();
+    const closeHandler = listeners.get("beforeunload");
+    assert(closeHandler !== undefined, "browser startup registers its close drain");
+    closeHandler({ type: "beforeunload" });
+    listeners.get("pagehide")?.({ type: "pagehide" });
+    assert(sessionRequests === 1, "pagehide plus beforeunload hand off the session only once");
+    assert(observedKeepalive === true, "keepalive session request starts synchronously before teardown yields");
+    await sessionWrite;
+    assert((await desktop.loadBrowserSession())?.route === "versions", "the latest route reaches the service sidecar");
+  } finally {
+    await desktop.close();
+    runtime.addEventListener = previousAddEventListener;
+    (globalThis as typeof globalThis & { document?: unknown }).document = previousDocument;
+    (globalThis as typeof globalThis & { __TAURI__?: unknown }).__TAURI__ = previousTauri;
+    globalThis.fetch = previousFetch;
+  }
+});
+
+Deno.test("browser export preflight uses the real query route", async () => {
+  const previousDocument = (globalThis as typeof globalThis & { document?: unknown }).document;
+  const previousTauri = (globalThis as typeof globalThis & { __TAURI__?: unknown }).__TAURI__;
+  const previousFetch = globalThis.fetch;
+  const { desktop } = await createDesktopProject();
+  try {
+    const store = await bootBrowserPage(desktop);
+    store.ui.publishFormat = "markdown";
+    store.ui.publishScope = "course";
+    await store.openPreflight();
+    const report = store.ui.preflightReport as {
+      snapshot_revision?: string;
+      issues?: Array<{ code?: string; message?: string }>;
+    };
+    assert(store.ui.route === "publish" && store.ui.preflight, "preflight stays on the publish route");
+    assert(store.ui.preflightPending === false, "real DesktopService query settles the preflight");
+    assert(typeof store.ui.preflightOptions?.snapshot_revision === "string", "query response carries the authoritative project revision");
+    assert(
+      !(report.issues || []).some((issue) => issue.code === "unsupported_format" || issue.message?.includes("该操作不受支持")),
+      "browser query route must not turn export.preflight into an unsupported command",
+    );
   } finally {
     await desktop.close();
     (globalThis as typeof globalThis & { document?: unknown }).document = previousDocument;

@@ -1,0 +1,8 @@
+Check tests/project_save_protocol_test.ts
+running 3 tests from ./tests/project_save_protocol_test.ts
+project.read_state stays pure and open_state returns the active lease ... ok (46ms)
+bound project saves return compact ack and unchanged saves perform zero writes ... ok (41ms)
+project.save rejects stale lease and wrong owner before changing canonical ... ok (17ms)
+
+ok | 3 passed | 0 failed (109ms)
+

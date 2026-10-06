@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { dirname, join } from "node:path";
+import type { ProjectData } from "../src/domain/types.ts";
 import {
   addAsset,
   addAssetUsage,
@@ -31,7 +32,12 @@ import {
   getPublicationCapabilities,
 } from "../app/publication.js";
 import { renderPublishHtml, renderPublishPdf } from "../src/service/publish.ts";
-import { getExportStreamMetrics } from "../src/service/import_export.ts";
+import {
+  getExportStreamMetrics,
+  setExportStreamDiagnosticsEnabled,
+} from "../src/service/import_export.ts";
+
+setExportStreamDiagnosticsEnabled(true);
 
 function assert(condition: unknown, message: string): asserts condition {
   if (!condition) throw new Error(message);
@@ -210,6 +216,185 @@ Deno.test("asset import shows checksum duplicates and never executes scripts", a
       script.items[0]?.errors.some((message) => message.includes("不会执行")),
     "scripts must be rejected without execution",
   );
+});
+
+Deno.test("incomplete import rollback retains recovery backups through outer cleanup", async () => {
+  const failures: string[] = [];
+  for (const failure of ["promoted-target-remove", "current-backup-restore"] as const) {
+    const directory = await Deno.makeTempDir({ prefix: "acw-import-rollback-" });
+    const oldA = new Uint8Array([91, 12, 203]);
+    const oldB = new Uint8Array([44, 177, 6]);
+    const nextA = new Uint8Array([1, 2, 3]);
+    const nextB = new Uint8Array([4, 5, 6]);
+    const data = createEmptyProjectData("回滚素材恢复");
+    const preview = await previewImport([
+      { name: "a.png", bytes: nextA },
+      { name: "b.png", bytes: nextB },
+    ], { data, mode: "asset" });
+    const targetA = join(directory, "assets", `${preview.items[0]!.id}-a.png`);
+    const targetB = join(directory, "assets", `${preview.items[1]!.id}-b.png`);
+    await Deno.mkdir(dirname(targetA), { recursive: true });
+    await Deno.writeFile(targetA, oldA);
+    await Deno.writeFile(targetB, oldB);
+
+    const originalRename = Deno.rename;
+    const originalRemove = Deno.remove;
+    let failedPromotion = false;
+    let failureInjected = false;
+    let stagingRoot: string | null = null;
+    try {
+      Deno.rename = async (from, to) => {
+        const source = String(from).replaceAll("\\", "/");
+        const destination = String(to).replaceAll("\\", "/");
+        if (destination.endsWith("/backup-0")) stagingRoot = dirname(String(to));
+        if (source.endsWith("/1.asset") && to === targetB && !failedPromotion) {
+          failedPromotion = true;
+          throw new Error("injected second asset promotion failure");
+        }
+        if (
+          failure === "current-backup-restore" &&
+          source.endsWith("/backup-1") && to === targetB && !failureInjected
+        ) {
+          failureInjected = true;
+          throw new Error("injected current backup restoration failure");
+        }
+        await originalRename(from, to);
+      };
+      Deno.remove = async (path, options) => {
+        if (failure === "promoted-target-remove" && path === targetA && !failureInjected) {
+          failureInjected = true;
+          throw new Error("injected promoted target rollback removal failure");
+        }
+        await originalRemove(path, options);
+      };
+
+      let caught = false;
+      try {
+        await confirmImport(data, preview, {
+          mode: "asset",
+          project_root: directory,
+          duplicate_choice: "copy",
+        });
+      } catch {
+        caught = true;
+      }
+      if (!caught || !failedPromotion || !failureInjected) {
+        failures.push(`${failure}: injection did not reach the expected rollback stage`);
+      }
+      if (!stagingRoot) {
+        failures.push(`${failure}: transaction backup directory was not observed`);
+      } else {
+        const backupPath = join(stagingRoot, failure === "promoted-target-remove" ? "backup-0" : "backup-1");
+        const expectedBackup = failure === "promoted-target-remove" ? oldA : oldB;
+        const backup = await Deno.readFile(backupPath).catch(() => null);
+        if (
+          !backup ||
+          createHash("sha256").update(backup).digest("hex") !==
+            createHash("sha256").update(expectedBackup).digest("hex")
+        ) {
+          failures.push(`${failure}: original target backup was deleted or changed`);
+        }
+      }
+      if (data.assets.length !== 0) failures.push(`${failure}: canonical data changed`);
+      if (failure === "promoted-target-remove") {
+        const target = await Deno.readFile(targetA).catch(() => null);
+        if (
+          !target || createHash("sha256").update(target).digest("hex") !==
+            createHash("sha256").update(nextA).digest("hex")
+        ) failures.push(`${failure}: failed rollback target was not left beside its backup`);
+      } else {
+        const target = await Deno.readFile(targetA).catch(() => null);
+        if (
+          !target || createHash("sha256").update(target).digest("hex") !==
+            createHash("sha256").update(oldA).digest("hex")
+        ) failures.push(`${failure}: earlier promoted asset did not roll back`);
+        let missingTargetB = false;
+        try {
+          await Deno.stat(targetB);
+        } catch (error) {
+          missingTargetB = error instanceof Deno.errors.NotFound;
+        }
+        if (!missingTargetB) failures.push(`${failure}: failed backup restore left an unexpected target`);
+      }
+    } finally {
+      Deno.rename = originalRename;
+      Deno.remove = originalRemove;
+      await Deno.remove(directory, { recursive: true });
+    }
+  }
+  assert(failures.length === 0, failures.join("; "));
+});
+
+Deno.test("incomplete import rollback exposes a safe recovery path through CommandBus", async () => {
+  const directory = await Deno.makeTempDir({ prefix: "acw-import-rollback-command-" });
+  const desktop = new DesktopService(directory, {
+    app_instance_id: `import-rollback-${crypto.randomUUID()}`,
+  });
+  const oldA = new Uint8Array([91, 12, 203]);
+  const oldB = new Uint8Array([44, 177, 6]);
+  const nextA = new Uint8Array([1, 2, 3]);
+  const nextB = new Uint8Array([4, 5, 6]);
+  const originalRename = Deno.rename;
+  let failedPromotion = false;
+  let failedRestore = false;
+  try {
+    await desktop.open();
+    const created = await desktop.commands.execute("project.create", {
+      title: "回滚错误封送",
+    });
+    assert(!created.error, "a project is required before confirming an import");
+    const previewExecution = await desktop.commands.execute("import.preview", {
+      mode: "asset",
+      sources: [
+        { name: "a.png", bytes: nextA },
+        { name: "b.png", bytes: nextB },
+      ],
+    });
+    assert(!previewExecution.error, "the import preview should be available");
+    const preview = previewExecution.value as Awaited<ReturnType<typeof previewImport>>;
+    const targetA = join(directory, "assets", `${preview.items[0]!.id}-a.png`);
+    const targetB = join(directory, "assets", `${preview.items[1]!.id}-b.png`);
+    await Deno.mkdir(dirname(targetA), { recursive: true });
+    await Deno.writeFile(targetA, oldA);
+    await Deno.writeFile(targetB, oldB);
+
+    Deno.rename = async (from, to) => {
+      const source = String(from).replaceAll("\\", "/");
+      if (source.endsWith("/1.asset") && to === targetB && !failedPromotion) {
+        failedPromotion = true;
+        throw new Error("injected second asset promotion failure");
+      }
+      if (source.endsWith("/backup-1") && to === targetB && !failedRestore) {
+        failedRestore = true;
+        throw new Error("injected current backup restoration failure");
+      }
+      await originalRename(from, to);
+    };
+    const execution = await desktop.commands.execute("import.confirm", {
+      preview_id: preview.id,
+      options: { mode: "asset", duplicate_choice: "copy" },
+    });
+    const failure = execution.error;
+    assert(failedPromotion && failedRestore, "both promotion and recovery faults should be reached");
+    assert(failure?.code === "import_rollback_incomplete", "CommandBus should preserve the structured error code");
+    assert(failure?.details.stage === "restore_current_backup", "the error should identify the recovery stage");
+    assert(failure?.details.commit_state === "outcome_uncertain", "partial asset rollback is an uncertain outcome");
+    assert(failure?.details.retryable === false, "partial rollback must not be retried blindly");
+    assert(failure?.details.backup_preserved === true, "the error must report preserved recovery bytes");
+    const recoveryPath = failure?.details.recovery_path;
+    assert(typeof recoveryPath === "string" && recoveryPath.startsWith(".workspace/import-staging/"), "the error should expose a project-relative recovery location");
+    assert(!recoveryPath.includes(directory), "the recovery location must not disclose an absolute path");
+    const backup = await Deno.readFile(join(directory, recoveryPath, "backup-1"));
+    assert(
+      createHash("sha256").update(backup).digest("hex") ===
+        createHash("sha256").update(oldB).digest("hex"),
+      "the path in the command error must lead to the real preserved backup bytes",
+    );
+  } finally {
+    Deno.rename = originalRename;
+    await desktop.close();
+    await Deno.remove(directory, { recursive: true }).catch(() => {});
+  }
 });
 
 Deno.test("Word and PDF are explicit unsupported adapters", async () => {
@@ -1411,7 +1596,12 @@ Deno.test("desktop confirmation installs a confirmed project import", async () =
       title: "当前项目",
     });
     assert(!initial.error, "current project should be created");
+    const initialProject = initial.value as ProjectData;
     const imported = createEmptyProjectData("导入项目");
+    assert(
+      imported.project.id !== initialProject.project.id,
+      "project import fixture should exercise an identity replacement",
+    );
     const preview = await desktop.commands.execute("import.preview", {
       mode: "project",
       sources: [{ name: "project.json", bytes: JSON.stringify(imported) }],
@@ -1421,8 +1611,29 @@ Deno.test("desktop confirmation installs a confirmed project import", async () =
       preview: preview.value,
     });
     assert(
-      !confirmed.error && desktop.context.project?.project.title === "导入项目",
-      "confirmed project import should replace the open project",
+      !confirmed.error,
+      `project import should confirm successfully: ${JSON.stringify(confirmed.error)}`,
+    );
+    assert(
+      desktop.context.project?.project.title === "导入项目" &&
+        desktop.context.project.project.id === imported.project.id,
+      `confirmed project import should replace the open project: context=${desktop.context.project?.project.id}; result=${JSON.stringify(confirmed.value)}`,
+    );
+    const disk = await desktop.store.readProjectSnapshot();
+    const reopened = await desktop.commands.execute("project.open_state", {});
+    const openState = reopened.value as {
+      project_id: string | null;
+      project_dir: string;
+      lease_generation: string | null;
+      fingerprint: { hash: string | null };
+    };
+    assert(
+      !reopened.error && disk.project?.project.id === imported.project.id &&
+        openState.project_id === imported.project.id &&
+        openState.project_dir === directory &&
+        openState.lease_generation === desktop.store.leaseGeneration &&
+        openState.fingerprint.hash === disk.fingerprint.hash,
+      "committed project replacement should refresh Canonical, baseline, and open-state lease",
     );
   } finally {
     await desktop.close();

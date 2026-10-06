@@ -51,6 +51,7 @@ export const HIGH_LEVEL_COMMANDS = [
   "folder.append",
   "asset.import",
   "asset.rename",
+  "asset.preview_batch",
   "inbox.create",
   "inbox.triage",
   "inbox.assetize",
@@ -119,6 +120,7 @@ export interface CommandContext {
 
 export interface CommandResult<T = unknown> {
   value: T;
+  mutation_ack?: Record<string, unknown>;
   events?: DomainEvent[];
   notification?: {
     level: "info" | "success" | "warning" | "error";
@@ -155,6 +157,7 @@ export interface CommandExecution<T> {
   id: string;
   value: T;
   error: ErrorObject | null;
+  mutation_ack?: Record<string, unknown>;
   undo(): Promise<boolean>;
 }
 
@@ -181,6 +184,7 @@ export class CommandBus {
     NonNullable<CommandDefinition["validate"]>
   >();
   private readonly allowed: readonly string[];
+  private closed = false;
 
   constructor(
     readonly context: CommandContext,
@@ -218,12 +222,24 @@ export class CommandBus {
     return this.handlers.has(name);
   }
 
+  close(): void {
+    this.closed = true;
+  }
+
   async execute<T = unknown>(
     name: string,
     input: unknown = {},
   ): Promise<CommandExecution<T>> {
     const executionId = id();
     try {
+      if (this.closed) {
+        throw error(
+          "service_closed",
+          "工作台服务正在关闭，请重新启动后重试。",
+          "Command rejected after service shutdown began",
+          { recoverable: false, recommended_action: null, details: { stage: "service_shutdown", commit_state: "not_committed", retryable: false } },
+        );
+      }
       ensureAllowed(name, this.allowed);
       const handler = this.handlers.get(name);
       if (!handler) {
@@ -264,6 +280,7 @@ export class CommandBus {
         id: executionId,
         value: result.value as T,
         error: null,
+        ...(result.mutation_ack ? { mutation_ack: result.mutation_ack } : {}),
         undo: async () => {
           if (!result.undo) return false;
           await result.undo();

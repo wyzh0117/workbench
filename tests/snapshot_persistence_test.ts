@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { join } from "node:path";
+import { join, normalize } from "node:path";
 import {
   DesktopService,
   MemorySecretStore,
@@ -178,6 +178,114 @@ Deno.test("snapshot.create binds a persisted copy, is idempotent, and lists bad 
       "list must isolate a malformed row and keep the valid snapshot available",
     );
   } finally {
+    await desktop.close();
+    await Deno.remove(directory, { recursive: true }).catch(() => undefined);
+  }
+});
+
+Deno.test("snapshot create and restore report snapshot-directory sync warnings", async () => {
+  const { desktop, directory, project } = await openProject("快照目录同步告警");
+  const snapshotId = crypto.randomUUID().replaceAll("-", "");
+  const snapshotDirectory = normalize(
+    join(directory, ".workspace", "snapshots"),
+  );
+  const originalOpen = Deno.open;
+  const blockSnapshotDirectorySync = () => {
+    Deno.open = async (path, options) => {
+      if (normalize(String(path)) === snapshotDirectory) {
+        throw new Error("injected snapshot directory sync failure");
+      }
+      return await originalOpen(path, options);
+    };
+  };
+  try {
+    blockSnapshotDirectorySync();
+    const created = await desktop.commands.execute("snapshot.create", {
+      ...snapshotRequest(desktop, project, snapshotId),
+    });
+    assert(
+      !created.error,
+      "directory-sync warning must not roll back snapshot bytes",
+    );
+    const createdAck = created.value as {
+      persisted: boolean;
+      durability_warning?: string | null;
+      content_hash: string;
+    };
+    assert(
+      createdAck.persisted &&
+        createdAck.durability_warning?.includes("目录元数据同步失败"),
+      "snapshot.create must report a failed snapshots-directory sync",
+    );
+    const snapshotPath = join(snapshotDirectory, `${snapshotId}.json`);
+    const snapshotMetadata = JSON.parse(
+      await Deno.readTextFile(
+        join(snapshotDirectory, `${snapshotId}.meta.json`),
+      ),
+    ) as { snapshot_id: string; content_hash: string };
+    assert(
+      hash(await Deno.readFile(snapshotPath)) === createdAck.content_hash &&
+        snapshotMetadata.snapshot_id === snapshotId &&
+        snapshotMetadata.content_hash === createdAck.content_hash,
+      "a post-promotion sync warning must preserve the persisted snapshot and metadata",
+    );
+
+    const retry = await desktop.commands.execute("snapshot.create", {
+      ...snapshotRequest(desktop, project, snapshotId),
+    });
+    assert(
+      !retry.error,
+      "the same snapshot can be retried after a sync warning",
+    );
+    const retryAck = retry.value as {
+      outcome: string;
+      durability_warning?: string | null;
+    };
+    assert(
+      retryAck.outcome === "unchanged" &&
+        retryAck.durability_warning?.includes("目录元数据同步失败"),
+      "an idempotent retry must re-attempt and report an unresolved directory sync",
+    );
+
+    Deno.open = originalOpen;
+    const modified = structuredClone(project);
+    modified.project.description = "恢复前目录同步告警测试内容";
+    await desktop.store.saveWithRecovery(modified);
+    const state = await desktop.store.readProjectSnapshot();
+    assert(state.project, "the modified canonical project should be readable");
+    blockSnapshotDirectorySync();
+    const restored = await desktop.commands.execute("snapshot.restore", {
+      project_dir: desktop.store.directory,
+      expected_project_id: project.project.id,
+      expected_fingerprint: state.fingerprint,
+      lease_generation: desktop.store.leaseGeneration,
+      editor_generation: 8,
+      operation_id: `restore-op-${crypto.randomUUID()}`,
+      revision: 4,
+      snapshot_id: snapshotId,
+    });
+    assert(
+      !restored.error,
+      "a backup directory-sync warning must not undo restore",
+    );
+    const restoreAck = restored.value as {
+      durability_warning?: string | null;
+      backup_snapshot_id: string;
+    };
+    assert(
+      restoreAck.durability_warning?.includes("目录元数据同步失败"),
+      "snapshot.restore must include the before-backup directory-sync warning",
+    );
+    const backupBytes = await Deno.readFile(
+      join(snapshotDirectory, `${restoreAck.backup_snapshot_id}.json`),
+    );
+    assert(
+      JSON.parse(new TextDecoder().decode(backupBytes)).project.description ===
+        modified.project.description,
+      "the warning must describe an actual persisted before-backup",
+    );
+  } finally {
+    Deno.open = originalOpen;
     await desktop.close();
     await Deno.remove(directory, { recursive: true }).catch(() => undefined);
   }

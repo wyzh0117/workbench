@@ -1,4 +1,5 @@
 import { basename, dirname, isAbsolute, join, normalize, relative } from "node:path";
+import { createHash } from "node:crypto";
 import {
   addAsset,
   type AddAssetResult,
@@ -50,10 +51,21 @@ export interface ProjectSaveBinding {
   recovery_metadata?: unknown;
 }
 
+export interface ProjectWriteResult {
+  fingerprint: FileFingerprint;
+  durability_warning: string | null;
+}
+
+interface AtomicTextWriteResult {
+  mtime_ms: number | null;
+  durability_warning: string | null;
+}
+
 export interface SnapshotCopyWriteResult {
   content_hash: string;
   created_at: string;
   outcome: "written" | "unchanged";
+  durability_warning: string | null;
 }
 
 export interface SnapshotListRow {
@@ -257,6 +269,47 @@ const PROJECT_FILE = "project.json";
 const LOCK_FILE = ".workspace/project.lock";
 const LOCK_GUARD_FILE = ".workspace/project.lock.guard";
 const JOURNAL_FILE = ".workspace/recovery.json";
+const storageIoMetrics = {
+  project_full_read_operations: 0,
+  project_full_read_bytes: 0,
+  project_hash_passes: 0,
+  project_hash_bytes: 0,
+  project_temp_files_created: 0,
+  project_temp_write_bytes: 0,
+  project_backup_copy_operations: 0,
+  project_backup_copy_read_bytes: 0,
+  project_backup_copy_write_bytes: 0,
+  project_file_sync_attempts: 0,
+  project_file_sync_successes: 0,
+  project_backup_renames: 0,
+  project_promotions: 0,
+  project_directory_sync_attempts: 0,
+  project_directory_sync_successes: 0,
+  recovery_journal_temp_files_created: 0,
+  recovery_journal_temp_write_bytes: 0,
+  recovery_journal_file_sync_attempts: 0,
+  recovery_journal_file_sync_successes: 0,
+  recovery_journal_promotions: 0,
+  recovery_journal_removal_attempts: 0,
+  recovery_journal_removal_successes: 0,
+  recovery_directory_sync_attempts: 0,
+  recovery_directory_sync_successes: 0,
+};
+let storageIoDiagnosticsEnabled = false;
+
+export function setStorageIoDiagnosticsEnabled(enabled: boolean): void {
+  storageIoDiagnosticsEnabled = enabled;
+  if (!enabled) return;
+  for (const key of Object.keys(storageIoMetrics) as Array<
+    keyof typeof storageIoMetrics
+  >) {
+    storageIoMetrics[key] = 0;
+  }
+}
+
+export function getStorageIoMetrics(): typeof storageIoMetrics {
+  return { ...storageIoMetrics };
+}
 
 function isNotFound(caught: unknown): boolean {
   return caught instanceof Deno.errors.NotFound ||
@@ -290,6 +343,46 @@ function mapWriteFailure(caught: unknown, relativePath: string): unknown {
     );
   }
   return caught;
+}
+
+function isSafeRetryableWriteFailure(caught: unknown): boolean {
+  const nestedCode = caught instanceof ServiceError
+    ? caught.error.details.write_error_code
+    : undefined;
+  const code = String(
+    nestedCode ?? (caught as { code?: unknown })?.code ?? "",
+  ).toUpperCase();
+  return code === "EAGAIN" || code === "EBUSY" || code === "EINTR";
+}
+
+function writeFailure(
+  caught: unknown,
+  relativePath: string,
+  stage: string,
+  commitState: "not_committed" | "outcome_uncertain" | "committed",
+): ServiceError {
+  const mapped = mapWriteFailure(caught, relativePath);
+  const retryable = commitState === "not_committed" &&
+    isSafeRetryableWriteFailure(caught);
+  const details = {
+    ...(mapped instanceof ServiceError ? mapped.error.details : {}),
+    path: relativePath,
+    ...(String((caught as { code?: unknown })?.code ?? "")
+      ? { write_error_code: String((caught as { code?: unknown }).code) }
+      : {}),
+    stage,
+    commit_state: commitState,
+    retryable,
+  };
+  if (mapped instanceof ServiceError) {
+    return new ServiceError({ ...mapped.error, details });
+  }
+  return error(
+    "storage_write_failed",
+    "保存没有完成，请检查项目文件状态后重试。",
+    mapped instanceof Error ? mapped.message : String(mapped),
+    { recoverable: false, recommended_action: null, details },
+  );
 }
 
 function assertRelative(relativePath: string, allowRoot = false): void {
@@ -368,20 +461,91 @@ function assertNoSymlink(root: string, target: string): void {
 async function writeBytesSyncSafe(
   path: string,
   bytes: Uint8Array,
+  onCreate?: () => void,
+  trackProjectTemp = false,
+  trackRecoveryJournalTemp = false,
 ): Promise<void> {
   const file = await Deno.open(path, {
-    create: true,
-    truncate: true,
+    createNew: true,
     write: true,
   });
+  onCreate?.();
+  if (trackProjectTemp && storageIoDiagnosticsEnabled) {
+    storageIoMetrics.project_temp_files_created += 1;
+  }
+  if (trackRecoveryJournalTemp && storageIoDiagnosticsEnabled) {
+    storageIoMetrics.recovery_journal_temp_files_created += 1;
+  }
   try {
     let offset = 0;
     while (offset < bytes.length) {
-      offset += await file.write(bytes.subarray(offset));
+      const written = await file.write(bytes.subarray(offset));
+      offset += written;
+      if (trackProjectTemp && storageIoDiagnosticsEnabled) {
+        storageIoMetrics.project_temp_write_bytes += written;
+      }
+      if (trackRecoveryJournalTemp && storageIoDiagnosticsEnabled) {
+        storageIoMetrics.recovery_journal_temp_write_bytes += written;
+      }
+    }
+    if (trackProjectTemp && storageIoDiagnosticsEnabled) {
+      storageIoMetrics.project_file_sync_attempts += 1;
+    }
+    if (trackRecoveryJournalTemp && storageIoDiagnosticsEnabled) {
+      storageIoMetrics.recovery_journal_file_sync_attempts += 1;
     }
     await file.sync();
+    if (trackProjectTemp && storageIoDiagnosticsEnabled) {
+      storageIoMetrics.project_file_sync_successes += 1;
+    }
+    if (trackRecoveryJournalTemp && storageIoDiagnosticsEnabled) {
+      storageIoMetrics.recovery_journal_file_sync_successes += 1;
+    }
   } finally {
     file.close();
+  }
+}
+
+async function copyFileSyncSafe(
+  source: string,
+  destination: string,
+  onCreate: () => void,
+  trackProjectBackup = false,
+): Promise<void> {
+  const input = await Deno.open(source, { read: true });
+  let output: Deno.FsFile | null = null;
+  try {
+    output = await Deno.open(destination, { createNew: true, write: true });
+    onCreate();
+    if (trackProjectBackup && storageIoDiagnosticsEnabled) {
+      storageIoMetrics.project_backup_copy_operations += 1;
+    }
+    const buffer = new Uint8Array(64 * 1024);
+    while (true) {
+      const count = await input.read(buffer);
+      if (count === null) break;
+      if (trackProjectBackup && storageIoDiagnosticsEnabled) {
+        storageIoMetrics.project_backup_copy_read_bytes += count;
+      }
+      let offset = 0;
+      while (offset < count) {
+        const written = await output.write(buffer.subarray(offset, count));
+        offset += written;
+        if (trackProjectBackup && storageIoDiagnosticsEnabled) {
+          storageIoMetrics.project_backup_copy_write_bytes += written;
+        }
+      }
+    }
+    if (trackProjectBackup && storageIoDiagnosticsEnabled) {
+      storageIoMetrics.project_file_sync_attempts += 1;
+    }
+    await output.sync();
+    if (trackProjectBackup && storageIoDiagnosticsEnabled) {
+      storageIoMetrics.project_file_sync_successes += 1;
+    }
+  } finally {
+    output?.close();
+    input.close();
   }
 }
 
@@ -398,8 +562,103 @@ async function syncDirectoryPath(path: string): Promise<boolean> {
   }
 }
 
-export async function checksumFile(path: string): Promise<string> {
-  return await sha256Bytes(await Deno.readFile(path));
+export async function checksumFile(
+  path: string,
+  trackProject = false,
+): Promise<string> {
+  const measure = storageIoDiagnosticsEnabled && trackProject;
+  const input = await Deno.open(path, { read: true });
+  if (measure) {
+    storageIoMetrics.project_full_read_operations += 1;
+    storageIoMetrics.project_hash_passes += 1;
+  }
+  const hash = createHash("sha256");
+  const buffer = new Uint8Array(64 * 1024);
+  try {
+    while (true) {
+      const count = await input.read(buffer);
+      if (count === null) break;
+      if (count) {
+        hash.update(buffer.subarray(0, count));
+        if (measure) {
+          storageIoMetrics.project_full_read_bytes += count;
+          storageIoMetrics.project_hash_bytes += count;
+        }
+      }
+    }
+  } finally {
+    input.close();
+  }
+  return hash.digest("hex");
+}
+
+function sameFileIdentity(left: Deno.FileInfo, right: Deno.FileInfo): boolean {
+  return left.isFile && right.isFile && left.dev === right.dev &&
+    left.ino === right.ino && left.size === right.size &&
+    left.mtime?.getTime() === right.mtime?.getTime();
+}
+
+async function copyAssetAndHash(
+  source: string,
+  destination: string,
+): Promise<{ checksum: string; size: number }> {
+  const sourcePathInfo = await Deno.lstat(source);
+  if (sourcePathInfo.isSymlink || !sourcePathInfo.isFile) {
+    throw error(
+      "asset_source_unsafe",
+      "素材源必须是普通文件。",
+      `Asset import source is not a regular file: ${source}`,
+      { recoverable: false, recommended_action: null, details: { stage: "source_validate", commit_state: "not_committed", retryable: false } },
+    );
+  }
+  const input = await Deno.open(source, { read: true });
+  let output: Deno.FsFile | null = null;
+  let created = false;
+  const hash = createHash("sha256");
+  const buffer = new Uint8Array(64 * 1024);
+  let size = 0;
+  try {
+    const opened = await input.stat();
+    if (!sameFileIdentity(sourcePathInfo, opened)) {
+      throw new Error("素材源在打开期间发生了变化");
+    }
+    output = await Deno.open(destination, { write: true, createNew: true });
+    created = true;
+    while (true) {
+      const count = await input.read(buffer);
+      if (count === null) break;
+      if (!count) continue;
+      const chunk = buffer.subarray(0, count);
+      let offset = 0;
+      while (offset < count) {
+        const written = await output.write(chunk.subarray(offset));
+        if (!written) throw new Error("素材复制写入没有前进");
+        offset += written;
+      }
+      hash.update(chunk);
+      size += count;
+    }
+    const [inputAfter, pathAfter, outputStat] = await Promise.all([
+      input.stat(),
+      Deno.lstat(source),
+      output.stat(),
+    ]);
+    if (
+      !sameFileIdentity(sourcePathInfo, inputAfter) ||
+      !sameFileIdentity(sourcePathInfo, pathAfter) ||
+      !outputStat.isFile || outputStat.size !== size
+    ) {
+      throw new Error("素材在复制期间发生了变化或复制结果不完整");
+    }
+    await output.sync();
+    return { checksum: hash.digest("hex"), size };
+  } catch (caught) {
+    if (created) await Deno.remove(destination).catch(() => {});
+    throw caught;
+  } finally {
+    output?.close();
+    input.close();
+  }
 }
 
 export interface AssetIntegrityResult {
@@ -473,7 +732,7 @@ export async function fileFingerprint(path: string): Promise<FileFingerprint> {
       exists: true,
       mtime_ms: stat.mtime?.getTime() ?? null,
       size: stat.size,
-      hash: await checksumFile(path),
+      hash: await checksumFile(path, basename(path) === PROJECT_FILE),
     };
   } catch (caught) {
     if (isNotFound(caught)) {
@@ -630,6 +889,13 @@ async function readProjectState(
   path: string,
 ): Promise<{ original: unknown; project: ProjectData; fingerprint: FileFingerprint }> {
   const bytes = await Deno.readFile(path);
+  const measure = storageIoDiagnosticsEnabled && basename(path) === PROJECT_FILE;
+  if (measure) {
+    storageIoMetrics.project_full_read_operations += 1;
+    storageIoMetrics.project_full_read_bytes += bytes.byteLength;
+    storageIoMetrics.project_hash_passes += 1;
+    storageIoMetrics.project_hash_bytes += bytes.byteLength;
+  }
   const original: unknown = JSON.parse(new TextDecoder().decode(bytes));
   const project = migrateProject(original);
   const stat = await Deno.stat(path);
@@ -744,6 +1010,44 @@ export class ProjectDirectoryStore {
         },
       );
     }
+  }
+
+  private async assertMutationBaseline(
+    binding: ProjectSaveBinding,
+    projectId: string,
+    stage: string,
+  ): Promise<FileFingerprint> {
+    await this.assertWritableLease();
+    if (binding.lease_generation !== this.leaseGeneration) {
+      throw error(
+        "project_lock_lost",
+        "项目编辑租约已变化，文件操作已暂停。",
+        "Canonical mutation lease generation no longer matches the active writer",
+        { recoverable: false, recommended_action: null, details: { stage: "lease_validate", commit_state: "not_committed", retryable: false } },
+      );
+    }
+    const activeProjectId = this.baselineProject?.project.id ?? null;
+    if (
+      !activeProjectId || activeProjectId !== projectId ||
+      projectId !== binding.expected_project_id
+    ) {
+      throw error(
+        "project_id_mismatch",
+        "文件操作与当前课程身份不匹配。",
+        "Canonical mutation owner identity does not match the active project",
+        { recoverable: false, recommended_action: null, details: { stage: "project_identity", commit_state: "not_committed", retryable: false } },
+      );
+    }
+    const current = await fileFingerprint(this.projectPath);
+    if (fingerprintsDiffer(binding.expected_fingerprint, current)) {
+      throw error(
+        "external_modification_conflict",
+        "课程文件已发生变化，文件操作已暂停，请重新读取后重试。",
+        "Canonical mutation expected fingerprint does not match disk",
+        { recoverable: false, recommended_action: null, details: { stage, commit_state: "not_committed", retryable: false, fingerprint: current } },
+      );
+    }
+    return current;
   }
 
   private async withLockGuard<T>(operation: () => Promise<T>): Promise<T> {
@@ -1126,16 +1430,32 @@ export class ProjectDirectoryStore {
   async writeProject(
     data: ProjectData,
     options: { allow_external_overwrite?: boolean } = {},
-  ): Promise<void> {
-    await this.withWritableLease(() => this.writeProjectUnlocked(data, options));
+  ): Promise<ProjectWriteResult> {
+    return await this.withWritableLease(() =>
+      this.writeProjectUnlocked(data, options)
+    );
   }
 
   private async writeProjectUnlocked(
     data: ProjectData,
-    options: { allow_external_overwrite?: boolean } = {},
-  ): Promise<FileFingerprint> {
+    options: {
+      allow_external_overwrite?: boolean;
+      expected_current?: FileFingerprint;
+    } = {},
+  ): Promise<ProjectWriteResult> {
     await this.ensureDirectory();
     const externalState = await this.externalChange();
+    if (
+      options.expected_current &&
+      fingerprintsDiffer(options.expected_current, externalState.current)
+    ) {
+      throw error(
+        "external_modification_conflict",
+        "处理期间课程文件又发生了变化，当前选择没有写入。请重新查看最新版本后再试。",
+        "Canonical changed after explicit project.resolve preflight",
+        { recoverable: false, recommended_action: null, details: { stage: "final_recheck", commit_state: "not_committed", retryable: false, expected: options.expected_current, current: externalState.current } },
+      );
+    }
     if (
       !options.allow_external_overwrite &&
       (externalState.changed ||
@@ -1157,49 +1477,149 @@ export class ProjectDirectoryStore {
     }
     const contents = serializeProject(data);
     const bytes = new TextEncoder().encode(contents);
-    await this.writeAtomicText(PROJECT_FILE, contents, true);
-    const written = await Deno.stat(this.projectPath);
+    let written: AtomicTextWriteResult;
+    try {
+      written = await this.writeAtomicText(PROJECT_FILE, contents, true);
+    } catch (caught) {
+      const details = caught instanceof ServiceError ? caught.error.details : {};
+      if (details.commit_state !== "outcome_uncertain") throw caught;
+
+      // A failed rename acknowledgement can happen after the filesystem moved
+      // the staged file. Resolve that one ambiguous boundary from Canonical's
+      // actual bytes; never ask the caller to blindly replay a committed write.
+      const actual = await this.readProjectSnapshot().catch(() => null);
+      const expectedHash = await sha256Bytes(bytes);
+      if (
+        actual?.project?.project.id === data.project.id &&
+        actual.project.project.updated_at === data.project.updated_at &&
+        actual.fingerprint.size === bytes.byteLength &&
+        actual.fingerprint.hash === expectedHash
+      ) {
+        written = {
+          mtime_ms: actual.fingerprint.mtime_ms,
+          durability_warning: "保存已提交，但文件系统未确认原子替换结果。",
+        };
+      } else {
+        throw writeFailure(
+          caught,
+          PROJECT_FILE,
+          String(details.stage ?? "promote"),
+          actual && this.baseline &&
+              !fingerprintsDiffer(actual.fingerprint, this.baseline)
+            ? "not_committed"
+            : "outcome_uncertain",
+        );
+      }
+    }
     this.baseline = {
       exists: true,
-      mtime_ms: written.mtime?.getTime() ?? null,
+      mtime_ms: written.mtime_ms,
       size: bytes.length,
       hash: await sha256Bytes(bytes),
     };
     this.baselineProject = clone(migrateProject(data));
-    return clone(this.baseline);
+    return {
+      fingerprint: clone(this.baseline),
+      durability_warning: written.durability_warning,
+    };
   }
 
   private async writeAtomicText(
     relativePath: string,
     contents: string,
     keepBackup = true,
-  ): Promise<void> {
+  ): Promise<AtomicTextWriteResult> {
     const target = this.path(relativePath);
-    await Deno.mkdir(dirname(target), { recursive: true });
     const temporary = `${target}.tmp-${id()}`;
+    const backup = `${target}.bak`;
+    const backupTemporary = `${backup}.tmp-${id()}`;
+    let stage = "directory_create";
+    let promoted = false;
+    let temporaryCreated = false;
+    let backupTemporaryCreated = false;
     try {
-      await writeBytesSyncSafe(temporary, new TextEncoder().encode(contents));
+      assertNoSymlink(this.directory, target);
+      await Deno.mkdir(dirname(target), { recursive: true });
+      assertNoSymlink(this.directory, target);
+      stage = "temp_write";
+      await writeBytesSyncSafe(
+        temporary,
+        new TextEncoder().encode(contents),
+        () => temporaryCreated = true,
+        relativePath === PROJECT_FILE,
+        relativePath === JOURNAL_FILE,
+      );
+      stage = "temp_verify";
+      const stagedStat = await Deno.stat(temporary);
+      stage = "validate";
       const parsed = JSON.parse(contents);
       if (!parsed || typeof parsed !== "object") {
         throw new Error("JSON root must be object");
       }
       if (keepBackup) {
-        const backup = `${target}.bak`;
+        stage = "backup";
         assertNoSymlink(this.directory, backup);
         try {
-          await Deno.copyFile(target, backup);
+          await copyFileSyncSafe(
+            target,
+            backupTemporary,
+            () => backupTemporaryCreated = true,
+            relativePath === PROJECT_FILE,
+          );
+          assertNoSymlink(this.directory, backup);
+          await Deno.rename(backupTemporary, backup);
+          if (relativePath === PROJECT_FILE && storageIoDiagnosticsEnabled) {
+            storageIoMetrics.project_backup_renames += 1;
+          }
+          backupTemporaryCreated = false;
         } catch (caught) {
           if (!isNotFound(caught)) throw caught;
         }
       }
+      stage = "promote";
       await Deno.rename(temporary, target);
-    } catch (caught) {
-      try {
-        await Deno.remove(temporary);
-      } catch (cleanup) {
-        if (!isNotFound(cleanup)) void cleanup;
+      promoted = true;
+      if (relativePath === PROJECT_FILE && storageIoDiagnosticsEnabled) {
+        storageIoMetrics.project_promotions += 1;
+        storageIoMetrics.project_directory_sync_attempts += 1;
       }
-      throw mapWriteFailure(caught, relativePath);
+      if (relativePath === JOURNAL_FILE && storageIoDiagnosticsEnabled) {
+        storageIoMetrics.recovery_journal_promotions += 1;
+        storageIoMetrics.recovery_directory_sync_attempts += 1;
+      }
+      const durability_warning = await syncDirectoryPath(dirname(target))
+        ? null
+        : "文件已写入，但目录元数据同步失败。";
+      if (relativePath === PROJECT_FILE && storageIoDiagnosticsEnabled && !durability_warning) {
+        storageIoMetrics.project_directory_sync_successes += 1;
+      }
+      if (relativePath === JOURNAL_FILE && storageIoDiagnosticsEnabled && !durability_warning) {
+        storageIoMetrics.recovery_directory_sync_successes += 1;
+      }
+      return {
+        mtime_ms: stagedStat.mtime?.getTime() ?? null,
+        durability_warning,
+      };
+    } catch (caught) {
+      const ownedPaths = [
+        ...(temporaryCreated ? [temporary] : []),
+        ...(backupTemporaryCreated ? [backupTemporary] : []),
+      ];
+      for (const ownedPath of ownedPaths) {
+        try {
+          await Deno.remove(ownedPath);
+        } catch (cleanup) {
+          if (!isNotFound(cleanup)) void cleanup;
+        }
+      }
+      throw writeFailure(
+        caught,
+        relativePath,
+        stage,
+        promoted ? "committed" : stage === "promote"
+          ? "outcome_uncertain"
+          : "not_committed",
+      );
     }
   }
 
@@ -1224,13 +1644,28 @@ export class ProjectDirectoryStore {
     });
   }
 
-  async readRecoveryJournal(): Promise<RecoveryJournal | null> {
+  async readRecoveryJournal(
+    canonicalProject?: ProjectData | null,
+  ): Promise<RecoveryJournal | null> {
     try {
       const journal = JSON.parse(
         await Deno.readTextFile(this.journalPath),
       ) as RecoveryJournal;
       if (journal && typeof journal === "object" && journal.project) {
         serializeProject(journal.project);
+      }
+      const canonical = canonicalProject === undefined
+        ? (await this.readProjectSnapshot()).project
+        : canonicalProject;
+      if (
+        canonical && journal?.project &&
+        journal.project_id === canonical.project.id &&
+        journal.canonical_revision === canonical.project.updated_at &&
+        serializeProject(journal.project) === serializeProject(canonical)
+      ) {
+        // A post-commit cleanup failure can leave this journal behind. Keep the
+        // file for diagnosis/recovery, but don't offer content already committed.
+        return null;
       }
       return journal;
     } catch (caught) {
@@ -1252,7 +1687,13 @@ export class ProjectDirectoryStore {
   async saveWithRecovery(
     data: ProjectData,
     expectedFingerprint?: FileFingerprint,
-  ): Promise<{ fingerprint: FileFingerprint; recovery_warning: string | null }> {
+    options: { allow_project_identity_change?: boolean } = {},
+  ): Promise<{
+    project: ProjectData;
+    fingerprint: FileFingerprint;
+    recovery_warning: string | null;
+    durability_warning: string | null;
+  }> {
     const canonical = migrateProject(JSON.parse(serializeProject(data)));
     const journal: RecoveryJournal = {
       transaction_id: id(),
@@ -1294,27 +1735,67 @@ export class ProjectDirectoryStore {
           },
         );
       }
+      if (
+        !options.allow_project_identity_change &&
+        this.baselineProject &&
+        canonical.project.id !== this.baselineProject.project.id
+      ) {
+        throw error(
+          "project_id_mismatch",
+          "保存请求与当前课程身份不匹配。",
+          "Refusing legacy project.save for a different baseline project",
+          {
+            recoverable: false,
+            recommended_action: null,
+            details: {
+              stage: "project_identity",
+              commit_state: "not_committed",
+              retryable: false,
+            },
+          },
+        );
+      }
       // The compare and both writes share one OS lock. A sibling service
       // command cannot advance the canonical file between the CAS and rename.
-      await this.writeAtomicText(JOURNAL_FILE, JSON.stringify(journal), false);
-      try {
-        await this.writeProjectUnlocked(canonical);
-      } catch (caught) {
-        // If the canonical write failed, keep the recovery data only when its
-        // transaction was actually the last one placed in the journal.
-        throw caught;
-      }
+      const journalWrite = await this.writeAtomicText(
+        JOURNAL_FILE,
+        JSON.stringify(journal),
+        false,
+      );
+      const projectWrite = await this.writeProjectUnlocked(canonical);
       let recoveryWarning: string | null = null;
+      let durabilityWarning = projectWrite.durability_warning ??
+        journalWrite.durability_warning;
       try {
+        if (storageIoDiagnosticsEnabled) {
+          storageIoMetrics.recovery_journal_removal_attempts += 1;
+        }
         await Deno.remove(this.journalPath);
+        if (storageIoDiagnosticsEnabled) {
+          storageIoMetrics.recovery_journal_removal_successes += 1;
+        }
       } catch (caught) {
         if (!isNotFound(caught)) {
           recoveryWarning = "恢复日志清理失败，但课程内容已经保存。";
         }
       }
+      if (!recoveryWarning) {
+        if (storageIoDiagnosticsEnabled) {
+          storageIoMetrics.recovery_directory_sync_attempts += 1;
+        }
+        if (!await syncDirectoryPath(this.workspacePath)) {
+          durabilityWarning = durabilityWarning
+            ? `${durabilityWarning}恢复目录元数据同步失败。`
+            : "课程已保存，但恢复目录元数据同步失败。";
+        } else if (storageIoDiagnosticsEnabled) {
+          storageIoMetrics.recovery_directory_sync_successes += 1;
+        }
+      }
       return {
-        fingerprint: structuredClone(this.baseline!),
+        project: clone(canonical),
+        fingerprint: projectWrite.fingerprint,
         recovery_warning: recoveryWarning,
+        durability_warning: durabilityWarning,
       };
     });
   }
@@ -1323,6 +1804,7 @@ export class ProjectDirectoryStore {
     data: ProjectData,
     binding: ProjectSaveBinding,
   ): Promise<{
+    project: ProjectData;
     fingerprint: FileFingerprint;
     recovery_warning: string | null;
     durability_warning: string | null;
@@ -1339,6 +1821,12 @@ export class ProjectDirectoryStore {
         stage,
         commit_state: commitState,
         retryable,
+        project_id: binding.expected_project_id,
+        project_dir: this.directory,
+        editor_generation: binding.editor_generation,
+        operation_id: binding.operation_id,
+        revision: binding.revision,
+        expected_hash: binding.expected_fingerprint.hash,
         ...(caught instanceof ServiceError && caught.error.details.fingerprint
           ? { fingerprint: caught.error.details.fingerprint }
           : {}),
@@ -1394,6 +1882,24 @@ export class ProjectDirectoryStore {
         }
         const current = await fileFingerprint(this.projectPath);
         if (fingerprintsDiffer(binding.expected_fingerprint, current)) {
+          // An ACK can be lost after an atomic promote. If the current
+          // Canonical bytes are exactly the requested project, the retry is
+          // already satisfied; return that receipt without rewriting it.
+          const actual = await this.readProjectSnapshot().catch(() => null);
+          if (
+            actual?.project?.project.id === canonical.project.id &&
+            serializeProject(actual.project) === serializeProject(canonical)
+          ) {
+            this.baseline = structuredClone(actual.fingerprint);
+            this.baselineProject = clone(actual.project);
+            return {
+              project: clone(actual.project),
+              fingerprint: structuredClone(actual.fingerprint),
+              recovery_warning: null,
+              durability_warning: null,
+              outcome: "unchanged",
+            };
+          }
           throw error(
             "external_modification_conflict",
             "课程文件已由另一个写入更新，保存已暂停以免覆盖内容。请重新载入或合并修改。",
@@ -1417,14 +1923,13 @@ export class ProjectDirectoryStore {
           serializeProject(canonical) === serializeProject(this.baselineProject)
         ) {
           return {
+            project: clone(canonical),
             fingerprint: structuredClone(current),
             recovery_warning: null,
             durability_warning: null,
             outcome: "unchanged",
           };
         }
-        const contents = serializeProject(canonical);
-        const bytes = new TextEncoder().encode(contents);
         const journal: RecoveryJournal = {
           transaction_id: binding.operation_id,
           project_id: canonical.project.id,
@@ -1432,46 +1937,78 @@ export class ProjectDirectoryStore {
           saved_at: now(),
           project: clone(canonical),
         };
+        let journalWrite!: AtomicTextWriteResult;
         try {
-          await this.writeAtomicText(JOURNAL_FILE, JSON.stringify(journal), false);
+          journalWrite = await this.writeAtomicText(
+            JOURNAL_FILE,
+            JSON.stringify(journal),
+            false,
+          );
         } catch (caught) {
-          fail(caught, "recovery_write", "not_committed", true);
+          const details = caught instanceof ServiceError
+            ? caught.error.details
+            : {};
+          fail(
+            caught,
+            String(details.stage ?? "recovery_write"),
+            details.commit_state === "outcome_uncertain"
+              ? "outcome_uncertain"
+              : "not_committed",
+            details.retryable === true,
+          );
         }
+        let projectWrite!: ProjectWriteResult;
         try {
-          await this.writeAtomicText(PROJECT_FILE, contents, true);
+          projectWrite = await this.writeProjectUnlocked(canonical);
           canonicalCommitted = true;
         } catch (caught) {
-          fail(caught, "canonical_write", "outcome_uncertain", false);
+          const details = caught instanceof ServiceError
+            ? caught.error.details
+            : {};
+          fail(
+            caught,
+            String(details.stage ?? "canonical_write"),
+            details.commit_state === "committed"
+              ? "committed"
+              : details.commit_state === "not_committed"
+              ? "not_committed"
+              : "outcome_uncertain",
+            details.retryable === true,
+          );
         }
-        const stat = await Deno.stat(this.projectPath).catch((caught): never => {
-          return fail(caught, "fingerprint_ack", "committed", false);
-        });
-        const fingerprint: FileFingerprint = {
-          exists: true,
-          mtime_ms: stat.mtime?.getTime() ?? null,
-          size: bytes.byteLength,
-          hash: await sha256Bytes(bytes),
-        };
+        const fingerprint = projectWrite.fingerprint;
         this.baseline = structuredClone(fingerprint);
         this.baselineProject = clone(canonical);
-        let durabilityWarning: string | null = null;
-        if (!await syncDirectoryPath(this.directory)) {
-          durabilityWarning = "项目文件已写入，但无法同步项目目录元数据。";
-        }
+        let durabilityWarning = projectWrite.durability_warning ??
+          journalWrite.durability_warning;
         let recoveryWarning: string | null = null;
         try {
+          if (storageIoDiagnosticsEnabled) {
+            storageIoMetrics.recovery_journal_removal_attempts += 1;
+          }
           await Deno.remove(this.journalPath);
+          if (storageIoDiagnosticsEnabled) {
+            storageIoMetrics.recovery_journal_removal_successes += 1;
+          }
         } catch (caught) {
           if (!isNotFound(caught)) {
             recoveryWarning = "恢复日志清理失败，但课程内容已经保存。";
           }
         }
-        if (!recoveryWarning && !await syncDirectoryPath(this.workspacePath)) {
-          durabilityWarning = durabilityWarning
-            ? `${durabilityWarning}恢复目录元数据同步失败。`
-            : "课程已保存，但恢复目录元数据同步失败。";
+        if (!recoveryWarning) {
+          if (storageIoDiagnosticsEnabled) {
+            storageIoMetrics.recovery_directory_sync_attempts += 1;
+          }
+          if (!await syncDirectoryPath(this.workspacePath)) {
+            durabilityWarning = durabilityWarning
+              ? `${durabilityWarning}恢复目录元数据同步失败。`
+              : "课程已保存，但恢复目录元数据同步失败。";
+          } else if (storageIoDiagnosticsEnabled) {
+            storageIoMetrics.recovery_directory_sync_successes += 1;
+          }
         }
         return {
+          project: clone(canonical),
           fingerprint,
           recovery_warning: recoveryWarning,
           durability_warning: durabilityWarning,
@@ -1480,7 +2017,16 @@ export class ProjectDirectoryStore {
       });
     } catch (caught) {
       if (caught instanceof ServiceError && caught.error.details.commit_state) throw caught;
-      return fail(caught, "save_preflight", canonicalCommitted ? "committed" : "not_committed", !canonicalCommitted);
+      const retryable = !canonicalCommitted && (
+        (caught instanceof ServiceError && caught.error.details.retryable === true) ||
+        isSafeRetryableWriteFailure(caught)
+      );
+      return fail(
+        caught,
+        "save_preflight",
+        canonicalCommitted ? "committed" : "not_committed",
+        retryable,
+      );
     }
   }
 
@@ -1564,27 +2110,49 @@ export class ProjectDirectoryStore {
   async resolveExternalChanges(
     resolvedProject: ProjectData,
     expectedCurrent: FileFingerprint,
-  ): Promise<FileFingerprint> {
-    await this.withWritableLease(async () => {
+    binding?: ProjectSaveBinding,
+  ): Promise<ProjectWriteResult> {
+    return await this.withWritableLease(async () => {
       const current = await fileFingerprint(this.projectPath);
-      if (fingerprintsDiffer(expectedCurrent, current)) {
+      if (
+        fingerprintsDiffer(expectedCurrent, current) ||
+        (binding &&
+          fingerprintsDiffer(binding.expected_fingerprint, expectedCurrent))
+      ) {
         throw error(
           "external_modification_conflict",
           "处理期间课程文件又发生了变化，当前选择没有写入。请重新查看最新版本后再试。",
           "External canonical changed while conflict resolution was pending",
           {
-            recoverable: true,
-            recommended_action: "重新查看最新磁盘版本。",
-            details: { expected: expectedCurrent, current },
+            recoverable: false,
+            recommended_action: null,
+            details: { stage: "fingerprint_preflight", commit_state: "not_committed", retryable: false, expected: expectedCurrent, current },
           },
         );
       }
       const external = current.exists ? await loadProject(this.projectPath) : null;
-      this.baseline = current;
-      this.baselineProject = external ? clone(external) : null;
-      await this.writeProjectUnlocked(resolvedProject);
+      if (
+        binding &&
+        (!binding.lease_generation || binding.lease_generation !== this.leaseGeneration ||
+          external?.project.id !== binding.expected_project_id ||
+          resolvedProject.project.id !== binding.expected_project_id)
+      ) {
+        throw error(
+          "project_id_mismatch",
+          "冲突处理请求与当前课程身份不匹配。",
+          "project.resolve owner identity or lease changed before write",
+          { recoverable: false, recommended_action: null, details: { stage: "project_identity", commit_state: "not_committed", retryable: false } },
+        );
+      }
+      // This command is the explicit user decision to accept the inspected
+      // external version. Bypass the stale in-memory baseline only after the
+      // user-confirmed fingerprint was matched under the writer lock; the
+      // successful write itself installs the new baseline.
+      return await this.writeProjectUnlocked(resolvedProject, {
+        allow_external_overwrite: true,
+        expected_current: expectedCurrent,
+      });
     });
-    return structuredClone(this.baseline!);
   }
 
   /** Diff two persisted file snapshots without exposing Git primitives. */
@@ -1684,8 +2252,8 @@ export class ProjectDirectoryStore {
     note = "",
     options: { allow_external_overwrite?: boolean } = {},
   ): Promise<Snapshot> {
-    return await this.withWritableLease(() =>
-      this.createSnapshotUnlocked(data, name, note, options)
+    return await this.withWritableLease(async () =>
+      (await this.createSnapshotUnlocked(data, name, note, options)).snapshot
     );
   }
 
@@ -1829,11 +2397,18 @@ export class ProjectDirectoryStore {
       }
 
       const createdAt = metadata?.created_at ?? now();
+      let durabilityWarning: string | null = null;
       if (!existingBytes) {
-        await this.writeAtomicText(relativePath, contents, false);
+        durabilityWarning = (await this.writeAtomicText(
+          relativePath,
+          contents,
+          false,
+        )).durability_warning;
       }
       if (!metadata) {
-        await this.writeAtomicText(
+        // This is the last directory sync for the snapshot pair; a successful
+        // sync here also covers the JSON promotion above.
+        durabilityWarning = (await this.writeAtomicText(
           metadataPath,
           JSON.stringify({
             version: 1,
@@ -1844,12 +2419,20 @@ export class ProjectDirectoryStore {
             content_hash: contentHash,
           } satisfies SnapshotFileMetadata),
           false,
-        );
+        )).durability_warning;
+      }
+      if (existingBytes && metadata) {
+        // Re-try the parent sync on idempotent requests so a prior uncertain
+        // directory sync cannot silently become a warning-free acknowledgement.
+        durabilityWarning = await syncDirectoryPath(dirname(fullPath))
+          ? null
+          : "文件已写入，但目录元数据同步失败。";
       }
       return {
         content_hash: contentHash,
         created_at: createdAt,
         outcome: existingBytes ? "unchanged" : "written",
+        durability_warning: durabilityWarning,
       };
     });
   }
@@ -2001,7 +2584,7 @@ export class ProjectDirectoryStore {
       allow_external_overwrite?: boolean;
       persist_canonical?: boolean;
     } = {},
-  ): Promise<Snapshot> {
+  ): Promise<{ snapshot: Snapshot; durability_warning: string | null }> {
     // Detect before creating a snapshot side effect; the canonical write also
     // repeats this check immediately before replacement.
     if (!options.allow_external_overwrite) {
@@ -2040,8 +2623,9 @@ export class ProjectDirectoryStore {
       "snapshots",
       snapshot.id + ".json",
     );
+    let metadataWrite: AtomicTextWriteResult;
     try {
-      await this.writeAtomicText(
+      metadataWrite = await this.writeAtomicText(
         join(".workspace", "snapshots", snapshot.id + ".meta.json"),
         JSON.stringify({
           version: 1,
@@ -2061,23 +2645,35 @@ export class ProjectDirectoryStore {
       }
       throw caught;
     }
+    let durabilityWarning = metadataWrite.durability_warning;
     if (options.persist_canonical !== false) {
-      await this.writeProjectUnlocked(data, options);
+      const projectWrite = await this.writeProjectUnlocked(data, options);
+      durabilityWarning = [durabilityWarning, projectWrite.durability_warning]
+        .filter(Boolean).join(" ") || null;
     }
-    return snapshot;
+    return { snapshot, durability_warning: durabilityWarning };
   }
 
   async restoreSnapshot(
     data: ProjectData,
     snapshotId: string,
+    binding?: ProjectSaveBinding,
   ): Promise<{
     project: ProjectData;
     backup: Snapshot;
     fingerprint: FileFingerprint;
+    durability_warning: string | null;
   }> {
-    return await this.withWritableLease(() =>
-      this.restoreSnapshotUnlocked(data, snapshotId)
-    );
+    return await this.withWritableLease(async () => {
+      if (binding) {
+        await this.assertMutationBaseline(
+          binding,
+          data.project.id,
+          "snapshot_restore_preflight",
+        );
+      }
+      return await this.restoreSnapshotUnlocked(data, snapshotId);
+    });
   }
 
   private async restoreSnapshotUnlocked(
@@ -2087,6 +2683,7 @@ export class ProjectDirectoryStore {
     project: ProjectData;
     backup: Snapshot;
     fingerprint: FileFingerprint;
+    durability_warning: string | null;
   }> {
     if (!/^[A-Za-z0-9_-]+$/.test(snapshotId)) {
       throw error(
@@ -2161,18 +2758,27 @@ export class ProjectDirectoryStore {
         { recoverable: false, recommended_action: null, details: {} },
       );
     }
-    const backup = await this.createSnapshotUnlocked(
+    const backupWrite = await this.createSnapshotUnlocked(
       data,
       "恢复前备份",
       "恢复旧版本前自动保存当前项目",
       { persist_canonical: false },
     );
+    const backup = backupWrite.snapshot;
     restored.snapshots = [
       backup,
       ...restored.snapshots.filter((snapshot) => snapshot.id !== backup.id),
     ];
-    const fingerprint = await this.writeProjectUnlocked(restored);
-    return { project: restored, backup, fingerprint };
+    const committed = await this.writeProjectUnlocked(restored);
+    return {
+      project: restored,
+      backup,
+      fingerprint: committed.fingerprint,
+      durability_warning: [
+        backupWrite.durability_warning,
+        committed.durability_warning,
+      ].filter(Boolean).join(" ") || null,
+    };
   }
 
   async importAssetFile(
@@ -2182,9 +2788,34 @@ export class ProjectDirectoryStore {
       filename?: string;
     },
     choice: "existing" | "copy" | "cancel" = "existing",
+    binding?: ProjectSaveBinding,
   ): Promise<AddAssetResult> {
     return await this.withWritableLease(async () => {
+    if (binding) {
+      await this.assertMutationBaseline(
+        binding,
+        data.project.id,
+        "asset_import_preflight",
+      );
+    }
+    const sourceInfo = await Deno.lstat(sourcePath);
+    if (sourceInfo.isSymlink || !sourceInfo.isFile) {
+      throw error(
+        "asset_source_unsafe",
+        "素材源必须是普通文件。",
+        `Asset import source is not a regular file: ${sourcePath}`,
+        { recoverable: false, recommended_action: null, details: { stage: "source_validate", commit_state: "not_committed", retryable: false } },
+      );
+    }
     const checksum = await checksumFile(sourcePath);
+    if (!sameFileIdentity(sourceInfo, await Deno.lstat(sourcePath))) {
+      throw error(
+        "asset_source_changed",
+        "素材在检查期间发生了变化，未完成导入。",
+        "Asset source identity changed during duplicate preflight",
+        { recoverable: false, recommended_action: null, details: { stage: "source_preflight", commit_state: "not_committed", retryable: false } },
+      );
+    }
     const existing = data.assets.find((asset) =>
       asset.project_id === data.project.id && asset.checksum === checksum &&
       !asset.archived
@@ -2205,16 +2836,23 @@ export class ProjectDirectoryStore {
     const destination = this.path(relativePath);
     await Deno.mkdir(dirname(destination), { recursive: true });
     await this.assertWritableLease();
-    await Deno.copyFile(sourcePath, destination);
     try {
-      await this.assertWritableLease();
-      const destinationStat = await Deno.stat(destination);
+      const copied = await copyAssetAndHash(sourcePath, destination);
+      if (copied.checksum !== checksum) {
+        await Deno.remove(destination).catch(() => {});
+        throw error(
+          "asset_source_changed",
+          "素材在复制期间发生了变化，未完成导入。",
+          "Hash of bytes copied to the managed destination differs from source preflight",
+          { recoverable: false, recommended_action: null, details: { stage: "asset_destination_verify", commit_state: "not_committed", retryable: false } },
+        );
+      }
       return addAsset(data, data.project.id, {
         ...input,
         filename,
-        checksum,
+        checksum: copied.checksum,
         storage_path: relativePath,
-        file_size: input.file_size ?? destinationStat.size,
+        file_size: copied.size,
       }, Boolean(existing));
     } catch (caught) {
       try {
@@ -2224,6 +2862,31 @@ export class ProjectDirectoryStore {
       }
       throw caught;
     }
+    });
+  }
+
+  async discardUncommittedAssetFile(assetId: string, storagePath: string): Promise<void> {
+    if (!/^[A-Za-z0-9_-]+$/.test(assetId) ||
+      !storagePath.startsWith(`assets/${assetId}-`)) {
+      throw new Error("Only a transaction-owned imported asset can be removed");
+    }
+    await this.withWritableLease(async () => {
+      if (this.baselineProject?.assets.some((asset) => asset.id === assetId)) return;
+      const target = this.path(storagePath);
+      try {
+        const stat = await Deno.lstat(target);
+        if (stat.isSymlink || !stat.isFile) {
+          throw error(
+            "asset_cleanup_unsafe",
+            "导入失败，临时素材路径不是普通文件，已保留以避免删除其他数据。",
+            `Refusing to remove unsafe uncommitted asset: ${storagePath}`,
+            { recoverable: false, recommended_action: null, details: { stage: "asset_cleanup", commit_state: "not_committed", retryable: false } },
+          );
+        }
+        await Deno.remove(target);
+      } catch (caught) {
+        if (!isNotFound(caught)) throw caught;
+      }
     });
   }
 
@@ -2254,12 +2917,37 @@ export class ProjectDirectoryStore {
     data: ProjectData,
     assetId: string,
     requestedName: string,
+    binding?: ProjectSaveBinding,
   ): Promise<
-    { status: "renamed" | "noop"; plan: AssetRenamePlan; rewritten: number; project: ProjectData }
+    {
+      status: "renamed" | "noop";
+      plan: AssetRenamePlan;
+      rewritten: number;
+      project: ProjectData;
+      fingerprint?: FileFingerprint;
+      durability_warning?: string | null;
+      outcome?: "written" | "unchanged";
+    }
   > {
     const plan = planAssetRename(data, assetId, requestedName);
     if (isAssetRenameNoop(plan)) {
-      return { status: "noop", plan, rewritten: 0, project: data };
+      if (!binding) return { status: "noop", plan, rewritten: 0, project: data };
+      return await this.withWritableLease(async () => {
+        const fingerprint = await this.assertMutationBaseline(
+          binding,
+          data.project.id,
+          "asset_rename_preflight",
+        );
+        return {
+          status: "noop" as const,
+          plan,
+          rewritten: 0,
+          project: data,
+          fingerprint,
+          durability_warning: null,
+          outcome: "unchanged" as const,
+        };
+      });
     }
 
     // Canonical-level collision: another live asset already owns the target path.
@@ -2285,6 +2973,13 @@ export class ProjectDirectoryStore {
     }
 
     return await this.withWritableLease(async () => {
+      if (binding) {
+        await this.assertMutationBaseline(
+          binding,
+          data.project.id,
+          "asset_rename_preflight",
+        );
+      }
       const oldAbsolute = this.path(plan.old_storage_path);
       const newAbsolute = this.path(plan.new_storage_path);
 
@@ -2362,9 +3057,54 @@ export class ProjectDirectoryStore {
       const next = clone(data);
       try {
         const rewritten = applyAssetRename(next, plan);
-        await this.writeProjectUnlocked(next);
-        return { status: "renamed", plan, rewritten, project: next };
+        const committed = await this.writeProjectUnlocked(next);
+        return {
+          status: "renamed",
+          plan,
+          rewritten,
+          project: next,
+          fingerprint: committed.fingerprint,
+          durability_warning: committed.durability_warning,
+          outcome: "written" as const,
+        };
       } catch (saveError) {
+        const commitState = saveError instanceof ServiceError
+          ? saveError.error.details.commit_state
+          : undefined;
+        if (commitState === "committed" || commitState === "outcome_uncertain") {
+          const expectedBytes = new TextEncoder().encode(serializeProject(next));
+          const expectedCommittedHash = await sha256Bytes(expectedBytes);
+          throw error(
+            "rename_outcome_uncertain",
+            commitState === "committed"
+              ? `素材重命名已提交，但后续确认失败。文件保留在「${plan.new_filename}」；请重新载入项目后继续。`
+              : `素材重命名结果尚未核实。文件保留在「${plan.new_filename}」；请重新载入项目后继续，暂勿重试。`,
+            `Canonical rename ended with ${commitState}; managed asset stays at ${plan.new_storage_path}`,
+            {
+              recoverable: false,
+              recommended_action: "重新载入项目并核对素材；确认状态前不要重试重命名。",
+              details: {
+                stage: "asset_rename_commit",
+                commit_state: commitState,
+                retryable: false,
+                project_id: binding?.expected_project_id ?? data.project.id,
+                project_dir: this.directory,
+                lease_generation: binding?.lease_generation ?? null,
+                editor_generation: binding?.editor_generation ?? null,
+                operation_id: binding?.operation_id ?? null,
+                revision: binding?.revision ?? null,
+                expected_fingerprint: binding
+                  ? structuredClone(binding.expected_fingerprint)
+                  : null,
+                expected_committed_hash: expectedCommittedHash,
+                expected_committed_size: expectedBytes.byteLength,
+                asset_id: assetId,
+                original_path: plan.old_storage_path,
+                target_path: plan.new_storage_path,
+              },
+            },
+          );
+        }
         // Roll the physical file back to its original name.
         try {
           await Deno.rename(newAbsolute, oldAbsolute);

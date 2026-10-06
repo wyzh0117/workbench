@@ -1,0 +1,4 @@
+Check src/service/import_export.ts
+Check src/service/folder_adoption.ts
+Check tests/import_export_test.ts
+Check tests/t04_adoption_test.ts

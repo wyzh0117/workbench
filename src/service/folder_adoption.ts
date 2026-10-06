@@ -39,7 +39,11 @@ import {
   documentImportReportFromFiles,
   isDocumentImportCandidate,
 } from "./folder_mapping.ts";
-import { ProjectDirectoryStore, inspectProjectDirectory } from "./storage.ts";
+import {
+  ProjectDirectoryStore,
+  inspectProjectDirectory,
+  type ProjectWriteResult,
+} from "./storage.ts";
 import { parseMarkdown } from "../../app/markdown.js";
 
 const ADOPTION_IO_CHUNK_BYTES = 1024 * 1024;
@@ -61,6 +65,17 @@ const adoptionStreamMetrics = {
   rename_promotions: 0,
   copy_fallback_promotions: 0,
 };
+let adoptionStreamDiagnosticsEnabled = false;
+
+export function setFolderAdoptionStreamDiagnosticsEnabled(enabled: boolean): void {
+  adoptionStreamDiagnosticsEnabled = enabled;
+  if (!enabled) return;
+  for (const key of Object.keys(adoptionStreamMetrics) as Array<
+    keyof typeof adoptionStreamMetrics
+  >) {
+    adoptionStreamMetrics[key] = 0;
+  }
+}
 
 export function getFolderAdoptionStreamMetrics(): typeof adoptionStreamMetrics {
   return { ...adoptionStreamMetrics };
@@ -85,6 +100,8 @@ export interface FolderAdoptionOptions {
    * aside, never deleted, and only after the import is otherwise ready to commit.
    */
   replace_invalid_project?: boolean;
+  /** Captures the exact persisted write receipt for the command acknowledgement. */
+  on_project_write?: (result: ProjectWriteResult) => void;
 }
 
 export interface FolderAdoptionResult {
@@ -467,9 +484,11 @@ async function writeAll(
     const written = await file.write(bytes.subarray(offset));
     if (!written) throw new Error("导入文件写入没有前进");
     offset += written;
-    adoptionStreamMetrics.bytes_written += written;
-    if (fallbackCopy) {
-      adoptionStreamMetrics.fallback_copy_bytes_written += written;
+    if (adoptionStreamDiagnosticsEnabled) {
+      adoptionStreamMetrics.bytes_written += written;
+      if (fallbackCopy) {
+        adoptionStreamMetrics.fallback_copy_bytes_written += written;
+      }
     }
   }
 }
@@ -505,15 +524,17 @@ async function streamCopyAndHash(
       await writeAll(output, chunk, fallbackCopy);
       hash.update(chunk);
       size += read;
-      adoptionStreamMetrics.bytes_read += read;
-      if (fallbackCopy) {
-        adoptionStreamMetrics.fallback_copy_bytes_read += read;
+      if (adoptionStreamDiagnosticsEnabled) {
+        adoptionStreamMetrics.bytes_read += read;
+        if (fallbackCopy) {
+          adoptionStreamMetrics.fallback_copy_bytes_read += read;
+        }
+        adoptionStreamMetrics.chunks += 1;
+        adoptionStreamMetrics.peak_buffered_bytes = Math.max(
+          adoptionStreamMetrics.peak_buffered_bytes,
+          buffer.byteLength,
+        );
       }
-      adoptionStreamMetrics.chunks += 1;
-      adoptionStreamMetrics.peak_buffered_bytes = Math.max(
-        adoptionStreamMetrics.peak_buffered_bytes,
-        buffer.byteLength,
-      );
     }
     const outputStat = await output.stat();
     if (!outputStat.isFile || outputStat.size !== size) {
@@ -571,7 +592,9 @@ async function promoteStaging(
         if (targetStat.isSymlink || !targetStat.isFile || targetStat.size !== pair.size) {
           throw new Error(`接管素材目标校验失败：${pair.final}`);
         }
+      if (adoptionStreamDiagnosticsEnabled) {
         adoptionStreamMetrics.rename_promotions += 1;
+      }
       } catch (caught) {
         const code = caught && typeof caught === "object" && "code" in caught
           ? String((caught as { code?: unknown }).code)
@@ -584,7 +607,9 @@ async function promoteStaging(
         if (written.size !== pair.size || written.checksum !== pair.checksum) {
           throw new Error(`接管素材目标校验失败：${pair.final}`);
         }
+      if (adoptionStreamDiagnosticsEnabled) {
         adoptionStreamMetrics.copy_fallback_promotions += 1;
+      }
         await Deno.remove(from);
       }
     }
@@ -1298,7 +1323,8 @@ export async function confirmFolderAdoption(
       await store.open();
       const promoted = await promoteStaging(root, staged);
       try {
-        await store.writeProject(data);
+        const writeResult = await store.writeProject(data);
+        options.on_project_write?.(writeResult);
       } catch (persistError) {
         await removePromoted(root, promoted);
         throw persistError;

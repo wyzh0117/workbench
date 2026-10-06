@@ -102,8 +102,41 @@ async function bridgeSession(request: Request): Promise<Response> {
   }
   try {
     const body = await requestBody(request);
-    await desktop.saveBrowserSession(body.session);
-    return json({ value: null });
+    const hasOrdering = ["session_generation", "revision", "operation_id"]
+      .some((key) => key in body);
+    if (hasOrdering && (
+      typeof body.session_generation !== "number" ||
+      typeof body.revision !== "number" ||
+      typeof body.operation_id !== "string"
+    )) {
+      throw new Error("Session ordering metadata must be complete");
+    }
+    const result = await desktop.saveBrowserSession(
+      body.session,
+      hasOrdering
+        ? {
+          session_generation: body.session_generation as number,
+          revision: body.revision as number,
+          operation_id: body.operation_id as string,
+        }
+        : undefined,
+    );
+    return json({ value: result ?? null });
+  } catch (caught) {
+    return json({ error: asErrorObject(caught, "browser_session_unavailable") }, 400);
+  }
+}
+
+async function bridgeSessionOpen(request: Request): Promise<Response> {
+  if (request.method !== "POST") {
+    return new Response("Method not allowed", { status: 405 });
+  }
+  try {
+    const body = await requestBody(request);
+    if (typeof body.project_id !== "string") {
+      throw new Error("POST /api/session/open requires project_id");
+    }
+    return json({ value: await desktop.openBrowserSession(body.project_id) });
   } catch (caught) {
     return json({ error: asErrorObject(caught, "browser_session_unavailable") }, 400);
   }
@@ -137,7 +170,11 @@ async function bridgeCommand(request: Request): Promise<Response> {
       }
     } catch { /* the scan already returned its user-facing path error */ }
   }
-  return json({ value: execution.value, execution_id: execution.id });
+  return json({
+    value: execution.value,
+    execution_id: execution.id,
+    ...(execution.mutation_ack ? { mutation_ack: execution.mutation_ack } : {}),
+  });
 }
 
 async function bridgeQuery(request: Request): Promise<Response> {
@@ -419,6 +456,9 @@ const server = Deno.serve(
       }
       if (url.pathname === "/api/session" && ["GET", "POST"].includes(request.method)) {
         return await bridgeSession(request);
+      }
+      if (url.pathname === "/api/session/open" && request.method === "POST") {
+        return await bridgeSessionOpen(request);
       }
       if (url.pathname === "/api/command" && request.method === "POST") {
         return await bridgeCommand(request);

@@ -1,0 +1,34 @@
+running 2 tests from ./tests/snapshot_persistence_test.ts
+snapshot.list is read-only when the snapshot directory is absent ... FAILED (54ms)
+snapshot.list keeps a persisted orphan visible after canonical index commit fails ... FAILED (35ms)
+
+ ERRORS 
+
+snapshot.list is read-only when the snapshot directory is absent => ./tests/snapshot_persistence_test.ts:147:6
+error: Error: snapshot.list should be available in read-only mode: command_not_allowed
+  if (!condition) throw new Error(message);
+                        ^
+    at assert (file:///private/tmp/workbench-deno-t2.eqIdwz/tests/snapshot_persistence_test.ts:10:25)
+    at file:///private/tmp/workbench-deno-t2.eqIdwz/tests/snapshot_persistence_test.ts:164:5
+
+snapshot.list keeps a persisted orphan visible after canonical index commit fails => ./tests/snapshot_persistence_test.ts:178:6
+error: Error: a sidecar snapshot should remain listable when Canonical indexing fails
+  if (!condition) throw new Error(message);
+                        ^
+    at assert (file:///private/tmp/workbench-deno-t2.eqIdwz/tests/snapshot_persistence_test.ts:10:25)
+    at file:///private/tmp/workbench-deno-t2.eqIdwz/tests/snapshot_persistence_test.ts:217:5
+
+ FAILURES 
+
+snapshot.list is read-only when the snapshot directory is absent => ./tests/snapshot_persistence_test.ts:147:6
+snapshot.list keeps a persisted orphan visible after canonical index commit fails => ./tests/snapshot_persistence_test.ts:178:6
+
+FAILED | 0 passed | 2 failed | 3 filtered out (93ms)
+
+error: Test failed
+
+BASELINE_EXPECTED_RED_EXIT=1
+BASELINE_DIR=/tmp/workbench-deno-t2.eqIdwz
+
+CLASSIFICATION=NEW_PROTOCOL_TDD_NOT_LEGACY_BEHAVIOR_RED
+NOTE=snapshot.list command was absent at dfcb23e; the executable legacy behavior is recorded separately in deno-t2-legacy-baseline-red.log.

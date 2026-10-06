@@ -5,6 +5,7 @@ import {
   isAbsolute,
   join,
   normalize,
+  relative,
 } from "node:path";
 import { createHash } from "node:crypto";
 import { addAsset } from "../domain/assets.ts";
@@ -261,6 +262,18 @@ const exportStreamMetrics = {
   peak_export_buffered_bytes: 0,
   commit_rollbacks: 0,
 };
+let exportStreamDiagnosticsEnabled = false;
+
+export function setExportStreamDiagnosticsEnabled(enabled: boolean): void {
+  exportStreamDiagnosticsEnabled = enabled;
+  if (!enabled) return;
+  for (const key of Object.keys(exportStreamMetrics) as Array<
+    keyof typeof exportStreamMetrics
+  >) {
+    exportStreamMetrics[key] = 0;
+  }
+}
+
 const MAX_ACTIVE_ASSET_STREAMS = 2;
 let activeAssetStreams = 0;
 const assetStreamWaiters: Array<{ grant(): boolean; cancel(): void }> = [];
@@ -316,58 +329,63 @@ export async function acquireExportStreamBuffer(
   kind: "asset" | "download" = "asset",
 ): Promise<() => void> {
   const releaseSlot = await acquireAssetStream(signal);
-  exportStreamMetrics.export_active_streams += 1;
-  exportStreamMetrics.peak_export_active_streams = Math.max(
-    exportStreamMetrics.peak_export_active_streams,
-    exportStreamMetrics.export_active_streams,
-  );
-  if (kind === "asset") {
-    exportStreamMetrics.asset_active_streams += 1;
-    exportStreamMetrics.peak_asset_active_streams = Math.max(
-      exportStreamMetrics.peak_asset_active_streams,
-      exportStreamMetrics.asset_active_streams,
+  const measure = exportStreamDiagnosticsEnabled;
+  if (measure) {
+    exportStreamMetrics.export_active_streams += 1;
+    exportStreamMetrics.peak_export_active_streams = Math.max(
+      exportStreamMetrics.peak_export_active_streams,
+      exportStreamMetrics.export_active_streams,
     );
-    exportStreamMetrics.asset_buffered_bytes += bytes;
-    exportStreamMetrics.peak_asset_buffered_bytes = Math.max(
-      exportStreamMetrics.peak_asset_buffered_bytes,
-      exportStreamMetrics.asset_buffered_bytes,
-    );
-  } else {
-    exportStreamMetrics.download_active_streams += 1;
-    exportStreamMetrics.peak_download_active_streams = Math.max(
-      exportStreamMetrics.peak_download_active_streams,
-      exportStreamMetrics.download_active_streams,
-    );
-    exportStreamMetrics.download_buffered_bytes += bytes;
-    exportStreamMetrics.peak_download_buffered_bytes = Math.max(
-      exportStreamMetrics.peak_download_buffered_bytes,
-      exportStreamMetrics.download_buffered_bytes,
+    if (kind === "asset") {
+      exportStreamMetrics.asset_active_streams += 1;
+      exportStreamMetrics.peak_asset_active_streams = Math.max(
+        exportStreamMetrics.peak_asset_active_streams,
+        exportStreamMetrics.asset_active_streams,
+      );
+      exportStreamMetrics.asset_buffered_bytes += bytes;
+      exportStreamMetrics.peak_asset_buffered_bytes = Math.max(
+        exportStreamMetrics.peak_asset_buffered_bytes,
+        exportStreamMetrics.asset_buffered_bytes,
+      );
+    } else {
+      exportStreamMetrics.download_active_streams += 1;
+      exportStreamMetrics.peak_download_active_streams = Math.max(
+        exportStreamMetrics.peak_download_active_streams,
+        exportStreamMetrics.download_active_streams,
+      );
+      exportStreamMetrics.download_buffered_bytes += bytes;
+      exportStreamMetrics.peak_download_buffered_bytes = Math.max(
+        exportStreamMetrics.peak_download_buffered_bytes,
+        exportStreamMetrics.download_buffered_bytes,
+      );
+    }
+    exportStreamMetrics.export_buffered_bytes += bytes;
+    exportStreamMetrics.peak_export_buffered_bytes = Math.max(
+      exportStreamMetrics.peak_export_buffered_bytes,
+      exportStreamMetrics.export_buffered_bytes,
     );
   }
-  exportStreamMetrics.export_buffered_bytes += bytes;
-  exportStreamMetrics.peak_export_buffered_bytes = Math.max(
-    exportStreamMetrics.peak_export_buffered_bytes,
-    exportStreamMetrics.export_buffered_bytes,
-  );
   let released = false;
   return () => {
     if (released) return;
     released = true;
-    exportStreamMetrics.export_active_streams -= 1;
-    if (kind === "asset") {
-      exportStreamMetrics.asset_active_streams -= 1;
-      exportStreamMetrics.asset_buffered_bytes -= bytes;
-    } else {
-      exportStreamMetrics.download_active_streams -= 1;
-      exportStreamMetrics.download_buffered_bytes -= bytes;
+    if (measure) {
+      exportStreamMetrics.export_active_streams -= 1;
+      if (kind === "asset") {
+        exportStreamMetrics.asset_active_streams -= 1;
+        exportStreamMetrics.asset_buffered_bytes -= bytes;
+      } else {
+        exportStreamMetrics.download_active_streams -= 1;
+        exportStreamMetrics.download_buffered_bytes -= bytes;
+      }
+      exportStreamMetrics.export_buffered_bytes -= bytes;
     }
-    exportStreamMetrics.export_buffered_bytes -= bytes;
     releaseSlot();
   };
 }
 
 export function recordExportDownloadRead(bytes: number): void {
-  exportStreamMetrics.download_bytes_read += bytes;
+  if (exportStreamDiagnosticsEnabled) exportStreamMetrics.download_bytes_read += bytes;
 }
 
 export function getExportStreamMetrics(): typeof exportStreamMetrics {
@@ -1265,6 +1283,7 @@ interface ImportAssetTransaction {
   staging_root: string | null;
   prepared: Map<string, PreparedImportAsset>;
   staged: StagedImportAsset[];
+  preserve_recovery_files: boolean;
 }
 
 function assetNeedsImport(
@@ -1390,6 +1409,7 @@ async function prepareImportAssets(
     staging_root: null,
     prepared: new Map(),
     staged: [],
+    preserve_recovery_files: false,
   };
   if (options.project_root) {
     const root = normalize(options.project_root);
@@ -1476,7 +1496,7 @@ async function prepareImportAssets(
 async function removeImportStaging(
   transaction: ImportAssetTransaction,
 ): Promise<void> {
-  if (!transaction.staging_root) return;
+  if (!transaction.staging_root || transaction.preserve_recovery_files) return;
   try {
     await Deno.remove(transaction.staging_root, { recursive: true });
   } catch (caught) {
@@ -1490,6 +1510,31 @@ async function commitImportAssets(
 ): Promise<string[]> {
   if (!transaction.root) return [];
   const root = normalize(transaction.root);
+  const recoveryFailure = (
+    stage: string,
+    rollbackFailureCount: number,
+  ) => {
+    transaction.preserve_recovery_files = true;
+    const recoveryPath = relative(root, transaction.staging_root!)
+      .replaceAll("\\", "/");
+    return structuredError(
+      "import_rollback_incomplete",
+      "导入素材没有完全恢复，备份已保留。请先检查恢复目录，不要直接重试导入。",
+      `Import rollback was incomplete; recovery files remain at ${recoveryPath}`,
+      {
+        recoverable: false,
+        recommended_action: `保留并检查项目内恢复目录 ${recoveryPath}，确认备份状态后再继续。`,
+        details: {
+          stage,
+          commit_state: "outcome_uncertain",
+          retryable: false,
+          backup_preserved: true,
+          recovery_path: recoveryPath,
+          rollback_failure_count: rollbackFailureCount,
+        },
+      },
+    );
+  };
   const promoted: Array<{
     target: string;
     checksum: string;
@@ -1517,7 +1562,13 @@ async function commitImportAssets(
       try {
         await Deno.rename(asset.staged_path, target);
       } catch (caught) {
-        if (backup) await Deno.rename(backup, target);
+        if (backup) {
+          try {
+            await Deno.rename(backup, target);
+          } catch {
+            throw recoveryFailure("restore_current_backup", 1);
+          }
+        }
         throw caught;
       }
       promoted.push({ target, checksum: asset.checksum, backup });
@@ -1546,12 +1597,7 @@ async function commitImportAssets(
       }
     }
     if (rollbackErrors.length) {
-      throw new Error(
-        `导入提交失败，且回滚未完全完成；恢复文件保留在 ${transaction.staging_root}: ${
-          rollbackErrors.join("；")
-        }`,
-        { cause: caught },
-      );
+      throw recoveryFailure("rollback_promoted_assets", rollbackErrors.length);
     }
     await removeImportStaging(transaction);
     throw caught;
@@ -2664,8 +2710,10 @@ async function streamExportFile(
       const written = await destination.write(chunk.subarray(offset));
       if (!written) throw new Error("导出文件写入没有前进");
       offset += written;
-      if (file.asset_id) exportStreamMetrics.asset_bytes_written += written;
-      else exportStreamMetrics.generated_bytes_written += written;
+      if (exportStreamDiagnosticsEnabled) {
+        if (file.asset_id) exportStreamMetrics.asset_bytes_written += written;
+        else exportStreamMetrics.generated_bytes_written += written;
+      }
     }
   };
   try {
@@ -2701,7 +2749,9 @@ async function streamExportFile(
           hash.update(chunk);
           await writeChunk(chunk);
           size += count;
-          exportStreamMetrics.asset_bytes_read += count;
+          if (exportStreamDiagnosticsEnabled) {
+            exportStreamMetrics.asset_bytes_read += count;
+          }
         }
         const after = await input.stat();
         let pathAfter: Deno.FileInfo;
@@ -2736,7 +2786,9 @@ async function streamExportFile(
         await writeChunk(chunk);
         size += chunk.byteLength;
         if (file.asset_id) {
-          exportStreamMetrics.asset_bytes_read += chunk.byteLength;
+          if (exportStreamDiagnosticsEnabled) {
+            exportStreamMetrics.asset_bytes_read += chunk.byteLength;
+          }
         }
       }
     } else {
@@ -2935,7 +2987,9 @@ async function writeOutput(
     commitFinished = true;
   } finally {
     if (commitStarted && !commitFinished) {
-      exportStreamMetrics.commit_rollbacks += 1;
+        if (exportStreamDiagnosticsEnabled) {
+          exportStreamMetrics.commit_rollbacks += 1;
+        }
       const rollbackErrors: string[] = [];
       for (const target of installed.reverse()) {
         try {

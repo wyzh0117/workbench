@@ -35,10 +35,13 @@ import { scanFolder } from "../src/service/folder_scan.ts";
 import {
   confirmFolderAdoption,
   getFolderAdoptionStreamMetrics,
+  setFolderAdoptionStreamDiagnosticsEnabled,
   type FolderAdoptionResult,
 } from "../src/service/folder_adoption.ts";
 import { addLayoutPage, createPagedLayout } from "../app/layout_pages.js";
 import { buildPublicationProjection } from "../app/publication.js";
+
+setFolderAdoptionStreamDiagnosticsEnabled(true);
 
 function assert(condition: unknown, message: string): asserts condition {
   if (!condition) throw new Error(message);
@@ -706,8 +709,11 @@ async function bootStore(projectRoot = "") {
     `../app/main.js?t04-adoption-${importCounter}`
   );
   const bridge = {
-    projectDir: null as string | null,
+    projectDir: projectRoot || null as string | null,
     projectDirFromUrl: false,
+    lastOpenedProjectState: projectRoot
+      ? { project_dir: projectRoot, project_id: state.project.project.id, lease_generation: `lease:${projectRoot}` }
+      : null,
     isNative: () => false,
     currentProject: () => state.project,
     loadSession: async () => null,
@@ -715,9 +721,23 @@ async function bootStore(projectRoot = "") {
     readProjectState: async () => ({
       project: structuredClone(state.project),
       project_id: state.project.project.id,
-      lease_generation: null,
+      project_dir: bridge.projectDir || projectRoot || null,
+      lease_generation: bridge.lastOpenedProjectState?.lease_generation ?? null,
       fingerprint: currentFingerprint(),
     }),
+    openProjectState: async () => {
+      const projectDir = bridge.projectDir || projectRoot;
+      if (!projectDir) return { project: null, project_id: null, project_dir: null, lease_generation: null, fingerprint: currentFingerprint() };
+      const opened = {
+        project: structuredClone(state.project),
+        project_id: state.project.project.id,
+        project_dir: projectDir,
+        lease_generation: `lease:${projectDir}`,
+        fingerprint: currentFingerprint(),
+      };
+      bridge.lastOpenedProjectState = opened;
+      return opened;
+    },
     readRecoveryJournal: async () => null,
     listenNativeDrops: async () => () => {},
     writeRecoveryJournal: async () => {},
@@ -797,6 +817,28 @@ async function bootStore(projectRoot = "") {
       if (name === "ai.connection.list") return { providers: [] };
       if (name === "ai.execution.list") return { records: [] };
       throw new Error(`unexpected command ${name}`);
+    },
+    commandWithMutationAck: async (name: string, input: Record<string, unknown> = {}) => {
+      const value = await bridge.command(name, input);
+      const project = structuredClone((value as { data?: ProjectData })?.data ?? state.project);
+      const projectDir = name === "folder.adopt"
+        ? String((value as { root?: string })?.root || input.plan && (input.plan as ImportMappingPlan).root || "")
+        : projectRoot || String((value as { root?: string })?.root || "");
+      const mutation_ack = {
+        project,
+        fingerprint: currentFingerprint(),
+        project_id: project.project.id,
+        project_dir: projectDir,
+        lease_generation: name === "folder.adopt" ? null : input.lease_generation ?? null,
+        editor_generation: input.editor_generation,
+        operation_id: input.operation_id,
+        revision: input.revision,
+        commit_state: "committed",
+        outcome: "written",
+        recovery_warning: null,
+        durability_warning: null,
+      };
+      return { value, mutation_ack };
     },
   };
   const store = new (WorkbenchStore as new (bridge: unknown) => {
