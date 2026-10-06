@@ -221,6 +221,13 @@ async function readAssetPreviewBatch(store: ProjectDirectoryStore, input: unknow
       items.push(itemError("asset_missing", "找不到可预览的素材。"));
       continue;
     }
+    if (
+      (asset.type === "image" || asset.type === "gif") &&
+      !asset.mime_type?.trim().toLowerCase().startsWith("image/")
+    ) {
+      items.push(itemError("asset_mime_mismatch", "素材类型与声明的 MIME 不匹配。"));
+      continue;
+    }
     if (!safeAssetStoragePath(asset.storage_path)) {
       items.push(itemError("asset_path_invalid", "素材路径无效。"));
       continue;

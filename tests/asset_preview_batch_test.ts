@@ -22,7 +22,7 @@ function asset(project: ProjectData, id: string, path: string, bytes: Uint8Array
     type: "image",
     filename: `${id}.bin`,
     storage_path: path,
-    mime_type: "application/octet-stream",
+    mime_type: "image/png",
     width: null,
     height: null,
     duration_ms: null,
@@ -161,6 +161,26 @@ Deno.test("asset.preview_batch binds Canonical once, enforces raw budget and iso
       asset_ids: ["asset-first"],
     });
     assert(stale.error?.code === "asset_preview_stale");
+
+    const wrongMimeBytes = new Uint8Array([1, 2, 3]);
+    await Deno.writeFile(join(assetsDirectory, "wrong-mime.bin"), wrongMimeBytes);
+    asset(project, "asset-wrong-mime", "assets/wrong-mime.bin", wrongMimeBytes);
+    project.assets.at(-1)!.mime_type = "text/plain";
+    await desktop.store.writeProject(project);
+    const wrongMimeState = await desktop.store.readProjectSnapshot();
+    const mixed = await desktop.commands.execute("asset.preview_batch", {
+      project_dir: directory,
+      project_id: project.project.id,
+      fingerprint: wrongMimeState.fingerprint,
+      request_generation: 13,
+      asset_ids: ["asset-wrong-mime", "asset-empty"],
+    });
+    assert(!mixed.error, "a MIME mismatch should remain isolated to its row");
+    const mixedItems = new Map((mixed.value as {
+      items: Array<{ asset_id: string; status: string; error?: { code: string } }>;
+    }).items.map((item) => [item.asset_id, item]));
+    assert(mixedItems.get("asset-wrong-mime")?.error?.code === "asset_mime_mismatch");
+    assert(mixedItems.get("asset-empty")?.status === "ok", "valid rows should remain readable beside a MIME mismatch");
   } finally {
     setAssetPreviewBatchDiagnosticsEnabled(false);
     await desktop.close();
