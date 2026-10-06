@@ -1600,6 +1600,80 @@ Deno.test("modal keyboard trap wraps Tab, skips hidden controls and Escape resto
   }
 });
 
+Deno.test("a failed merge preview exposes explicit keep-local without writing or crossing projects", async () => {
+  const { store, lastHtml, restore } = await bootDom();
+  try {
+    const data = projectWith("外部冲突");
+    const conflict = {
+      current: { exists: true, mtime_ms: 1, size: 10, hash: "a".repeat(64) },
+      external_diff: { entries: [{ path: "project.title" }] },
+      local_diff: { entries: [{ path: "project.title" }] },
+    };
+    let canonicalWrites = 0;
+    store.data = data;
+    store.ui.screen = "project";
+    store.externalConflict = conflict;
+    store.bridge.mergeExternalProject = async () => ({
+      can_apply: false,
+      conflicts: [{ path: "project.title", base: "基础", local: "本地", external: "磁盘" }],
+    });
+    store.bridge.commandWithMutationAck = async () => {
+      canonicalWrites += 1;
+      return { value: null, mutation_ack: null };
+    };
+    store.notify();
+    const beforePreview = JSON.stringify(store.data);
+
+    await store.resolveExternalConflict("merge");
+
+    assert(store.externalConflict === conflict, "the failed preview must remain attached to its originating conflict");
+    assert(store.externalConflict.merge?.conflicts.length === 1, "the preview conflict count must be retained");
+    assert(lastHtml().includes("合并冲突 <b>1</b>"), "the rendered dialog must show the actual merge conflict count");
+    assert(lastHtml().includes('data-action="external-keep-local"'), "the dialog must expose the promised explicit keep-local action");
+    assert(canonicalWrites === 0, "previewing a failed merge must not write Canonical before explicit confirmation");
+    assert(JSON.stringify(store.data) === beforePreview, "the failed preview must preserve the local draft");
+
+    const unresolvedConflict: any = {
+      current: conflict.current,
+      external_diff: conflict.external_diff,
+      local_diff: conflict.local_diff,
+    };
+    store.externalConflict = unresolvedConflict;
+    store.bridge.mergeExternalProject = async () => ({ can_apply: false, conflicts: [] });
+    store.notify();
+    await store.resolveExternalConflict("merge");
+    assert(unresolvedConflict.merge?.can_apply === false, "a non-applicable preview must be retained even when it has no path-level conflict rows");
+    assert(lastHtml().includes("合并冲突 <b>0</b>"), "the dialog must keep the backend's zero-conflict count");
+    assert(lastHtml().includes('data-action="external-keep-local"'), "the failed preview must still expose its explicit keep-local action");
+    assert(canonicalWrites === 0, "a non-applicable preview with no conflict rows must not resolve automatically");
+
+    let finishLateMerge!: (result: unknown) => void;
+    store.bridge.mergeExternalProject = () => new Promise((resolve) => {
+      finishLateMerge = resolve;
+    });
+    const latePreview = store.resolveExternalConflict("merge");
+    const nextData = projectWith("新项目");
+    const nextConflict = {
+      current: { exists: true, mtime_ms: 2, size: 11, hash: "b".repeat(64) },
+      external_diff: { entries: [] },
+      local_diff: { entries: [] },
+    };
+    store.data = nextData;
+    store.externalConflict = nextConflict;
+    store.ui.toast = "新项目冲突仍待处理";
+    store.notify();
+    finishLateMerge({ can_apply: false, conflicts: [{ path: "project.title" }] });
+    await latePreview;
+
+    assert(store.externalConflict === nextConflict, "a late preview must not attach to a different project's conflict");
+    assert(!store.externalConflict.merge, "a late preview must not contaminate the newer conflict details");
+    assert(store.ui.toast === "新项目冲突仍待处理", "a late preview must not overwrite the newer project's status");
+    assert(canonicalWrites === 0, "neither preview may write Canonical without the user's explicit choice");
+  } finally {
+    restore();
+  }
+});
+
 Deno.test("mapping confirmation restores focus after its async document scan is escaped", async () => {
   const { store, document, registered, actionNodes, fireDocument, setActiveDialog, createNode, restore } = await bootDom();
   try {

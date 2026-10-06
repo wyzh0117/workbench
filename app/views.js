@@ -3739,7 +3739,7 @@ export function createViews(store) {
           ).join("") ||
         `<div><span>课程文件</span><small>文件内容或是否存在发生变化</small></div>`
       }</div><div class="modal-actions"><button class="secondary" data-action="external-reload">重新载入磁盘版本</button><button class="secondary" data-action="external-merge">预览并自动合并</button>${
-        mergeConflicts.length
+        mergeConflicts.length || conflict.merge?.can_apply === false
           ? `<button class="primary danger" data-action="external-keep-local">明确保留本地版本</button>`
           : ""
       }</div></div></div>`;

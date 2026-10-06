@@ -4598,12 +4598,17 @@ class WorkbenchStore {
       return;
     }
     if (action === "merge") {
+      const conflict = this.externalConflict;
+      const projectId = this.data?.project?.id;
+      if (!conflict) return;
       try {
         // This is the user's explicit conflict decision. The failed save queue
         // is isolated by project.resolve itself; trying to flush it here would
         // prevent the user from resolving the conflict.
         const result = await this.bridge.mergeExternalProject(this.data);
+        if (this.externalConflict !== conflict || this.data?.project?.id !== projectId) return;
         if (!result || result.can_apply === false) {
+          if (result?.can_apply === false) conflict.merge = result;
           throw new Error(
             result?.reason ||
               "还有无法自动合并的内容，请选择重新载入或明确保留本地版本",
@@ -4617,6 +4622,7 @@ class WorkbenchStore {
         if (!merged) throw new Error("自动合并没有返回可用的项目数据");
         await this.applyExternalResolution(merged, "已按无冲突内容自动合并");
       } catch (error) {
+        if (this.externalConflict !== conflict || this.data?.project?.id !== projectId) return;
         this.ui.toast = userFacingError(error, "自动合并没有完成。当前内容没有改变，请重新载入或保留本地版本。");
         this.notify();
       }
