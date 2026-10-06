@@ -1373,7 +1373,7 @@ Deno.test("release during a successful open closes the unregistered download han
 
 Deno.test("browser export downloads staged bytes over HTTP and release or shutdown closes them", async () => {
   const directory = await Deno.makeTempDir({ prefix: "acw-export-http-project-" });
-  const size = 3 * 1024 * 1024 + 79;
+  const size = 32 * 1024 * 1024 + 79;
   const fixture = await persistedDiskAssetProject(directory, size);
   const stagesBefore = await exportTempArtifacts();
   const listener = Deno.listen({ hostname: "127.0.0.1", port: 0 });
@@ -1386,11 +1386,31 @@ Deno.test("browser export downloads staged bytes over HTTP and release or shutdo
     stdout: "null",
     stderr: "null",
   }).spawn();
-  const post = async (name: string, input: Record<string, unknown>) => {
+  const activeReaders = new Set<ReadableStreamDefaultReader<Uint8Array>>();
+  let childExited = false;
+  const cancelReaderBounded = async (reader: ReadableStreamDefaultReader<Uint8Array>) => {
+    let timeout: ReturnType<typeof setTimeout> | undefined;
+    try {
+      return await Promise.race([
+        reader.cancel().then(() => true, () => true),
+        new Promise<boolean>((resolve) => {
+          timeout = setTimeout(() => resolve(false), 1000);
+        }),
+      ]);
+    } finally {
+      if (timeout !== undefined) clearTimeout(timeout);
+    }
+  };
+  const post = async (
+    name: string,
+    input: Record<string, unknown>,
+    client?: Deno.HttpClient,
+  ) => {
     const response = await fetch(`${base}/api/command`, {
       method: "POST",
       headers: { "content-type": "application/json", origin: base },
       body: JSON.stringify({ name, input }),
+      ...(client ? { client } : {}),
     });
     const payload = await response.json() as { value?: unknown; error?: unknown };
     assert(response.ok, `${name} should succeed: ${JSON.stringify(payload.error)}`);
@@ -1452,32 +1472,70 @@ Deno.test("browser export downloads staged bytes over HTTP and release or shutdo
     assert([...(await exportTempArtifacts())].every((name) => stagesBefore.has(name)), "all staged files should be removed after every file downloads");
 
     await writePatternSource(fixture.asset_path, size);
+    const stagesBeforeSecond = await exportTempArtifacts();
     const secondId = crypto.randomUUID().replaceAll("-", "");
     const second = await post("export.run", { export_id: secondId, preset: fixture.preset });
     const secondFiles = second.files as typeof firstFiles;
     const secondAsset = secondFiles.find((file) => file.asset_id === fixture.asset.id)!;
+    const secondStageNames = [...(await exportTempArtifacts())].filter((name) => !stagesBeforeSecond.has(name));
+    assert(secondStageNames.length > 0, "the second export should retain its staged files until release");
     const activeResponse = await fetch(new URL(secondAsset.download_url!, base));
     assert(activeResponse.ok, "second staged download should open");
     const reader = activeResponse.body!.getReader();
+    activeReaders.add(reader);
     const firstChunk = await reader.read();
     assert(!firstChunk.done && firstChunk.value.byteLength > 0, "HTTP stream should deliver its first bounded chunk");
     let receivedBeforeRelease = firstChunk.value.byteLength;
-    await post("export.release", { export_id: secondId });
-    let interrupted = false;
+    const releaseClient = Deno.createHttpClient({});
     try {
-      const next = await Promise.race([
-        reader.read(),
-        new Promise<never>((_, reject) => setTimeout(() => reject(new Error("download did not cancel")), 3000)),
-      ]);
-      if (next.done) interrupted = receivedBeforeRelease < size;
-      else {
-        receivedBeforeRelease += next.value.byteLength;
-        interrupted = receivedBeforeRelease < size;
-      }
-    } catch {
-      interrupted = true;
+      await post("export.release", { export_id: secondId }, releaseClient);
+    } finally {
+      releaseClient.close();
     }
-    assert(interrupted, "release should abort the active HTTP stream before it reaches the full file");
+    let timedOut = false;
+    let timeoutId: ReturnType<typeof setTimeout> | undefined;
+    let stopReason = "full-file";
+    const readUntilStopped = async (): Promise<boolean> => {
+      try {
+        while (receivedBeforeRelease < size) {
+          const next = await reader.read();
+          if (next.done) {
+            stopReason = "eof";
+            return true;
+          }
+          receivedBeforeRelease += next.value.byteLength;
+        }
+      } catch {
+        stopReason = "stream-error";
+        return receivedBeforeRelease < size;
+      }
+      return false;
+    };
+    let interrupted: boolean;
+    let readerCancelled = false;
+    try {
+      interrupted = await Promise.race([
+        readUntilStopped(),
+        new Promise<boolean>((resolve) => {
+          timeoutId = setTimeout(() => {
+            timedOut = true;
+            resolve(false);
+          }, 3000);
+        }),
+      ]);
+    } finally {
+      if (timeoutId !== undefined) clearTimeout(timeoutId);
+      readerCancelled = await cancelReaderBounded(reader);
+      if (readerCancelled) activeReaders.delete(reader);
+    }
+    interrupted = interrupted && !timedOut;
+    assert(readerCancelled, "release should settle the active reader during bounded cleanup");
+    assert(
+      interrupted,
+      `release should abort the active HTTP stream before it reaches the full file (${receivedBeforeRelease}/${size} bytes, ${stopReason}, timedOut=${timedOut})`,
+    );
+    const afterRelease = await exportTempArtifacts();
+    assert(secondStageNames.every((name) => !afterRelease.has(name)), "release should remove the active export's staged files");
 
     const thirdId = crypto.randomUUID().replaceAll("-", "");
     await post("export.run", { export_id: thirdId, preset: fixture.preset });
@@ -1485,16 +1543,35 @@ Deno.test("browser export downloads staged bytes over HTTP and release or shutdo
     const ownedAtShutdown = [...beforeShutdown].filter((name) => !stagesBefore.has(name));
     assert(ownedAtShutdown.length > 0, "a pending download should retain its staged files until service shutdown");
     child.kill("SIGTERM");
+    let shutdownTimeoutId: ReturnType<typeof setTimeout> | undefined;
     const status = await Promise.race([
       child.status,
-      new Promise<never>((_, reject) => setTimeout(() => reject(new Error("server shutdown did not finish")), 5000)),
-    ]);
+      new Promise<never>((_, reject) => {
+        shutdownTimeoutId = setTimeout(() => reject(new Error("server shutdown did not finish")), 5000);
+      }),
+    ]).finally(() => {
+      if (shutdownTimeoutId !== undefined) clearTimeout(shutdownTimeoutId);
+    });
+    childExited = true;
     assert(status.success, "SIGTERM should run DesktopService close and stop the HTTP server cleanly");
     const afterShutdown = await exportTempArtifacts();
     assert(ownedAtShutdown.every((name) => !afterShutdown.has(name)), "service shutdown should remove every owned export stage");
   } finally {
+    for (const reader of activeReaders) {
+      if (!await cancelReaderBounded(reader)) console.error("active HTTP reader cleanup exceeded one second");
+    }
     try { child.kill("SIGTERM"); } catch { /* already exited */ }
-    await child.status.catch(() => undefined);
+    if (!childExited) {
+      let cleanupTimeout: ReturnType<typeof setTimeout> | undefined;
+      const exited = await Promise.race([
+        child.status.then(() => true),
+        new Promise<boolean>((resolve) => {
+          cleanupTimeout = setTimeout(() => resolve(false), 5000);
+        }),
+      ]);
+      if (cleanupTimeout !== undefined) clearTimeout(cleanupTimeout);
+      if (!exited) console.error("isolated service child cleanup exceeded five seconds");
+    }
     await Deno.remove(directory, { recursive: true });
   }
 });

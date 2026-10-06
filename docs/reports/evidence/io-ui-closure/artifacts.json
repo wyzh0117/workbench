@@ -1,12 +1,12 @@
 {
   "schema_version": 1,
-  "generated_at_utc": "2026-10-06T17:23:09Z",
+  "generated_at_utc": "2026-10-06T18:02:47Z",
   "generated_for_source_commit": "50aaea7268164b9fa066425ce4a5ac158ca87352",
   "source_state": "Current combined source 50aaea7268164b9fa066425ce4a5ac158ca87352. Deno check 0, full tests 716/0, focused writer 17/0. Rust fcefcb106c2cf4e957d54a1ee7e112e2aa83cac0: 258/0/1 ignored, fmt and dev build pass. Native Final10 embeds UI 9bbc8cf3067b6117be8de41e1bd5bef3960a671a and Rust fcefcb106c2cf4e957d54a1ee7e112e2aa83cac0; independently audited package, targeted cold-scroll restore and four-state rename evidence pass. Overall remains PARTIAL: diagnostics-on changed-save p95 regresses +21.12%; the cause is not isolated. Native matrix and compound N06 remain partial.",
   "overall_status": "PARTIAL",
   "scope_note": "Inventory of currently retained report and evidence files plus the offline HTML report. The index excludes its own hash entry, absent external archive payloads, and build/cache/temp trees. Historical and invalid attempts remain labeled with their own provenance and are not promoted to final evidence.",
   "entry_count": 1196,
-  "total_bytes": 83898175,
+  "total_bytes": 83898047,
   "self_reference_excluded": true,
   "external_archive_manifests": [
     "native-qa-historical-packages-archive-20261006.json",
@@ -17,8 +17,8 @@
       "path": "../../../../.github/release-notes/v0.2.7.md",
       "kind": "delivery_document",
       "status": "release_preparation_draft",
-      "bytes": 1645,
-      "sha256": "e7f0eabeb956a5c9f5709c37df106e775a7681e25e113ff2531007da470c602a",
+      "bytes": 1432,
+      "sha256": "5582613c90fd3258a054b5f866d084c52aeeed56a66c3e9ba0aa24b6faafc206",
       "note": "v0.2.7 release-notes draft; not a published release.",
       "media_type": "text/markdown"
     },
@@ -26,8 +26,8 @@
       "path": "../../../../PROJECT_MASTER_CONTROL.md",
       "kind": "delivery_document",
       "status": "current_delivery_document",
-      "bytes": 250772,
-      "sha256": "94fddf2ec3626462711f7bf8b8f4c19369ba53bc680aa1a45c93c837892a53eb",
+      "bytes": 250851,
+      "sha256": "4a8b0f910e9ecce424e0bc529eb0153540afea028ec2b1171d7f1a508d424883",
       "note": "Current delivery document: PROJECT_MASTER_CONTROL.md.",
       "media_type": "text/markdown"
     },
@@ -62,8 +62,8 @@
       "path": "../../../feature-history/v0.2.7.md",
       "kind": "delivery_document",
       "status": "release_preparation_draft",
-      "bytes": 2040,
-      "sha256": "33a61e61464aedcd6fe16e1738215d37c24818f2b98c7cfa2f82ddb2ebdf6ca8",
+      "bytes": 2046,
+      "sha256": "57c7c02e449a3cb436450f720c61a8c0a0b9ec2be53d9dea2b393925dceb8327",
       "note": "v0.2.7 release-preparation feature-history draft; not a published release.",
       "media_type": "text/markdown"
     },

@@ -4302,4 +4302,4 @@ Native 最新 warm pair 是单独的 debug backend profile，不代表 GUI/IPC�
 
 v0.2.7 已获发布授权，候选说明见 [release notes](.github/release-notes/v0.2.7.md) 与 [feature history draft](docs/feature-history/v0.2.7.md)。仓库应用版本已为 0.2.7；当前公开最新版本仍是 v0.2.6，尚无 v0.2.7 tag、Release 或公开资产。候选内容沿用 §47 的 PARTIAL 验收结论，包括未观察的 N06 in-flight/A→B→A 交互、真实 150%/200% 缩放与 reduced-motion 行为，以及 diagnostics-on changed-save p95 +21.12% 的未定位尾部回退。
 
-发布应由 `.github/workflows/release.yml` 的 tag-triggered workflow 生成 Universal DMG；`workflow_dispatch` 仅构建，不发布。Final10 arm64 ZIP 是 QA 制品，不是正式 DMG。最近一次只读检查未发现 Apple 签名/公证 secrets；若 secrets 未变化，CI 会使用 workflow 的 ad-hoc 回退。以实际 workflow 产物与校验结果更新本节和 feature history。发布准备 commit 不等于公开发布，只有 tag workflow 成功且 Release/资产经核验后，才能将 v0.2.7 记为 latest public。
+发布应由 `.github/workflows/release.yml` 的 tag-triggered workflow 生成 Universal DMG；`workflow_dispatch` 仅构建，不发布。Final10 arm64 ZIP 是 QA 制品，不是正式 DMG。最近一次检查确认 GitHub 仓库级 Actions secrets 列表为空；organization-level secrets 未验证。若发布时 repository-level `APPLE_CERTIFICATE` 仍未配置，workflow 会走 ad-hoc 回退。以实际 workflow 产物与校验结果更新本节和 feature history。发布准备 commit 不等于公开发布，只有 tag workflow 成功且 Release/资产经核验后，才能将 v0.2.7 记为 latest public。
