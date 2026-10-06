@@ -10426,6 +10426,7 @@ let pendingLayoutPageFocus = null;
 /** Caret to put back into a block editor after a render that a compile caused. */
 let pendingEditorCaret = null;
 let pendingEditorActionBlur = null;
+let pointerDownEditorAction = null;
 
 /** A stable selector for the control that currently has focus. */
 function focusSelector(element) {
@@ -10824,6 +10825,75 @@ function installEditorGuards() {
       return false;
     }
   };
+  const actionAt = (node) => actionTargetFromEditorBlur({ relatedTarget: node });
+  const commitDeferredBlur = () => {
+    const pending = pendingEditorActionBlur;
+    if (!pending) return false;
+    pendingEditorActionBlur = null;
+    flushPendingEdit(pending.editor, { convert: true });
+    return true;
+  };
+  target.addEventListener("pointerdown", (event) => {
+    pointerDownEditorAction = null;
+    if ((event.button !== undefined && event.button !== 0) || event.isPrimary === false) return;
+    const foundAction = actionAt(event.target);
+    const actionElement = owns(foundAction) ? foundAction : null;
+    if (pendingEditorActionBlur) {
+      // A later pointer interaction must finish or retarget the old defer;
+      // otherwise an unrelated click can inherit its action.
+      pendingEditorActionBlur.pointerId = event.pointerId ?? null;
+      if (actionElement) pendingEditorActionBlur.actionElement = actionElement;
+      return;
+    }
+    if (!actionElement) return;
+    const editor = globalThis.document?.activeElement;
+    if (
+      !owns(editor) || typeof editor?.dataset?.editBaseline !== "string" ||
+      composingField === editor
+    ) return;
+    pointerDownEditorAction = {
+      editor,
+      actionElement,
+      pointerId: event.pointerId ?? null,
+    };
+  }, true);
+  target.addEventListener("pointerup", (event) => {
+    const pointerAction = pointerDownEditorAction;
+    if (pointerAction && (event.pointerId == null || event.pointerId === pointerAction.pointerId)) {
+      pointerDownEditorAction = null;
+    }
+    const pending = pendingEditorActionBlur;
+    if (
+      pending?.pointerId != null &&
+      (event.pointerId == null || event.pointerId === pending.pointerId) &&
+      actionAt(event.target) !== pending.actionElement
+    ) commitDeferredBlur();
+  }, true);
+  target.addEventListener("pointercancel", (event) => {
+    if (
+      pointerDownEditorAction &&
+      (event.pointerId == null || event.pointerId === pointerDownEditorAction.pointerId)
+    ) pointerDownEditorAction = null;
+    if (
+      pendingEditorActionBlur?.pointerId != null &&
+      (event.pointerId == null || event.pointerId === pendingEditorActionBlur.pointerId)
+    ) commitDeferredBlur();
+  }, true);
+  target.addEventListener("click", (event) => {
+    pointerDownEditorAction = null;
+    const pending = pendingEditorActionBlur;
+    if (pending?.pointerId != null && actionAt(event.target) !== pending.actionElement) {
+      commitDeferredBlur();
+    }
+  }, true);
+  target.addEventListener("keydown", (event) => {
+    pointerDownEditorAction = null;
+    const pending = pendingEditorActionBlur;
+    if (!pending) return;
+    const activatesPendingAction = actionAt(event.target) === pending.actionElement &&
+      (event.key === "Enter" || event.key === " " || event.code === "Space");
+    if (!activatesPendingAction) commitDeferredBlur();
+  }, true);
   target.addEventListener("compositionstart", (event) => {
     if (owns(event.target)) composingField = event.target;
   }, true);
@@ -10953,12 +11023,16 @@ function flushEditorBeforeAction(actionElement, { notify = false } = {}) {
 }
 
 function deferEditorBlurUntilAction(editor, event) {
-  const actionElement = actionTargetFromEditorBlur(event);
+  const pointerAction = pointerDownEditorAction?.editor === editor
+    ? pointerDownEditorAction
+    : null;
+  const actionElement = actionTargetFromEditorBlur(event) || pointerAction?.actionElement;
   if (!actionElement || composingField === editor) return false;
   if (pendingEditorActionBlur && pendingEditorActionBlur.actionElement !== actionElement) {
     flushEditorBeforeAction(pendingEditorActionBlur.actionElement, { notify: true });
   }
-  pendingEditorActionBlur = { editor, actionElement };
+  pendingEditorActionBlur = { editor, actionElement, pointerId: pointerAction?.pointerId ?? null };
+  if (pointerAction) pointerDownEditorAction = null;
   return true;
 }
 

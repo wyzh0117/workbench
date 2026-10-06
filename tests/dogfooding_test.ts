@@ -985,6 +985,123 @@ Deno.test("blur into an action keeps the editor and action alive until click dis
   }
 });
 
+Deno.test("pointerdown preserves an action through native blur without relatedTarget", async () => {
+  const dom = await bootDom();
+  try {
+    const data = projectWith("原生 blur 无 relatedTarget");
+    const block = data.blocks[0];
+    assert(block, "the project fixture must have an editable block");
+    const editor = dom.createNode({ blockId: block.id }, { value: String(block.content ?? "") });
+    const saveVersion = dom.createNode({ action: "save-version" });
+    const expectedText = `${String(block.content ?? "")} Final7 FirstClick marker 2026-10-06`;
+    (editor as any).tagName = "TEXTAREA";
+    dom.textEditors.push(editor);
+    dom.actionNodes.push(saveVersion);
+    dom.renderProject(data);
+
+    editor.fire("focus");
+    editor.value = expectedText;
+    editor.fire("input");
+    dom.document.activeElement = editor;
+    dom.detachOnNextRender(saveVersion);
+
+    // WKWebView may report a null relatedTarget on pointer-driven blur. The
+    // document capture witness records intent only; the action still runs on
+    // the subsequent click event.
+    dom.fireDocument("pointerdown", { target: saveVersion, button: 0, pointerId: 7 });
+    editor.fire("blur", { relatedTarget: null });
+    assert(
+      saveVersion.inRoot,
+      "null-relatedTarget blur must keep the clicked action mounted until click dispatch",
+    );
+    dom.fireDocument("pointerup", { target: saveVersion, button: 0, pointerId: 7 });
+    dom.fireDocument("click", { target: saveVersion });
+    saveVersion.fire("click", { target: saveVersion });
+    assert(dom.store.ui.snapshot, "the original save-version action must open its dialog");
+    assert(
+      dom.lastHtml().includes('data-focus-key="snapshot-name"'),
+      "the snapshot dialog must render after the pending edit is flushed",
+    );
+    assert(
+      dom.store.history.some((entry: any) => entry.label === "编辑正文"),
+      "the pending text edit must be recorded before the action completes",
+    );
+    assert(
+      dom.store.data.blocks.find((candidate: any) => candidate.id === block.id)?.content === expectedText,
+      "the full edit, including its final characters, must be committed before the snapshot action",
+    );
+  } finally {
+    dom.restore();
+  }
+});
+
+Deno.test("pointer cancellation releases a deferred editor blur without running the action", async () => {
+  const dom = await bootDom();
+  try {
+    const data = projectWith("取消指针操作后普通 blur");
+    const block = data.blocks[0];
+    assert(block, "the project fixture must have an editable block");
+    const editor = dom.createNode({ blockId: block.id }, { value: String(block.content ?? "") });
+    const saveVersion = dom.createNode({ action: "save-version" });
+    (editor as any).tagName = "TEXTAREA";
+    dom.textEditors.push(editor);
+    dom.actionNodes.push(saveVersion);
+    dom.renderProject(data);
+
+    editor.fire("focus");
+    editor.value = `${String(block.content ?? "")} cancelled edit`;
+    editor.fire("input");
+    dom.document.activeElement = editor;
+    dom.detachOnNextRender(saveVersion);
+    dom.fireDocument("pointerdown", { target: saveVersion, button: 0, pointerId: 9 });
+    editor.fire("blur", { relatedTarget: null });
+    assert(saveVersion.inRoot, "the initial pointer blur should be held for click dispatch");
+    dom.fireDocument("pointercancel", { target: saveVersion, pointerId: 9 });
+    assert(!saveVersion.inRoot, "pointer cancellation should release the deferred render");
+    assert(
+      dom.store.history.some((entry: any) => entry.label === "编辑正文"),
+      "cancellation must commit the edit without dispatching the action",
+    );
+    assert(!dom.store.ui.snapshot, "a canceled pointer must not open the snapshot dialog");
+
+    editor.fire("focus");
+    const afterKeyboard = `${String(block.content ?? "")} keyboard takeover`;
+    editor.value = afterKeyboard;
+    editor.fire("input");
+    dom.document.activeElement = editor;
+    dom.fireDocument("pointerdown", { target: saveVersion, button: 0, pointerId: 10 });
+    dom.fireDocument("keydown", { target: editor, key: "ArrowLeft", code: "ArrowLeft" });
+    dom.detachOnNextRender(editor);
+    editor.fire("blur", { relatedTarget: null });
+    assert(!editor.inRoot, "a keyboard event must clear an unconsumed pointer witness");
+    assert(
+      dom.store.data.blocks.find((candidate: any) => candidate.id === block.id)?.content === afterKeyboard,
+      "keyboard takeover must fall back to an ordinary complete blur commit",
+    );
+
+    editor.fire("focus");
+    const afterPointer = `${String(block.content ?? "")} non-action pointer`;
+    editor.value = afterPointer;
+    editor.fire("input");
+    dom.document.activeElement = editor;
+    dom.fireDocument("pointerdown", { target: saveVersion, button: 0, pointerId: 11 });
+    dom.fireDocument("pointerdown", {
+      target: dom.createNode({ focusKey: "outside-editor" }),
+      button: 0,
+      pointerId: 12,
+    });
+    dom.detachOnNextRender(editor);
+    editor.fire("blur", { relatedTarget: null });
+    assert(!editor.inRoot, "a later non-action pointer must clear the prior action witness");
+    assert(
+      dom.store.data.blocks.find((candidate: any) => candidate.id === block.id)?.content === afterPointer,
+      "non-action pointer blur must commit all pending text immediately",
+    );
+  } finally {
+    dom.restore();
+  }
+});
+
 Deno.test("blur away from an action still commits the pending editor change", async () => {
   const dom = await bootDom();
   try {
