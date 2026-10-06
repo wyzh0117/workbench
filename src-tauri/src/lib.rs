@@ -4841,6 +4841,7 @@ fn restore_snapshot(
         0,
         json!({
             "id": backup.get("id").cloned().unwrap_or_else(|| json!(backup_id)),
+            "project_id": json!(binding.project_id.clone()),
             "name": backup.get("name").cloned().unwrap_or_else(|| json!("恢复前备份")),
             "note": backup.get("note").cloned().unwrap_or_else(|| json!("恢复旧版本前自动创建")),
             "created_at": backup.get("created_at").cloned().unwrap_or_else(|| json!(unix_millis().to_string())),
@@ -20730,6 +20731,11 @@ mod tests {
         .expect("persisted backup should allow restore");
         let committed_bytes = fs::read(directory.join("project.json")).unwrap();
         let committed_project: Value = serde_json::from_slice(&committed_bytes).unwrap();
+        assert_eq!(
+            committed_project["snapshots"][0]["project_id"],
+            json!("p1"),
+            "restore-before Canonical rows must identify their owning project"
+        );
         assert_eq!(restored["restored"], json!(true));
         assert_eq!(restored["commit_state"], json!("committed"));
         assert_eq!(restored["backup_persisted"], json!(true));
@@ -28309,6 +28315,134 @@ mod tests {
         let _ = project_close(target.to_string_lossy().into_owned());
         let _ = fs::remove_dir_all(target);
         let _ = fs::remove_dir_all(second);
+    }
+
+    #[test]
+    fn folder_append_keeps_same_basename_documents_from_distinct_selected_stages() {
+        let target = test_directory("folder-append-same-basename-target");
+        fs::write(
+            target.join("seed.txt"),
+            "Existing lesson keeps the project open.\n",
+        )
+        .expect("seed source");
+        let initial = folder_adopt(
+            json!({
+                "root": target.to_string_lossy(),
+                "confirmed": true,
+                "items": [{
+                    "relative_path": "seed.txt",
+                    "kind": "file",
+                    "mapping": "lesson",
+                    "selected": true
+                }]
+            }),
+            None,
+            None,
+            None,
+        )
+        .expect("create the existing project");
+        let project_id = initial["data"]["project"]["id"]
+            .as_str()
+            .expect("project id")
+            .to_owned();
+
+        let source = test_directory("folder-append-same-basename-source");
+        let relative_paths = [
+            "01 基础 Stage/shared lesson.md",
+            "02 进阶 Stage/shared lesson.md",
+        ];
+        for (relative_path, body) in relative_paths.iter().zip([
+            "# 基础阶段内容\n\nThe first document has unique bytes.\n",
+            "# 进阶阶段内容\n\nThe second document has different bytes.\n",
+        ]) {
+            let path = source.join(relative_path);
+            fs::create_dir_all(path.parent().expect("document parent")).expect("stage folder");
+            fs::write(path, body).expect("distinct Markdown source");
+        }
+        let plan = json!({
+            "root": source.to_string_lossy(),
+            "confirmed": true,
+            "items": [
+                { "relative_path": "01 基础 Stage", "kind": "directory", "mapping": "stage", "selected": true },
+                { "relative_path": "02 进阶 Stage", "kind": "directory", "mapping": "stage", "selected": true }
+            ]
+        });
+        let appended = folder_append_with_documents(
+            plan,
+            target.to_string_lossy().into_owned(),
+            None,
+            Some(
+                relative_paths
+                    .iter()
+                    .map(|path| (*path).to_owned())
+                    .collect(),
+            ),
+            Some(project_id),
+            Some(project_fingerprint(&target).expect("append fingerprint")),
+            Some(active_lease_generation(&target).expect("append lease")),
+            Some(7),
+            Some("native-same-basename-append".into()),
+            Some(1),
+        )
+        .expect("append both distinct relative paths");
+
+        let tally = test_document_import(&appended);
+        assert_eq!(tally["succeeded"], json!(2), "both selected paths import");
+        assert_eq!(
+            tally["skipped"],
+            json!(0),
+            "basename alone is not a duplicate"
+        );
+        assert_eq!(tally["failed"], json!(0));
+        let data = &appended["data"];
+        let ledger = data["project"]["settings"]["markdown_import_sources"]
+            .as_array()
+            .expect("Markdown source ledger");
+        let stage_by_title: HashMap<String, String> = data["stages"]
+            .as_array()
+            .expect("stages")
+            .iter()
+            .map(|stage| {
+                (
+                    stage["title"].as_str().unwrap_or_default().to_owned(),
+                    stage["id"].as_str().unwrap_or_default().to_owned(),
+                )
+            })
+            .collect();
+        for relative_path in relative_paths {
+            let source = ledger
+                .iter()
+                .find(|entry| entry["relative_path"] == json!(relative_path))
+                .unwrap_or_else(|| panic!("missing provenance for {relative_path}"));
+            let content_id = source["content_item_id"].as_str().expect("content id");
+            let lesson = data["content_items"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|item| item["id"] == json!(content_id))
+                .expect("lesson for source");
+            let expected_stage = relative_path.split('/').next().unwrap();
+            assert_eq!(
+                lesson["stage_id"],
+                json!(stage_by_title[expected_stage]),
+                "{relative_path} stays under its own parent stage"
+            );
+        }
+        assert_eq!(
+            data["content_items"].as_array().unwrap().len(),
+            3,
+            "the original lesson and both imported lessons remain"
+        );
+        assert_test_mutation_ack(
+            &appended["mutation_ack"],
+            &target,
+            "native-same-basename-append",
+            1,
+            "written",
+        );
+        let _ = project_close(target.to_string_lossy().into_owned());
+        let _ = fs::remove_dir_all(target);
+        let _ = fs::remove_dir_all(source);
     }
 
     #[test]
