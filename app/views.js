@@ -1966,7 +1966,7 @@ export function createViews(store) {
       ).join("")
     }</select></label><button class="${map.lesson_count ? "secondary" : "primary"}" data-action="${map.lesson_count ? "open-workbench" : "route"}" ${map.lesson_count ? "" : 'data-route="map"'}>${map.lesson_count ? "打开当前课" : "创建第一课"}</button></div></div><div class="summary-grid board-summary" aria-label="课程进度概况"><article class="summary-card"><span>课程内容</span><strong>${map.lesson_count}</strong><small>当前课程课次</small></article><article class="summary-card"><span>已完成</span><strong>${map.complete_count}</strong><small>${map.lesson_count ? `${Math.round(map.complete_count / map.lesson_count * 100)}% 完成` : "还没有课程内容"}</small></article><article class="summary-card ${map.open_requirements ? "warning" : ""}"><span>待补内容</span><strong>${map.open_requirements}</strong><small>跨课次累计</small></article></div>${
       map.lesson_count
-        ? `<div class="kanban board-columns" aria-label="${dimensions.find(([key]) => key === dimension)?.[1] || "状态"}状态分组">${cards}</div>`
+        ? `<div class="kanban board-columns" role="region" tabindex="0" aria-label="${dimensions.find(([key]) => key === dimension)?.[1] || "状态"}状态分组">${cards}</div>`
         : `<div class="empty-state board-empty"><span class="empty-icon" aria-hidden="true">▤</span><h2>课程还没有课时</h2><p class="muted">先在课程地图建立阶段和课时，再回来按状态跟进制作进度。</p><button class="primary" data-action="route" data-route="map">打开课程地图</button></div>`
     }</section>`;
   }

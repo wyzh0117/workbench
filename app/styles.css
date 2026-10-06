@@ -1076,8 +1076,8 @@ body.pointer-reordering * { cursor: grabbing !important; user-select: none !impo
 .course-map-page .map-item.current { background: #eff7f3; border-color: #a9c9bb; }
 .course-map-page .seed-card { background: #fbfcfa; border: 1px solid var(--line); border-radius: var(--radius-md); margin-bottom: 18px; padding: 17px; }
 .board-page .board-dimension { background: var(--panel-muted); border: 1px solid var(--line); border-radius: 10px; margin: 0; padding: 8px 11px; }
-.board-page .kanban { align-items: flex-start; gap: 12px; overflow-x: auto; padding: 2px 0 14px; }
-.board-page .kanban-column { background: #e9efeb; border: 1px solid #dce5de; border-radius: 12px; min-width: 230px; padding: 10px; }
+.board-page .kanban { align-items: flex-start; gap: 12px; grid-template-columns: repeat(4, minmax(230px, 1fr)); overflow-x: auto; padding: 2px 0 14px; }
+.board-page .kanban-column { background: #e9efeb; border: 1px solid #dce5de; border-radius: 12px; padding: 10px; }
 .board-page .kanban-head { padding: 5px 4px 12px; }
 .board-page .kanban-card { border: 1px solid var(--line); border-radius: 9px; box-shadow: 0 2px 5px rgba(31, 43, 38, .04); margin-bottom: 8px; min-height: 80px; }
 .inbox-page .inbox-list { display: grid; gap: 11px; }
