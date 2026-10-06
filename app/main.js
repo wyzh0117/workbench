@@ -10425,6 +10425,7 @@ let pendingBlockOverflowFocus = null;
 let pendingLayoutPageFocus = null;
 /** Caret to put back into a block editor after a render that a compile caused. */
 let pendingEditorCaret = null;
+let pendingEditorActionBlur = null;
 
 /** A stable selector for the control that currently has focus. */
 function focusSelector(element) {
@@ -10593,7 +10594,7 @@ function patchChrome() {
       const verify = updatedSave?.querySelector?.('[data-action="verify-save-result"]');
       if (verify && verify.dataset.verifyActionBound !== "true") {
         verify.dataset.verifyActionBound = "true";
-        verify.addEventListener("click", (event) => handleAction("verify-save-result", verify, event));
+        verify.addEventListener("click", (event) => dispatchBoundAction(verify, event));
       }
     }
     const statusbar = root.querySelector("[data-chrome-statusbar]");
@@ -10930,6 +10931,46 @@ function flushPendingEdit(element, { notify = true, convert = false, structuralO
     store.renameLesson(block.id, element.value);
   }
   delete element.dataset.editBaseline;
+}
+
+function actionTargetFromEditorBlur(event) {
+  const related = event?.relatedTarget;
+  const action = related?.dataset?.action ? related : related?.closest?.("[data-action]");
+  if (!action || action.disabled || action.getAttribute?.("aria-disabled") === "true") return null;
+  return action;
+}
+
+function flushEditorBeforeAction(actionElement, { notify = false } = {}) {
+  const pending = pendingEditorActionBlur?.actionElement === actionElement
+    ? pendingEditorActionBlur
+    : null;
+  const editor = pending?.editor || globalThis.document?.activeElement;
+  const hasEditBaseline = typeof editor?.dataset?.editBaseline === "string";
+  if (!editor || !hasEditBaseline || composingField === editor) return false;
+  if (pending) pendingEditorActionBlur = null;
+  flushPendingEdit(editor, { notify, convert: true });
+  return true;
+}
+
+function deferEditorBlurUntilAction(editor, event) {
+  const actionElement = actionTargetFromEditorBlur(event);
+  if (!actionElement || composingField === editor) return false;
+  if (pendingEditorActionBlur && pendingEditorActionBlur.actionElement !== actionElement) {
+    flushEditorBeforeAction(pendingEditorActionBlur.actionElement, { notify: true });
+  }
+  pendingEditorActionBlur = { editor, actionElement };
+  return true;
+}
+
+function dispatchBoundAction(element, event) {
+  const actionDataset = { ...element.dataset };
+  const action = actionDataset.action;
+  const flushedEditor = flushEditorBeforeAction(element);
+  // flushEditorBeforeAction suppresses its render until this action has been
+  // dispatched, keeping the original control and its captured data available.
+  Object.assign(element.dataset, actionDataset);
+  handleAction(action, element, event);
+  if (flushedEditor && element.isConnected) render();
 }
 
 /**
@@ -11783,7 +11824,7 @@ function onGridPointerClick(event) {
   if (control) {
     // One dispatch path for every grid control, so `data-action` keeps its
     // app-wide meaning while the grid itself never depends on re-bound nodes.
-    handleAction(control.dataset.action, control, event);
+    dispatchBoundAction(control, event);
     return;
   }
   if (!placement) {
@@ -11829,6 +11870,9 @@ function bindActionControls(scope) {
   if (!scope?.querySelectorAll) return 0;
   const controls = Array.from(scope.querySelectorAll("[data-action]") || []);
   for (const element of controls) {
+    element.addEventListener("blur", () => {
+      flushEditorBeforeAction(element, { notify: true });
+    });
     element.addEventListener("click", (event) => {
       if (element.matches?.("select[data-action], input[data-action]")) return;
       // Controls inside the placement Grid / unplaced strip belong to the single
@@ -11851,7 +11895,7 @@ function bindActionControls(scope) {
         dialog &&
         !(typeof element.closest === "function" && element.closest("[data-stop-click='true']") === dialog)
       ) return;
-      handleAction(element.dataset.action, element, event);
+      dispatchBoundAction(element, event);
     });
   }
   return controls.length;
@@ -11930,7 +11974,7 @@ function bindEvents() {
   }
   root.querySelectorAll("select[data-action], input[data-action]").forEach((element) => {
     element.addEventListener("change", (event) => {
-      handleAction(element.dataset.action, element, event);
+      dispatchBoundAction(element, event);
     });
   });
   root.querySelectorAll("details.block-more > summary").forEach((summary) => {
@@ -12033,8 +12077,9 @@ function bindEvents() {
       if (block) element.dataset.editBaseline = block.content;
       store.selectBlock(element.dataset.blockId, { force: true, soft: true });
     });
-    element.addEventListener("blur", () => {
+    element.addEventListener("blur", (event) => {
       stopCompile();
+      if (deferEditorBlurUntilAction(element, event)) return;
       flushPendingEdit(element, { convert: true });
     });
   });
@@ -12066,7 +12111,10 @@ function bindEvents() {
       // One selection API: soft select keeps caret / IME (no full notify).
       store.selectBlock(element.dataset.blockId, { force: true, soft: true });
     });
-    element.addEventListener("blur", () => flushPendingEdit(element));
+    element.addEventListener("blur", (event) => {
+      if (deferEditorBlurUntilAction(element, event)) return;
+      flushPendingEdit(element);
+    });
   });
 
   // Clicking anywhere in a block selects it for the right-hand panels without

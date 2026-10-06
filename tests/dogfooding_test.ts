@@ -155,6 +155,8 @@ async function bootDom() {
   const registered = new Map<string, FakeNode>();
   const scrollNodes = new Map<string, FakeNode[]>();
   const actionNodes: FakeNode[] = [];
+  const textEditors: FakeNode[] = [];
+  let detachOnNextRender: FakeNode | null = null;
   let activeDialog: any = null;
   let dialogRendered = false;
   let currentHtml = "";
@@ -167,6 +169,10 @@ async function bootDom() {
       currentHtml = value;
       dialogRendered = value.includes('role="dialog" aria-modal="true"');
       htmlWrites.push(value);
+      if (detachOnNextRender) {
+        detachOnNextRender.inRoot = false;
+        detachOnNextRender = null;
+      }
       // Replacing innerHTML throws the old subtree away, so every scroll
       // container starts at the top again — exactly what render() must undo.
       for (const nodes of scrollNodes.values()) {
@@ -190,8 +196,11 @@ async function bootDom() {
       }
       return registered.get(selector) ?? null;
     },
-    querySelectorAll: (selector: string) =>
-      selector === "[data-action]" ? actionNodes : (scrollNodes.get(selector) ?? []),
+    querySelectorAll: (selector: string) => {
+      if (selector === "[data-action]") return actionNodes;
+      if (selector === "textarea[data-block-id], input[data-block-id]") return textEditors;
+      return scrollNodes.get(selector) ?? [];
+    },
   };
 
   const document: any = {
@@ -269,7 +278,9 @@ async function bootDom() {
     registered,
     scrollNodes,
     actionNodes,
+    textEditors,
     createNode,
+    detachOnNextRender: (node: FakeNode) => { detachOnNextRender = node; },
     renderProject,
     fireDocument,
     fireRoot,
@@ -928,6 +939,77 @@ Deno.test("every overlay hands the caret to its field when it opens", async () =
       await new Promise((resolve) => setTimeout(resolve, 0));
       assert(field.focused > 0, `opening ${name} must put the caret in the ${key} field`);
     }
+  } finally {
+    dom.restore();
+  }
+});
+
+Deno.test("blur into an action keeps the editor and action alive until click dispatch", async () => {
+  const dom = await bootDom();
+  try {
+    const data = projectWith("保存版本 blur 时序");
+    const block = data.blocks[0];
+    assert(block, "the project fixture must have an editable block");
+    const editor = dom.createNode({ blockId: block.id }, { value: String(block.content ?? "") });
+    const saveVersion = dom.createNode({ action: "save-version" });
+    (editor as any).tagName = "TEXTAREA";
+    dom.textEditors.push(editor);
+    dom.actionNodes.push(saveVersion);
+    dom.renderProject(data);
+
+    editor.fire("focus");
+    editor.value = `${String(block.content ?? "")} 新输入`;
+    editor.fire("input");
+    dom.document.activeElement = editor;
+    // A real click moves focus before dispatching click. The blur commit calls
+    // notify(), whose innerHTML replacement detaches the button under the
+    // pointer; browsers then never dispatch click to that old node.
+    dom.detachOnNextRender(saveVersion);
+    editor.fire("blur", { relatedTarget: saveVersion });
+    assert(
+      saveVersion.inRoot,
+      "blur toward an action must not replace that action before click dispatch",
+    );
+    saveVersion.fire("click", { target: saveVersion });
+    assert(dom.store.ui.snapshot, "the original save-version action must open its dialog");
+    assert(
+      dom.lastHtml().includes('data-focus-key="snapshot-name"'),
+      "the snapshot dialog must render after the pending edit is flushed",
+    );
+    assert(
+      dom.store.history.some((entry: any) => entry.label === "编辑正文"),
+      "the pending text edit must still be recorded before the action completes",
+    );
+  } finally {
+    dom.restore();
+  }
+});
+
+Deno.test("blur away from an action still commits the pending editor change", async () => {
+  const dom = await bootDom();
+  try {
+    const data = projectWith("独立 blur 保存");
+    const block = data.blocks[0];
+    assert(block, "the project fixture must have an editable block");
+    const editor = dom.createNode({ blockId: block.id }, { value: String(block.content ?? "") });
+    (editor as any).tagName = "TEXTAREA";
+    dom.textEditors.push(editor);
+    dom.renderProject(data);
+
+    editor.fire("focus");
+    editor.value = `${String(block.content ?? "")} 离开编辑器`;
+    editor.fire("input");
+    const historyBefore = dom.store.history.length;
+    dom.document.activeElement = editor;
+    dom.detachOnNextRender(editor);
+    editor.fire("blur", { relatedTarget: dom.createNode({ focusKey: "outside-editor" }) });
+
+    assert(!editor.inRoot, "an ordinary blur may render and replace the editor immediately");
+    assert(dom.store.history.length > historyBefore, "ordinary blur must record the edit");
+    assert(
+      dom.store.data.blocks.find((candidate: any) => candidate.id === block.id)?.content === editor.value,
+      "ordinary blur must retain the text already entered into Canonical",
+    );
   } finally {
     dom.restore();
   }
