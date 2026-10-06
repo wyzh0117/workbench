@@ -28,6 +28,23 @@ function fingerprintFor(project: unknown, revision: number): TestFingerprint {
   };
 }
 
+function boundSaveAck(request: any, fingerprint: TestFingerprint) {
+  return {
+    project: structuredClone(request.project),
+    fingerprint: structuredClone(fingerprint),
+    recovery_warning: null,
+    durability_warning: null,
+    outcome: "written",
+    commit_state: "committed",
+    project_id: request.expected_project_id,
+    project_dir: request.project_dir,
+    lease_generation: request.lease_generation,
+    editor_generation: request.editor_generation,
+    operation_id: request.operation_id,
+    revision: request.revision,
+  };
+}
+
 const missingFingerprint: TestFingerprint = {
   exists: false,
   mtime_ms: null,
@@ -70,6 +87,8 @@ function nativeSwitchBridge(
   const calls: string[] = [];
   const locked = new Set<string>();
   const revisions = new Map(Object.keys(projects).map((dir) => [dir, 1]));
+  const leases = new Map<string, string>();
+  const leaseFor = (dir: string | null) => dir ? leases.get(dir) ?? null : null;
   const getFingerprint = (dir: string | null): TestFingerprint => {
     if (!dir || !projects[dir]) return structuredClone(missingFingerprint);
     return fingerprintFor(projects[dir], revisions.get(dir) ?? 1);
@@ -77,38 +96,77 @@ function nativeSwitchBridge(
   const bridge: any = {
     projectDir: currentDir,
     projectDirFromUrl: false,
+    lastOpenedProjectState: null,
     isNative: () => true,
     setProjectDir: (value: string) => {
       currentDir = value;
       bridge.projectDir = value;
     },
-    restoreProjectDir: (value: string | null) => {
+    restoreProjectDir: (value: string | null, _fromUrl = false, openedState: any = null) => {
       currentDir = value;
       bridge.projectDir = value;
+      bridge.lastOpenedProjectState = openedState && openedState.project_dir === value
+        ? structuredClone(openedState)
+        : null;
     },
-    openProject: async () => {
+    openProjectState: async () => {
       if (currentDir && locked.has(currentDir)) throw new Error("project_locked: 项目已被占用");
       const project = currentDir ? projects[currentDir] : null;
       if (!project) throw new Error("项目目录不存在");
-      return structuredClone(project);
+      const leaseGeneration = `lease:${currentDir}`;
+      leases.set(currentDir!, leaseGeneration);
+      const state = {
+        project: structuredClone(project),
+        project_id: project.project.id,
+        project_dir: currentDir,
+        lease_generation: leaseGeneration,
+        fingerprint: getFingerprint(currentDir),
+      };
+      bridge.lastOpenedProjectState = structuredClone(state);
+      return state;
+    },
+    openProject: async () => {
+      const state = await bridge.openProjectState();
+      return structuredClone(state.project);
     },
     readProject: async () => currentDir && projects[currentDir]
       ? structuredClone(projects[currentDir])
       : null,
-    readProjectState: () => ({
-      project: currentDir && projects[currentDir]
+    readProjectState: () => {
+      const project = currentDir && projects[currentDir]
         ? structuredClone(projects[currentDir])
-        : null,
-      fingerprint: getFingerprint(currentDir),
-    }),
+        : null;
+      return {
+        project,
+        project_id: project?.project.id ?? null,
+        project_dir: currentDir,
+        lease_generation: bridge.lastOpenedProjectState?.project_dir === currentDir
+          ? leaseFor(currentDir)
+          : null,
+        fingerprint: getFingerprint(currentDir),
+      };
+    },
     readRecoveryJournal: async () => null,
     listenNativeDrops: async () => () => {},
     writeRecoveryJournal: async () => {},
-    writeProject: async (project: any) => {
-      if (!currentDir) return { fingerprint: structuredClone(missingFingerprint), recovery_warning: null };
+    writeProject: async (request: any) => {
+      const project = request?.project;
+      assert(currentDir && projects[currentDir], "bound save must target an opened project");
+      assert(request.project_dir === currentDir, "save request must bind the active directory");
+      assert(request.expected_project_id === projects[currentDir].project.id, "save request must bind the active project id");
+      assert(request.lease_generation === leaseFor(currentDir), "save request must bind the active lease generation");
+      assert(Number.isSafeInteger(request.editor_generation), "save request must carry its editor generation");
+      assert(typeof request.operation_id === "string" && request.operation_id, "save request must carry its operation id");
+      assert(Number.isSafeInteger(request.revision) && request.revision > 0, "save request must carry its revision");
+      assert(request.recovery_metadata?.project_id === request.expected_project_id, "recovery metadata must bind the same project");
+      assert(
+        JSON.stringify(request.expected_fingerprint) === JSON.stringify(getFingerprint(currentDir)),
+        "save request must compare against the current disk fingerprint",
+      );
+      assert(project?.project?.id === request.expected_project_id, "save body must match its bound project id");
       projects[currentDir] = structuredClone(project);
       revisions.set(currentDir, (revisions.get(currentDir) ?? 1) + 1);
-      return { fingerprint: getFingerprint(currentDir), recovery_warning: null };
+      return boundSaveAck(request, getFingerprint(currentDir));
     },
     clearRecoveryJournal: async () => {},
     projectIdentity: async () => currentDir && projects[currentDir]
@@ -136,9 +194,21 @@ function nativeSwitchBridge(
     },
     closeProject: async (projectDir: string) => {
       calls.push(`close:${projectDir}`);
+      leases.delete(projectDir);
     },
     command: async () => ({}),
   };
+  if (currentDir && projects[currentDir]) {
+    const leaseGeneration = `lease:${currentDir}`;
+    leases.set(currentDir, leaseGeneration);
+    bridge.lastOpenedProjectState = {
+      project: structuredClone(projects[currentDir]),
+      project_id: projects[currentDir].project.id,
+      project_dir: currentDir,
+      lease_generation: leaseGeneration,
+      fingerprint: getFingerprint(currentDir),
+    };
+  }
   return { bridge, sessions, calls, locked };
 }
 
@@ -313,13 +383,17 @@ Deno.test("native failed transitions keep the old session for missing, invalid, 
     assert(first.sessions.at(-1)?.project_id === projects.A.project.id, "failed target opens must retain the old identity");
 
     first.locked.delete("B");
-    first.bridge.openProject = async () => ({ malformed: true });
+    first.bridge.openProject = async () => {
+      await first.bridge.openProjectState();
+      return { malformed: true };
+    };
     await store.openProject("B");
     assert(first.bridge.projectDir === "A", "malformed target data must roll back the old path");
     assert(first.calls.at(-1) === "close:B", "malformed target data must release its provisional target lease");
     assert(first.sessions.at(-1)?.project_dir === "A", "rollback must restore the complete old session");
     assert(first.sessions.at(-1)?.project_id === projects.A.project.id, "rollback must restore the old project ID");
     assert(first.sessions.at(-1)?.mode === "preview" && first.sessions.at(-1)?.route === "media", "rollback must restore old reader state");
+    assert(first.bridge.lastOpenedProjectState?.project_dir === "A" && first.bridge.lastOpenedProjectState?.lease_generation === "lease:A", "rollback must restore the original live lease identity");
     assert(store.data.project.id === projects.A.project.id && store.ui.mode === "preview", "rollback must keep old in-memory reader state");
   } finally {
     runtime.document = previousDocument;
@@ -347,49 +421,55 @@ Deno.test("WorkbenchStore flush retries a mutation that lands during save", asyn
   try {
     const { WorkbenchStore } = await import("../app/main.js?recovery-test");
     await new Promise((resolve) => setTimeout(resolve, 0));
-    const journals: Array<{ saved_at: string; project: { project: { updated_at: string } } }> = [];
-    const writes: Array<{ project: { title: string; updated_at: string } }> = [];
+    const journals: Array<{ saved_at: string; canonical_revision: string; project: ProjectData }> = [];
+    const writes: Array<{ project: ProjectData; recovery_metadata: Record<string, unknown> }> = [];
     let sessionCount = 0;
     let store: InstanceType<typeof WorkbenchStore>;
     const bridge = {
       isNative: () => false,
       writeRecoveryJournal: async () => {},
-      writeProject: async (
-        snapshot: typeof writes[number],
-        _expected: TestFingerprint,
-        journal: typeof journals[number],
-      ) => {
-        writes.push(structuredClone(snapshot));
+      writeProject: async (request: typeof writes[number] & Record<string, any>) => {
+        const snapshot = request.project;
+        const journal = {
+          ...request.recovery_metadata,
+          project: structuredClone(snapshot),
+        } as typeof journals[number];
+        assert(request.expected_project_id === snapshot.project.id, "save request must bind the current project id");
+        assert(typeof request.operation_id === "string" && request.operation_id, "save request must include an operation id");
+        assert(Number.isSafeInteger(request.revision) && request.revision > 0, "save request must include a revision");
+        writes.push(structuredClone(request));
         journals.push(structuredClone(journal));
         if (writes.length === 1) {
           store.data.project.title = "最新标题";
           store.markDirty();
         }
-        return { fingerprint: fingerprintFor(snapshot, writes.length), recovery_warning: null };
+        return boundSaveAck(request, fingerprintFor(snapshot, writes.length));
       },
       clearRecoveryJournal: async () => {},
       saveSession: async () => { sessionCount += 1; },
     };
     store = new WorkbenchStore(bridge);
+    store.data = switchProject("保存重试项目");
+    store.trackProjectIdentity();
     store.projectFingerprint = structuredClone(missingFingerprint);
     store.projectFingerprintGeneration = 1;
     const saved = await store.flush();
     clearTimeout(store.saveTimer);
-    assert(saved, "flush must succeed after retrying the changed snapshot");
+    assert(saved, `flush must succeed after retrying the changed snapshot (status=${store.saveStatus}, toast=${store.ui.toast}, writes=${writes.length})`);
     assert(writes.length === 2, "a mutation during the first save must trigger a second write");
     const latestWrite = writes.at(-1);
     const latestJournal = journals.at(-1);
     assert(latestWrite && latestJournal, "stable save must produce a latest write and journal");
-    assert(latestWrite.project.title === "最新标题", "the second write must contain the latest data");
+    assert(latestWrite.project.project.title === "最新标题", "the second write must contain the latest data");
     assert(
-      latestWrite.project.updated_at === store.data.project.updated_at &&
-        latestJournal.saved_at === latestWrite.project.updated_at,
-      "canonical and recovery journal must share the latest revision",
+      latestWrite.project.project.updated_at === store.data.project.updated_at &&
+        latestJournal.canonical_revision === latestWrite.project.project.updated_at,
+      "canonical and recovery journal metadata must share the latest revision",
     );
     assert(
       journals.length === writes.length &&
         journals.every((journal, index) =>
-          journal.project.project.updated_at === writes[index]?.project.updated_at
+          journal.project.project.updated_at === writes[index]?.project.project.updated_at
         ),
       "each canonical retry must carry its matching recovery journal",
     );
@@ -418,36 +498,59 @@ Deno.test("WorkbenchStore surfaces autosave conflicts and reload establishes a u
     const { WorkbenchStore } = await import("../app/main.js?external-conflict-ui-test");
     let shouldConflict = true;
     let fingerprint = structuredClone(missingFingerprint);
+    let externalFingerprint = fingerprintFor(switchProject("外部磁盘项目"), 2);
     let store: InstanceType<typeof WorkbenchStore>;
     const bridge = {
       isNative: () => false,
       writeRecoveryJournal: async () => {},
-      writeProject: async (project: ProjectData) => {
+      writeProject: async (request: any) => {
+        assert(request.project?.project?.id === request.expected_project_id, "save body and expected project id must match");
+        assert(typeof request.operation_id === "string" && request.operation_id, "save request must carry an operation id");
+        assert(Number.isSafeInteger(request.revision) && request.revision > 0, "save request must carry its revision");
         if (shouldConflict) {
-          const failure = new Error("保存已阻止") as Error & { code: string };
+          const failure = new Error("保存已阻止") as Error & { code: string; details: Record<string, unknown> };
           failure.code = "external_modification_conflict";
+          failure.details = {
+            stage: "canonical_compare",
+            commit_state: "not_committed",
+            retryable: false,
+            project_id: request.expected_project_id,
+            project_dir: request.project_dir,
+            editor_generation: request.editor_generation,
+            operation_id: request.operation_id,
+            revision: request.revision,
+            expected_fingerprint: request.expected_fingerprint,
+            fingerprint: externalFingerprint,
+          };
           throw failure;
         }
-        fingerprint = fingerprintFor(project, 2);
-        return { fingerprint: structuredClone(fingerprint), recovery_warning: null };
+        fingerprint = fingerprintFor(request.project, 3);
+        return boundSaveAck(request, fingerprint);
       },
       inspectExternalModification: async () => ({
         changed: true,
-        current: { exists: true, mtime_ms: 1, size: 2, hash: "external" },
+        current: structuredClone(externalFingerprint),
         external_diff: { changed: true, entries: [{ path: "project.title" }] },
         local_diff: { changed: true, entries: [{ path: "project.description" }] },
       }),
       reloadExternalProject: async () => {
         const project = structuredClone(store.data);
         project.project.title = "磁盘版本";
-        fingerprint = fingerprintFor(project, 1);
-        return { project, fingerprint: structuredClone(fingerprint) };
+        fingerprint = fingerprintFor(project, 2);
+        externalFingerprint = structuredClone(fingerprint);
+        return {
+          project,
+          project_id: project.project.id,
+          fingerprint: structuredClone(fingerprint),
+        };
       },
       clearRecoveryJournal: async () => {},
       saveSession: async () => {},
     };
     store = new WorkbenchStore(bridge);
-    store.projectFingerprint = structuredClone(missingFingerprint);
+    store.data = switchProject("本地项目");
+    store.trackProjectIdentity();
+    store.projectFingerprint = fingerprintFor(store.data, 1);
     store.projectFingerprintGeneration = 1;
     assert(!(await store.flush()), "autosave must report a blocked write");
     assert(store.externalConflict?.changed, "the UI must retain structured conflict state");
@@ -455,7 +558,7 @@ Deno.test("WorkbenchStore surfaces autosave conflicts and reload establishes a u
     shouldConflict = false;
     await store.resolveExternalConflict("reload");
     assert(store.data.project.title === "磁盘版本", "reload must replace stale in-memory state");
-    assert(!store.externalConflict, "reload must clear the resolved conflict");
+    assert(!store.externalConflict, `reload must clear the resolved conflict (status=${store.saveStatus}, toast=${store.ui.toast})`);
     assert(await store.flush(), "saving after reload must succeed");
   } finally {
     runtime.document = previousDocument;
@@ -480,41 +583,57 @@ Deno.test("pending recovery keeps canonical data until restore snapshots it", as
   try {
     const { WorkbenchStore } = await import("../app/main.js?pending-recovery-test");
     const backups: Array<{ project: { project: { title: string } } }> = [];
-    const writes: Array<{ project: { title: string }; snapshots: Array<{ name: string }> }> = [];
+    const writes: Array<{ project: ProjectData; recovery_metadata: Record<string, unknown> }> = [];
     let clearCount = 0;
-    let persisted: Record<string, unknown> | null = null;
+    let persisted: ProjectData | null = null;
     let journal: Record<string, unknown> | null = null;
     let diskFingerprint = structuredClone(missingFingerprint);
     let fingerprintRevision = 1;
-    const bridge = {
+    const leaseGeneration = "lease:recovery-project";
+    const bridge: any = {
       projectDir: "/tmp/recovery-project",
+      lastOpenedProjectState: null,
       isNative: () => true,
       loadSession: async () => null,
       readProject: async () => structuredClone(persisted),
       readProjectState: async () => ({
         project: structuredClone(persisted),
+        project_id: (persisted as ProjectData | null)?.project.id ?? null,
+        project_dir: "/tmp/recovery-project",
+        lease_generation: bridge.lastOpenedProjectState?.lease_generation ?? null,
         fingerprint: structuredClone(diskFingerprint),
       }),
+      openProjectState: async () => {
+        const state = {
+          project: structuredClone(persisted),
+          project_id: (persisted as ProjectData | null)?.project.id ?? null,
+          project_dir: "/tmp/recovery-project",
+          lease_generation: leaseGeneration,
+          fingerprint: structuredClone(diskFingerprint),
+        };
+        bridge.lastOpenedProjectState = structuredClone(state);
+        return state;
+      },
+      restoreProjectDir: (value: string | null) => { bridge.projectDir = value; },
       readRecoveryJournal: async () => structuredClone(journal),
       listenNativeDrops: async () => () => {},
       writeRecoveryJournal: async () => {},
-      writeProject: async (
-        project: typeof writes[number],
-        expected: TestFingerprint,
-        recoveryJournal: Record<string, unknown>,
-      ) => {
+      writeProject: async (request: typeof writes[number] & Record<string, any>) => {
+        const project = request.project;
         assert(
-          JSON.stringify(expected) === JSON.stringify(diskFingerprint),
+          JSON.stringify(request.expected_fingerprint) === JSON.stringify(diskFingerprint),
           "recovery restore must save from the adopted canonical baseline",
         );
-        writes.push(structuredClone(project));
+        assert(request.project_dir === "/tmp/recovery-project", "recovery save must bind its project directory");
+        assert(request.expected_project_id === project.project.id, "recovery save must bind its project id");
+        assert(request.lease_generation === leaseGeneration, "recovery save must bind its active lease");
+        assert(request.recovery_metadata?.project_id === project.project.id, "recovery journal metadata must bind the project");
+        writes.push(structuredClone(request));
         persisted = structuredClone(project);
-        if (recoveryJournal) {
-          journal = null;
-          clearCount += 1;
-        }
+        journal = null;
+        clearCount += 1;
         diskFingerprint = fingerprintFor(project, ++fingerprintRevision);
-        return { fingerprint: structuredClone(diskFingerprint), recovery_warning: null };
+        return boundSaveAck(request, diskFingerprint);
       },
       createSnapshot: async (input: typeof backups[number]) => {
         backups.push(structuredClone(input));
@@ -537,10 +656,10 @@ Deno.test("pending recovery keeps canonical data until restore snapshots it", as
     assert(!(await store.flush()), "pending recovery must block an ordinary flush");
     await store.resolvePendingRecovery("restore");
     assert(String(store.data.project.title) === "自动保存版本", "restore must install the journal project");
-    assert(writes.at(-1)?.project.title === "自动保存版本", "restore must persist the journal project");
+    assert(writes.at(-1)?.project.project.title === "自动保存版本", "restore must persist the journal project");
     const backup = backups.at(0);
     assert(backup && backup.project.project.title === "磁盘版本", "restore must snapshot canonical data first");
-    assert(writes.at(-1)?.snapshots[0]?.name === "恢复前备份", "restore must retain the before-backup metadata");
+    assert(writes.at(-1)?.project.snapshots[0]?.name === "恢复前备份", "restore must retain the before-backup metadata");
     assert(clearCount === 1 && !store.pendingRecovery, "restore must clear the journal and pending state");
     store.pendingRecovery = { project: recovered, canonical: store.data, saved_at: "2999-09-21T00:00:00.000Z" };
     await store.resolvePendingRecovery("discard");
@@ -621,38 +740,79 @@ Deno.test("native project switching rolls back the target when the old lease can
     const calls: string[] = [];
     const sessions: Array<{ project_dir: string | null }> = [];
     let store: InstanceType<typeof WorkbenchStore>;
-    const bridge = {
+    let currentDir = "A";
+    const projectA = switchProject("项目 A");
+    const projectB = switchProject("项目 B");
+    const projects = { A: projectA, B: projectB };
+    const leases = new Map<string, string>([["A", "lease:A"]]);
+    const bridge: any = {
       projectDir: "A",
       projectDirFromUrl: false,
+      lastOpenedProjectState: {
+        project: structuredClone(projectA),
+        project_id: projectA.project.id,
+        project_dir: "A",
+        lease_generation: "lease:A",
+        fingerprint: fingerprintFor(projectA, 1),
+      },
       isNative: () => true,
-      setProjectDir: (value: string) => { bridge.projectDir = value; },
-      restoreProjectDir: (value: string | null) => { bridge.projectDir = value || ""; },
+      setProjectDir: (value: string) => { currentDir = value; bridge.projectDir = value; },
+      restoreProjectDir: (value: string | null, _fromUrl = false, openedState: any = null) => {
+        currentDir = value || "";
+        bridge.projectDir = currentDir;
+        bridge.lastOpenedProjectState = openedState && openedState.project_dir === currentDir
+          ? structuredClone(openedState)
+          : null;
+      },
+      openProjectState: async () => {
+        const project = projects[currentDir as "A" | "B"];
+        const leaseGeneration = `lease:${currentDir}`;
+        leases.set(currentDir, leaseGeneration);
+        const state = {
+          project: structuredClone(project),
+          project_id: project.project.id,
+          project_dir: currentDir,
+          lease_generation: leaseGeneration,
+          fingerprint: fingerprintFor(project, currentDir === "B" ? 2 : 1),
+        };
+        bridge.lastOpenedProjectState = structuredClone(state);
+        return state;
+      },
       openProject: async () => {
-        const project = structuredClone(store.data);
-        project.project.title = "B";
-        return project;
+        const state = await bridge.openProjectState();
+        return structuredClone(state.project);
       },
       readProjectState: async () => {
-        const project = structuredClone(store.data);
-        if (bridge.projectDir === "B") project.project.title = "B";
+        const project = structuredClone(projects[currentDir as "A" | "B"]);
         return {
           project,
-          fingerprint: fingerprintFor(project, bridge.projectDir === "B" ? 2 : 1),
+          project_id: project.project.id,
+          project_dir: currentDir,
+          lease_generation: bridge.lastOpenedProjectState?.project_dir === currentDir
+            ? leases.get(currentDir)
+            : null,
+          fingerprint: fingerprintFor(project, currentDir === "B" ? 2 : 1),
         };
       },
       saveSession: async (session: { project_dir: string | null }) => { sessions.push(session); },
       writeRecoveryJournal: async () => {},
-      writeProject: async (project: ProjectData) => ({
-        fingerprint: fingerprintFor(project, 3),
-        recovery_warning: null,
-      }),
+      writeProject: async (request: any) => {
+        assert(request.project_dir === currentDir, "save must target the active directory");
+        assert(request.expected_project_id === request.project.project.id, "save must bind the project id");
+        assert(request.lease_generation === leases.get(currentDir), "save must bind the active lease generation");
+        const project = structuredClone(request.project);
+        return boundSaveAck(request, fingerprintFor(project, 3));
+      },
       clearRecoveryJournal: async () => {},
       closeProject: async (projectDir: string) => {
         calls.push(`close:${projectDir}`);
         if (projectDir === "A") throw new Error("old lease close failed");
+        leases.delete(projectDir);
       },
     };
     store = new WorkbenchStore(bridge);
+    store.data = structuredClone(projectA);
+    store.trackProjectIdentity();
     store.markNativeLease("A");
     store.projectFingerprint = fingerprintFor(store.data, 1);
     store.projectFingerprintGeneration = 1;
@@ -661,7 +821,9 @@ Deno.test("native project switching rolls back the target when the old lease can
     assert(bridge.projectDir === "A", "switch failure must restore the original project path");
     assert(sessions.at(-1)?.project_dir === "A", "switch rollback must persist the original project path");
     assert(store.hasNativeLease("A") && !store.hasNativeLease("B"), "failed switch must not leave two active leases");
+    assert(store.saveIdentity().lease_generation === "lease:A", "rollback must restore A's captured lease generation");
     assert(!store.nativeSwitchPending, "a successful target rollback must not leave a pending switch");
+    assert(await store.flush(), "the restored A lease must permit the next bound save");
   } finally {
     runtime.document = previousDocument;
     runtime.__TAURI__ = previousTauri;

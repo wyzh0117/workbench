@@ -1,0 +1,103 @@
+Check tests/recovery_ui_test.ts
+Check tests/native_boundary_test.ts
+running 12 tests from ./tests/recovery_ui_test.ts
+UI recovery queue serializes saves and survives a failed task ... ok (263µs)
+UI surfaces backend recovery warnings from import results ... ok (448µs)
+native project transitions keep A to B to A reader positions and session identities ... FAILED (26ms)
+native failed transitions keep the old session for missing, invalid, and locked targets ... FAILED (12ms)
+WorkbenchStore flush retries a mutation that lands during save ... FAILED (13ms)
+WorkbenchStore surfaces autosave conflicts and reload establishes a usable state ... FAILED (12ms)
+pending recovery keeps canonical data until restore snapshots it ... FAILED (19ms)
+native startup clears a persisted project path when opening loses its lease ... ok (10ms)
+native project switching rolls back the target when the old lease cannot close ... FAILED (10ms)
+native open releases a provisional lease when project data is malformed ... ok (10ms)
+native open does not close a lease when project_open rejects ... ok (11ms)
+native open keeps a null project result unleased ... ok (11ms)
+running 5 tests from ./tests/native_boundary_test.ts
+native shell exposes explicit project and high-level workflows ... FAILED (6ms)
+native boundary has no fs or shell Tauri capability ... ok (169µs)
+every project command the app sends natively has a shell mapping ... FAILED (445µs)
+every single-struct shell command is nested by the app payload builder ... ok (3ms)
+folder.adopt native IPC sends the confirmed plan and direct-child selection flat ... FAILED (501µs)
+
+ ERRORS
+
+native shell exposes explicit project and high-level workflows => ./tests/native_boundary_test.ts:24:6
+error: Error: native mapping must target explicit create/open/restore/close lifecycle commands
+  if (!condition) throw new Error(message);
+                        ^
+    at assert (file:///Users/youngi/.codex/worktrees/io-ui-closure/workbench/tests/native_boundary_test.ts:2:25)
+    at file:///Users/youngi/.codex/worktrees/io-ui-closure/workbench/tests/native_boundary_test.ts:161:3
+
+every project command the app sends natively has a shell mapping => ./tests/native_boundary_test.ts:409:6
+error: Error: import.preview.release is project-scoped, so nativeCommand must map it to a shell command
+  if (!condition) throw new Error(message);
+                        ^
+    at assert (file:///Users/youngi/.codex/worktrees/io-ui-closure/workbench/tests/native_boundary_test.ts:2:25)
+    at file:///Users/youngi/.codex/worktrees/io-ui-closure/workbench/tests/native_boundary_test.ts:426:5
+
+folder.adopt native IPC sends the confirmed plan and direct-child selection flat => ./tests/native_boundary_test.ts:482:6
+error: Error: UI apply must send the confirmed plan and checked paths flat
+  if (!condition) throw new Error(message);
+                        ^
+    at assert (file:///Users/youngi/.codex/worktrees/io-ui-closure/workbench/tests/native_boundary_test.ts:2:25)
+    at file:///Users/youngi/.codex/worktrees/io-ui-closure/workbench/tests/native_boundary_test.ts:518:3
+
+native project transitions keep A to B to A reader positions and session identities => ./tests/recovery_ui_test.ts:183:6
+error: Error: successful switch must point at B
+  if (!condition) throw new Error(message);
+                        ^
+    at assert (file:///Users/youngi/.codex/worktrees/io-ui-closure/workbench/tests/recovery_ui_test.ts:12:25)
+    at file:///Users/youngi/.codex/worktrees/io-ui-closure/workbench/tests/recovery_ui_test.ts:220:5
+
+native failed transitions keep the old session for missing, invalid, and locked targets => ./tests/recovery_ui_test.ts:273:6
+error: Error: malformed target data must release its provisional target lease
+  if (!condition) throw new Error(message);
+                        ^
+    at assert (file:///Users/youngi/.codex/worktrees/io-ui-closure/workbench/tests/recovery_ui_test.ts:12:25)
+    at file:///Users/youngi/.codex/worktrees/io-ui-closure/workbench/tests/recovery_ui_test.ts:319:5
+
+WorkbenchStore flush retries a mutation that lands during save => ./tests/recovery_ui_test.ts:331:6
+error: Error: flush must succeed after retrying the changed snapshot
+  if (!condition) throw new Error(message);
+                        ^
+    at assert (file:///Users/youngi/.codex/worktrees/io-ui-closure/workbench/tests/recovery_ui_test.ts:12:25)
+    at file:///Users/youngi/.codex/worktrees/io-ui-closure/workbench/tests/recovery_ui_test.ts:378:5
+
+WorkbenchStore surfaces autosave conflicts and reload establishes a usable state => ./tests/recovery_ui_test.ts:403:6
+error: Error: the UI must retain structured conflict state
+  if (!condition) throw new Error(message);
+                        ^
+    at assert (file:///Users/youngi/.codex/worktrees/io-ui-closure/workbench/tests/recovery_ui_test.ts:12:25)
+    at file:///Users/youngi/.codex/worktrees/io-ui-closure/workbench/tests/recovery_ui_test.ts:453:5
+
+pending recovery keeps canonical data until restore snapshots it => ./tests/recovery_ui_test.ts:466:6
+error: TypeError: this.bridge.restoreProjectDir is not a function
+    this.bridge.restoreProjectDir(null, false);
+                ^
+    at WorkbenchStore.forgetNativeProject (file:///Users/youngi/.codex/worktrees/io-ui-closure/workbench/app/main.js?pending-recovery-test:4635:17)
+    at WorkbenchStore.initialize (file:///Users/youngi/.codex/worktrees/io-ui-closure/workbench/app/main.js?pending-recovery-test:4829:20)
+    at async file:///Users/youngi/.codex/worktrees/io-ui-closure/workbench/tests/recovery_ui_test.ts:534:5
+
+native project switching rolls back the target when the old lease cannot close => ./tests/recovery_ui_test.ts:601:6
+error: Error: switch failure must close the target rollback lease
+  if (!condition) throw new Error(message);
+                        ^
+    at assert (file:///Users/youngi/.codex/worktrees/io-ui-closure/workbench/tests/recovery_ui_test.ts:12:25)
+    at file:///Users/youngi/.codex/worktrees/io-ui-closure/workbench/tests/recovery_ui_test.ts:660:5
+
+ FAILURES
+
+native shell exposes explicit project and high-level workflows => ./tests/native_boundary_test.ts:24:6
+every project command the app sends natively has a shell mapping => ./tests/native_boundary_test.ts:409:6
+folder.adopt native IPC sends the confirmed plan and direct-child selection flat => ./tests/native_boundary_test.ts:482:6
+native project transitions keep A to B to A reader positions and session identities => ./tests/recovery_ui_test.ts:183:6
+native failed transitions keep the old session for missing, invalid, and locked targets => ./tests/recovery_ui_test.ts:273:6
+WorkbenchStore flush retries a mutation that lands during save => ./tests/recovery_ui_test.ts:331:6
+WorkbenchStore surfaces autosave conflicts and reload establishes a usable state => ./tests/recovery_ui_test.ts:403:6
+pending recovery keeps canonical data until restore snapshots it => ./tests/recovery_ui_test.ts:466:6
+native project switching rolls back the target when the old lease cannot close => ./tests/recovery_ui_test.ts:601:6
+
+FAILED | 8 passed | 9 failed (189ms)
+
+error: Test failed

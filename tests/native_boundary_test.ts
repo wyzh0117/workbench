@@ -170,7 +170,9 @@ Deno.test("native shell exposes explicit project and high-level workflows", () =
       app.includes('listen("tauri://close-requested"') &&
       app.includes('workbench://close-requested') &&
       app.includes('confirmClose()') &&
-      app.includes('return await this.invoke("project.open", {})') &&
+      app.includes('"project.open_state": "project_open_state"') &&
+      app.includes("const state = await this.openProjectState();") &&
+      app.includes('return state && Object.hasOwn(state, "project") ? state.project : state;') &&
       !app.includes('invoke("open_project"') &&
       app.includes('"project.external.inspect": "project_external_status"') &&
       app.includes('resolveExternalConflict') &&
@@ -202,7 +204,7 @@ Deno.test("native shell exposes explicit project and high-level workflows", () =
       projectSave.includes("require_active_project_lock") &&
       projectSave.includes("fingerprints_differ") &&
       projectSave.indexOf("fingerprints_differ") < projectSave.indexOf("write_recovery_journal_unlocked") &&
-      projectSave.indexOf("write_recovery_journal_unlocked") < projectSave.indexOf("write_project_value_with_warning_unlocked") &&
+      projectSave.indexOf("write_recovery_journal_unlocked") < projectSave.indexOf("write_project_contents_report_unlocked") &&
       !projectSave.includes("expected_fingerprint: Option<FileFingerprint>") &&
       !projectSave.includes("acquire_project_lock"),
     "project_save must require an existing lease; project_create owns acquisition",
@@ -213,9 +215,10 @@ Deno.test("native shell exposes explicit project and high-level workflows", () =
   assert(
     openStateStart >= 0 && openStateEnd > openStateStart &&
       openState.includes("project_dir: String") &&
-      openState.includes("require_active_project_lock") &&
-      openState.includes("read_project_state(&project_dir)") &&
-      openState.includes("fingerprint"),
+      openState.includes("project_open_inner(project_dir.clone())?") &&
+      openState.includes('"fingerprint": fingerprint') &&
+      openState.includes('"project_id": project_id') &&
+      openState.includes('"lease_generation": lease_generation'),
     "project_open_state must read and return the project plus its fingerprint under the project lease",
   );
   const newProjectStart = app.indexOf("async newProject(title");
@@ -318,7 +321,8 @@ Deno.test("native shell exposes explicit project and high-level workflows", () =
       app.includes("project_sessions") &&
       !app.includes("data-project-dir") &&
       app.includes('"select_folder"') &&
-      app.includes('return await this.invoke("project.open", {})') &&
+      app.includes('"project.open_state": "project_open_state"') &&
+      app.includes("const state = await this.openProjectState();") &&
       !app.includes('invoke("open_project"') &&
       app.includes("await this.persistSession({ project_dir: null })"),
     "native session and launcher must use the folder picker instead of manual paths",
@@ -333,7 +337,7 @@ Deno.test("native shell exposes explicit project and high-level workflows", () =
       const explicitInsert = app.slice(insertStart, insertEnd);
       return importStart >= 0 && importEnd > importStart &&
         insertStart >= 0 && insertEnd > insertStart &&
-        mediaImport.includes('this.bridge.command("asset.import"') &&
+        mediaImport.includes('await this.runCanonicalMutation("asset.import"') &&
         !mediaImport.includes("assetContext(") &&
         !mediaImport.includes("content_item_id:") &&
         explicitInsert.includes("插入素材：") &&
@@ -418,11 +422,16 @@ Deno.test("every project command the app sends natively has a shell mapping", ()
     match.groups!.name
   );
   assert(scoped.length >= 10, "the project-scoped command list must parse");
+  assert(
+    app.includes("async releaseImportPreview(previewId)") &&
+      app.includes("if (!previewId || this.isNative()) return { released: false };"),
+    "native import preview has no owned cache, so release is an explicit no-op",
+  );
   const mapping = app.slice(
     app.indexOf("  nativeCommand(command) {"),
     app.indexOf("  async selectFolder()"),
   );
-  for (const name of scoped) {
+  for (const name of scoped.filter((name) => name !== "import.preview.release")) {
     assert(
       mapping.includes(`"${name}":`),
       `${name} is project-scoped, so nativeCommand must map it to a shell command`,
@@ -516,10 +525,15 @@ Deno.test("folder.adopt native IPC sends the confirmed plan and direct-child sel
   );
   // Adoption stays flat; append adds only the currently open project target.
   assert(
-    app.includes('this.bridge.command(appending ? "folder.append" : "folder.adopt"') &&
+    app.includes('await this.runCanonicalMutation("folder.append", request, { preDrained: true })') &&
+      app.includes('await this.bridge.commandWithMutationAck("folder.adopt", request)') &&
+      app.includes("const commandInput = {") &&
+      app.includes("editor_generation: sourceContext.identity.editor_generation") &&
+      app.includes("operation_id: uid()") &&
+      app.includes("revision: Math.max(1, this.saveRevision)") &&
       app.includes("plan: executablePlan") &&
       app.includes("document_paths: [...(this.ui.documentImportPaths || [])]"),
-    "UI apply must send the confirmed plan and checked paths flat",
+    "UI must keep the confirmed plan and checked paths flat and use bound mutation calls",
   );
   const nestedBlock = app.slice(
     app.indexOf("    // These commands take one `input: Value` struct"),

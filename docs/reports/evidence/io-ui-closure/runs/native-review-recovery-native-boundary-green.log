@@ -1,0 +1,21 @@
+running 12 tests from ./tests/recovery_ui_test.ts
+UI recovery queue serializes saves and survives a failed task ... ok (297µs)
+UI surfaces backend recovery warnings from import results ... ok (303µs)
+native project transitions keep A to B to A reader positions and session identities ... ok (26ms)
+native failed transitions keep the old session for missing, invalid, and locked targets ... ok (13ms)
+WorkbenchStore flush retries a mutation that lands during save ... ok (368ms)
+WorkbenchStore surfaces autosave conflicts and reload establishes a usable state ... ok (26ms)
+pending recovery keeps canonical data until restore snapshots it ... ok (17ms)
+native startup clears a persisted project path when opening loses its lease ... ok (13ms)
+native project switching rolls back the target when the old lease cannot close ... ok (14ms)
+native open releases a provisional lease when project data is malformed ... ok (10ms)
+native open does not close a lease when project_open rejects ... ok (15ms)
+native open keeps a null project result unleased ... ok (10ms)
+running 5 tests from ./tests/native_boundary_test.ts
+native shell exposes explicit project and high-level workflows ... ok (8ms)
+native boundary has no fs or shell Tauri capability ... ok (178µs)
+every project command the app sends natively has a shell mapping ... ok (230µs)
+every single-struct shell command is nested by the app payload builder ... ok (3ms)
+folder.adopt native IPC sends the confirmed plan and direct-child selection flat ... ok (644µs)
+
+ok | 17 passed | 0 failed (565ms)
