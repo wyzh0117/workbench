@@ -36,8 +36,8 @@ jobs:
           $ErrorActionPreference = 'Stop'
           $config = Get-Content src-tauri/tauri.conf.json -Raw | ConvertFrom-Json
           $releaseTag = "v$($config.version)"
-          $requested = $env:GITHUB_REF_NAME -replace '^windows-assets-', ''
-          if ($requested -ne $releaseTag) {
+          $prefix = "windows-assets-$releaseTag"
+          if (-not $env:GITHUB_REF_NAME.StartsWith($prefix)) {
             throw "Tag $env:GITHUB_REF_NAME does not match app version $releaseTag."
           }
           "tag=$releaseTag" >> $env:GITHUB_OUTPUT
@@ -67,6 +67,7 @@ jobs:
           Get-Content 'dist/AI-Course-Workbench-Windows-x64-setup.exe.sha256'
 
       - name: Compose release notes with both platforms
+        shell: bash
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
@@ -82,6 +83,7 @@ jobs:
             printf '# AI Course Workbench %s\n\n' "$VERSION"
             if [ -f "$NOTES_FILE" ]; then
               cat "$NOTES_FILE"
+              printf '\n- Windows: x64 NSIS installer (%s bytes) built from the 0.2.7 Windows port; verified on Windows 11 — service suite `716/0` (`deno task test`), native suite `255/0` (`cargo test`), per-user install and app launch OK, app version `0.2.7`.\n' "$WIN_SIZE"
               printf '\n'
             fi
             cat <<EOF
@@ -150,11 +152,6 @@ jobs:
           shasum -a 256 ~/Downloads/AI-Course-Workbench-macOS.dmg
           \`\`\`
 
-          ## Release verification
-
-          - macOS: built from tag source commit \`fb050b121c2014ac3226e90d3683b7c6c26391b0\`; the Universal DMG's SHA-256 matched its sidecar and the GitHub asset digest, \`hdiutil verify\` reported VALID, app version \`0.2.7\`, architectures \`x86_64 arm64\`.
-          - Windows: x64 NSIS installer (${WIN_SIZE} bytes) built from the 0.2.7 Windows port; verified on Windows 11 — service suite \`716/0\` (\`deno task test\`), native suite \`255/0\` (\`cargo test\`), per-user install and app launch OK, app version \`0.2.7\`.
-
           ## Links
 
           - Latest release page: https://github.com/${GITHUB_REPOSITORY}/releases/latest
@@ -164,6 +161,7 @@ jobs:
           } > dist/release-notes.md
 
       - name: Add Windows assets and update release notes (never overwrites)
+        shell: bash
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
