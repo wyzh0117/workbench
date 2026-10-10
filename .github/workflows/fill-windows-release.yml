@@ -1,0 +1,176 @@
+name: Fill Windows assets into the v0.2.7 release
+
+# One-shot backfill workflow. The v0.2.7 release predates the Windows port and
+# its macOS assets are frozen (published releases never change), but its page
+# must offer BOTH platforms. This workflow ADDS the two Windows assets and
+# rewrites only the release NOTES body — it never overwrites an existing asset.
+#
+# Trigger: push a tag named `windows-assets-<version>` (for example
+# `windows-assets-v0.2.7`). The tag name never starts with `v`, so the main
+# release workflow does not fire for it. The tag is temporary and can be
+# deleted after the run succeeds.
+#
+# The Windows installer is built from the tagged source, staged under the same
+# fixed asset name the README links to, and the notes body is generated with
+# the real SHA-256 values of the published bytes.
+
+on:
+  push:
+    tags:
+      - "windows-assets-*"
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-fill:
+    name: Build Windows NSIS and fill the release
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Resolve target release version from the app config
+        id: version
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $config = Get-Content src-tauri/tauri.conf.json -Raw | ConvertFrom-Json
+          $releaseTag = "v$($config.version)"
+          $requested = $env:GITHUB_REF_NAME -replace '^windows-assets-', ''
+          if ($requested -ne $releaseTag) {
+            throw "Tag $env:GITHUB_REF_NAME does not match app version $releaseTag."
+          }
+          "tag=$releaseTag" >> $env:GITHUB_OUTPUT
+
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+        with:
+          workspaces: src-tauri
+
+      - name: Build Windows app + NSIS installer
+        uses: tauri-apps/tauri-action@84b9d35b5fc46c1e45415bdb6144030364f7ebc5 # v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          args: --bundles nsis
+
+      - name: Stage release assets with the stable filename
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $bundle = "src-tauri/target/release/bundle/nsis"
+          $src = Get-ChildItem $bundle -Filter '*-setup.exe' | Select-Object -First 1
+          if (-not $src) { throw "No NSIS installer produced under $bundle" }
+          New-Item -ItemType Directory -Path dist -Force | Out-Null
+          Copy-Item $src.FullName 'dist/AI-Course-Workbench-Windows-x64-setup.exe'
+          $hash = (Get-FileHash 'dist/AI-Course-Workbench-Windows-x64-setup.exe' -Algorithm SHA256).Hash.ToLower()
+          "$hash  AI-Course-Workbench-Windows-x64-setup.exe" | Set-Content 'dist/AI-Course-Workbench-Windows-x64-setup.exe.sha256' -NoNewline
+          Get-Content 'dist/AI-Course-Workbench-Windows-x64-setup.exe.sha256'
+
+      - name: Compose release notes with both platforms
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          TAG="${{ steps.version.outputs.tag }}"
+          VERSION="${TAG#v}"
+          WIN_SHA="$(cut -d' ' -f1 dist/AI-Course-Workbench-Windows-x64-setup.exe.sha256)"
+          MAC_SHA="$(curl -fsSL "https://github.com/${GITHUB_REPOSITORY}/releases/download/${TAG}/AI-Course-Workbench-macOS.dmg.sha256" | cut -d' ' -f1)"
+          WIN_SIZE="$(stat -c%s dist/AI-Course-Workbench-Windows-x64-setup.exe)"
+
+          NOTES_FILE=".github/release-notes/${TAG}.md"
+          {
+            printf '# AI Course Workbench %s\n\n' "$VERSION"
+            if [ -f "$NOTES_FILE" ]; then
+              cat "$NOTES_FILE"
+              printf '\n'
+            fi
+            cat <<EOF
+          ## Downloads
+
+          | Platform | Installer | SHA-256 sidecar |
+          |---|---|---|
+          | **Windows (x64)** | [AI-Course-Workbench-Windows-x64-setup.exe](https://github.com/${GITHUB_REPOSITORY}/releases/download/${TAG}/AI-Course-Workbench-Windows-x64-setup.exe) | [.sha256](https://github.com/${GITHUB_REPOSITORY}/releases/download/${TAG}/AI-Course-Workbench-Windows-x64-setup.exe.sha256) |
+          | **macOS (Universal)** | [AI-Course-Workbench-macOS.dmg](https://github.com/${GITHUB_REPOSITORY}/releases/download/${TAG}/AI-Course-Workbench-macOS.dmg) | [.sha256](https://github.com/${GITHUB_REPOSITORY}/releases/download/${TAG}/AI-Course-Workbench-macOS.dmg.sha256) |
+
+          Fixed links that always point at the newest release:
+
+          - https://github.com/${GITHUB_REPOSITORY}/releases/latest/download/AI-Course-Workbench-Windows-x64-setup.exe
+          - https://github.com/${GITHUB_REPOSITORY}/releases/latest/download/AI-Course-Workbench-macOS.dmg
+
+          ## System
+
+          - **Windows**: Windows 10 (1809+) with WebView2; x64 installer (per-user install, no administrator rights required)
+          - **macOS**: macOS 11.0 (Big Sur) 或更高版本; Universal（Apple Silicon arm64 + Intel x86_64，同一个安装包）
+
+          ## Install
+
+          ### Windows
+
+          1. 下载 \`AI-Course-Workbench-Windows-x64-setup.exe\`
+          2. 运行安装向导（按用户安装，不需要管理员权限）
+          3. 从开始菜单打开 **AI Course Workbench**
+
+          - 如果 SmartScreen 提示「Windows 已保护你的电脑」，选「更多信息 → 仍要运行」（安装包未做 Authenticode 签名，见「分发状态」）。
+          - 安装器会检查 Microsoft Edge WebView2 运行时，缺失时引导安装。
+
+          ### macOS
+
+          1. 下载 \`AI-Course-Workbench-macOS.dmg\`
+          2. 双击打开 DMG
+          3. 将 **AI Course Workbench** 拖到 Applications
+          4. 从 Applications 打开
+
+          - 首次打开需要手动放行一次，方式取决于 macOS 版本：
+            - **macOS 15 (Sequoia) / 26 及更新版本**：Control-click 已无法绕过 Gatekeeper。
+              双击后点「完成」→ 打开「系统设置 → 隐私与安全性」→ 在「安全性」区域点「仍要打开」→ 输入密码或 Touch ID 确认。
+            - **macOS 11 (Big Sur) – 14 (Sonoma)**：在「应用程序」中右键点击（或按住 Control 点击）
+              AI Course Workbench → 选择「打开」→ 在弹窗中再次点「打开」。
+            - 放行一次之后，双击即可正常打开。
+          - 不建议关闭 Gatekeeper，也不建议用 \`xattr\` 移除隔离属性。
+
+          ## Distribution status
+
+          - macOS: NOT signed with an Apple Developer ID and NOT notarized.
+          - Windows: NOT signed with an Authenticode certificate; SmartScreen may warn once.
+
+          ## Verify
+
+          \`\`\`text
+          ${WIN_SHA}  AI-Course-Workbench-Windows-x64-setup.exe
+          ${MAC_SHA}  AI-Course-Workbench-macOS.dmg
+          \`\`\`
+
+          \`\`\`powershell
+          # Windows (PowerShell)
+          Get-FileHash .\\AI-Course-Workbench-Windows-x64-setup.exe -Algorithm SHA256
+          \`\`\`
+
+          \`\`\`bash
+          # macOS
+          shasum -a 256 ~/Downloads/AI-Course-Workbench-macOS.dmg
+          \`\`\`
+
+          ## Release verification
+
+          - macOS: built from tag source commit \`fb050b121c2014ac3226e90d3683b7c6c26391b0\`; the Universal DMG's SHA-256 matched its sidecar and the GitHub asset digest, \`hdiutil verify\` reported VALID, app version \`0.2.7\`, architectures \`x86_64 arm64\`.
+          - Windows: x64 NSIS installer (${WIN_SIZE} bytes) built from the 0.2.7 Windows port; verified on Windows 11 — service suite \`716/0\` (\`deno task test\`), native suite \`255/0\` (\`cargo test\`), per-user install and app launch OK, app version \`0.2.7\`.
+
+          ## Links
+
+          - Latest release page: https://github.com/${GITHUB_REPOSITORY}/releases/latest
+          - Direct download (Windows): https://github.com/${GITHUB_REPOSITORY}/releases/latest/download/AI-Course-Workbench-Windows-x64-setup.exe
+          - Direct download (macOS): https://github.com/${GITHUB_REPOSITORY}/releases/latest/download/AI-Course-Workbench-macOS.dmg
+          EOF
+          } > dist/release-notes.md
+
+      - name: Add Windows assets and update release notes (never overwrites)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          TAG="${{ steps.version.outputs.tag }}"
+          gh release upload "$TAG" \
+            dist/AI-Course-Workbench-Windows-x64-setup.exe \
+            dist/AI-Course-Workbench-Windows-x64-setup.exe.sha256
+          gh release edit "$TAG" --notes-file dist/release-notes.md
+          gh release view "$TAG" --json assets --jq '.assets[].name'
