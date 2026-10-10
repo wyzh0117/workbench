@@ -1,7 +1,0 @@
-Native cold-close regression, red reproduction
-base source: c19bc7c3f371b4e778114f61cdc9b562d152975d
-test added before production fix: tests/native_boot_test.ts
-command: deno test -A --filter='native cold close confirms exit without saving a placeholder project' tests/native_boot_test.ts
-result: exit 1; 0 passed, 1 failed
-failure: waiting for confirm_close timed out at tests/native_boot_test.ts:883
-cause: flushAndClose unconditionally called store.flush(); with no opened project identity, saveRequest rejected the blank launcher placeholder and the close flow returned before confirm_close.

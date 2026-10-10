@@ -10,6 +10,7 @@
  * connector, and the provider / credential / execution storage is answered by
  * an in-memory fake bridge.
  */
+import { appCredentialStoreLabel } from "../app/host.js";
 import {
   FakeAiConnector,
   HttpAiConnector,
@@ -1140,16 +1141,16 @@ Deno.test("the panel names the AI storage location of the running shell", async 
     store.aiEditProvider("fake");
     store.notify();
     assert(
-      root.innerHTML.includes("macOS 系统钥匙串（本机浏览器服务）"),
-      "浏览器壳必须说明密钥写入 macOS 系统钥匙串",
+      root.innerHTML.includes(appCredentialStoreLabel(false)),
+      "浏览器壳必须说明密钥写入本机系统凭据存储",
     );
     assert(!root.innerHTML.includes("本项目目录的 .workspace/ai"), "浏览器壳不得声称密钥在项目文件");
     assert(root.innerHTML.includes("课程文件不含凭据"), "必须说明课程文件不保存凭据");
     store.bridge.isNative = () => true;
     store.notify();
     assert(
-      root.innerHTML.includes("macOS 系统钥匙串"),
-      "桌面壳必须说明密钥写入 macOS 系统钥匙串",
+      root.innerHTML.includes(appCredentialStoreLabel(true)),
+      "桌面壳必须说明密钥写入系统凭据管理器",
     );
     assert(
       !root.innerHTML.includes("本机应用数据目录") &&
@@ -1521,9 +1522,10 @@ Deno.test("the panel never renders a provider credential value", async () => {
       "面板绝不能渲染密钥值",
     );
     assert(
-      root.innerHTML.includes("macOS 系统钥匙串") &&
+      (root.innerHTML.includes(appCredentialStoreLabel(true)) ||
+        root.innerHTML.includes(appCredentialStoreLabel(false))) &&
         root.innerHTML.includes("课程文件不含凭据"),
-      "面板必须说明密钥保存于系统钥匙串且课程文件不含凭据",
+      "面板必须说明密钥保存于系统凭据存储且课程文件不含凭据",
     );
     // Deleting asks for confirmation; a headless shell has no dialog, so the
     // test approves it explicitly.
@@ -1816,7 +1818,7 @@ Deno.test("a key the shell cannot read back is never reported as configured", as
       "a key that cannot be read back is not configured",
     );
     assert(
-      /没有读回/.test(String(store.ui.toast)) && /钥匙串/.test(String(store.ui.toast)),
+      /没有读回/.test(String(store.ui.toast)) && /凭据存储|钥匙串/.test(String(store.ui.toast)),
       "the toast must explain that the write could not be confirmed",
     );
     assert(

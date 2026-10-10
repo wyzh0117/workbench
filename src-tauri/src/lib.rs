@@ -1417,12 +1417,28 @@ fn atomic_write_path_report(
     }
     #[cfg(test)]
     record_project_io(target, "sync", 0);
-    match File::open(parent).and_then(|directory| directory.sync_all()) {
+    match sync_directory_best_effort(parent) {
         Ok(()) => Ok((!post_commit_warnings.is_empty()).then(|| post_commit_warnings.join("；"))),
         Err(error) => {
             post_commit_warnings.push(format!("项目内容已提交，但目录同步失败：{error}"));
             Ok(Some(post_commit_warnings.join("；")))
         }
+    }
+}
+
+/// Best-effort directory fsync for POSIX rename durability. Windows cannot
+/// open directory handles through `std` (os error 5) and NTFS journals the
+/// metadata once the file handles are flushed, so a directory fsync has
+/// nothing to add there and is not a durability gap.
+fn sync_directory_best_effort(parent: &Path) -> std::io::Result<()> {
+    #[cfg(windows)]
+    {
+        let _ = parent;
+        Ok(())
+    }
+    #[cfg(not(windows))]
+    {
+        File::open(parent).and_then(|directory| directory.sync_all())
     }
 }
 
@@ -1601,6 +1617,8 @@ fn record_project_io(path: &Path, event: &str, bytes: u64) {
         .ok()
         .map(|path| path.to_string_lossy().into_owned())
         .unwrap_or_else(|| path.to_string_lossy().into_owned());
+    // Metrics keys are always `/`-separated, on every platform.
+    let relative = relative.replace('\\', "/");
     let mut counters = PROJECT_IO_METRICS
         .get_or_init(|| Mutex::new(HashMap::new()))
         .lock()
@@ -4342,7 +4360,7 @@ fn snapshot_directory_sync_warning(parent: &Path, snapshot_id: &str) -> Option<S
             "测试注入：快照目录同步失败",
         ))
     } else {
-        File::open(parent).and_then(|directory| directory.sync_all())
+        sync_directory_best_effort(parent)
     };
     result
         .err()
@@ -11340,7 +11358,7 @@ fn print_projection_pdf(
     output_path: &Path,
 ) -> Result<(), String> {
     let chrome = chrome_binary()
-        .ok_or("PDF 导出需要本机 Google Chrome/Chromium 打印引擎；请安装后重试，或先导出 HTML。")?;
+        .ok_or("PDF 导出需要本机 Chrome / Edge / Chromium 打印引擎；请安装后重试，或先导出 HTML。")?;
     let staging = unique_export_staging(output_path)?;
     fs::create_dir_all(&staging).map_err(|error| format!("无法创建 PDF 临时目录：{error}"))?;
     let result = (|| {
@@ -11348,7 +11366,7 @@ fn print_projection_pdf(
         fs::write(&html_path, html).map_err(|error| format!("无法写入 PDF 临时页面：{error}"))?;
         copy_projection_assets(projection, project, project_dir, &staging)?;
         let pdf_path = staging.join("result.pdf");
-        let file_url = format!("file://{}", html_path.to_string_lossy());
+        let file_url = file_url_for(&html_path);
         let status = ProcessCommand::new(chrome)
             .args([
                 "--headless=new",
@@ -11480,13 +11498,48 @@ fn sanitized_project_package(project: &Value) -> Value {
 }
 
 fn chrome_binary() -> Option<PathBuf> {
-    [
-        "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
-        "/Applications/Chromium.app/Contents/MacOS/Chromium",
-    ]
-    .iter()
-    .map(PathBuf::from)
-    .find(|path| path.is_file())
+    #[cfg(target_os = "windows")]
+    {
+        // Chrome / Chromium / Edge are all Chromium print engines. Windows
+        // installs are per-machine or per-user, so probe both Program Files
+        // locations and the user-local install.
+        let mut candidates: Vec<PathBuf> = Vec::new();
+        for base in [
+            std::env::var("PROGRAMFILES").ok(),
+            std::env::var("PROGRAMFILES(X86)").ok(),
+            std::env::var("LOCALAPPDATA").ok(),
+        ]
+        .into_iter()
+        .flatten()
+        {
+            let base = PathBuf::from(base);
+            candidates.push(base.join(r"Google\Chrome\Application\chrome.exe"));
+            candidates.push(base.join(r"Chromium\Application\chrome.exe"));
+            candidates.push(base.join(r"Microsoft\Edge\Application\msedge.exe"));
+        }
+        return candidates.into_iter().find(|path| path.is_file());
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        [
+            "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+            "/Applications/Chromium.app/Contents/MacOS/Chromium",
+        ]
+        .iter()
+        .map(PathBuf::from)
+        .find(|path| path.is_file())
+    }
+}
+
+/// `file://` URL for a staged HTML page. Windows paths need the drive letter
+/// form (`file:///C:/...`), not the POSIX `file:///...` concatenation.
+fn file_url_for(path: &Path) -> String {
+    let text = path.to_string_lossy().replace('\\', "/");
+    if text.starts_with('/') {
+        format!("file://{text}")
+    } else {
+        format!("file:///{text}")
+    }
 }
 
 fn print_html_pdf(
@@ -11497,7 +11550,7 @@ fn print_html_pdf(
     content_item_id: Option<&str>,
 ) -> Result<(), String> {
     let chrome = chrome_binary()
-        .ok_or("PDF 导出需要本机 Google Chrome/Chromium 打印引擎；请安装后重试，或先导出 HTML。")?;
+        .ok_or("PDF 导出需要本机 Chrome / Edge / Chromium 打印引擎；请安装后重试，或先导出 HTML。")?;
     let staging = unique_export_staging(output_path)?;
     fs::create_dir_all(&staging).map_err(|error| format!("无法创建 PDF 临时目录: {error}"))?;
     let result = (|| {
@@ -11505,7 +11558,7 @@ fn print_html_pdf(
         fs::write(&html_path, html).map_err(|error| format!("无法写入 PDF 临时页面: {error}"))?;
         copy_export_assets(project, project_dir, &staging, content_item_id, false)?;
         let pdf_path = staging.join("result.pdf");
-        let file_url = format!("file://{}", html_path.to_string_lossy());
+        let file_url = file_url_for(&html_path);
         let status = ProcessCommand::new(chrome)
             .args([
                 "--headless=new",
@@ -11780,21 +11833,54 @@ fn export_run(preset: Value, options: Option<Value>) -> Result<Value, String> {
 fn reveal_export_path(path: String) -> Result<Value, String> {
     let path = PathBuf::from(path.trim());
     if !path.is_absolute() || !path.exists() {
-        return Err("导出结果不存在，无法在 Finder 中定位。".into());
+        return Err("导出结果不存在，无法在文件管理器中定位。".into());
     }
     reject_symlink(&path, "导出结果")?;
-    let mut command = ProcessCommand::new("/usr/bin/open");
-    if path.is_file() {
-        command.arg("-R");
-    }
-    let status = command
-        .arg(&path)
-        .status()
-        .map_err(|error| format!("无法打开 Finder: {error}"))?;
-    if !status.success() {
-        return Err("Finder 未能打开导出结果。".into());
-    }
+    reveal_in_file_manager(&path)?;
     Ok(json!({ "status": "opened", "path": path }))
+}
+
+/// Open the platform file manager with `path` selected (file) or open (dir).
+fn reveal_in_file_manager(path: &Path) -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    {
+        let mut command = ProcessCommand::new("/usr/bin/open");
+        if path.is_file() {
+            command.arg("-R");
+        }
+        let status = command
+            .arg(path)
+            .status()
+            .map_err(|error| format!("无法打开 Finder: {error}"))?;
+        if !status.success() {
+            return Err("Finder 未能打开导出结果。".into());
+        }
+        Ok(())
+    }
+    #[cfg(target_os = "windows")]
+    {
+        // `explorer /select,<path>` reveals the file; for a directory plain
+        // `explorer <path>` opens it. explorer reports exit code 1 even on
+        // success, so only spawn failure is surfaced.
+        let mut command = ProcessCommand::new("explorer.exe");
+        if path.is_file() {
+            command.arg(format!("/select,{}", path.to_string_lossy()));
+        } else {
+            command.arg(path);
+        }
+        command
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .map(|_| ())
+            .map_err(|error| format!("无法打开资源管理器: {error}"))
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+    {
+        let _ = path;
+        Err("当前平台不支持在文件管理器中定位导出结果。".into())
+    }
 }
 
 #[tauri::command]
@@ -13203,11 +13289,7 @@ fn clear_recovery_journal(
             Some("恢复记录已清除，但目录元数据同步失败（测试注入）".to_owned())
         } else {
             path.parent()
-                .and_then(|parent| {
-                    File::open(parent)
-                        .and_then(|directory| directory.sync_all())
-                        .err()
-                })
+                .and_then(|parent| sync_directory_best_effort(parent).err())
                 .map(|error| format!("恢复记录已清除，但目录元数据同步失败: {error}"))
         };
     Ok(recovery_clear_ack(
@@ -13548,7 +13630,8 @@ fn suggestion_apply(input: Value) -> Result<Value, String> {
 // V0-T03 / Workstream C —— AI 传输、Provider 配置与执行记录
 //
 // 这三块都**不是** Canonical：Provider 元数据与执行记录写在应用数据目录的
-// `.workspace/ai/` 下，凭据写入 macOS 系统钥匙串，既不进 `project.json`，也不进导出包。
+// `.workspace/ai/` 下，凭据写入系统凭据存储（macOS 系统钥匙串 / Windows 凭据管理器），
+// 既不进 `project.json`，也不进导出包。
 // 读接口只回传「是否已配置」的布尔值，任何返回值或错误文本都不会带上凭据本身。
 // ---------------------------------------------------------------------------
 
@@ -13599,11 +13682,28 @@ trait AiCredentialStore {
     fn delete(&self, provider_id: &str) -> Result<bool, String>;
 }
 
+/// 平台凭据存储的用户可见名称：macOS 是系统钥匙串，Windows 是凭据管理器。
+fn credential_store_label() -> &'static str {
+    #[cfg(target_os = "macos")]
+    {
+        "macOS 系统钥匙串"
+    }
+    #[cfg(target_os = "windows")]
+    {
+        "Windows 凭据管理器"
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+    {
+        "系统凭据存储"
+    }
+}
+
 fn keychain_failure(operation: &str) -> String {
+    let store = credential_store_label();
     let message = match operation {
-        "get" => "无法访问 macOS 系统钥匙串，无法确认 API Key 是否已配置",
-        "delete" => "无法访问 macOS 系统钥匙串，API Key 未删除",
-        _ => "无法访问 macOS 系统钥匙串，API Key 未保存",
+        "get" => format!("无法访问{store}，无法确认 API Key 是否已配置"),
+        "delete" => format!("无法访问{store}，API Key 未删除"),
+        _ => format!("无法访问{store}，API Key 未保存"),
     };
     format!("keychain_unavailable: {message}（{operation}）")
 }
@@ -13738,6 +13838,130 @@ impl AiCredentialStore for MacKeychainStore {
     }
 }
 
+/// Windows Credential Manager store — the counterpart of `MacKeychainStore`.
+///
+/// (Type, TargetName) is the unique key in Credential Manager, so every entry
+/// carries the service and the per-project account in its target name. Writes
+/// are verified by reading the entry back before success is reported, with the
+/// same fail-closed semantics as the macOS store.
+#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
+struct WindowsCredentialStore {
+    account_prefix: String,
+}
+
+#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
+impl WindowsCredentialStore {
+    fn for_base(base: &Path) -> Self {
+        // Identical derivation to `MacKeychainStore`: native and browser
+        // project credentials stay isolated and no path leaks into metadata.
+        let digest = sha256_hex(base.to_string_lossy().as_bytes());
+        Self {
+            account_prefix: format!("project-{}:provider:", &digest[..32]),
+        }
+    }
+
+    fn account(&self, provider_id: &str) -> String {
+        format!("{}{}", self.account_prefix, provider_id)
+    }
+
+    fn target_name(&self, provider_id: &str) -> String {
+        format!("{}:{}", AI_KEYCHAIN_SERVICE, self.account(provider_id))
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn wide(value: &str) -> Vec<u16> {
+    use std::os::windows::ffi::OsStrExt as _;
+    std::ffi::OsStr::new(value)
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect()
+}
+
+#[cfg(target_os = "windows")]
+impl AiCredentialStore for WindowsCredentialStore {
+    fn set(&self, provider_id: &str, value: &str) -> Result<(), String> {
+        use windows_sys::Win32::Security::Credentials::{
+            CredWriteW, CREDENTIALW, CRED_PERSIST_LOCAL_MACHINE, CRED_TYPE_GENERIC,
+        };
+
+        let trimmed = value.trim();
+        let target = wide(&self.target_name(provider_id));
+        let user = wide(&self.account(provider_id));
+        let mut blob = trimmed.as_bytes().to_vec();
+        let credential = CREDENTIALW {
+            Flags: 0,
+            Type: CRED_TYPE_GENERIC,
+            TargetName: target.as_ptr() as *mut u16,
+            Comment: std::ptr::null_mut(),
+            LastWritten: windows_sys::Win32::Foundation::FILETIME {
+                dwLowDateTime: 0,
+                dwHighDateTime: 0,
+            },
+            CredentialBlobSize: blob.len() as u32,
+            CredentialBlob: blob.as_mut_ptr(),
+            Persist: CRED_PERSIST_LOCAL_MACHINE,
+            AttributeCount: 0,
+            Attributes: std::ptr::null_mut(),
+            TargetAlias: std::ptr::null_mut(),
+            UserName: user.as_ptr() as *mut u16,
+        };
+        let written = unsafe { CredWriteW(&credential, 0) };
+        if written == 0 {
+            return Err(keychain_failure("set"));
+        }
+        match self.get(provider_id)? {
+            Some(stored) if stored == trimmed => Ok(()),
+            _ => Err(keychain_failure("set")),
+        }
+    }
+
+    fn get(&self, provider_id: &str) -> Result<Option<String>, String> {
+        use windows_sys::Win32::Foundation::ERROR_NOT_FOUND;
+        use windows_sys::Win32::Security::Credentials::{
+            CredFree, CredReadW, CREDENTIALW, CRED_TYPE_GENERIC,
+        };
+
+        let target = wide(&self.target_name(provider_id));
+        let mut out: *mut CREDENTIALW = std::ptr::null_mut();
+        let read = unsafe { CredReadW(target.as_ptr(), CRED_TYPE_GENERIC, 0, &mut out) };
+        if read == 0 {
+            let code = std::io::Error::last_os_error().raw_os_error().unwrap_or(0);
+            if code == ERROR_NOT_FOUND as i32 {
+                return Ok(None);
+            }
+            return Err(keychain_failure("get"));
+        }
+        let value = unsafe {
+            let credential = &*out;
+            let blob = std::slice::from_raw_parts(
+                credential.CredentialBlob,
+                credential.CredentialBlobSize as usize,
+            );
+            let decoded = String::from_utf8_lossy(blob).trim().to_owned();
+            CredFree(out as *const _);
+            decoded
+        };
+        Ok((!value.is_empty()).then_some(value))
+    }
+
+    fn delete(&self, provider_id: &str) -> Result<bool, String> {
+        use windows_sys::Win32::Foundation::ERROR_NOT_FOUND;
+        use windows_sys::Win32::Security::Credentials::{CredDeleteW, CRED_TYPE_GENERIC};
+
+        let target = wide(&self.target_name(provider_id));
+        let deleted = unsafe { CredDeleteW(target.as_ptr(), CRED_TYPE_GENERIC, 0) };
+        if deleted != 0 {
+            return Ok(true);
+        }
+        let code = std::io::Error::last_os_error().raw_os_error().unwrap_or(0);
+        if code == ERROR_NOT_FOUND as i32 {
+            return Ok(false);
+        }
+        Err(keychain_failure("delete"))
+    }
+}
+
 #[cfg(test)]
 static TEST_AI_CREDENTIALS: OnceLock<Mutex<HashMap<String, String>>> = OnceLock::new();
 
@@ -13788,7 +14012,16 @@ fn ai_credential_store(base: &Path) -> Box<dyn AiCredentialStore> {
     }
     #[cfg(not(test))]
     {
-        Box::new(MacKeychainStore::for_base(base))
+        #[cfg(target_os = "windows")]
+        {
+            Box::new(WindowsCredentialStore::for_base(base))
+        }
+        // macOS and other POSIX hosts use the Keychain adapter; anything it
+        // cannot reach fails closed with `keychain_unavailable`.
+        #[cfg(not(target_os = "windows"))]
+        {
+            Box::new(MacKeychainStore::for_base(base))
+        }
     }
 }
 
@@ -13974,7 +14207,7 @@ fn ai_read_provider_store(path: &Path) -> Result<Map<String, Value>, String> {
 
 fn ai_migration_failure(operation: &str) -> String {
     format!(
-        "keychain_unavailable: 历史 API Key 未能安全迁移到 macOS 系统钥匙串（{operation}），原文件未删除"
+        "keychain_unavailable: 历史 API Key 未能安全迁移到系统凭据存储（macOS 系统钥匙串 / Windows 凭据管理器）（{operation}），原文件未删除"
     )
 }
 
@@ -14422,7 +14655,7 @@ const AI_SECRET_LABELS: [&str; 21] = [
     "token",
 ];
 
-/// 擦除素材：从系统钥匙串读取；无法确认所有凭据时，调用方必须拒绝读写。
+/// 擦除素材：从系统凭据存储读取；无法确认所有凭据时，调用方必须拒绝读写。
 #[derive(Default, Clone)]
 struct AiSecrets {
     /// 精确替换用的形态：`<scheme> <value>` 与裸 `<value>`，长的在前。
@@ -14450,7 +14683,7 @@ fn ai_stored_secrets(base: &Path) -> Result<AiSecrets, String> {
         };
         let value = credential_store
             .get(provider_id)
-            .map_err(|_| "无法安全读取系统钥匙串，未生成或读取 AI 执行记录".to_owned())?;
+            .map_err(|_| "无法安全读取系统凭据存储，未生成或读取 AI 执行记录".to_owned())?;
         let Some(value) = value else { continue };
         let value = value.trim();
         if value.is_empty() {
@@ -15440,14 +15673,14 @@ const SIWC_STAGES: [SiwcStage; 15] = [
         stage: "login",
         label: "保存账户",
         message: "无法在本机保存 ChatGPT 订阅会话。",
-        action: "请确认 macOS 钥匙串可用，然后重新登录。",
+        action: "请确认系统凭据存储可用，然后重新登录。",
     },
     SiwcStage {
         code: "subscription_native_only",
         stage: "login",
         label: "登录",
-        message: "ChatGPT 订阅登录需要 macOS 桌面版的系统浏览器回调和系统钥匙串。",
-        action: "请在 macOS 桌面版 Workbench 的「设置 → 模型」中管理订阅账户。",
+        message: "ChatGPT 订阅登录需要桌面版（macOS / Windows）的系统浏览器回调和系统凭据存储。",
+        action: "请在桌面版 Workbench 的「设置 → 模型」中管理订阅账户。",
     },
     // ---- 套餐用量授权（§10.2：已登录 ≠ 有推理权限） ----
     SiwcStage {
@@ -15769,12 +16002,32 @@ fn siwc_browser_open(url: &str) -> Result<(), String> {
                 )
             })
     }
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(target_os = "windows")]
+    {
+        // `explorer.exe <url>` hands the URL to the system default browser
+        // without a `cmd.exe` re-parse of the URL. Its exit code is not
+        // meaningful (it reports 1 even on success), so only spawn failure
+        // is treated as "browser unavailable".
+        ProcessCommand::new("explorer.exe")
+            .arg(url)
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .map(|_| ())
+            .map_err(|_| {
+                siwc_error(
+                    "subscription_browser_unavailable",
+                    "无法打开系统浏览器进行 ChatGPT 授权。",
+                )
+            })
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
     {
         let _ = url;
         Err(siwc_error(
             "subscription_platform_unsupported",
-            "ChatGPT 订阅登录目前需要 macOS 系统钥匙串和系统浏览器。",
+            "ChatGPT 订阅登录目前需要 macOS 或 Windows 桌面版的系统浏览器与系统凭据存储。",
         ))
     }
 }
@@ -18834,6 +19087,47 @@ fn asset_rename(input: Value) -> Result<Value, String> {
 mod tests {
 
     use super::*;
+
+    /// Escape fixture: a link at `link` that must never be followed out of its
+    /// root. POSIX uses a symlink. Windows uses a real symlink when the
+    /// process holds the privilege and otherwise falls back to a directory
+    /// junction, which reports `is_symlink()` exactly like a POSIX symlink.
+    /// Returns false when the platform needs a privilege this process lacks.
+    fn escape_link(original: &Path, link: &Path) -> bool {
+        #[cfg(unix)]
+        {
+            std::os::unix::fs::symlink(original, link).is_ok()
+        }
+        #[cfg(windows)]
+        {
+            use std::os::windows::fs::{symlink_dir, symlink_file};
+            let direct = if original.is_dir() {
+                symlink_dir(original, link)
+            } else {
+                symlink_file(original, link)
+            };
+            if direct.is_ok() {
+                return true;
+            }
+            // Junction fallback (no privilege needed): point at the target
+            // directory, or at the file's parent when the target is a file.
+            let junction_target = if original.is_dir() {
+                original.to_path_buf()
+            } else {
+                match original.parent() {
+                    Some(parent) => parent.to_path_buf(),
+                    None => return false,
+                }
+            };
+            std::process::Command::new("cmd.exe")
+                .args(["/c", "mklink", "/J"])
+                .arg(link)
+                .arg(junction_target)
+                .status()
+                .map(|status| status.success())
+                .unwrap_or(false)
+        }
+    }
 
     fn test_directory(label: &str) -> PathBuf {
         let directory = std::env::temp_dir().join(format!(
@@ -27228,8 +27522,12 @@ mod tests {
         fs::write(outside.join("leak.png"), vec![42_u8]).expect("leak");
         fs::create_dir_all(root.join("course")).expect("course");
         fs::write(root.join("course/keep.png"), vec![7_u8]).expect("png");
-        std::os::unix::fs::symlink(outside.join("leak.png"), root.join("course/escape.png"))
-            .expect("symlink");
+        if !escape_link(&outside.join("leak.png"), &root.join("course/escape.png")) {
+            eprintln!("skipping: this platform cannot create the escape-link fixture");
+            let _ = fs::remove_dir_all(root);
+            let _ = fs::remove_dir_all(outside);
+            return;
+        }
         let result = folder_adopt(
             json!({
                 "root": root.to_string_lossy(),
@@ -28653,8 +28951,12 @@ mod tests {
         fs::create_dir_all(root.join("inner")).expect("inner");
         fs::write(root.join("keep.txt"), "留在文件夹内\n").expect("txt");
         let outside_document = outside.join("secret.docx");
-        std::os::unix::fs::symlink(&outside_document, root.join("inner/link.docx"))
-            .expect("symlink fixture");
+        if !escape_link(&outside_document, &root.join("inner/link.docx")) {
+            eprintln!("skipping: this platform cannot create the escape-link fixture");
+            let _ = fs::remove_dir_all(root);
+            let _ = fs::remove_dir_all(outside);
+            return;
+        }
         let plan = json!({
             "root": root.to_string_lossy(),
             "confirmed": true,

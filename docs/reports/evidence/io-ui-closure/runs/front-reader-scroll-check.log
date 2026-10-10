@@ -1,2 +1,0 @@
-command: deno check app/main.js tests/dogfooding_test.ts
-exit_code: 0

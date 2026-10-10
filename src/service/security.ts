@@ -1,4 +1,5 @@
 import { isAbsolute, join, normalize, relative } from "node:path";
+import { createHash } from "node:crypto";
 import type { ProjectData } from "../domain/types.ts";
 import { id } from "../domain/util.ts";
 import { error, ServiceError } from "./errors.ts";
@@ -7,19 +8,30 @@ const KEYCHAIN_COMMAND = "/usr/bin/security";
 const KEYCHAIN_SERVICE = "com.ai-course-workbench.ai";
 const KEYCHAIN_ACCOUNT_PREFIX = "provider:";
 
+/** Human name of the platform credential store; used verbatim in user copy. */
+export function credentialStoreLabel(shell: "native" | "browser" = "native"): string {
+  if (Deno.build.os === "windows") {
+    return shell === "native"
+      ? "Windows 凭据管理器"
+      : "Windows 凭据保护存储（本机浏览器服务）";
+  }
+  return shell === "native" ? "macOS 系统钥匙串" : "macOS 系统钥匙串（本机浏览器服务）";
+}
+
 function keychainFailure(operation: string): ServiceError {
+  const store = credentialStoreLabel("browser");
   const userMessage = operation === "delete"
-    ? "无法访问 macOS 系统钥匙串，API Key 没有删除。"
+    ? `无法访问${store}，API Key 没有删除。`
     : operation === "get"
-    ? "无法访问 macOS 系统钥匙串，无法确认 API Key 是否已配置。"
-    : "无法访问 macOS 系统钥匙串，API Key 没有保存。";
+    ? `无法访问${store}，无法确认 API Key 是否已配置。`
+    : `无法访问${store}，API Key 没有保存。`;
   return error(
     "keychain_unavailable",
     userMessage,
-    `系统钥匙串操作失败（${operation}）`,
+    `系统凭据存储操作失败（${operation}）`,
     {
       recoverable: true,
-      recommended_action: "确认已登录 macOS 钥匙串并重试；课程文件未被修改。",
+      recommended_action: `确认${store}可用后重试；课程文件未被修改。`,
       details: { operation },
     },
   );
@@ -141,6 +153,140 @@ export class MacKeychainSecretStore implements SecretStore {
   }
 }
 
+/**
+ * Windows counterpart of `MacKeychainSecretStore` for the local browser
+ * service: each secret is stored as a DPAPI-protected blob under the user's
+ * Local AppData, so only the same Windows user on the same machine can
+ * decrypt it. The secret travels to PowerShell over stdin — never argv — and
+ * a write only counts as successful after the round trip reads it back, with
+ * the same fail-closed semantics as the macOS store.
+ */
+export class WindowsDpapiSecretStore implements SecretStore {
+  readonly service: string;
+  readonly accountPrefix: string;
+  private readonly knownProviders = new Set<string>();
+
+  constructor(options: { service?: string; accountPrefix?: string } = {}) {
+    this.service = options.service?.trim() || KEYCHAIN_SERVICE;
+    this.accountPrefix = options.accountPrefix?.trim() || KEYCHAIN_ACCOUNT_PREFIX;
+  }
+
+  private ensureSupported(): void {
+    if (Deno.build.os !== "windows") throw keychainFailure("unsupported-platform");
+  }
+
+  private secretPath(account: string): string {
+    const base = Deno.env.get("LOCALAPPDATA") || Deno.env.get("HOME") || ".";
+    const digest = createHash("sha256")
+      .update(`${this.service}\n${account}`)
+      .digest("hex");
+    return join(base, this.service, "secrets", `${digest}.bin`);
+  }
+
+  private async run(script: string, stdin = ""): Promise<{ code: number; stdout: string }> {
+    this.ensureSupported();
+    try {
+      const command = new Deno.Command("powershell.exe", {
+        args: ["-NoProfile", "-NonInteractive", "-Command", script],
+        stdin: "piped",
+        stdout: "piped",
+        stderr: "null",
+      });
+      const child = command.spawn();
+      if (stdin) {
+        const writer = child.stdin.getWriter();
+        await writer.write(new TextEncoder().encode(stdin));
+        await writer.close();
+      } else {
+        child.stdin.close();
+      }
+      const output = await child.output();
+      return {
+        code: output.code,
+        stdout: new TextDecoder().decode(output.stdout),
+      };
+    } catch {
+      // Do not surface PowerShell stderr: it can contain user or machine
+      // metadata and is not actionable at the renderer boundary.
+      throw keychainFailure("process");
+    }
+  }
+
+  private quote(path: string): string {
+    return `'${path.replaceAll("'", "''")}'`;
+  }
+
+  async set(provider: string, value: string): Promise<void> {
+    if (!value) throw error("secret_invalid", "凭据不能为空。", "Empty secret rejected", {
+      recoverable: false,
+      recommended_action: null,
+      details: {},
+    });
+    const account = keychainAccount(provider, this.accountPrefix);
+    const path = this.secretPath(account);
+    const script = [
+      `$ErrorActionPreference = 'Stop'`,
+      `$secret = [Console]::In.ReadToEnd().Trim()`,
+      `$secure = ConvertTo-SecureString -AsPlainText -Force $secret`,
+      `$blob = ConvertFrom-SecureString -SecureString $secure`,
+      `$dir = Split-Path -Parent ${this.quote(path)}`,
+      `if (!(Test-Path $dir)) { New-Item -ItemType Directory -Path $dir -Force | Out-Null }`,
+      `[IO.File]::WriteAllText(${this.quote(path)}, $blob)`,
+    ].join("; ");
+    const result = await this.run(script, value);
+    if (result.code !== 0) throw keychainFailure("set");
+    // Verify the round trip: a secret that cannot be read back is not saved.
+    const stored = await this.get(provider).catch(() => null);
+    if (stored !== value.trim()) throw keychainFailure("set");
+    this.knownProviders.add(provider.trim());
+  }
+
+  async get(provider: string): Promise<string | null> {
+    const account = keychainAccount(provider, this.accountPrefix);
+    const path = this.secretPath(account);
+    const script = [
+      `$ErrorActionPreference = 'Stop'`,
+      `if (!(Test-Path ${this.quote(path)})) { exit 44 }`,
+      `$blob = [IO.File]::ReadAllText(${this.quote(path)})`,
+      `$secure = ConvertTo-SecureString $blob`,
+      `$plain = [Net.NetworkCredential]::new('', $secure).Password`,
+      `[Console]::Out.Write($plain)`,
+    ].join("; ");
+    const result = await this.run(script);
+    if (result.code === 44) return null;
+    if (result.code !== 0) throw keychainFailure("get");
+    const value = result.stdout.trim();
+    if (value.length > 0) this.knownProviders.add(provider.trim());
+    return value.length > 0 ? value : null;
+  }
+
+  async delete(provider: string): Promise<void> {
+    const account = keychainAccount(provider, this.accountPrefix);
+    const path = this.secretPath(account);
+    const script = [
+      `$ErrorActionPreference = 'Stop'`,
+      `if (!(Test-Path ${this.quote(path)})) { exit 44 }`,
+      `[IO.File]::Delete(${this.quote(path)})`,
+    ].join("; ");
+    const result = await this.run(script);
+    if (result.code !== 0 && result.code !== 44) throw keychainFailure("delete");
+    this.knownProviders.delete(provider.trim());
+  }
+
+  async listProviders(): Promise<string[]> {
+    return [...this.knownProviders];
+  }
+}
+
+/** Production default: the platform's system-secure credential store. */
+export function createDefaultSecretStore(
+  options: { service?: string; accountPrefix?: string } = {},
+): SecretStore {
+  return Deno.build.os === "windows"
+    ? new WindowsDpapiSecretStore(options)
+    : new MacKeychainSecretStore(options);
+}
+
 /** Provider-scoped secret boundary; production implementations must be system-secure. */
 export interface SecretStore {
   set(provider: string, value: string): Promise<void>;
@@ -149,7 +295,7 @@ export interface SecretStore {
   listProviders(): Promise<string[]>;
 }
 
-/** Injectable in-memory fake; production defaults to MacKeychainSecretStore. */
+/** Injectable in-memory fake; production defaults to `createDefaultSecretStore()`. */
 export class MemorySecretStore implements SecretStore {
   private readonly values = new Map<string, string>();
 

@@ -1,9 +1,0 @@
-Date: 2026-10-06 (Asia/Shanghai)
-Source base: 77993519e31cb3c780a77af319ce3033acecccf2
-Change under test: app/views.js + tests/authoring_ui_test.ts working-tree diff to be committed with this log
-Command: deno test -A --filter 'version history formats ISO and native epoch-millisecond timestamps' tests/authoring_ui_test.ts
-Assertions: ISO timestamp renders as date; 13-digit epoch-millisecond string renders as date; invalid timestamp renders existing unknown-date fallback.
-running 1 test from ./tests/authoring_ui_test.ts
-version history formats ISO and native epoch-millisecond timestamps ... ok (301ms)
-
-ok | 1 passed | 0 failed | 80 filtered out (328ms)

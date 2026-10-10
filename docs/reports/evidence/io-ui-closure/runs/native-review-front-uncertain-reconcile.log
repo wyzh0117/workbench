@@ -1,5 +1,0 @@
-running 1 test from ./tests/authoring_ui_test.ts
-an uncertain rename can be proven, reconciled, and saved without restoring its old path ... ok (20ms)
-
-ok | 1 passed | 0 failed | 79 filtered out (24ms)
-

@@ -16,6 +16,7 @@ import {
   documentImportTallyText,
   groupDocumentImportCandidates,
 } from "./constants.js";
+import { desktopShellLabel, fileManagerLabel } from "./host.js";
 import { parseMarkdown, renderMarkdown } from "./markdown.js";
 import {
   MEDIA_REQUIREMENT_TYPES,
@@ -2447,7 +2448,7 @@ export function createViews(store) {
       ${showLayoutControls ? `<section class="page-section card publish-card publish-section" aria-labelledby="publish-layout-heading"><div class="publish-section-heading"><span class="publish-step">02</span><div><h2 id="publish-layout-heading">2. 输出布局与页面</h2><p class="muted">页码范围与目标尺寸只影响本次输出。</p></div></div><div class="publish-layout-controls">${pageRange}${layout?.pagination_mode === "paged" && !supportsLayout ? `<p class="muted publish-format-note">当前格式不会保留页面布局，因此无法按页筛选。</p>` : ""}<div class="page-action-row">${targetSizeControl}</div>${targetSizeNotice}${fitPreview}</div><p class="publish-layout-note">页面筛选与目标尺寸仅影响本次导出；尺寸不同的课时会按同一比例居中适配，不裁掉页面内容。</p></section>` : ""}
       <section class="page-section card publish-card publish-section" aria-labelledby="publish-format-heading"><div class="publish-section-heading"><span class="publish-step">03</span><div><h2 id="publish-format-heading">3. 选择格式</h2><p class="muted">每种格式都会说明可用性和布局处理方式。</p></div></div><div class="format-grid">${formats.map(([key, label, detail]) => { let capability = { status: "unavailable" }; try { capability = store.publicationCapability(key); } catch { /* selection validation is shown in preflight */ } const unavailable = ["unavailable", "unsupported"].includes(capability.status); const capabilityLabel = capability.code === "explicit_target_page_size_required" ? "请先选择统一尺寸" : capability.status === "available" ? (adapters[key]?.layout ? "页面布局保留" : "可用") : capability.status === "lossy" ? "页面布局会线性化" : capability.status === "unsupported" ? "当前排版不支持" : "此环境不可用"; return `<button class="format-card ${store.ui.publishFormat === key ? "active" : ""}" data-action="publish-format" data-format="${key}" aria-pressed="${store.ui.publishFormat === key}" ${unavailable ? "disabled" : ""}><b>${label}</b><small>${detail}</small><small class="format-capability">${capabilityLabel}</small></button>`; }).join("")}</div><div class="action-row publish-preflight-action"><button class="secondary" data-action="preflight">运行导出前检查</button></div></section>
       ${store.ui.preflight ? publishPreflightView() : ""}
-      ${last ? `<section class="page-section card publish-card publish-last-export"><div class="publish-section-heading"><span class="publish-step" aria-hidden="true">✓</span><div><h2>最近一次导出</h2><p class="muted">${store.bridge.isNative() ? "导出已经完成，以下是实际保存位置。" : "文件已交给浏览器下载；完成情况请查看浏览器下载列表。"}</p></div><span class="status-pill is-done">${store.bridge.isNative() ? "已完成" : "已交给浏览器"}</span></div><p><b>${esc(last.format)}</b> · ${last.scope === "course" ? "整门课程" : "当前课"} · ${last.files} 个文件</p><p class="muted">${store.bridge.isNative() ? "实际位置" : "交付方式"}：<code>${esc(last.path)}</code></p>${store.bridge.isNative() ? `<p class="muted">输出不依赖 Workbench 运行。</p><div class="action-row"><button class="secondary" data-action="reveal-export">在 Finder 中显示</button></div>` : ""}</section>` : ""}
+      ${last ? `<section class="page-section card publish-card publish-last-export"><div class="publish-section-heading"><span class="publish-step" aria-hidden="true">✓</span><div><h2>最近一次导出</h2><p class="muted">${store.bridge.isNative() ? "导出已经完成，以下是实际保存位置。" : "文件已交给浏览器下载；完成情况请查看浏览器下载列表。"}</p></div><span class="status-pill is-done">${store.bridge.isNative() ? "已完成" : "已交给浏览器"}</span></div><p><b>${esc(last.format)}</b> · ${last.scope === "course" ? "整门课程" : "当前课"} · ${last.files} 个文件</p><p class="muted">${store.bridge.isNative() ? "实际位置" : "交付方式"}：<code>${esc(last.path)}</code></p>${store.bridge.isNative() ? `<p class="muted">输出不依赖 Workbench 运行。</p><div class="action-row"><button class="secondary" data-action="reveal-export">在${fileManagerLabel()}中显示</button></div>` : ""}</section>` : ""}
       <section class="page-section card publish-card publish-history" aria-labelledby="publish-history-heading"><div class="publish-section-heading"><div><h2 id="publish-history-heading">发布记录</h2><p class="muted">只记录你确认过的发布节点，不会改变课程内容。</p></div><button class="secondary" data-action="record-publication">记录已发布</button></div>${publications.length ? `<div class="version-list" role="list">${publications.map((publication) => `<article class="version-card list-row" role="listitem"><span class="version-icon" aria-hidden="true">↗</span><div><b>${esc(publication.version_label)}</b><p>${esc(publication.platform)} · ${esc(publication.status)}</p><small>${esc(publication.published_at || "")}</small></div></article>`).join("")}</div>` : `<div class="empty-state publish-history-empty"><h3>还没有发布记录</h3><p class="muted">导出并实际迁移后，可以记录这个发布节点；课程内容不会因此改变。</p></div>`}</section></section>`;
   }
 
@@ -3010,12 +3011,12 @@ export function createViews(store) {
     const pending = attempt?.status === "pending";
     const statusLine = attempt?.message
       ? `<p class="ai-subscription-status ${esc(attempt.status || "")}" aria-live="polite">${esc(attempt.message)}</p>`
-      : `<p class="ai-hint">授权由你在系统浏览器中完成；Access/Refresh Token 只保存在本机系统钥匙串。</p>`;
+      : `<p class="ai-hint">授权由你在系统浏览器中完成；Access/Refresh Token 只保存在本机系统凭据存储。</p>`;
     return `<section class="ai-subscription-settings">
       <div class="ai-block-head"><div><b>ChatGPT 订阅登录</b><small>OpenAI SIWC · 独立于 API Key</small></div></div>
       ${native
         ? `<p class="ai-hint">首次登录会为 Workbench 动态注册独立客户端身份。Workbench 不读取其他应用的会话，也不会用环境 API Key 代替订阅授权。</p><div class="ai-run-row"><button class="secondary" data-action="ai-subscription-start" ${pending ? "disabled" : ""}>Continue with ChatGPT</button>${pending ? `<button class="text-button" data-action="ai-subscription-cancel">取消登录</button>` : ""}</div>${statusLine}`
-        : `<p class="ai-hint">当前浏览器服务壳不支持订阅登录；请在 macOS 桌面版使用系统浏览器回调与系统钥匙串。这里不会模拟成功状态。</p>`}
+        : `<p class="ai-hint">当前浏览器服务壳不支持订阅登录；请在${desktopShellLabel()}使用系统浏览器回调与系统凭据存储。这里不会模拟成功状态。</p>`}
       <div class="ai-subscription-list">${accounts.length
         ? accounts.map((provider) => {
           const id = String(provider.id || "");
@@ -3443,7 +3444,7 @@ export function createViews(store) {
         : `<option value="">${esc(model || "还没有可用模型，请先在设置中添加")}</option>`
     }</select></label>
       <div class="ai-provider-state"><span class="ai-key-state ${configured[providerId] ? "set" : "unset"}">${descriptor?.kind === "openai_chatgpt_subscription" ? (configured[providerId] ? "ChatGPT 订阅已授权" : "ChatGPT 订阅未登录") : (configured[providerId] ? "已保存 API Key" : "未保存 API Key")}</span><span class="ai-current-model">${esc(descriptor?.label || providerId)} · ${esc(model || "未设置模型")}</span></div>
-      <p class="side-note">连接与模型在右上角“设置”中管理。API Key 与订阅令牌保存在本机系统钥匙串，不写入课程文件。</p>
+      <p class="side-note">连接与模型在右上角“设置”中管理。API Key 与订阅令牌保存在本机系统凭据存储，不写入课程文件。</p>
     </div>
 
     <div class="ai-block">
@@ -3848,7 +3849,7 @@ export function createViews(store) {
         ? editableChoices.find((choice) => choice.id === String(form.id || "").trim()) ||
           (form.isNew === true ? form : null)
         : null;
-      return `<div class="overlay ai-settings-overlay" data-action="ai-settings-backdrop"><section class="modal ai-settings-modal" role="dialog" aria-modal="true" aria-labelledby="ai-settings-title" data-stop-click="true"><header class="modal-head"><div><span class="eyebrow">应用设置 · 模型</span><h2 id="ai-settings-title">AI 模型</h2></div><button class="icon-button" data-action="ai-close-settings" aria-label="关闭设置" title="关闭设置">×</button></header><p class="muted">设置连接、协议、模型与本机凭据。配置保存、模型发现和连接测试分别显示状态。</p>${formDescriptor ? aiProviderFormView(formDescriptor, configured) : ""}${aiConnectionManagerView(choices, configured)}${aiSubscriptionSettingsView(store, configured)}${formDescriptor ? "" : `<p class="ai-hint">选择一个 API 连接进行管理，或新建连接。</p>`}<div class="ai-settings-foot"><span>AI 配置仅保存连接元数据；密钥和订阅令牌写入${esc(store.aiStorageLabel ? store.aiStorageLabel() : "本机系统钥匙串")}，课程文件不含凭据。</span><button class="secondary" data-action="ai-close-settings">完成</button></div></section></div>`;
+      return `<div class="overlay ai-settings-overlay" data-action="ai-settings-backdrop"><section class="modal ai-settings-modal" role="dialog" aria-modal="true" aria-labelledby="ai-settings-title" data-stop-click="true"><header class="modal-head"><div><span class="eyebrow">应用设置 · 模型</span><h2 id="ai-settings-title">AI 模型</h2></div><button class="icon-button" data-action="ai-close-settings" aria-label="关闭设置" title="关闭设置">×</button></header><p class="muted">设置连接、协议、模型与本机凭据。配置保存、模型发现和连接测试分别显示状态。</p>${formDescriptor ? aiProviderFormView(formDescriptor, configured) : ""}${aiConnectionManagerView(choices, configured)}${aiSubscriptionSettingsView(store, configured)}${formDescriptor ? "" : `<p class="ai-hint">选择一个 API 连接进行管理，或新建连接。</p>`}<div class="ai-settings-foot"><span>AI 配置仅保存连接元数据；密钥和订阅令牌写入${esc(store.aiStorageLabel ? store.aiStorageLabel() : "本机系统凭据存储")}，课程文件不含凭据。</span><button class="secondary" data-action="ai-close-settings">完成</button></div></section></div>`;
     }
     return "";
   }

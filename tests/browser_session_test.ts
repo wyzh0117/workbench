@@ -232,7 +232,10 @@ Deno.test("browser page reload restores reader position, then saves canonical ed
     const serviceLease = second.bridge.lastOpenedProjectState?.lease_generation;
     assert(typeof serviceLease === "string" && serviceLease.length > 0, "browser open_state must carry the DesktopService writer lease");
     assert(second.saveIdentity().lease_generation === serviceLease, "browser saves must bind the actual service lease returned by open_state");
-    assert(second.saveIdentity().project_dir === directory, "browser save identity must use the service's canonical project directory");
+    assert(
+      second.saveIdentity().project_dir.replaceAll("\\", "/") === directory.replaceAll("\\", "/"),
+      "browser save identity must use the service's canonical project directory",
+    );
 
     const block = second.data.blocks.find((candidate: any) => candidate.document_id === lesson.document_id);
     assert(block, "fixture must contain a lesson block");

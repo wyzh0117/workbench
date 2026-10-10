@@ -10,6 +10,12 @@ import {
   type RecoveryJournal,
 } from "../src/service/storage.ts";
 import type { ProjectData } from "../src/domain/types.ts";
+import { createEscapeLink } from "./helpers/fs_links.ts";
+
+/** Separator-insensitive path equality: injected fakes see platform paths. */
+function samePath(left: unknown, right: unknown): boolean {
+  return String(left).replaceAll("\\", "/") === String(right).replaceAll("\\", "/");
+}
 
 function assert(condition: unknown, message: string): asserts condition {
   if (!condition) throw new Error(message);
@@ -389,7 +395,11 @@ Deno.test("backup symlink failure leaves Canonical unchanged and is not retryabl
     const sentinelPath = `${directory}/protected-output`;
     const before = await Deno.readFile(canonicalPath);
     await Deno.writeTextFile(sentinelPath, "preserve existing output");
-    await Deno.symlink(sentinelPath, backupPath);
+    const linked = await createEscapeLink(sentinelPath, backupPath, "file");
+    if (!linked) {
+      console.warn("[skip] Windows lacks symlink privilege; backup-link rejection not exercised");
+      return;
+    }
 
     const failure = await caughtSave(store, project, "backup-symlink-op");
     const after = await Deno.readFile(canonicalPath);
@@ -593,7 +603,7 @@ Deno.test("transient pre-promotion failure is retryable only after disk proves n
   const originalRename = Deno.rename;
   try {
     deno.rename = async (from, to) => {
-      if (to === canonicalPath) {
+      if (samePath(to, canonicalPath)) {
         throw Object.assign(new Error("temporary rename contention"), {
           code: "EBUSY",
         });
@@ -621,7 +631,7 @@ Deno.test("lost rename acknowledgement is verified as committed and cleanup fail
   try {
     deno.rename = async (from, to) => {
       await originalRename(from, to);
-      if (to === canonicalPath) {
+      if (samePath(to, canonicalPath)) {
         await Deno.remove(recoveryPath);
         await Deno.mkdir(recoveryPath);
         await Deno.writeTextFile(`${recoveryPath}/held`, "prevent cleanup");
@@ -690,13 +700,13 @@ Deno.test("asset rename preserves target bytes when canonical commit outcome is 
 
     deno.rename = async (from, to) => {
       await originalRename(from, to);
-      if (to === canonicalPath && !canonicalRenameCompleted) {
+      if (samePath(to, canonicalPath) && !canonicalRenameCompleted) {
         canonicalRenameCompleted = true;
         throw Object.assign(new Error("canonical rename ack lost"), { code: "EIO" });
       }
     };
     deno.readFile = async (path) => {
-      if (String(path) === canonicalPath && canonicalRenameCompleted && !verificationReadFailed) {
+      if (samePath(path, canonicalPath) && canonicalRenameCompleted && !verificationReadFailed) {
         verificationReadFailed = true;
         throw new Deno.errors.PermissionDenied("injected canonical verification read failure");
       }

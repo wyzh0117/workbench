@@ -1,6 +1,0 @@
-error: unexpected argument '-A' found
-
-  tip: to pass '-A' as a value, use '-- -A'
-
-Usage: deno eval [OPTIONS] [CODE_ARG]...
-

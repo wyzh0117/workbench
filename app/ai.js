@@ -22,6 +22,7 @@
  *    `recommended_action`, so the UI can always say what happened next.
  */
 
+import { appCredentialStoreName, desktopShellLabel } from "./host.js";
 import {
   MEDIA_BLOCK_TYPES,
   REQUIREMENT_TYPES,
@@ -603,14 +604,14 @@ export const AI_SUBSCRIPTION_STAGES = Object.freeze([
     stage: "login",
     label: "保存账户",
     message: "无法在本机保存 ChatGPT 订阅会话。",
-    action: "请确认 macOS 钥匙串可用，然后重新登录。",
+    action: "请确认" + appCredentialStoreName() + "可用，然后重新登录。",
   }),
   Object.freeze({
     code: "subscription_native_only",
     stage: "login",
     label: "登录",
-    message: "ChatGPT 订阅登录需要 macOS 桌面版的系统浏览器回调和系统钥匙串。",
-    action: "请在 macOS 桌面版 Workbench 的「设置 → 模型」中管理订阅账户。",
+    message: "ChatGPT 订阅登录需要" + desktopShellLabel() + "的系统浏览器回调和系统凭据存储。",
+    action: "请在桌面版 Workbench 的「设置 → 模型」中管理订阅账户。",
   }),
   Object.freeze({
     code: "subscription_scope_missing",
@@ -691,7 +692,8 @@ const AI_FAILURE_DEFAULTS = {
   missing_credential: {
     message: "这个 Provider 还没有配置 API Key，请求被拒绝了。",
     action:
-      "请在「AI 设置」里为这个 Provider 填写 API Key；密钥由本机服务写入 macOS 系统钥匙串，不会写入课程文件。",
+      "请在「AI 设置」里为这个 Provider 填写 API Key；密钥由本机服务写入" +
+      appCredentialStoreName() + "，不会写入课程文件。",
   },
   credential_origin_confirmation_required: {
     message: "这个连接的 API Key 尚未授权发送到当前服务域名。",

@@ -6,6 +6,8 @@
 import { join } from "node:path";
 import { DesktopService } from "../src/service/desktop.ts";
 import { inspectMarkdownImage, readFolderPreview, scanFolder, type ScanResult } from "../src/service/folder_scan.ts";
+import { createEscapeLink } from "./helpers/fs_links.ts";
+import { denyFileRead } from "./helpers/fs_faults.ts";
 
 function assert(condition: unknown, message: string): asserts condition {
   if (!condition) throw new Error(message);
@@ -103,7 +105,11 @@ Deno.test("readFolderPreview rejects intermediate symlinks and still reads an in
     await Deno.mkdir(join(root, "images"), { recursive: true });
     await Deno.writeFile(join(root, "images", "local.png"), new Uint8Array([1, 2, 3]));
     await Deno.writeFile(join(outside, "secret.png"), new Uint8Array([9, 8, 7]));
-    await Deno.symlink(outside, join(root, "external"), { type: "dir" });
+    const linked = await createEscapeLink(outside, join(root, "external"), "dir");
+    if (!linked) {
+      console.warn("[skip] Windows lacks symlink privilege; intermediate-link rejection not exercised");
+      return;
+    }
 
     const local = await readFolderPreview(root, "images/local.png");
     assert(local.preview_kind === "image" && local.bytes_base64, "an ordinary in-root image remains previewable");
@@ -214,10 +220,11 @@ Deno.test("scanFolder shows a child folder without reading its contents", async 
 Deno.test("scanFolder degrades an unreadable single file without failing siblings (§40)", async () => {
   const root = await Deno.makeTempDir({ prefix: "acw-t04-unreadable-file-" });
   const lockedFile = join(root, "locked.md");
+  let restoreRead: (() => Promise<void>) | null = null;
   try {
     await Deno.writeTextFile(join(root, "ok.md"), "# ok\n");
     await Deno.writeTextFile(lockedFile, "secret");
-    await Deno.chmod(lockedFile, 0o000);
+    restoreRead = await denyFileRead(lockedFile);
 
     const report = await scanFolder(root);
     const map = byRelative(report.entries);
@@ -235,7 +242,7 @@ Deno.test("scanFolder degrades an unreadable single file without failing sibling
     );
   } finally {
     try {
-      await Deno.chmod(lockedFile, 0o600);
+      await restoreRead?.();
     } catch { /* best-effort restore for cleanup */ }
     await Deno.remove(root, { recursive: true });
   }
@@ -324,8 +331,12 @@ Deno.test("scanFolder rejects symlink escape and skips symlink children", async 
   try {
     await Deno.writeTextFile(join(outside, "escape.md"), "escaped");
     await Deno.writeTextFile(join(root, "safe.md"), "safe");
-    await Deno.symlink(outside, join(root, "link-out"));
-    await Deno.symlink(root, join(root, "loop"));
+    const linked = await createEscapeLink(outside, join(root, "link-out"), "dir");
+    if (!linked) {
+      console.warn("[skip] Windows lacks symlink privilege; symlink-escape rejection not exercised");
+      return;
+    }
+    await createEscapeLink(root, join(root, "loop"), "dir");
 
     const report = await scanFolder(root);
     const rels = report.entries.map((entry) => entry.relative_path.replaceAll("\\", "/"));

@@ -1,6 +1,0 @@
-Check tests/import_preview_lifecycle_test.ts
-running 1 test from ./tests/import_preview_lifecycle_test.ts
-service close rejects an import preview waiting on cache pruning ... ok (15ms)
-
-ok | 1 passed | 0 failed | 6 filtered out (19ms)
-

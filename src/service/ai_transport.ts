@@ -10,8 +10,9 @@
  * Non-canonical local state, never part of `project.json` and never exported:
  *   <project>/.workspace/ai/providers.json    provider metadata only
  *   <project>/.workspace/ai/executions.json   bounded execution log (max 200)
- * Credentials are held by macOS Keychain; historical plaintext values are
- * migrated once and removed only after verified Keychain storage succeeds.
+ * Credentials are held by the platform credential store (macOS Keychain /
+ * Windows Credential Manager / DPAPI); historical plaintext values are
+ * migrated once and removed only after verified secure storage succeeds.
  *
  * The JSON shapes are shared with the native (Rust) transport so the two
  * shells stay interchangeable.
@@ -22,7 +23,8 @@ import { dirname, join, normalize } from "node:path";
 import { id } from "../domain/util.ts";
 import { error, redactSecrets, ServiceError } from "./errors.ts";
 import {
-  MacKeychainSecretStore,
+  createDefaultSecretStore,
+  credentialStoreLabel,
   type SecretStore,
 } from "./security.ts";
 
@@ -45,9 +47,9 @@ function rejectNativeOnlySubscription(provider: AiProviderConfig | null | undefi
   if (provider?.kind === "openai_chatgpt_subscription") {
     throw error(
       "subscription_native_only",
-      "ChatGPT 订阅登录需要 macOS 桌面版的系统浏览器回调和系统钥匙串。",
-      "Sign in with ChatGPT is supported by the native Tauri runtime only",
-      { recoverable: false, recommended_action: "请在 macOS 桌面版 Workbench 的 AI 设置中管理订阅账户。", details: {} },
+      "ChatGPT 订阅登录需要桌面版（macOS / Windows）的系统浏览器回调和系统凭据存储。",
+      "Sign in with ChatGPT is supported by the native desktop runtime only",
+      { recoverable: false, recommended_action: "请在桌面版 Workbench 的 AI 设置中管理订阅账户。", details: {} },
     );
   }
 }
@@ -957,7 +959,7 @@ export class AiTransport {
     this.requestRegistry = options.requests ?? new Map<string, AbortController>();
     this.readOnly = options.read_only === true;
     this.recordLimit = normalizeMaxRecords(options.max_records);
-    this.credentialStore = options.credential_store ?? new MacKeychainSecretStore({
+    this.credentialStore = options.credential_store ?? createDefaultSecretStore({
       accountPrefix: projectKeychainPrefix(this.projectDirectory),
     });
   }
@@ -1906,8 +1908,8 @@ export class AiTransport {
     providers: readonly AiProviderConfig[],
   ): Promise<string[]> {
     const providerIds = new Set(providers.map((provider) => provider.id));
-    // Injectable fakes can enumerate their isolated accounts; the macOS
-    // adapter intentionally does not enumerate the user's Keychain.
+    // Injectable fakes can enumerate their isolated accounts; the system
+    // store adapters intentionally do not enumerate the user's whole store.
     for (const providerId of await this.credentialStore.listProviders()) {
       providerIds.add(providerId);
     }
@@ -1920,13 +1922,14 @@ export class AiTransport {
   }
 
   private migrationFailure(operation: string): ServiceError {
+    const store = credentialStoreLabel("native");
     return error(
       "ai_credential_migration_failed",
-      "历史 API Key 未能安全迁移到 macOS 系统钥匙串，原文件未删除。",
+      `历史 API Key 未能安全迁移到${store}，原文件未删除。`,
       `Credential migration failed (${operation})`,
       {
         recoverable: true,
-        recommended_action: "确认 macOS 钥匙串可用后重试；在迁移完成前不要共享项目目录。",
+        recommended_action: `确认${store}可用后重试；在迁移完成前不要共享项目目录。`,
         details: { operation, path: ".workspace/ai/providers.json" },
       },
     );

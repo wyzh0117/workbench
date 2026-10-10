@@ -33,6 +33,7 @@ import {
   rejectAiChangeDraft,
   validateAiChangeDraft,
 } from "../app/ai.js";
+import { appCredentialStoreName } from "../app/host.js";
 import {
   addAsset,
   addAssetUsage,
@@ -734,8 +735,8 @@ Deno.test("credential requirement is a property of the connection, not a templat
 Deno.test("missing credential guidance names the system-secure storage boundary", () => {
   const failure = new AiFailure("missing_credential", "这个 Provider 还没有配置 API Key。");
   assert(
-    failure.recommended_action.includes("macOS 系统钥匙串"),
-    "缺少密钥的下一步必须指向系统钥匙串",
+    failure.recommended_action.includes(appCredentialStoreName()),
+    "缺少密钥的下一步必须指向系统凭据存储",
   );
   assert(
     !failure.recommended_action.includes(".workspace"),

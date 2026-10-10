@@ -3,6 +3,7 @@ import { asErrorObject } from "../src/service/errors.ts";
 import { HIGH_LEVEL_COMMANDS, READ_QUERIES } from "../src/service/commands.ts";
 import { DesktopService } from "../src/service/desktop.ts";
 import { resolveFolderVideoSource } from "../src/service/folder_scan.ts";
+import { isPathWithin } from "../src/service/fs_paths.ts";
 import { fileRangeResponse } from "../src/service/media_range.ts";
 
 const appRoot = normalize(new URL("../app/", import.meta.url).pathname);
@@ -251,6 +252,7 @@ async function exportDownloadResponse(
   requestSignal: AbortSignal,
 ): Promise<Response> {
   const handle = await desktop.openExportDownload(exportId, fileIndex, requestSignal);
+  let servedBytes = 0;
   const filename = handle.relative_path.split(/[\\/]/).at(-1) || "export";
   const asciiFilename = filename.replace(/[^\x20-\x7E]/g, "_")
     .replace(/["\\\r\n]/g, "_") || "export";
@@ -264,11 +266,22 @@ async function exportDownloadResponse(
         if (handle.signal.aborted) throw new DOMException("Export download cancelled", "AbortError");
         const count = await handle.read(chunk);
         if (count === null) {
-          await handle.finish(true);
+          // `finish` marks the download complete synchronously (before its
+          // first await). Start it BEFORE the client can observe the end of
+          // the body, so a repeated download URL is already refused while the
+          // staging cleanup still runs.
+          const finishing = handle.finish(true);
           controller.close();
+          await finishing;
           return;
         }
+        servedBytes += count;
         controller.enqueue(chunk.subarray(0, count));
+        if (servedBytes >= handle.size) {
+          const finishing = handle.finish(true);
+          controller.close();
+          await finishing;
+        }
       } catch (caught) {
         controller.error(caught);
         await handle.finish(false);
@@ -316,7 +329,9 @@ async function resolveProjectVideoSource(assetId: string): Promise<{
     if (stat.isSymlink) throw new Error("素材路径包含符号链接");
   }
   const path = await Deno.realPath(cursor);
-  if (path !== root && !path.startsWith(`${root}/`)) throw new Error("素材路径超出项目目录");
+  if (!isPathWithin(root, path)) {
+    throw new Error("素材路径超出项目目录");
+  }
   const metadata = await Deno.stat(path);
   if (!metadata.isFile) throw new Error("素材路径不是普通文件");
   return { path, mime: asset.mime_type, size: metadata.size, projectId };
@@ -512,6 +527,22 @@ for (const signal of ["SIGINT", "SIGTERM"] as const) {
     // Some embedded hosts do not grant signal handling; server.finished still
     // owns the normal service cleanup path.
   }
+}
+// Windows has no SIGTERM, so a supervising parent needs another way to ask
+// for a graceful stop. With WORKBENCH_SHUTDOWN_ON_STDIN_EOF=1 the service
+// treats its closed stdin as that request and runs the same clean shutdown
+// path (HTTP stop + DesktopService close) as SIGTERM on POSIX.
+if (Deno.env.get("WORKBENCH_SHUTDOWN_ON_STDIN_EOF") === "1") {
+  void (async () => {
+    try {
+      for await (const _chunk of Deno.stdin.readable) {
+        // Drain: the parent may write before closing; EOF is the signal.
+      }
+    } catch {
+      // stdin may already be gone; either way the request is "stop now".
+    }
+    shutdown();
+  })();
 }
 try {
   await server.finished;

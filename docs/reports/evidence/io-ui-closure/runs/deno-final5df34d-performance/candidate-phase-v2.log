@@ -1,7 +1,0 @@
-{
-  "output": "/Users/youngi/.codex/worktrees/io-ui-closure/workbench/docs/reports/evidence/io-ui-closure/runs/deno-final5df34d-performance/candidate-phase-v2.json",
-  "mode": "candidate",
-  "measurement_mode": "unprobed_latency_only",
-  "fixture_sha256": "14991258eb33336582280c093d97cc3fc61ba6dab166c1a8970ce542f05509a4",
-  "iterations_per_case": 10
-}

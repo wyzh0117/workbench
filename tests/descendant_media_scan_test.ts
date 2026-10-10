@@ -7,6 +7,7 @@
  * for a directory the user explicitly selected, and it must be strictly visual
  * media, read-only and symlink/traversal safe.
  */
+import { createEscapeLink } from "./helpers/fs_links.ts";
 import {
   addAsset,
   createEmptyProjectData,
@@ -93,7 +94,11 @@ Deno.test("scanMediaDescendants rejects symlinked descendants that escape the ro
   try {
     await buildTree(dir);
     await Deno.writeFile(`${outside}/leak.png`, PNG);
-    await Deno.symlink(`${outside}/leak.png`, `${dir}/s01-00/link.png`);
+    const linked = await createEscapeLink(`${outside}/leak.png`, `${dir}/s01-00/link.png`, "file");
+    if (!linked) {
+      console.warn("[skip] Windows lacks symlink privilege; descendant file-link escape not exercised");
+      return;
+    }
     const scan = await scanMediaDescendants(dir, "s01-00");
     const paths = scan.entries.map((entry) => entry.relative_path);
     assert(!paths.includes("s01-00/link.png"), "symlinked media must be skipped");

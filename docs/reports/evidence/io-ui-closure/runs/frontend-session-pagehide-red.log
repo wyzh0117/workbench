@@ -1,7 +1,0 @@
-Date: 2026-10-06 (Asia/Shanghai)
-Baseline HEAD: 72841fecc11fc97782f58b74030774cf16e5c388
-Command: deno test --allow-read --allow-write --allow-env tests/browser_session_test.ts
-Failing test: browser beforeunload drains the latest reader position with a keepalive request
-Failing assertion: session writes started during unload must survive document teardown
-Observed value before fix: DesktopBridge's `/api/session` POST did not set `RequestInit.keepalive`, so the browser could cancel the debounced reader-position save on reload.
-Actual implementation path: captured browser `beforeunload` handler -> WorkbenchStore.flush -> session scheduler drain -> DesktopBridge.saveSession -> real DesktopService `/api/session`.

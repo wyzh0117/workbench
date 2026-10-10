@@ -1,1 +1,0 @@
-{"reproduced":true,"first_original_bytes":[1,2,3],"first_target_after_failed_rollback":[7,8,9],"recovery_staging_entries_after_error":[],"error":"导入提交失败，且回滚未完全完成；恢复文件保留在 /var/folders/fb/x3zpt1kj2_j8jbr0xg6wxft00000gn/T/deno-review-import-rollback-123012a0f282f171/.workspace/import-staging/199286a8-5c54-4aeb-ae0e-0eb578ae48f9: injected rollback remove failure"}

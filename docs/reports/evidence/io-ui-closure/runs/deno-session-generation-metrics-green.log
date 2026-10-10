@@ -1,6 +1,0 @@
-running 2 tests from ./tests/browser_session_generation_test.ts
-browser session epochs reject delayed pages and order same-page saves ... ok (15ms)
-browser session same-value save performs zero envelope data-file writes ... ok (11ms)
-
-ok | 2 passed | 0 failed (31ms)
-

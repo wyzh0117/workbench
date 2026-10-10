@@ -1257,7 +1257,15 @@ mod tests {
         fs::create_dir_all(&empty_dir).expect("empty fixture directory");
         assert!(!registry_project_available(&empty_dir.to_string_lossy()));
 
-        let spaced_dir = parent.join(" project root with edge spaces ");
+        // A trailing space in a directory name is not representable in the
+        // Win32 namespace (creation strips it, lookup then fails), so Windows
+        // keeps the leading-space edge case and POSIX exercises both edges.
+        let edge_name = if cfg!(windows) {
+            " project root with edge spaces"
+        } else {
+            " project root with edge spaces "
+        };
+        let spaced_dir = parent.join(edge_name);
         fs::create_dir_all(&spaced_dir).expect("spaced fixture directory");
         fs::write(spaced_dir.join("project.json"), "{}").expect("fixture Canonical file");
         assert!(registry_project_available(&spaced_dir.to_string_lossy()));

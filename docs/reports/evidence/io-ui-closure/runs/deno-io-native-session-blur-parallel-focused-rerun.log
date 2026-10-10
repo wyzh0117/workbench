@@ -1,4 +1,0 @@
-error: the argument '--filter <filter>' cannot be used multiple times
-
-Usage: deno test [OPTIONS] [files]... [-- [SCRIPT_ARG]...]
-

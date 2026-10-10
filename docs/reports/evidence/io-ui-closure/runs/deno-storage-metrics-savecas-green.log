@@ -1,7 +1,0 @@
-Check tests/save_cas_test.ts
-running 2 tests from ./tests/save_cas_test.ts
-folder.append rejects a stale project.save and accepts the fresh baseline ... ok (191ms)
-snapshot.create stores the caller copy without changing the CAS baseline ... ok (214ms)
-
-ok | 2 passed | 0 failed (411ms)
-

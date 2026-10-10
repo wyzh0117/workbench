@@ -1,5 +1,0 @@
-Check tests/t04_adoption_test.ts
-running 1 test from ./tests/t04_adoption_test.ts
-256 MiB adoption streams and stores the actual target SHA-256 ... ok (1s)
-
-ok | 1 passed | 0 failed | 15 filtered out (1s)

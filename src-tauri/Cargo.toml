@@ -42,6 +42,16 @@ encoding_rs = "=0.8.35"
 # 手写这套不现实（也正是 lopdf 被推荐的原因）。关掉默认特性（chrono-clock/rayon），
 # 只保留解析与文本解码所需部分。
 lopdf = { version = "=0.45.0", default-features = false }
+# (平台专属依赖见文末 [target.'cfg(windows)'.dependencies])
+
+# Windows 端凭据存储：API Key 写入 Windows 凭据管理器（Credential Manager），
+# 对应 macOS 端的系统钥匙串。只用 windows-sys 的 CredRead/CredWrite/CredDelete，
+# 版本对齐依赖树里已有的 0.61.2，不引入新 crate。
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "=0.61.2", features = [
+  "Win32_Foundation",
+  "Win32_Security_Credentials",
+] }
 
 [features]
 custom-protocol = ["tauri/custom-protocol"]

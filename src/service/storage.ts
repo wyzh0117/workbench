@@ -553,10 +553,21 @@ async function syncDirectoryPath(path: string): Promise<boolean> {
   let directory: Deno.FsFile | null = null;
   try {
     directory = await Deno.open(path, { read: true });
+  } catch {
+    // The directory itself cannot even be opened: a real durability gap.
+    return false;
+  }
+  try {
     await directory.sync();
     return true;
-  } catch {
-    return false;
+  } catch (caught) {
+    // Windows cannot flush directory handles (os error 5) and NTFS journals
+    // metadata after the file handles are flushed, so there is nothing a
+    // directory fsync could add there. A thrown sync is only a warning-worthy
+    // gap on POSIX; injected/other failures still report honestly.
+    const platformLimitation = Deno.build.os === "windows" &&
+      caught instanceof Deno.errors.PermissionDenied;
+    return platformLimitation;
   } finally {
     directory?.close();
   }
@@ -957,8 +968,12 @@ export class ProjectDirectoryStore {
   }
 
   private path(relativePath: string): string {
-    assertRelative(relativePath);
-    const target = join(this.directory, relativePath);
+    // `join()` builds these internal paths with the platform separator; the
+    // canonical form validated (and stored) is always `/`-separated, so fold
+    // Windows backslashes before validating. Traversal parts still reject.
+    const canonical = relativePath.replaceAll("\\", "/");
+    assertRelative(canonical);
+    const target = join(this.directory, canonical);
     assertNoSymlink(this.directory, target);
     return target;
   }

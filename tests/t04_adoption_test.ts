@@ -1025,7 +1025,10 @@ Deno.test("folder append is one undoable Canonical change and never removes sour
     await store.confirmImportMapping();
     await acceptDocumentImportDialog(store);
 
-    assert(state.appends.length === 1, "confirmed append should execute once");
+    assert(
+      state.appends.length === 1,
+      `confirmed append should execute once (got ${state.appends.length}; dialog=${JSON.stringify(store.ui.documentImportDialog ? true : false)}; err=${JSON.stringify(store.ui.importMappingError)}; toast=${JSON.stringify(store.ui.toast)})`,
+    );
     const imported = store.data.blocks.find((block) =>
       block.type === "heading" && block.content === "追加正文"
     );

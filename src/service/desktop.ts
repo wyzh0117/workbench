@@ -32,7 +32,8 @@ import { CommandBus, type CommandContext, QueryBus } from "./commands.ts";
 import { EventBus } from "./events.ts";
 import { error, ServiceError } from "./errors.ts";
 import { JobManager } from "./jobs.ts";
-import { MacKeychainSecretStore, type SecretStore } from "./security.ts";
+import { createDefaultSecretStore, type SecretStore } from "./security.ts";
+import { isPathWithin } from "./fs_paths.ts";
 import { DiagnosticLogger } from "./diagnostics.ts";
 import {
   createSearchIndex,
@@ -245,7 +246,7 @@ async function readAssetPreviewBatch(store: ProjectDirectoryStore, input: unknow
         continue;
       }
       const realTarget = await Deno.realPath(before.path);
-      if (realTarget !== root && !realTarget.startsWith(`${root}/`)) {
+      if (!isPathWithin(root, realTarget)) {
         items.push(itemError("asset_path_invalid", "素材路径越过课程目录。"));
         continue;
       }
@@ -617,7 +618,7 @@ export class DesktopService {
   constructor(
     directory: string,
     options: ProjectDirectoryOptions = {},
-    secrets: SecretStore = new MacKeychainSecretStore(),
+    secrets: SecretStore = createDefaultSecretStore(),
     aiOptions: AiTransportOptions = {},
   ) {
     this.store = new ProjectDirectoryStore(directory, options);
@@ -2874,12 +2875,12 @@ export class DesktopService {
       this.commands.register(command, async () => {
         throw error(
           "subscription_native_only",
-          "ChatGPT 订阅登录需要 macOS 桌面版的系统浏览器回调和系统钥匙串。",
-          "Sign in with ChatGPT is supported by the native Tauri runtime only",
+          "ChatGPT 订阅登录需要桌面版（macOS / Windows）的系统浏览器回调和系统凭据存储。",
+          "Sign in with ChatGPT is supported by the native desktop runtime only",
           {
             recoverable: false,
             recommended_action:
-              "请在 macOS 桌面版 Workbench 的 AI 设置中管理订阅账户。",
+              "请在桌面版 Workbench 的 AI 设置中管理订阅账户。",
             details: {},
           },
         );
@@ -3293,6 +3294,11 @@ export class DesktopService {
     if (!Number.isSafeInteger(fileIndex) || fileIndex < 0 || fileIndex >= slot.files.length) {
       throw unavailable();
     }
+    // Each staged file is a one-shot download capability. Refusing a completed
+    // download also keeps the "final download releases the artifact" boundary
+    // deterministic: the HTTP client sees the body as complete (content-length
+    // framing) slightly before the server-side cleanup has run.
+    if (slot.downloaded.has(fileIndex)) throw unavailable();
     const descriptor = slot.files[fileIndex];
     if (!descriptor) throw unavailable();
     let stat: Deno.FileInfo;

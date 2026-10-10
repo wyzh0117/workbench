@@ -1,8 +1,0 @@
-Date: 2026-10-06 (Asia/Shanghai)
-Baseline HEAD: 72841fecc11fc97782f58b74030774cf16e5c388
-Command: deno test --allow-read --allow-write --allow-env tests/browser_session_test.ts
-Result before fix: 5 passed, 1 failed.
-Failing test: saved snapshot list hydrates when a browser reload restores the versions route
-Failing assertion: the versions page hydrates persisted rows after a browser reload
-Root cause: initialize restored the saved `versions` route but did not call `refreshSnapshots`; `snapshotRows` therefore remained its initial empty array even though DesktopService `snapshot.list` returned the persisted snapshot.
-Actual browser screenshot retained as failure evidence: screenshots/browser-p15-snapshot-persisted-reload-red-1440.jpg

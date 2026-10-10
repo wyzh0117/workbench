@@ -6,15 +6,24 @@ target/
 # Stray compiler output at the repo root (`rustc file.rs` writes ./rust_out).
 rust_out
 
+# Node tooling (optional local CLI installs) and download caches.
+node_modules/
+*.tgz
+
 # ---- Release staging -------------------------------------------------------
-# Scratch space for a local release build: the renamed DMG, its .sha256, the
-# checksum comparison and the mount point used by the install smoke. All of it
-# is either reproducible or uploaded as a GitHub Release asset, never committed.
+# Scratch space for a local release build: the renamed installers, checksums,
+# the checksum comparison and the mount point used by install smoke tests. All
+# of it is either reproducible or uploaded as a GitHub Release asset, never
+# committed.
 .release/
 .release-tmp/
 dist/
 *.dmg
 *.dmg.sha256
+*.exe
+*.msi
+*.zip
+*.sha256
 
 # ---- Local workbench data --------------------------------------------------
 # The app's own working project: Canonical project.json, imported assets, and
@@ -39,8 +48,7 @@ Thumbs.db
 *~
 .Rhistory
 
-# Per-editor agent state (statusline/hook wiring, editor-local rules). The
-# shared, portable agent guidance lives in the committed AGENTS.md instead.
+# Per-editor agent state (statusline/hook wiring, editor-local rules).
 .claude/
 .cursor/
 
@@ -49,5 +57,29 @@ Thumbs.db
 .env.*
 *.local
 
-# graft's local graph cache — regenerable, not committed (run `graft build`).
+# ---- Internal development-planning documents -------------------------------
+# This repository publishes the PRODUCT only. Task cards, milestone plans,
+# closure/acceptance reports, spec packages and other software-development
+# planning material must never re-enter the tree — keep it outside the repo.
+PROJECT_MASTER_CONTROL.md
+TASK_CARD_*
+V0-T*
+V1-T*
+V1_*
+V1-*
+AI_Course_Workbench_M1_*
+AI_Course_Workbench_完整开发资料包*/
+*.Closure.md
+*.Closure_*.md
+*_Closure_*.md
+*_Completion_Report.md
+*_Acceptance_Report.md
+*Completion_Report.md
+docs/reports/
+docs/release-playbook.md
+.superpowers/
+AGENTS.md
+.mcp.json
+
+# graft's local graph cache — regenerable, not committed.
 graft/

@@ -15,6 +15,7 @@ import {
   documentImportTallyText,
   normalizeDocumentImportReport,
 } from "./constants.js";
+import { appCredentialStoreLabel, appCredentialStoreName } from "./host.js";
 import {
   caretTextOffset,
   compileInlineAtCaret,
@@ -712,9 +713,9 @@ class DesktopBridge {
           payload = {
             error: {
               code: "keychain_unavailable",
-              user_message: "无法访问 macOS 系统钥匙串。课程内容没有改动，请检查系统钥匙串后重试。",
+              user_message: "无法访问" + appCredentialStoreName() + "。课程内容没有改动，请检查系统凭据存储后重试。",
               technical_message: raw,
-              recommended_action: "确认系统钥匙串可用后重试；课程内容不会因此改变。",
+              recommended_action: "确认系统凭据存储可用后重试；课程内容不会因此改变。",
               details: {},
             },
           };
@@ -1081,7 +1082,7 @@ class DesktopBridge {
     const opened = this.lastOpenedProjectState;
     const projectDir = normalizeProjectDir(state?.project_dir ?? this.projectDir);
     if (
-      opened && opened.project_dir === projectDir &&
+      opened && normalizeProjectDir(opened.project_dir) === projectDir &&
       normalizeProjectDir(this.projectDir) === projectDir
     ) return { ...state, project_dir: projectDir, lease_generation: opened.lease_generation };
     return {
@@ -2515,7 +2516,7 @@ class WorkbenchStore {
     const projectId = data?.project?.id ?? null;
     const projectDir = normalizeProjectDir(this.bridge.projectDir);
     const opened = this.bridge.lastOpenedProjectState;
-    const leaseGeneration = opened?.project_dir === projectDir
+    const leaseGeneration = opened && normalizeProjectDir(opened.project_dir) === projectDir
       ? opened.lease_generation
       : null;
     const key = JSON.stringify({ project_dir: projectDir, project_id: projectId, lease_generation: leaseGeneration });
@@ -2554,7 +2555,7 @@ class WorkbenchStore {
   saveIdentity() {
     const projectDir = normalizeProjectDir(this.bridge.projectDir);
     const opened = this.bridge.lastOpenedProjectState;
-    const leaseGeneration = opened?.project_dir === projectDir
+    const leaseGeneration = opened && normalizeProjectDir(opened.project_dir) === projectDir
       ? opened.lease_generation
       : null;
     return {
@@ -3680,11 +3681,9 @@ class WorkbenchStore {
     this.ui.aiProviderForm = null;
     this.refreshAiSideFiles();
   }
-  /** Both shells keep provider metadata local and API Keys in macOS Keychain. */
+  /** Both shells keep provider metadata local and API Keys in the platform credential store. */
   aiStorageLabel() {
-    return this.bridge.isNative()
-      ? "macOS 系统钥匙串"
-      : "macOS 系统钥匙串（本机浏览器服务）";
+    return appCredentialStoreLabel(this.bridge.isNative());
   }
   /**
    * What this workflow may call besides the provider's chat endpoint.  Read
@@ -3804,7 +3803,7 @@ class WorkbenchStore {
   }
   async aiSubscriptionStart(providerId = "") {
     if (!this.bridge.isNative()) {
-      this.ui.aiSubscriptionAttempt = { status: "unavailable", message: "订阅登录需要 macOS 桌面版。" };
+      this.ui.aiSubscriptionAttempt = { status: "unavailable", message: "订阅登录需要桌面版（macOS / Windows）。" };
       this.notify();
       return false;
     }
@@ -4132,7 +4131,7 @@ class WorkbenchStore {
    * fails on it.  The rules are the ones the credential-origin binding already
    * uses (`normalizedOrigin` in the service layer): http or https, a real host,
    * and no user or password embedded in the URL — a key belongs in the API key
-   * field, where it goes to the keychain instead of into project.json.
+   * field, where it goes to the platform credential store instead of into project.json.
    *
    * The bad value is never echoed back: a pasted URL can itself carry a secret.
    *
@@ -4375,7 +4374,7 @@ class WorkbenchStore {
     const configured = Boolean(this.ui.aiConfigured?.[providerId]);
     this.ui.toast = configured
       ? `API Key 已保存到${this.aiStorageLabel()}，并已读回确认（不回显，也不进入课程文件）`
-      : "密钥写入后没有读回，暂时不能确认保存成功。请重试；如果一直失败，请检查系统钥匙串权限。";
+      : "密钥写入后没有读回，暂时不能确认保存成功。请重试；如果一直失败，请检查系统凭据存储权限。";
     this.notify();
     return configured;
   }
@@ -9331,7 +9330,7 @@ class WorkbenchStore {
       const validAck = result && result.persisted === true &&
         result.snapshot_id === request.snapshot_id && result.id === request.snapshot_id &&
         result.project_id === request.expected_project_id &&
-        result.project_dir === request.project_dir &&
+        normalizeProjectDir(result.project_dir) === request.project_dir &&
         result.lease_generation === request.lease_generation &&
         result.editor_generation === request.editor_generation &&
         result.operation_id === request.operation_id && result.revision === request.revision &&

@@ -1,5 +1,38 @@
-# graft's cards are gitignored but should stay greppable: ripgrep reads
-# .ignore before .gitignore, so this re-admits the tree to search only.
-!graft/
-graft/.cache/
-graft/.graph/
+# ripgrep/agent search ignore file. It is read BEFORE .gitignore, so it must
+# stay in sync with .gitignore's internal-planning-document block: development
+# planning material (task cards, milestone plans, closure/acceptance reports,
+# spec packages) must not be resurfaced by searches either.
+#
+# Build and local-state noise (already covered by .gitignore) is repeated here
+# so search results stay clean even when git metadata is unavailable.
+target/
+src-tauri/target/
+node_modules/
+dist/
+.release/
+.release-tmp/
+.workbench-project/
+.workspace/
+graft/
+superpowers/
+
+# Internal development-planning documents — never publish, never index.
+PROJECT_MASTER_CONTROL.md
+TASK_CARD_*
+V0-T*
+V1-T*
+V1_*
+V1-*
+AI_Course_Workbench_M1_*
+AI_Course_Workbench_完整开发资料包*/
+*.Closure.md
+*.Closure_*.md
+*_Closure_*.md
+*_Completion_Report.md
+*_Acceptance_Report.md
+*Completion_Report.md
+docs/reports/
+docs/release-playbook.md
+.superpowers/
+AGENTS.md
+.mcp.json

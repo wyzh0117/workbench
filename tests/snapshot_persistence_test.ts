@@ -523,12 +523,12 @@ Deno.test("snapshot.restore leaves Canonical intact when its before-backup canno
     const current = await desktop.commands.execute("project.open_state", {});
     assert(!current.error, "the current canonical project should reopen");
 
+    const norm = (value: unknown) => String(value).replaceAll("\\", "/");
+    const snapshotsDir = norm(join(directory, ".workspace", "snapshots"));
     Deno.rename = async (from, to) => {
       if (
-        String(to).startsWith(
-          join(directory, ".workspace", "snapshots") + "/",
-        ) &&
-        String(to).endsWith(".json") && String(to) !== snapshotPath
+        norm(to).startsWith(snapshotsDir + "/") &&
+        norm(to).endsWith(".json") && norm(to) !== norm(snapshotPath)
       ) throw new Error("injected before-backup persistence failure");
       await originalRename(from, to);
     };
