@@ -1,147 +1,43 @@
-# AI Course Workbench
+<div align="center">
+  <h1>AI Course Workbench</h1>
+  <p>在自己的电脑上，把课程结构、素材和待补内容整理成可编辑、可导出的课程。</p>
+</div>
 
-[中文文档（简体）](./README.zh-CN.md)
+[English](README.en.md) · [下载与版本](https://github.com/wyzh0117/workbench/releases/latest)
 
-**A local-first course authoring workbench.** Course map, lesson editor,
-requirements ("to complete") tracking, media library, six-dimension completion
-status, a review-only AI assistant, and a publish/export center — with your
-project data stored in an open `project.json` on your own disk.
+## 项目介绍
 
-Built with a Deno service/domain layer, a dependency-free web UI, and a
-restricted [Tauri 2](https://tauri.app) desktop shell. Everything rebuildable
-(search index, thumbnails, diagnostics, snapshots) is a cache; the canonical
-project file is the single source of truth.
+AI Course Workbench 是一款本地优先的课程创作工具。课程内容保存在你电脑上的 `project.json` 文件中，便于继续编辑和备份。
 
----
+## 快速开始
 
-## Download
+从[最新版本页面](https://github.com/wyzh0117/workbench/releases/latest)下载 Windows 或 macOS 安装包，安装后打开应用并新建或打开一个课程项目。
 
-> **Current status: v0.2.7 is published** and the repository is public. The
-> links below work for anonymous visitors.
-
-| Entry | Link |
-|---|---|
-| Latest release page (with release notes) | https://github.com/wyzh0117/workbench/releases/latest |
-| **Windows installer (x64, fixed link — always the newest version)** | https://github.com/wyzh0117/workbench/releases/latest/download/AI-Course-Workbench-Windows-x64-setup.exe |
-| **macOS disk image (Universal, fixed link — always the newest version)** | https://github.com/wyzh0117/workbench/releases/latest/download/AI-Course-Workbench-macOS.dmg |
-
-Checksum sidecars (`.sha256`) are published next to each installer in every
-release. Published releases are frozen: a released tag's assets never change,
-so an old download keeps matching its published checksum forever.
-
-### Requirements
-
-| Platform | Minimum | Architecture |
-|---|---|---|
-| Windows | Windows 10 (1809+) with WebView2 | x64 installer (runs on x64 and ARM64 via emulation) |
-| macOS | macOS 11.0 (Big Sur) | Universal — Apple Silicon (arm64) + Intel (x86_64) in one package |
-
-### Install — Windows
-
-1. Download `AI-Course-Workbench-Windows-x64-setup.exe`.
-2. Run it and follow the per-user setup wizard (no administrator rights
-   required).
-3. Launch **AI Course Workbench** from the Start menu.
-
-If Windows SmartScreen shows "Windows protected your PC", choose
-**More info → Run anyway** — the installer is not code-signed yet (see
-Distribution status below). The installer requires (and will offer to
-install) the Microsoft Edge WebView2 runtime.
-
-### Install — macOS
-
-1. Download `AI-Course-Workbench-macOS.dmg`.
-2. Open the DMG and drag **AI Course Workbench** to Applications.
-3. Launch it from Applications.
-
-The first launch needs a one-time approval because the app is not notarized
-yet (see Distribution status below):
-
-- **macOS 15 (Sequoia) / 26 and newer**: double-click, dismiss the dialog,
-  then open **System Settings → Privacy & Security**, press **Open Anyway**
-  and confirm with your password or Touch ID.
-- **macOS 11 (Big Sur) – 14 (Sonoma)**: right-click (or Control-click) the
-  app in Applications → **Open** → confirm **Open** in the dialog.
-
-Do not disable Gatekeeper or strip the quarantine attribute.
-
-### Verify your download
-
-Each release ships a `.sha256` sidecar next to the installer:
-
-```powershell
-# Windows (PowerShell)
-Get-FileHash .\AI-Course-Workbench-Windows-x64-setup.exe -Algorithm SHA256
-```
+从源码运行需要 Deno 2.x、Rust 和对应平台的构建工具：
 
 ```bash
-# macOS
-shasum -a 256 ~/Downloads/AI-Course-Workbench-macOS.dmg
-```
-
-Compare with the value in the `.sha256` sidecar from the same release.
-
-## Distribution status
-
-Honest current state:
-
-- **Windows**: the NSIS installer is **not code-signed** (no Authenticode
-  certificate), so SmartScreen may warn on first run. The per-user installer
-  and the app itself are fully functional.
-- **macOS**: the DMG is **ad-hoc signed and not notarized**; Gatekeeper
-  requires the one-time approval described above.
-- Getting proper Windows code signing / Apple Developer ID signing only needs
-  certificates added to the release workflow — the app itself needs no changes.
-
-## Features
-
-- **Course map** — stages and lessons you can add, rename, reorder, delete.
-- **Lesson editor** — body blocks, structure/flow, paged layout (Grid / Page),
-  live preview, placeholders ("to complete") with real anchors.
-- **Media library** — images, GIF, video, PDF/DOCX/EPUB/LaTeX/Markdown import
-  with previews; referenced-media rename with Undo/Redo.
-- **Requirements & six-dimension completion** — what's missing is tracked
-  explicitly, separate from author-controlled status.
-- **AI assistant (review-only)** — proposes `ChangeDraft`s you review and
-  apply one by one; API keys live in the system credential store (macOS
-  Keychain / Windows Credential Manager), never in course files.
-- **Publish & export center** — Markdown, Semantic HTML, Static Web package,
-  PDF, PPTX, WeChat/rich-text variants, Project JSON, asset packs, full
-  project packages; strict read-only exports with preflight checks.
-- **Safe storage** — atomic writes, autosave with recovery journal, project
-  lock, external-modification detection with merge preview, timestamped
-  snapshots, per-project reading position.
-
-## Build from source
-
-Prerequisites: [Deno](https://deno.com) 2.x, Rust (stable, MSVC toolchain on
-Windows / Xcode command line tools on macOS), and `cargo install tauri-cli`
-(or the `@tauri-apps/cli` npm package).
-
-```bash
-# 1. run the checks (the same gates releases pass)
 deno task check
-deno task test                                # service/UI test suite
+deno task test
 cargo test --manifest-path src-tauri/Cargo.toml
-
-# 2. build the desktop app for your platform
-cargo tauri build                             # from the repository root
+cargo tauri build
 ```
 
-Platform bundles come from `src-tauri/tauri.<platform>.conf.json`:
-macOS builds `app` + `dmg`, Windows builds the NSIS installer.
+## 工作方式
 
-## Repository layout
+先建立课程阶段和课次，再在每课中编辑内容、安排素材，并标记还需要补充的部分。可重建的搜索索引和预览只是缓存；课程文件保留项目的主要内容。AI 助手提出的修改需要你逐条检查后才会应用。
 
-```
-app/          # dependency-free web UI (also runs inside the Tauri shell)
-src/          # Deno domain + service layer (shared with the browser shell)
-src-tauri/    # Tauri 2 desktop shell (Rust)
-tests/        # Deno test suite
-docs/feature-history/  # per-version product history (changelog)
-.github/      # release workflow and per-version release notes
-```
+## 可以做什么
 
-## Feedback
+- 规划课程阶段与课次，调整顺序；
+- 编辑讲义和页面结构，预览课程内容；
+- 整理图片、视频、PDF、DOCX、EPUB、LaTeX 和 Markdown 素材；
+- 记录待补内容，查看课程完成情况；
+- 审阅 AI 修改建议，并导出 Markdown、HTML、PDF、PPTX 或完整项目包。
 
-Issues and discussions are welcome: https://github.com/wyzh0117/workbench
+## 示例
+
+制作一门摄影课时，可以先列出课程阶段和课次，再为每节课写讲义、附上示例图片、标出待补的拍摄练习，最后预览并导出课程材料。
+
+## License
+
+仓库当前没有提供 LICENSE 文件，使用、修改和再发布的授权方式尚未声明。
