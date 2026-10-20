@@ -218,9 +218,11 @@ jobs:
           $ErrorActionPreference = 'Stop'
           $setup = Get-Item 'dist/AI-Course-Workbench-Windows-x64-setup.exe'
           $vi = $setup.VersionInfo
+          $config = Get-Content src-tauri/tauri.conf.json -Raw | ConvertFrom-Json
+          $expected = [string]$config.version
           Write-Host "ProductVersion=$($vi.ProductVersion) FileVersion=$($vi.FileVersion) ProductName=$($vi.ProductName)"
-          if ($vi.ProductVersion -ne $env:GITHUB_REF_NAME.TrimStart('v')) {
-            throw "Installer version $($vi.ProductVersion) does not match tag $($env:GITHUB_REF_NAME)."
+          if ($vi.ProductVersion -ne $expected) {
+            throw "Installer version $($vi.ProductVersion) does not match app version $expected."
           }
 
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
