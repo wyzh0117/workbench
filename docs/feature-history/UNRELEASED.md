@@ -24,7 +24,7 @@ v3.0.0 候选包含统一课程工作区、与布局状态分离的课程完成�
 
 代码候选为 `f1de6643c0d2cb9023bfbf42a87d85a870adb2fa`；CI 校验更新为 `2775c9d2aecff38caa95622859206233a0770c6a`。修正后的 [build-only run](https://github.com/wyzh0117/workbench/actions/runs/39482060115) 在 macOS 和 Windows 均通过，GitHub Release job 跳过。macOS universal app 架构为 `x86_64 arm64`，ad-hoc 签名 strict verification 通过（无 Team ID、未公证）；Windows installer 版本资源为 3.0.0。构建产物与 sidecar SHA-256：`AI-Course-Workbench-macOS.dmg`（16,069,712 bytes，`da0e1d2b20329c0e3adaf923efe52bc64bd2a948c540afb50d1866f840a20feb`，hdiutil VALID）；`AI-Course-Workbench-Windows-x64-setup.exe`（5,519,408 bytes，`5923fb496517e26442b7ed89a4429d95e0f5ca83212142df4abbff776981b2fe`）。首次 [build-only run](https://github.com/wyzh0117/workbench/actions/runs/39480132218) 因将 `ProductVersion=3.0.0` 与分支名 `workbench-3.0.0` 比较而失败，未上传资产；修正后的 workflow 改为和 `tauri.conf.json` 比较。
 
-仅使用了仓库内一份现有 PPTX fixture，尚未证明它代表规格要求的两类真实课件；真实 PowerPoint 无 Repair/编辑/保存重开、真实搜索与 AI 推理、150%/200% 文字缩放仍未验证；性能验收为 PARTIAL。具体状态与证据见 [v3.0.0 草稿](./v3.0.0.md)、[32 项验收记录](../v3.0.0-acceptance.md) 和 [UI/性能证据](../acceptance/v3.0.0/README.md)。
+已用两份 MIT OCW 公开真实 PPTX 运行 production codec probe（23 页、8 页；来源、SHA、receipt 与十个输出见 [PPTX sample evidence](../acceptance/v3.0.0/pptx-real-samples.md)），补充了真实课件的 package-level 证据。两份样本都只有一个 master；多 master、传统 `.ppt`、损坏包输入，以及真实 PowerPoint 无 Repair/编辑/保存重开仍未验证。真实搜索与 AI 推理、150%/200% 文字缩放仍未验证；性能验收为 PARTIAL。具体状态与证据见 [v3.0.0 草稿](./v3.0.0.md)、[32 项验收记录](../v3.0.0-acceptance.md) 和 [UI/性能证据](../acceptance/v3.0.0/README.md)。
 
 ## 下一个开发周期
 
