@@ -9,12 +9,12 @@
 ```text
 Latest public release       = v0.2.7，已发布并冻结
 Release/tag/source          = [v0.2.7](https://github.com/wyzh0117/workbench/releases/tag/v0.2.7) / fb050b121c2014ac3226e90d3683b7c6c26391b0
-Rolling content             = v3.0.0 候选已实现；验收含 PARTIAL / UNVERIFIED，尚无 tag 或 Release
+Rolling content             = v3.0.0 候选已实现；CI build-only 通过，验收仍含 PARTIAL / UNVERIFIED，尚无 tag 或 Release
 Previous release            = v0.2.7，tag / DMG / sidecar 保持冻结
 V0 = CLOSED；V1 = ACTIVE；V1-T01–T06 保留原 VERIFIED；不创建 V1-T07，不关闭 V1
 ```
 
-已发布版本仍以 [v0.2.7 feature history](./v0.2.7.md) 为准；v3.0.0 候选代码已实现，见 [v3.0.0 草稿](./v3.0.0.md)。32 项验收矩阵仍有 PARTIAL / UNVERIFIED，CI build-only 与发布授权也未完成；该草稿不是发布记录。
+已发布版本仍以 [v0.2.7 feature history](./v0.2.7.md) 为准；v3.0.0 候选代码已实现，见 [v3.0.0 草稿](./v3.0.0.md)。修正后的 GitHub Actions build-only 在 macOS/Windows 均通过，Release job 被跳过；32 项验收矩阵仍有 PARTIAL / UNVERIFIED，未创建 v3.0.0 tag 或 Release，该草稿不是发布记录。
 
 ## 当前循环
 
@@ -22,7 +22,9 @@ v3.0.0 候选包含统一课程工作区、与布局状态分离的课程完成�
 
 第一次本地 `.app` build 未显式指定签名身份，`codesign --verify --deep --strict` 因资源封印错误失败。按 release workflow 的 `APPLE_SIGNING_IDENTITY='-'` 重建后 strict verification 通过；这是无 Team ID 的 ad-hoc 签名，不是 Developer ID 签名或公证。对应 ARM64 DMG 的 `hdiutil verify` 通过；第一次 sandbox DMG 尝试因 `hdiutil: Device not configured` 失败，受控重跑未改打包选项并通过。release workflow 已要求资产整理前 strict app verification。
 
-代码候选为 `f1de6643c0d2cb9023bfbf42a87d85a870adb2fa`。首次 [build-only run](https://github.com/wyzh0117/workbench/actions/runs/39480132218) 成功构建 Windows app 与 NSIS 安装包，但版本核对误将 `ProductVersion=3.0.0` 与分支名 `workbench-3.0.0` 比较，导致该步失败，未上传资产；macOS job 仍排队时取消了 run。分支 workflow 已改为与 `tauri.conf.json` 版本比较，修正后的 build-only run 待执行。仅使用了仓库内一份现有 PPTX fixture，尚未证明它代表规格要求的两类真实课件；真实 PowerPoint 无 Repair/编辑/保存重开、真实搜索与 AI 推理、150%/200% 文字缩放仍未验证；性能验收为 PARTIAL。具体状态与证据见 [v3.0.0 草稿](./v3.0.0.md)、[32 项验收记录](../v3.0.0-acceptance.md) 和 [UI/性能证据](../acceptance/v3.0.0/README.md)。
+代码候选为 `f1de6643c0d2cb9023bfbf42a87d85a870adb2fa`；CI 校验更新为 `2775c9d2aecff38caa95622859206233a0770c6a`。修正后的 [build-only run](https://github.com/wyzh0117/workbench/actions/runs/39482060115) 在 macOS 和 Windows 均通过，GitHub Release job 跳过。macOS universal app 架构为 `x86_64 arm64`，ad-hoc 签名 strict verification 通过（无 Team ID、未公证）；Windows installer 版本资源为 3.0.0。构建产物与 sidecar SHA-256：`AI-Course-Workbench-macOS.dmg`（16,069,712 bytes，`da0e1d2b20329c0e3adaf923efe52bc64bd2a948c540afb50d1866f840a20feb`，hdiutil VALID）；`AI-Course-Workbench-Windows-x64-setup.exe`（5,519,408 bytes，`5923fb496517e26442b7ed89a4429d95e0f5ca83212142df4abbff776981b2fe`）。首次 [build-only run](https://github.com/wyzh0117/workbench/actions/runs/39480132218) 因将 `ProductVersion=3.0.0` 与分支名 `workbench-3.0.0` 比较而失败，未上传资产；修正后的 workflow 改为和 `tauri.conf.json` 比较。
+
+仅使用了仓库内一份现有 PPTX fixture，尚未证明它代表规格要求的两类真实课件；真实 PowerPoint 无 Repair/编辑/保存重开、真实搜索与 AI 推理、150%/200% 文字缩放仍未验证；性能验收为 PARTIAL。具体状态与证据见 [v3.0.0 草稿](./v3.0.0.md)、[32 项验收记录](../v3.0.0-acceptance.md) 和 [UI/性能证据](../acceptance/v3.0.0/README.md)。
 
 ## 下一个开发周期
 
