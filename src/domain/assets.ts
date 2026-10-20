@@ -186,6 +186,18 @@ export function removeAsset(
 ): { usages_removed: number } {
   const asset = data.assets.find((candidate) => candidate.id === assetId);
   assert(asset, `找不到素材: ${assetId}`);
+  assert(
+    !data.style_profiles.some((profile) => profile.source_asset_id === assetId) &&
+      !data.presentation_documents.some((document) =>
+        document.source_asset_id === assetId ||
+        document.current_asset_id === assetId
+      ) &&
+      !data.slide_plans.some((plan) =>
+        plan.target_asset_id === assetId ||
+        plan.spec.image_asset_ids.includes(assetId)
+      ),
+    "素材仍被风格或演示文稿记录引用，不能删除",
+  );
   let removed = 0;
   for (
     const contentItemId of new Set(

@@ -199,7 +199,7 @@ async function bootBrowserPage(desktop: DesktopService): Promise<any> {
   return runtime.__workbench;
 }
 
-Deno.test("browser page reload restores reader position, then saves canonical edits before the next reload", async () => {
+Deno.test("browser page reload migrates legacy preview state, then saves canonical edits", async () => {
   const previousDocument = (globalThis as typeof globalThis & { document?: unknown }).document;
   const previousTauri = (globalThis as typeof globalThis & { __TAURI__?: unknown }).__TAURI__;
   const previousFetch = globalThis.fetch;
@@ -225,9 +225,10 @@ Deno.test("browser page reload restores reader position, then saves canonical ed
     assert(second.ui.screen === "project", "refresh must reopen the project shell instead of the launcher");
     assert(second.data.project.id === project.project.id, "refresh must reopen the same canonical project");
     assert(second.ui.activeId === lesson.id, "refresh must restore the active lesson");
-    assert(second.ui.route === "media", "refresh must restore the current view");
-    assert(second.ui.mode === "preview", "refresh must restore the reading mode");
-    assert(second.ui.rightPanel === "status", "refresh must restore the right panel");
+    assert(second.ui.route === "editor", "legacy Preview state resumes in the canonical editor");
+    assert(second.ui.mode === "writing", "removed Preview mode migrates to writing");
+    assert(second.ui.rightPanel === "assistant", "legacy right panels migrate to the assistant");
+    assert(second.ui.toast.includes("Preview"), "the compatibility notice explains the route migration");
     assert(second.ui.leftCollapsed === true, "refresh must restore panel collapse state");
     const serviceLease = second.bridge.lastOpenedProjectState?.lease_generation;
     assert(typeof serviceLease === "string" && serviceLease.length > 0, "browser open_state must carry the DesktopService writer lease");
@@ -250,8 +251,8 @@ Deno.test("browser page reload restores reader position, then saves canonical ed
     assert(third.ui.screen === "project", "second refresh must keep the project shell open");
     const savedBlock = third.data.blocks.find((candidate: any) => candidate.id === block.id);
     assert(savedBlock?.content === "刷新后保存的正文", "next refresh must retain the canonical edit");
-    assert(third.ui.activeId === lesson.id && third.ui.route === "media", "next refresh must retain reader position");
-    assert(third.ui.mode === "preview" && third.ui.rightPanel === "status", "next refresh must retain mode and panel");
+    assert(third.ui.activeId === lesson.id && third.ui.route === "editor", "next refresh retains the lesson and migrates Preview to 工作台");
+    assert(third.ui.mode === "writing" && third.ui.rightPanel === "assistant", "next refresh uses the canonical mode and panel");
 
     const bridge = third.bridge as any;
     const durableWrites: Array<{ session: Record<string, unknown>; metadata: Record<string, unknown> }> = [];
@@ -363,7 +364,7 @@ Deno.test("a new browser session epoch rejects a delayed save from the previous 
   }
 });
 
-Deno.test("openWorkbench after reload restores the session authoring subview for the current lesson", async () => {
+Deno.test("browser reload migrates a saved free-layout route to the current lesson editor", async () => {
   const previousDocument = (globalThis as typeof globalThis & { document?: unknown }).document;
   const previousTauri = (globalThis as typeof globalThis & { __TAURI__?: unknown }).__TAURI__;
   const previousFetch = globalThis.fetch;
@@ -374,19 +375,20 @@ Deno.test("openWorkbench after reload restores the session authoring subview for
     const lesson = project.content_items[0];
     assert(lesson, "fixture must contain a lesson");
     first.openItem(lesson.id);
-    first.setMode("structure");
-    first.ui.route = "media";
+    first.ui.mode = "writing";
+    first.ui.route = "free-layout";
     await first.persistSession(first.session());
 
     const second = await bootBrowserPage(desktop);
     assert(second.ui.activeId === lesson.id, "reload keeps the lesson");
-    assert(second.ui.mode === "structure", "reload keeps the authoring subview");
-    assert(second.ui.route === "media", "reload keeps the media route until 工作台 is opened");
+    assert(second.ui.mode === "writing", "the legacy route resumes in canonical writing mode");
+    assert(second.ui.route === "editor", "legacy free-layout state resumes in 工作台");
+    assert(second.ui.toast.includes("旧版排版"), "the compatibility notice explains the route migration");
 
     second.openWorkbench();
     assert(second.ui.route === "editor", "工作台 opens the authoring editor");
     assert(second.ui.activeId === lesson.id, "工作台 stays on the session lesson");
-    assert(second.ui.mode === "structure", "工作台 restores 结构 from the valid session");
+    assert(second.ui.mode === "writing", "工作台 stays in the canonical writing mode");
   } finally {
     await desktop.close();
     (globalThis as typeof globalThis & { document?: unknown }).document = previousDocument;
@@ -395,7 +397,7 @@ Deno.test("openWorkbench after reload restores the session authoring subview for
   }
 });
 
-Deno.test("saved snapshot list hydrates when a browser reload restores the versions route", async () => {
+Deno.test("saved snapshot list hydrates when legacy versions route migrates to settings history", async () => {
   const previousDocument = (globalThis as typeof globalThis & { document?: unknown }).document;
   const previousTauri = (globalThis as typeof globalThis & { __TAURI__?: unknown }).__TAURI__;
   const previousFetch = globalThis.fetch;
@@ -414,10 +416,11 @@ Deno.test("saved snapshot list hydrates when a browser reload restores the versi
 
     const second = await bootBrowserPage(desktop);
     assert(second.data.project.id === project.project.id, "reload restores the same canonical project");
-    assert(second.ui.route === "versions", "reload restores the versions route");
+    assert(second.ui.route === "settings", "removed versions route migrates to settings");
+    assert(second.ui.settingsSection === "history", "legacy versions route selects history settings");
     assert(
       second.snapshotRows.length === 1 && second.snapshotRows[0]?.name === "browser reload snapshot",
-      "the versions page hydrates persisted rows after a browser reload",
+      "the settings history page hydrates persisted rows after a browser reload",
     );
   } finally {
     await desktop.close();
@@ -523,6 +526,9 @@ Deno.test("browser session records reject stale, corrupt, credential-shaped, mis
     mode: "preview",
     right_panel: "status",
     route: "media",
+    course_tree_filter: "missing_media",
+    media_filter: "videos",
+    settings_section: "history",
     left_collapsed: false,
     right_collapsed: true,
     tabs: [{ content_item_id: "lesson-1", mode: "preview", pinned: false, scroll_top: 12 }],
@@ -530,7 +536,9 @@ Deno.test("browser session records reject stale, corrupt, credential-shaped, mis
   const store = new BrowserSessionStore(directory);
   try {
     await store.save(session, projectId);
-    assert((await store.load(projectId))?.active_content_item_id === "lesson-1", "valid session should round-trip");
+    const loaded = await store.load(projectId);
+    assert(loaded?.active_content_item_id === "lesson-1", "valid session should round-trip");
+    assert(loaded?.course_tree_filter === "missing_media" && loaded.media_filter === "videos" && loaded.settings_section === "history", "reader subview filters should round-trip");
 
     await Deno.writeTextFile(store.path, "{not-json");
     assert(await store.load(projectId) === null, "corrupt sessions must degrade to no session");
@@ -560,6 +568,15 @@ Deno.test("browser session records reject stale, corrupt, credential-shaped, mis
     }
     assert(rejected, "credential-shaped session fields must be rejected at the service boundary");
     assert(!await Deno.readTextFile(store.path).then((value) => value.includes("must-not-persist")), "rejected data must not reach disk");
+
+    let invalidFilterRejected = false;
+    try {
+      await store.save({ ...session, media_filter: "provider-secret" }, projectId);
+    } catch (caught) {
+      invalidFilterRejected = caught instanceof Error &&
+        (caught as { error?: { code?: string } }).error?.code === "invalid_browser_session";
+    }
+    assert(invalidFilterRejected, "reader filter fields must stay allowlisted at the service boundary");
 
     const missing = new BrowserSessionStore(`${directory}/missing-project`);
     assert(await missing.load(projectId) === null, "missing project roots must degrade to no session");

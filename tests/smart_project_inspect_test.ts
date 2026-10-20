@@ -8,6 +8,8 @@
  * migration must be reported as `migratable`, not `invalid`.
  */
 import {
+  CURRENT_PROJECT_SCHEMA_VERSION,
+  CURRENT_SCHEMA_VERSION,
   createEmptyProjectData,
   inspectProjectData,
   inspectProjectDirectory,
@@ -46,8 +48,24 @@ Deno.test("inspectProjectData: a current valid project reports status valid", ()
   assert(inspection.project?.id === fresh.project.id, "project id must be echoed");
   assert(
     inspection.supported_schema_version === fresh.schema_version,
-    "supported version must match CURRENT_SCHEMA_VERSION",
+    "supported version must match the current project envelope schema",
   );
+  assert(fresh.schema_version === CURRENT_PROJECT_SCHEMA_VERSION, "new projects use project schema 1.1.0");
+  assert(fresh.project.schema_version === CURRENT_PROJECT_SCHEMA_VERSION, "root and nested project schema agree");
+  assert(CURRENT_SCHEMA_VERSION === "1.0.0", "entity schema remains unchanged");
+});
+
+Deno.test("migration: a 1.0.0 project envelope migrates to 1.1.0 without changing entity schema", () => {
+  const fresh = createEmptyProjectData("兼容课程");
+  const legacy = structuredClone(fresh);
+  legacy.schema_version = "1.0.0";
+  legacy.project.schema_version = "1.0.0";
+  const inspection = inspectProjectData(legacy);
+  assert(inspection.status === "migratable", `old native project schema should migrate, got ${inspection.status}`);
+  const migrated = migrateProject(legacy);
+  assert(migrated.schema_version === "1.1.0", "top-level schema should migrate");
+  assert(migrated.project.schema_version === "1.1.0", "nested project schema should migrate in lockstep");
+  assert(validateProjectData(migrated).length === 0, "migrated project should validate");
 });
 
 Deno.test("inspectProjectData: an older supported schema is migratable, not invalid", () => {

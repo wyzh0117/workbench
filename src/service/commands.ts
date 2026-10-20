@@ -93,6 +93,19 @@ export const HIGH_LEVEL_COMMANDS = [
   "ai.cancel",
   "ai.execution.append",
   "ai.execution.list",
+  "resource.discovery.prepare",
+  "resource.providers.secret.set",
+  "resource.providers.secret.delete",
+  "resource.discovery.start",
+  "resource.discovery.cancel",
+  "resource.discovery.retry",
+  "resource.candidate.accept",
+  "presentation.style.extract",
+  "presentation.style.save",
+  "presentation.slide.prepare_ai_context",
+  "presentation.slide.propose",
+  "presentation.slide.preview",
+  "presentation.slide.export",
 ] as const;
 
 export const READ_QUERIES = [
@@ -106,6 +119,9 @@ export const READ_QUERIES = [
   "export.preflight",
   "search.query",
   "diagnostics.export",
+  "resource.providers.list",
+  "resource.discovery.plan",
+  "resource.discovery.get",
 ] as const;
 
 export type HighLevelCommand = typeof HIGH_LEVEL_COMMANDS[number];

@@ -97,9 +97,11 @@ import {
   applyAiChangeDraft,
   assembleAiContext,
   buildAiExecutionRecord,
+  buildAiProviderCall,
   createAiChangeDraft,
   createAiSuggestion,
   rejectAiChangeDraft,
+  normalizeAiProviderResponse,
   validateAiChangeDraft,
 } from "./ai.js";
 
@@ -170,6 +172,19 @@ const NATIVE_PROJECT_COMMANDS = new Set([
   "export.preflight",
   "export.run",
   "publication.record",
+  "resource.discovery.prepare",
+  "resource.discovery.plan",
+  "resource.discovery.start",
+  "resource.discovery.get",
+  "resource.discovery.cancel",
+  "resource.discovery.retry",
+  "resource.candidate.accept",
+  "presentation.style.extract",
+  "presentation.style.save",
+  "presentation.slide.propose",
+  "presentation.slide.prepare_ai_context",
+  "presentation.slide.preview",
+  "presentation.slide.export",
 ]);
 const PROJECT_STATE_COMMANDS = new Set([
   "asset.import",
@@ -178,8 +193,46 @@ const PROJECT_STATE_COMMANDS = new Set([
   "publication.record",
 ]);
 const clone = (value) => structuredClone(value);
+// Project roots use schema 1.1.0; nested document and layout records remain 1.0.0.
+const ENTITY_SCHEMA_VERSION = "1.0.0";
 const uid = () => crypto.randomUUID();
 const now = () => new Date().toISOString();
+function parsePresentationAiSlideSpec(text, prepared) {
+  let spec;
+  try {
+    spec = JSON.parse(String(text || "").trim());
+  } catch {
+    throw new Error("AI 回复必须是直接的 SlideSpec JSON；未创建方案。");
+  }
+  const keys = ["layout_ref", "title", "body", "image_asset_ids", "source_ids", "speaker_notes"];
+  if (!spec || typeof spec !== "object" || Array.isArray(spec) ||
+    Object.keys(spec).length !== keys.length || keys.some((key) => !Object.hasOwn(spec, key))) {
+    throw new Error("AI 回复字段不符合 SlideSpec；未创建方案。");
+  }
+  if (spec.layout_ref !== prepared.variant_id || typeof spec.title !== "string" ||
+    !spec.title.trim() || spec.title.length > 500 || !Array.isArray(spec.body) ||
+    spec.body.length > 50 || typeof spec.speaker_notes !== "string" ||
+    spec.speaker_notes.length > 20_000 || !Array.isArray(spec.image_asset_ids) ||
+    spec.image_asset_ids.length > 16 || !Array.isArray(spec.source_ids) || spec.source_ids.length > 100) {
+    throw new Error("AI 回复的版式、标题或内容超出允许范围；未创建方案。");
+  }
+  if (spec.body.some((item) => !item || typeof item !== "object" || Array.isArray(item) ||
+    Object.keys(item).length !== 2 || !Object.hasOwn(item, "kind") || !Object.hasOwn(item, "text") ||
+    !["paragraph", "bullet"].includes(item.kind) || typeof item.text !== "string" || item.text.length > 5_000)) {
+    throw new Error("AI 回复包含无效正文段落；未创建方案。");
+  }
+  for (const [field, allowed, maximum] of [
+    ["image_asset_ids", prepared.allowed_image_asset_ids, 16],
+    ["source_ids", prepared.allowed_source_ids, 100],
+  ]) {
+    const ids = spec[field];
+    if (!Array.isArray(allowed) || ids.some((id) => typeof id !== "string" || !allowed.includes(id)) ||
+      new Set(ids).size !== ids.length || ids.length > maximum) {
+      throw new Error(`AI 回复引用了未授权的 ${field === "source_ids" ? "来源" : "图片"}；未创建方案。`);
+    }
+  }
+  return spec;
+}
 function oneShotMediaRelease(url) {
   let released = false;
   return () => {
@@ -274,6 +327,7 @@ const mimeForFilename = (filename) => ({
   png: "image/png", jpg: "image/jpeg", jpeg: "image/jpeg", gif: "image/gif", webp: "image/webp", svg: "image/svg+xml",
   mp4: "video/mp4", webm: "video/webm", mov: "video/quicktime", mp3: "audio/mpeg", wav: "audio/wav",
   md: "text/markdown", markdown: "text/markdown", pdf: "application/pdf", docx: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  pptx: "application/vnd.openxmlformats-officedocument.presentationml.presentation",
 }[String(filename).split(".").pop()?.toLowerCase()] || "application/octet-stream");
 const assetTypeForFile = (filename, mime = "") => {
   const lower = String(filename).toLowerCase();
@@ -281,10 +335,11 @@ const assetTypeForFile = (filename, mime = "") => {
   if (mime.startsWith("image/") || /\.(png|jpe?g|gif|webp|svg)$/.test(lower)) return "image";
   if (mime.startsWith("video/") || /\.(mp4|webm|mov|m4v)$/.test(lower)) return "video";
   if (mime.startsWith("audio/") || /\.(mp3|wav|m4a|aac)$/.test(lower)) return "audio";
+  if (/\.pptx$/.test(lower) || mime === "application/vnd.openxmlformats-officedocument.presentationml.presentation") return "document";
   if (/\.(md|markdown)$/.test(lower) || mime === "text/markdown") return "document";
   return "other";
 };
-const isAssetFile = (filename, mime = "") => mime.startsWith("image/") || mime.startsWith("video/") || mime.startsWith("audio/") || /\.(gif|png|jpe?g|webp|svg|mp4|webm|mov|m4v|mp3|wav|m4a|aac|pdf|docx|md|markdown)$/i.test(filename);
+const isAssetFile = (filename, mime = "") => mime.startsWith("image/") || mime.startsWith("video/") || mime.startsWith("audio/") || /\.(gif|png|jpe?g|webp|svg|mp4|webm|mov|m4v|mp3|wav|m4a|aac|pdf|docx|pptx|md|markdown)$/i.test(filename);
 /**
  * A batch member counts as imported only when it added a row.  The native
  * shell answers with an explicit `duplicate`; the browser service can reuse an
@@ -561,6 +616,11 @@ class DesktopBridge {
   nativeInput(command, args = {}) {
     const input = args && typeof args === "object" ? args : {};
     if (!this.isNative()) return args;
+    if ([
+      "resource.providers.list",
+      "resource.providers.secret.set",
+      "resource.providers.secret.delete",
+    ].includes(command)) return { input };
     if (command === "folder.scan_documents") return input;
     if (command === "folder.adopt") {
       const {
@@ -692,6 +752,19 @@ class DesktopBridge {
         "publication.record",
         "course.seed.create",
         "blueprint.build",
+        "resource.discovery.prepare",
+        "resource.discovery.plan",
+        "resource.discovery.start",
+        "resource.discovery.get",
+        "resource.discovery.cancel",
+        "resource.discovery.retry",
+        "resource.candidate.accept",
+        "presentation.style.extract",
+        "presentation.style.save",
+        "presentation.slide.propose",
+        "presentation.slide.prepare_ai_context",
+        "presentation.slide.preview",
+        "presentation.slide.export",
       ].includes(command)
     ) {
       return { input: { ...input, project_dir: projectDir } };
@@ -873,6 +946,22 @@ class DesktopBridge {
       "publication.record": "publication_record",
       "secret.set": "secret_set",
       "secret.delete": "secret_delete",
+      "resource.providers.list": "resource_providers_list",
+      "resource.providers.secret.set": "resource_secret_set",
+      "resource.providers.secret.delete": "resource_secret_delete",
+      "resource.discovery.prepare": "resource_discovery_prepare",
+      "resource.discovery.plan": "resource_discovery_plan",
+      "resource.discovery.start": "resource_discovery_start",
+      "resource.discovery.get": "resource_discovery_get",
+      "resource.discovery.cancel": "resource_discovery_cancel",
+      "resource.discovery.retry": "resource_discovery_retry",
+      "resource.candidate.accept": "resource_candidate_accept",
+      "presentation.style.extract": "presentation_style_extract",
+      "presentation.style.save": "presentation_style_save",
+      "presentation.slide.propose": "presentation_slide_propose",
+      "presentation.slide.prepare_ai_context": "presentation_slide_prepare_ai_context",
+      "presentation.slide.preview": "presentation_slide_preview",
+      "presentation.slide.export": "presentation_slide_export",
       "connector.sync": "connector_sync",
       "ai.analyze": "ai_analyze",
       "suggestion.apply": "suggestion_apply",
@@ -1691,7 +1780,7 @@ class WorkbenchStore {
       leftCollapsed: false,
       rightCollapsed: false,
       collapsedStageIds: [],
-      rightPanel: "requirements",
+      rightPanel: "assistant",
       palette: false,
       paletteIndex: 0,
       capture: false,
@@ -1728,6 +1817,43 @@ class WorkbenchStore {
       assetUsageId: null,
       editingRequirementId: null,
       assetQuery: "",
+      mediaFilter: "all",
+      courseTreeFilter: "all",
+      resourceProviders: null,
+      resourceProvidersLoading: false,
+      resourceProvidersError: "",
+      resourceSecretSaving: "",
+      resourcePlan: null,
+      resourceTask: null,
+      resourceBusy: "",
+      resourceError: "",
+      resourceRecoveryWarning: "",
+      resourcePollTimer: null,
+      resourcePollCount: 0,
+      presentationStyleDraft: null,
+      presentationStyleError: "",
+      presentationBusy: "",
+      presentationSlidePlan: null,
+      presentationPreview: null,
+      presentationExport: null,
+      presentationError: "",
+      presentationMode: "manual",
+      presentationStyleProfileId: "",
+      presentationDocumentId: "",
+      presentationInsertAfterSlideId: "",
+      presentationSlideInstruction: "",
+      presentationSlideTitle: "",
+      presentationSlideBody: "",
+      presentationSlideNotes: "",
+      presentationTargetReport: null,
+      presentationTargetReportAssetId: "",
+      presentationTargetInspectingAssetId: "",
+      presentationTargetAttemptedAssetId: "",
+      presentationTargetInspectError: "",
+      presentationAiPrepared: null,
+      presentationAiConsent: false,
+      presentationAiRequestId: "",
+      presentationSessionGeneration: 0,
       showPreviewNotes: true,
       confirmDeleteLesson: null,
       confirmDeleteStage: null,
@@ -1756,6 +1882,24 @@ class WorkbenchStore {
       aiProviders: [],
       aiConfigured: {},
       aiProviderForm: null,
+      resourceProviders: [],
+      resourceProvidersError: "",
+      resourceProviderBusy: "",
+      resourceCredentialValues: {},
+      resourceDiscoveryOpen: false,
+      resourceDiscovery: null,
+      resourceDiscoveryError: "",
+      resourceDiscoveryBusy: false,
+      resourceDiscoveryProviderIds: [],
+      resourceDiscoveryBudget: 10,
+      resourceDiscoveryDocumentRefs: [],
+      resourceDiscoveryPreferences: "",
+      resourceDiscoveryPollTimer: 0,
+      presentationDraft: null,
+      presentationPlan: null,
+      presentationError: "",
+      presentationBusy: false,
+      presentationInstruction: "",
       aiRunId: null,
       /** Whether the next run should ask the model for concrete changes. */
       aiWantsChanges: false,
@@ -1964,6 +2108,9 @@ class WorkbenchStore {
       mode: this.ui.mode,
       right_panel: this.ui.rightPanel,
       route: this.ui.route,
+      course_tree_filter: this.ui.courseTreeFilter,
+      media_filter: this.ui.mediaFilter,
+      settings_section: this.ui.settingsSection,
       selected_block_id: this.ui.selectedBlockId,
       layout_page_id: this.ui.layoutPageId,
       layout_zoom: this.ui.layoutZoom,
@@ -2012,8 +2159,8 @@ class WorkbenchStore {
     return {
       active_content_item_id: activeId,
       mode: "writing",
-      right_panel: "requirements",
-      route,
+      right_panel: "assistant",
+      route: resolveReaderDestination(route).route,
       selected_block_id: null,
       layout_page_id: (() => {
         const layout = project?.layout_instances?.find((candidate) =>
@@ -2034,7 +2181,14 @@ class WorkbenchStore {
       explorer_filter: "",
       explorer_expanded: [],
       explorer_recent: [],
+      course_tree_filter: "all",
+      media_filter: "all",
+      settings_section: "general",
     };
+  }
+
+  resolveReaderDestination(route, fallback = "overview") {
+    return resolveReaderDestination(route, this.ui.mode, this.ui.rightPanel, fallback);
   }
   normalizeReaderState(project, candidate = {}, route = "overview") {
     const defaults = this.defaultReaderState(project, route);
@@ -2043,28 +2197,16 @@ class WorkbenchStore {
     const activeId = knownItem(value.active_content_item_id)
       ? value.active_content_item_id
       : defaults.active_content_item_id;
-    const legacyFlowRoute = value.route === "structure";
-    const savedMode = legacyFlowRoute
-      ? "structure"
-      : ["writing", "structure", "layout", "preview"].includes(value.mode)
-      ? value.mode
-      : defaults.mode;
-    const rightPanel = RIGHT_PANEL_KEYS.includes(value.right_panel)
-      ? value.right_panel
-      : defaults.right_panel;
-    const rawRoute = legacyFlowRoute
-      ? "editor"
-      : ROUTES.includes(value.route)
-      ? value.route
-      : defaults.route;
-    const nextRoute = rawRoute === "workbench"
-      ? "editor"
-      : rawRoute === "editor" && savedMode === "layout"
-      ? "free-layout"
-      : rawRoute;
-    // Layout editing moved to its own top-level route; old lesson tabs return
-    // to the body editor while the saved route carries the Grid/Page context.
-    const mode = savedMode === "layout" ? "writing" : savedMode;
+    const destination = resolveReaderDestination(
+      value.route || route,
+      value.mode,
+      value.right_panel,
+      defaults.route,
+    );
+    const nextRoute = destination.route;
+    // Legacy Flow, Grid, and Preview sessions resume in the canonical body editor.
+    const mode = "writing";
+    const rightPanel = "assistant";
     const selectedBlockId = typeof value.selected_block_id === "string" && activeId &&
         blocksFor(project, activeId).some((block) => block.id === value.selected_block_id)
       ? value.selected_block_id
@@ -2083,9 +2225,7 @@ class WorkbenchStore {
         .filter((tab) => tab && knownItem(tab.content_item_id))
         .map((tab) => ({
           content_item_id: tab.content_item_id,
-          mode: ["writing", "structure", "layout", "preview"].includes(tab.mode)
-            ? tab.mode === "layout" ? "writing" : tab.mode
-            : "writing",
+          mode: "writing",
           pinned: Boolean(tab.pinned),
           scroll_top: Number(tab.scroll_top) || 0,
         }))
@@ -2099,6 +2239,16 @@ class WorkbenchStore {
       mode,
       right_panel: rightPanel,
       route: nextRoute,
+      course_tree_filter: ["all", "open", "requirements", "missing_media", "complete"].includes(value.course_tree_filter)
+        ? value.course_tree_filter
+        : destination.courseTreeFilter || defaults.course_tree_filter,
+      media_filter: ["all", "cases", "videos", "images", "documents", "slides"].includes(value.media_filter)
+        ? value.media_filter
+        : defaults.media_filter,
+      settings_section: ["general", "history", "ai", "models", "accounts", "project"].includes(value.settings_section)
+        ? value.settings_section
+        : destination.settingsSection || defaults.settings_section,
+      legacy_route_notice: destination.notice || "",
       selected_block_id: selectedBlockId,
       layout_page_id: layoutPageId,
       layout_zoom: ["fit", "actual"].includes(value.layout_zoom)
@@ -2127,10 +2277,28 @@ class WorkbenchStore {
   }
   applyReaderState(reader) {
     const value = reader || {};
+    const destination = resolveReaderDestination(
+      value.route,
+      value.mode,
+      value.right_panel,
+    );
     this.ui.activeId = value.active_content_item_id || null;
-    this.ui.mode = value.mode || "writing";
-    this.ui.rightPanel = value.right_panel || "requirements";
-    this.ui.route = value.route || "overview";
+    this.ui.mode = "writing";
+    this.ui.rightPanel = "assistant";
+    this.ui.route = destination.route;
+    this.ui.courseTreeFilter = ["all", "open", "requirements", "missing_media", "complete"].includes(value.course_tree_filter)
+      ? value.course_tree_filter
+      : destination.courseTreeFilter || "all";
+    this.ui.mediaFilter = ["all", "cases", "videos", "images", "documents", "slides"].includes(value.media_filter)
+      ? value.media_filter
+      : "all";
+    this.ui.settingsSection = ["general", "history", "ai", "models", "accounts", "project"].includes(value.settings_section)
+      ? value.settings_section
+      : destination.settingsSection || "general";
+    this.ui.courseTreeQuery = String(value.course_tree_query || "").slice(0, 256);
+    if (value.legacy_route_notice || destination.notice) {
+      this.ui.toast = value.legacy_route_notice || destination.notice;
+    }
     this.ui.selectedBlockId = value.selected_block_id || null;
     this.ui.layoutPageId = value.layout_page_id || null;
     this.ui.layoutZoom = value.layout_zoom === "actual" ? "actual" : "fit";
@@ -2139,6 +2307,7 @@ class WorkbenchStore {
     this.ui.aiModel = value.ai_model || "";
     this.ui.aiSettingsOpen = false;
     this.ui.leftCollapsed = Boolean(value.left_collapsed);
+    if (destination.focusLeft) this.ui.leftCollapsed = false;
     this.ui.rightCollapsed = Boolean(value.right_collapsed);
     this.ui.collapsedStageIds = Array.isArray(value.collapsed_stage_ids)
       ? [...value.collapsed_stage_ids]
@@ -2422,8 +2591,9 @@ class WorkbenchStore {
     if (kind !== "project" && kind !== "stage") return;
     this.ui.propertyTarget = kind === "project" ? { kind } : { kind, id };
     this.ui.selectedBlockId = null;
-    this.ui.rightPanel = "properties";
-    this.ui.rightCollapsed = false;
+    this.ui.rightPanel = "assistant";
+    this.ui.route = kind === "project" ? "settings" : "overview";
+    if (kind === "project") this.ui.settingsSection = "project";
     this.notify();
   }
   selectBlock(id, options = {}) {
@@ -2464,6 +2634,7 @@ class WorkbenchStore {
     this.notify();
   }
   commit(label, mutation, { notify = true } = {}) {
+    this.invalidatePresentationAi({ notify: false });
     if (this.canonicalMutationPending) {
       this.ui.toast = "正在完成文件操作，请稍后再编辑。";
       this.notifyChrome();
@@ -2501,6 +2672,7 @@ class WorkbenchStore {
    */
   markPendingEdit() {
     if (this.canonicalMutationPending) return false;
+    this.invalidatePresentationAi({ notify: false });
     this.data.project.updated_at = nextRevision(this.data.project.updated_at);
     this.scheduleSave();
     clearTimeout(this.editTimer);
@@ -2521,6 +2693,7 @@ class WorkbenchStore {
       : null;
     const key = JSON.stringify({ project_dir: projectDir, project_id: projectId, lease_generation: leaseGeneration });
     if (key !== this.projectIdentityKey) {
+      this.invalidatePresentationAi({ notify: false });
       this.snapshotOperationGeneration += 1;
       this.snapshotSaving = false;
       this.snapshotRestoringId = null;
@@ -2576,6 +2749,7 @@ class WorkbenchStore {
       pauseIfInterveningEdit = false,
     } = {},
   ) {
+    this.invalidatePresentationAi({ notify: false });
     if (this.canonicalMutationPending) throw new Error("另一项文件操作尚未完成，请稍后重试。");
     const beforeDrain = this.saveIdentity();
     if (!beforeDrain.expected_project_id) throw new Error("请先打开课程，再执行文件操作。");
@@ -3680,6 +3854,589 @@ class WorkbenchStore {
     this.ui.aiExecutionsOpen = false;
     this.ui.aiProviderForm = null;
     this.refreshAiSideFiles();
+  }
+  resourceErrorText(error, fallback) {
+    const code = String(error?.code || error?.details?.code || "").trim();
+    const message = String(error?.user_message || error?.message || fallback).trim();
+    return `${code ? `${code}: ` : ""}${message || fallback}`;
+  }
+  async refreshResourceProviders() {
+    if (this.ui.resourceProvidersLoading) return;
+    this.ui.resourceProvidersLoading = true;
+    this.ui.resourceProvidersError = "";
+    this.notify();
+    try {
+      const result = await this.bridge.query("resource.providers.list", {});
+      this.ui.resourceProviders = Array.isArray(result) ? result : [];
+    } catch (error) {
+      this.ui.resourceProvidersError = this.resourceErrorText(error, "无法读取资源搜索服务状态。");
+    } finally {
+      this.ui.resourceProvidersLoading = false;
+      this.notify();
+    }
+  }
+  async setResourceProviderSecret(providerId, value) {
+    const id = String(providerId || "");
+    if (!["brave_search", "youtube_data_api"].includes(id)) return;
+    if (!String(value || "").trim()) {
+      this.ui.resourceProvidersError = "请输入该资源服务的专用密钥。";
+      this.notify();
+      return;
+    }
+    this.ui.resourceSecretSaving = id;
+    this.ui.resourceProvidersError = "";
+    this.notify();
+    try {
+      await this.bridge.command("resource.providers.secret.set", {
+        provider_id: id,
+        value: String(value),
+      });
+      await this.refreshResourceProviders();
+    } catch (error) {
+      this.ui.resourceProvidersError = this.resourceErrorText(error, "资源服务密钥未能保存。");
+    } finally {
+      this.ui.resourceSecretSaving = "";
+      this.notify();
+    }
+  }
+  async deleteResourceProviderSecret(providerId) {
+    const id = String(providerId || "");
+    if (!["brave_search", "youtube_data_api"].includes(id)) return;
+    this.ui.resourceSecretSaving = id;
+    this.ui.resourceProvidersError = "";
+    this.notify();
+    try {
+      await this.bridge.command("resource.providers.secret.delete", { provider_id: id });
+      await this.refreshResourceProviders();
+    } catch (error) {
+      this.ui.resourceProvidersError = this.resourceErrorText(error, "资源服务密钥未能删除。");
+    } finally {
+      this.ui.resourceSecretSaving = "";
+      this.notify();
+    }
+  }
+  async prepareResourceDiscovery(contentItemId, searchTypes, requestBudget) {
+    const item = this.data.content_items.find((candidate) =>
+      candidate.id === contentItemId && !candidate.archived
+    );
+    const kinds = [...new Set((Array.isArray(searchTypes) ? searchTypes : []).filter((kind) =>
+      kind === "web" || kind === "video"
+    ))];
+    const budget = Math.max(1, Math.min(50, Math.trunc(Number(requestBudget) || 1)));
+    if (!item || !kinds.length) {
+      this.ui.resourceError = "先选择一课和至少一种搜索类型。";
+      this.notify();
+      return;
+    }
+    this.ui.resourceBusy = "prepare";
+    this.ui.resourcePlan = null;
+    this.ui.resourceError = "";
+    this.notify();
+    try {
+      this.ui.resourcePlan = await this.bridge.command("resource.discovery.prepare", {
+        content_item_ids: [item.id],
+        search_types: kinds,
+        request_budget: budget,
+        preferences: {
+          per_lesson_limit: 5,
+          target_min_sec: 240,
+          target_max_sec: 360,
+          wide_min_sec: 180,
+          wide_max_sec: 480,
+          language: this.data.project.language || "zh-CN",
+        },
+      });
+    } catch (error) {
+      this.ui.resourceError = this.resourceErrorText(error, "无法生成素材搜索计划。");
+    } finally {
+      this.ui.resourceBusy = "";
+      this.notify();
+    }
+  }
+  async startResourceDiscovery() {
+    const plan = this.ui.resourcePlan;
+    if (!plan?.plan_id || !plan?.input_hash) return;
+    this.ui.resourceBusy = "start";
+    this.ui.resourceError = "";
+    this.notify();
+    try {
+      const providers = await this.bridge.query("resource.providers.list", {});
+      const status = new Map((Array.isArray(providers) ? providers : []).map((provider) => [provider.id, provider]));
+      const required = new Set((plan.queries || []).flatMap((lesson) =>
+        (lesson.queries || []).map((query) => query.kind === "video" ? "youtube_data_api" : "brave_search")
+      ));
+      const missing = [...required].filter((id) => status.get(id)?.credential_present !== true);
+      if (missing.length) {
+        const names = missing.map((id) => id === "brave_search" ? "Brave 搜索" : "YouTube Data API");
+        throw Object.assign(new Error(`请先在设置中配置${names.join("、")}的专用密钥。`), { code: "auth_required" });
+      }
+      const task = await this.bridge.command("resource.discovery.start", {
+        plan_id: plan.plan_id,
+        input_hash: plan.input_hash,
+        authorized: true,
+      });
+      this.ui.resourceTask = task;
+      this.ui.resourcePollCount = 0;
+      this.scheduleResourcePoll();
+    } catch (error) {
+      this.ui.resourceError = this.resourceErrorText(error, "素材搜索没有启动。");
+    } finally {
+      this.ui.resourceBusy = "";
+      this.notify();
+    }
+  }
+  scheduleResourcePoll() {
+    globalThis.clearTimeout?.(this.ui.resourcePollTimer);
+    const state = this.ui.resourceTask?.state;
+    if (!this.ui.resourceTask?.task_id || !["queued", "running", "cancel_requested"].includes(state) ||
+      this.ui.resourcePollCount >= 100) return;
+    this.ui.resourcePollTimer = globalThis.setTimeout?.(() => {
+      void this.refreshResourceTask(this.ui.resourceTask.task_id, true);
+    }, 1200);
+  }
+  async refreshResourceTask(taskId = this.ui.resourceTask?.task_id, poll = false) {
+    if (!taskId) return;
+    try {
+      const task = await this.bridge.query("resource.discovery.get", { task_id: taskId });
+      if (task) this.ui.resourceTask = task;
+      if (poll) this.ui.resourcePollCount += 1;
+      this.ui.resourceError = "";
+      this.scheduleResourcePoll();
+    } catch (error) {
+      this.ui.resourceError = this.resourceErrorText(error, "无法读取素材搜索进度。");
+    }
+    this.notify();
+  }
+  async cancelResourceDiscovery() {
+    const taskId = this.ui.resourceTask?.task_id;
+    if (!taskId) return;
+    this.ui.resourceBusy = "cancel";
+    this.ui.resourceError = "";
+    try {
+      this.ui.resourceTask = await this.bridge.command("resource.discovery.cancel", { task_id: taskId });
+    } catch (error) {
+      this.ui.resourceError = this.resourceErrorText(error, "无法取消素材搜索。");
+    } finally {
+      this.ui.resourceBusy = "";
+      this.scheduleResourcePoll();
+      this.notify();
+    }
+  }
+  async retryResourceDiscovery(candidateId = undefined) {
+    const taskId = this.ui.resourceTask?.task_id;
+    if (!taskId) return;
+    this.ui.resourceBusy = "retry";
+    this.ui.resourceError = "";
+    try {
+      this.ui.resourceTask = await this.bridge.command("resource.discovery.retry", {
+        task_id: taskId,
+        ...(candidateId ? { candidate_id: candidateId } : {}),
+      });
+      this.ui.resourcePollCount = 0;
+      this.scheduleResourcePoll();
+    } catch (error) {
+      this.ui.resourceError = this.resourceErrorText(error, "无法重试素材搜索。");
+    } finally {
+      this.ui.resourceBusy = "";
+      this.notify();
+    }
+  }
+  async acceptResourceCandidate(input) {
+    if (!input?.task_id || !input?.candidate_id || !input?.lesson_id) return;
+    this.ui.resourceBusy = input.candidate_id;
+    this.ui.resourceError = "";
+    this.notify();
+    try {
+      await this.runCanonicalMutation("resource.candidate.accept", input);
+      if (this.ui.resourceTask?.task_id === input.task_id) {
+        await this.refreshResourceTask(input.task_id);
+      }
+    } catch (error) {
+      this.ui.resourceError = this.resourceErrorText(error, "素材没有保存到课程。");
+    } finally {
+      this.ui.resourceBusy = "";
+      this.notify();
+    }
+  }
+  presentationSessionKey(input) {
+    const profile = this.data.style_profiles.find((row) => row.id === input.style_profile_id);
+    const document = this.data.presentation_documents.find((row) => row.id === input.document_id);
+    const asset = this.data.assets.find((row) => row.id === input.target_asset_id);
+    return JSON.stringify({
+      project_id: this.data.project?.id,
+      active_lesson_id: this.ui.activeId,
+      lesson_id: input.lesson_id,
+      style: profile && [profile.id, profile.revision, profile.markdown_hash],
+      document: document && [document.id, document.revision, document.current_asset_id],
+      target_asset: asset && [asset.id, asset.checksum],
+      insert_after_slide_id: input.insert_after_slide_id,
+      instruction: input.instruction,
+      editor_generation: this.editorGeneration,
+      project_fingerprint_generation: this.projectFingerprintGeneration,
+      provider_id: input.provider_id,
+      model: input.model,
+      current_provider_id: this.ui.aiProviderId,
+      current_model: this.aiModel(),
+      connection: (() => {
+        const connection = this.aiDescriptor(input.provider_id);
+        return connection && [connection.api_protocol, connection.base_url];
+      })(),
+    });
+  }
+  invalidatePresentationAi({ notify = true, cancel = true } = {}) {
+    this.ui.presentationSessionGeneration += 1;
+    const requestId = this.ui.presentationAiRequestId;
+    this.ui.presentationAiRequestId = "";
+    this.ui.presentationAiPrepared = null;
+    this.ui.presentationAiConsent = false;
+    root?.querySelector?.("[data-presentation-ai-review]")?.remove();
+    if (this.ui.presentationBusy === "prepare-ai" || this.ui.presentationBusy === "ai-generate") {
+      this.ui.presentationBusy = "";
+    }
+    if (cancel && requestId) {
+      try {
+        Promise.resolve(this.bridge.command("ai.cancel", { request_id: requestId })).catch(() => {});
+      } catch {
+        // The generation nonce still invalidates a response if cancellation is unavailable.
+      }
+    }
+    if (notify) this.notify();
+  }
+  updatePresentationField(field, value, { notify = false } = {}) {
+    const fields = new Set([
+      "presentationMode",
+      "presentationStyleProfileId",
+      "presentationDocumentId",
+      "presentationInsertAfterSlideId",
+      "presentationSlideInstruction",
+      "presentationSlideTitle",
+      "presentationSlideBody",
+      "presentationSlideNotes",
+    ]);
+    if (!fields.has(field)) return;
+    const normalized = String(value ?? "");
+    if (this.ui[field] === normalized) return;
+    this.ui[field] = normalized;
+    this.invalidatePresentationAi({ notify: false });
+    if (notify) this.notify();
+    else root.querySelector("[data-presentation-ai-review]")?.remove();
+  }
+  async inspectPresentationTarget(assetId, { force = false } = {}) {
+    const targetId = String(assetId || "");
+    if (!targetId || this.ui.presentationTargetInspectingAssetId === targetId) return;
+    if (!force && this.ui.presentationTargetAttemptedAssetId === targetId) return;
+    this.ui.presentationTargetAttemptedAssetId = targetId;
+    this.ui.presentationTargetInspectingAssetId = targetId;
+    this.ui.presentationTargetInspectError = "";
+    this.notify();
+    try {
+      const result = await this.bridge.command("presentation.style.extract", { source_asset_id: targetId });
+      const selected = this.data.presentation_documents.find((row) => row.id === this.ui.presentationDocumentId);
+      if (selected?.current_asset_id !== targetId || this.ui.presentationTargetInspectingAssetId !== targetId) return;
+      this.ui.presentationTargetReport = result?.report || null;
+      this.ui.presentationTargetReportAssetId = targetId;
+      this.ui.presentationTargetInspectError = "";
+      this.ui.presentationInsertAfterSlideId = "";
+      this.invalidatePresentationAi({ notify: false });
+    } catch (error) {
+      const selected = this.data.presentation_documents.find((row) => row.id === this.ui.presentationDocumentId);
+      if (selected?.current_asset_id === targetId && this.ui.presentationTargetInspectingAssetId === targetId) {
+        this.ui.presentationTargetReport = null;
+        this.ui.presentationTargetReportAssetId = targetId;
+        this.ui.presentationTargetInspectError = this.resourceErrorText(error, "无法读取当前工作副本的页码和插入位置。");
+      }
+    } finally {
+      if (this.ui.presentationTargetInspectingAssetId === targetId) {
+        this.ui.presentationTargetInspectingAssetId = "";
+        this.notify();
+      }
+    }
+  }
+  async preparePresentationAiContext(input) {
+    const connection = this.aiDescriptor();
+    const model = this.aiModel();
+    if (!connection || connection.id === AI_OFFLINE_PROVIDER_ID) {
+      this.ui.presentationError = "请先在“设置 → 模型”配置可用的 AI 连接；本地离线连接不发送请求。";
+      this.notify();
+      return false;
+    }
+    const requestInput = {
+      ...input,
+      provider_id: connection.id,
+      model,
+    };
+    if (!requestInput.document_id || !requestInput.lesson_id || !requestInput.style_profile_id ||
+      !requestInput.target_asset_id || !requestInput.instruction.trim() || !model) {
+      this.ui.presentationError = "请选择版式、工作副本和课程，并写明补充页目标。";
+      this.notify();
+      return false;
+    }
+    const profile = this.data.style_profiles.find((row) => row.id === requestInput.style_profile_id);
+    const document = this.data.presentation_documents.find((row) => row.id === requestInput.document_id);
+    const asset = this.data.assets.find((row) => row.id === requestInput.target_asset_id);
+    const report = this.ui.presentationTargetReport;
+    const reportMatches = Boolean(report && this.ui.presentationTargetReportAssetId === requestInput.target_asset_id &&
+      String(report.source_sha256 || "").toLowerCase() === String(asset?.checksum || "").toLowerCase());
+    if (!profile || !document || document.current_asset_id !== requestInput.target_asset_id ||
+      (requestInput.insert_after_slide_id && (!reportMatches ||
+        !report.ordered_slides?.some((slide) => slide.slide_id === requestInput.insert_after_slide_id)))) {
+      this.ui.presentationError = "所选版式、工作副本或插入位置已变化；请重新读取当前页序后重试。";
+      this.notify();
+      return false;
+    }
+    this.invalidatePresentationAi({ notify: false });
+    const sessionGeneration = this.ui.presentationSessionGeneration;
+    const sessionKey = this.presentationSessionKey(requestInput);
+    this.ui.presentationBusy = "prepare-ai";
+    this.ui.presentationError = "";
+    this.notify();
+    try {
+      if (!await this.flush()) throw new Error("课程内容尚未保存；AI 没有收到课程内容。请先重试保存。");
+      if (sessionGeneration !== this.ui.presentationSessionGeneration ||
+        sessionKey !== this.presentationSessionKey(requestInput)) return false;
+      const identity = this.saveIdentity();
+      if (!identity.expected_project_id || !this.saveIdentityMatches(identity)) {
+        throw new Error("当前课程绑定已经变化；请重新准备 AI 上下文。");
+      }
+      const preparedInput = {
+        ...requestInput,
+        generation_id: uid(),
+        session_generation: sessionGeneration,
+        editor_generation: identity.editor_generation,
+      };
+      const result = await this.bridge.command("presentation.slide.prepare_ai_context", preparedInput);
+      if (sessionGeneration !== this.ui.presentationSessionGeneration ||
+        sessionKey !== this.presentationSessionKey(requestInput) ||
+        !this.saveIdentityMatches(identity)) return false;
+      if (result?.generation_id !== preparedInput.generation_id ||
+        result?.session_generation !== sessionGeneration ||
+        result?.editor_generation !== identity.editor_generation ||
+        result?.project_id !== identity.expected_project_id ||
+        result?.lesson_id !== requestInput.lesson_id || result?.document_id !== requestInput.document_id ||
+        result?.style_profile_id !== requestInput.style_profile_id ||
+        result?.style_revision !== profile.revision || result?.variant_id !== profile.variant_id ||
+        result?.target_asset_id !== requestInput.target_asset_id ||
+        String(result?.style_markdown_sha256 || "").toLowerCase() !== String(profile.markdown_hash || "").toLowerCase() ||
+        String(result?.target_asset_sha256 || "").toLowerCase() !== String(asset?.checksum || "").toLowerCase() ||
+        result?.insert_after_slide_id !== requestInput.insert_after_slide_id ||
+        result?.provider_id !== connection.id || result?.model !== model ||
+        !result?.context?.system || !result?.context?.user) {
+        throw new Error("AI 上下文绑定返回不完整，请重新准备后重试。");
+      }
+      if (reportMatches) {
+        const selectedOrder = requestInput.insert_after_slide_id
+          ? report.ordered_slides.find((slide) => slide.slide_id === requestInput.insert_after_slide_id)?.order
+          : report.ordered_slides.length;
+        if (!Number.isInteger(selectedOrder) || result.insertion_order !== selectedOrder + 1) {
+          throw new Error("AI 上下文返回的插入页序与当前工作副本不符。请重新读取页序后重试。");
+        }
+      }
+      this.ui.presentationAiPrepared = {
+        input: preparedInput,
+        result,
+        identity,
+        session_key: sessionKey,
+      };
+      this.ui.presentationAiConsent = false;
+      return true;
+    } catch (error) {
+      if (sessionGeneration === this.ui.presentationSessionGeneration) {
+        this.ui.presentationError = this.resourceErrorText(error, "无法准备 AI 上下文。");
+      }
+      return false;
+    } finally {
+      if (sessionGeneration === this.ui.presentationSessionGeneration) {
+        this.ui.presentationBusy = "";
+        this.notify();
+      }
+    }
+  }
+  async generatePresentationSlideWithAi() {
+    const preparedRecord = this.ui.presentationAiPrepared;
+    if (!preparedRecord || this.ui.presentationAiConsent !== true) {
+      this.ui.presentationError = "请先查看完整上下文并明确勾选一次性发送授权。";
+      this.notify();
+      return false;
+    }
+    const { input, result: prepared, identity, session_key: sessionKey } = preparedRecord;
+    const sessionGeneration = input.session_generation;
+    const current = () => sessionGeneration === this.ui.presentationSessionGeneration &&
+      this.ui.presentationAiPrepared === preparedRecord &&
+      sessionKey === this.presentationSessionKey(input) && this.saveIdentityMatches(identity);
+    const connection = this.aiDescriptor(input.provider_id);
+    if (!current() || !connection || this.aiModel() !== input.model) {
+      this.invalidatePresentationAi({ notify: false });
+      this.ui.presentationError = "课程、版式或 AI 连接已经变化；旧上下文已失效，请重新准备。";
+      this.notify();
+      return false;
+    }
+    const requestId = `presentation:${input.generation_id}`;
+    this.ui.presentationAiRequestId = requestId;
+    this.ui.presentationBusy = "ai-generate";
+    this.ui.presentationError = "";
+    this.notify();
+    try {
+      const call = buildAiProviderCall({
+        connection,
+        model: input.model,
+        base_url: connection.base_url,
+        context: prepared.context,
+        instruction: "",
+        wants_changes: true,
+      });
+      const transportResult = await this.bridge.command("ai.complete", { request_id: requestId, ...call });
+      if (!current()) return false;
+      const text = normalizeAiProviderResponse(connection, transportResult).text;
+      const spec = parsePresentationAiSlideSpec(text, prepared);
+      if (!current()) return false;
+      const generationSource = {
+        mode: "ai",
+        generation_id: input.generation_id,
+        session_generation: sessionGeneration,
+        provider_id: input.provider_id,
+        model: input.model,
+        context_sha256: prepared.context_sha256,
+        lesson_snapshot_sha256: prepared.lesson_snapshot_sha256,
+        style_markdown_sha256: prepared.style_markdown_sha256,
+        snapshot_binding_sha256: prepared.snapshot_binding_sha256,
+        consented_at: now(),
+        authorized: true,
+      };
+      this.ui.presentationAiRequestId = "";
+      const slidePlan = await this.bridge.command("presentation.slide.propose", {
+        document_id: input.document_id,
+        lesson_id: input.lesson_id,
+        style_profile_id: input.style_profile_id,
+        style_revision: input.style_revision,
+        target_asset_id: input.target_asset_id,
+        insert_after_slide_id: input.insert_after_slide_id,
+        instruction: input.instruction,
+        generation_source: generationSource,
+        spec,
+      });
+      if (!current()) return false;
+      this.ui.presentationSlidePlan = slidePlan;
+      this.ui.presentationPreview = null;
+      this.ui.presentationExport = null;
+      this.ui.presentationAiPrepared = null;
+      this.ui.presentationAiConsent = false;
+      this.ui.presentationAiRequestId = "";
+      this.ui.presentationBusy = "";
+      this.notify();
+      return true;
+    } catch (error) {
+      if (current()) {
+        const message = this.resourceErrorText(error, "AI 没有生成可用的补充页方案。");
+        this.invalidatePresentationAi({ notify: false });
+        this.ui.presentationError = message;
+        this.notify();
+      }
+      return false;
+    } finally {
+      if (current()) {
+        this.ui.presentationAiRequestId = "";
+        this.ui.presentationBusy = "";
+        this.notify();
+      }
+    }
+  }
+  cancelPresentationAi() {
+    const pending = Boolean(this.ui.presentationBusy === "prepare-ai" || this.ui.presentationBusy === "ai-generate");
+    if (!pending) return;
+    this.invalidatePresentationAi({ notify: false });
+    this.ui.presentationError = "AI 生成已取消；迟到回复不会生成补充页方案。";
+    this.notify();
+  }
+  async extractPresentationStyle(sourceAssetId) {
+    this.ui.presentationBusy = "extract";
+    this.ui.presentationError = "";
+    this.ui.presentationStyleDraft = null;
+    this.notify();
+    try {
+      this.ui.presentationStyleDraft = await this.bridge.command("presentation.style.extract", {
+        source_asset_id: sourceAssetId,
+      });
+    } catch (error) {
+      this.ui.presentationError = this.resourceErrorText(error, "无法读取 PowerPoint 的版式结构。");
+    } finally {
+      this.ui.presentationBusy = "";
+      this.notify();
+    }
+  }
+  async savePresentationStyle(input) {
+    this.ui.presentationBusy = "save-style";
+    this.ui.presentationError = "";
+    this.notify();
+    try {
+      await this.runCanonicalMutation("presentation.style.save", input);
+      this.ui.presentationStyleDraft = null;
+    } catch (error) {
+      this.ui.presentationError = this.resourceErrorText(error, "版式档案没有保存。");
+    } finally {
+      this.ui.presentationBusy = "";
+      this.notify();
+    }
+  }
+  async proposePresentationSlide(input) {
+    this.ui.presentationBusy = "propose";
+    this.ui.presentationError = "";
+    this.ui.presentationPreview = null;
+    this.ui.presentationExport = null;
+    this.notify();
+    try {
+      this.ui.presentationSlidePlan = await this.bridge.command("presentation.slide.propose", input);
+    } catch (error) {
+      this.ui.presentationError = this.resourceErrorText(error, "无法生成补充页方案。");
+    } finally {
+      this.ui.presentationBusy = "";
+      this.notify();
+    }
+  }
+  async previewPresentationSlide() {
+    const plan = this.ui.presentationSlidePlan;
+    if (!plan?.id || !Number.isSafeInteger(plan.revision)) return;
+    this.ui.presentationBusy = "preview";
+    this.ui.presentationError = "";
+    this.notify();
+    try {
+      this.ui.presentationPreview = await this.bridge.command("presentation.slide.preview", {
+        slide_plan_id: plan.id,
+        revision: plan.revision,
+      });
+    } catch (error) {
+      this.ui.presentationError = this.resourceErrorText(error, "补充页预览没有生成。");
+      this.ui.presentationPreview = null;
+    } finally {
+      this.ui.presentationBusy = "";
+      this.notify();
+    }
+  }
+  async exportPresentationSlide(outputMode) {
+    const plan = this.ui.presentationSlidePlan;
+    const preview = this.ui.presentationPreview;
+    if (!plan?.id || preview?.slide_plan_id !== plan.id || preview?.revision !== plan.revision) {
+      this.ui.presentationError = "请先为当前补充页方案生成预览。";
+      this.notify();
+      return;
+    }
+    this.ui.presentationBusy = "export";
+    this.ui.presentationError = "";
+    this.notify();
+    try {
+      const result = await this.runCanonicalMutation("presentation.slide.export", {
+        slide_plan_id: plan.id,
+        revision: plan.revision,
+        output_mode: outputMode === "append" ? "append" : "single",
+        approved: true,
+      });
+      this.ui.presentationExport = result?.value ?? result;
+      this.ui.presentationSlidePlan = this.ui.presentationExport?.slide_plan || plan;
+    } catch (error) {
+      this.ui.presentationError = this.resourceErrorText(error, "PowerPoint 导出没有完成。");
+    } finally {
+      this.ui.presentationBusy = "";
+      this.notify();
+    }
   }
   /** Both shells keep provider metadata local and API Keys in the platform credential store. */
   aiStorageLabel() {
@@ -5005,6 +5762,9 @@ class WorkbenchStore {
     ) return false;
     const project = migrateUiProject(state.project);
     this.data = project;
+    this.ui.resourceRecoveryWarning = typeof state.resource_recovery_warning === "string"
+      ? state.resource_recovery_warning.trim()
+      : "";
     this.trackProjectIdentity();
     this.saveStatus = hasFingerprint && state.fingerprint.exists
       ? "已保存"
@@ -5182,7 +5942,10 @@ class WorkbenchStore {
       if (!this.bridge.isNative()) this.ui.screen = "project";
     }
     await this.restoreSession(session);
-    if (this.isProjectData(this.data) && this.ui.route === "versions") {
+    if (
+      this.isProjectData(this.data) && this.ui.route === "settings" &&
+      this.ui.settingsSection === "history"
+    ) {
       await this.refreshSnapshots();
     }
     if (this.bridge.isNative() && this.bridge.projectDir && persisted) {
@@ -5325,7 +6088,7 @@ class WorkbenchStore {
     }
     this.notify();
   }
-  commitNativeProject(project, reader, fingerprint) {
+  commitNativeProject(project, reader, fingerprint, resourceRecoveryWarning = "") {
     this.clearExplorerPreview();
     this.assetPreview.clear();
     this.data = project;
@@ -5340,6 +6103,9 @@ class WorkbenchStore {
     this.externalConflict = null;
     this.uncertainMutation = null;
     this.uncertainMutationPending = false;
+    this.ui.resourceRecoveryWarning = typeof resourceRecoveryWarning === "string"
+      ? resourceRecoveryWarning.trim()
+      : "";
     this.ui.screen = "project";
     this.ui.focusRequirementId = null;
     this.ui.gridEditing = false;
@@ -6056,7 +6822,7 @@ class WorkbenchStore {
       const warningSummary = warnings.length
         ? ` 注意：${warnings.slice(0, 2).join("；")}${warnings.length > 2 ? `；另有 ${warnings.length - 2} 项提醒` : ""}`
         : "";
-      this.ui.route = "map";
+      this.ui.route = "overview";
       this.scheduleSessionSave();
       this.ui.importMappingError = "";
       this.ui.toast = `${parts.join(" · ")}。原文件未移动或删除。${
@@ -6632,6 +7398,7 @@ class WorkbenchStore {
         targetData,
         this.normalizeReaderState(targetData, targetSession, "overview"),
         openedState?.fingerprint,
+        openedState?.resource_recovery_warning,
       );
       if (!this.offerPendingRecovery(openedState.recovery_journal)) {
         this.ui.toast = `已打开《${this.data.project.title}》`;
@@ -6734,6 +7501,7 @@ class WorkbenchStore {
         targetData,
         this.normalizeReaderState(targetData, targetSession, "project"),
         openedState?.fingerprint,
+        openedState?.resource_recovery_warning,
       );
       if (!this.offerPendingRecovery(openedState.recovery_journal)) {
         this.ui.toast = `已打开《${this.data.project.title}》`;
@@ -6847,7 +7615,7 @@ class WorkbenchStore {
       this.resetAiState();
       this.ui.seedType = null;
       this.ui.seedText = "";
-      this.ui.route = "map";
+      this.ui.route = "overview";
       this.ui.toast = "已生成课程地图草稿；确认后才会创建正式阶段与内容。";
     } catch (error) {
       this.ui.toast = seedSaved
@@ -6885,7 +7653,7 @@ class WorkbenchStore {
         const stage = data.stages.find((candidate) => candidate.id === stageId);
         const contentOrder = stageId ? contentOrderByStage.get(stageId) ?? 0 : data.content_items.length;
         const contentId = uid();
-        const document = { id: uid(), content_item_id: contentId, schema_version: data.schema_version, created_at: now(), updated_at: now() };
+        const document = { id: uid(), content_item_id: contentId, schema_version: ENTITY_SCHEMA_VERSION, created_at: now(), updated_at: now() };
         data.documents.push(document);
         data.content_items.push({ id: contentId, project_id: data.project.id, stage_id: stageId, code: stage ? `${stage.code}-${String(contentOrder + 1).padStart(2, "0")}` : `C${String(contentOrder + 1).padStart(2, "0")}`, title: node.title, type: node.suggested_type === "stage_intro" ? "lesson" : node.suggested_type, description: "", order_index: contentOrder, document_id: document.id, archived: false, created_at: now(), updated_at: now() });
         initializeStatusesFor(data, contentId);
@@ -7097,10 +7865,12 @@ class WorkbenchStore {
         const assetFile = isAssetFile(name, type);
         const textFile = type.startsWith("text/") || /\.txt$/i.test(name);
         if (!projectJson && !assetFile && !textFile) {
-          throw new Error("当前不支持这种文件格式；支持项目 JSON、文本、图片、视频、音频和参考文档。");
+          throw new Error("当前不支持这种文件格式；支持项目 JSON、文本、图片、视频、音频、PowerPoint 和参考文档。");
         }
         const size = Number(file.size);
-        const limit = this.assetPreview?.mediaLimit ?? 8 * 1024 * 1024;
+        const limit = /\.pptx$/i.test(name)
+          ? 256 * 1024 * 1024
+          : this.assetPreview?.mediaLimit ?? 8 * 1024 * 1024;
         if (!Number.isSafeInteger(size) || size < 0) {
           throw new Error("无法确认文件大小，文件尚未读取。");
         }
@@ -7448,6 +8218,7 @@ class WorkbenchStore {
     if (!item) return;
     this.ui.screen = "project";
     const lessonChanged = this.ui.activeId !== id;
+    if (lessonChanged) this.invalidatePresentationAi({ notify: false });
     this.ui.activeId = id;
     this.normalizeActiveLayoutPage(item);
     this.ui.route = "editor";
@@ -7472,7 +8243,7 @@ class WorkbenchStore {
   openWorkbench() {
     const items = this.data.content_items.filter((item) => !item.archived);
     if (items.length === 0) {
-      this.ui.route = "map";
+      this.ui.route = "overview";
       this.ui.activeId = null;
       this.scheduleSessionSave();
       this.notify();
@@ -7482,22 +8253,17 @@ class WorkbenchStore {
       ? this.ui.activeId
       : this.resumeLessonId();
     if (!id) {
-      this.ui.route = "map";
+      this.ui.route = "overview";
       this.ui.activeId = null;
       this.scheduleSessionSave();
       this.notify();
       return;
     }
-    const modes = ["writing", "structure", "preview"];
-    const tab = this.tabs.find((candidate) => candidate.content_item_id === id);
-    let mode = "writing";
-    if (tab && modes.includes(tab.mode)) mode = tab.mode;
-    else if (this.ui.activeId === id && modes.includes(this.ui.mode)) mode = this.ui.mode;
     const lessonChanged = this.ui.activeId !== id;
     this.ui.screen = "project";
     this.ui.activeId = id;
     this.ui.route = "editor";
-    this.ui.mode = mode;
+    this.ui.mode = "writing";
     this.ui.focusRequirementId = null;
     this.ui.selectedBlockId = null;
     this.ui.propertyTarget = null;
@@ -7506,7 +8272,7 @@ class WorkbenchStore {
     this.ui.editingRequirementId = null;
     this.ui.assetUsageId = null;
     if (lessonChanged) this.aiSyncScope();
-    this.openTab(id, mode);
+    this.openTab(id, "writing");
     this.scheduleSessionSave();
     this.notify();
   }
@@ -7516,9 +8282,9 @@ class WorkbenchStore {
     if (!this.data.content_items.some((item) => item.id === requirement.content_item_id)) return;
     this.ui.screen = "project";
     this.ui.activeId = requirement.content_item_id;
-    this.ui.route = requirement.scope === "layout" ? "free-layout" : "editor";
+    this.ui.route = "editor";
     this.ui.mode = "writing";
-    this.ui.rightPanel = "requirements";
+    this.ui.rightPanel = "assistant";
     this.ui.focusRequirementId = id;
     this.ui.selectedBlockId = requirement.anchor_block_id;
     this.ui.gridEditing = false;
@@ -7529,18 +8295,22 @@ class WorkbenchStore {
     this.notify();
   }
   setMode(mode, options = {}) {
-    if (!["writing", "structure", "layout", "preview"].includes(mode)) return;
+    const legacyMode = ["flow", "preview", "layout", "structure"].includes(mode);
+    if (mode !== "writing" && !legacyMode) return;
     this.ui.paginationEditing = false;
     this.ui.gridEditing = false;
     this.ui.movingPlacementTargetPageId = null;
-    // The former Workbench Layout tab now lives at the Free Layout route.
-    // Keep accepting its legacy action/session value, but never restore a dead tab.
-    if (mode === "layout") {
-      this.ui.route = "free-layout";
-      this.ui.mode = "writing";
-    } else this.ui.mode = mode;
+    if (legacyMode) {
+      this.ui.route = "editor";
+      this.ui.toast = mode === "flow"
+        ? "Flow 已合并到正文；可在正文中继续排序和查看素材。"
+        : mode === "preview"
+        ? "Preview 已合并到正文；可在发布页面查看实际输出。"
+        : "旧版排版入口已停用；课程正文与历史排版数据仍保留。";
+    }
+    this.ui.mode = "writing";
     const tab = this.tabs.find((candidate) => candidate.content_item_id === this.ui.activeId);
-    if (tab) tab.mode = mode === "layout" ? "writing" : mode;
+    if (tab) tab.mode = "writing";
     if (!options.silent) {
       this.scheduleSessionSave();
       this.notify();
@@ -7550,7 +8320,7 @@ class WorkbenchStore {
   setLayoutModeOnLayout(mode) {
     const item = this.currentItem();
     if (!item) return;
-    this.ui.route = "free-layout";
+    this.ui.route = "editor";
     this.ui.paginationEditing = false;
     this.ui.gridEditing = false;
     this.ui.movingPlacementTargetPageId = null;
@@ -7595,10 +8365,7 @@ class WorkbenchStore {
     // it here would put Chinese hints into the course and into every export.
     const blocks = blocksFor(this.data, item.id);
     const index = atIndex >= 0 ? Math.min(atIndex, blocks.length) : blocks.length;
-    // The new block is selected and 属性 opens, but focus stays in the editor:
-    // the user keeps typing where they were.  The selection and the panel are
-    // part of the same change as the block itself, because `commit` renders
-    // once: setting them afterwards leaves the previous panel on screen.
+    // Keep the new block selected without replacing the persistent AI panel.
     this.commit(`新增${blockLabel(type)}`, (data) => {
       const document = data.documents.find((candidate) => candidate.content_item_id === item.id) ||
         data.documents.find((candidate) => candidate.id === item.document_id);
@@ -7607,7 +8374,6 @@ class WorkbenchStore {
       data.blocks.push({ id, document_id: document.id, parent_block_id: null, type, order_index: index, content: String(content ?? ""), settings: type === "heading" ? { level: 2 } : {}, created_at: now(), updated_at: now() });
       renumberBlocks(data, document.id);
       this.ui.selectedBlockId = id;
-      this.ui.rightPanel = "properties";
     });
   }
   insertBlockBelow(blockId) {
@@ -7936,6 +8702,8 @@ class WorkbenchStore {
       data.documents = data.documents.filter((document) => !documentIds.has(document.id));
       data.requirements = data.requirements.filter((requirement) => !blockIds.has(requirement.anchor_block_id || "") && requirement.content_item_id !== id);
       data.asset_usages = data.asset_usages.filter((usage) => usage.content_item_id !== id && !blockIds.has(usage.block_id || ""));
+      data.resource_usages = (data.resource_usages || []).filter((usage) => usage.lesson_id !== id);
+      data.slide_plans = (data.slide_plans || []).filter((plan) => plan.lesson_id !== id);
       const layoutIds = new Set(data.layout_instances.filter((layout) => layout.content_item_id === id).map((layout) => layout.id));
       data.placements = data.placements.filter((placement) => !layoutIds.has(placement.layout_instance_id) && !blockIds.has(placement.block_id));
       data.layout_sections = data.layout_sections.filter((section) => !layoutIds.has(section.layout_instance_id));
@@ -8063,7 +8831,7 @@ class WorkbenchStore {
         stage = { id: uid(), project_id: data.project.id, parent_stage_id: null, code: "S01", title: "第一阶段", description: "", learning_action: "", order_index: 0, archived: false, created_at: now(), updated_at: now() };
         data.stages.push(stage);
       }
-      const document = { id: uid(), content_item_id: null, schema_version: data.schema_version, created_at: now(), updated_at: now() };
+      const document = { id: uid(), content_item_id: null, schema_version: ENTITY_SCHEMA_VERSION, created_at: now(), updated_at: now() };
       const siblings = data.content_items.filter((candidate) => candidate.stage_id === stage.id);
       const item = { id: uid(), project_id: data.project.id, stage_id: stage.id, code: nextLessonCode(stage.code, siblings), title: requested, type: "lesson", description: "", order_index: siblings.length, document_id: document.id, archived: false, created_at: now(), updated_at: now() };
       document.content_item_id = item.id;
@@ -8479,19 +9247,26 @@ class WorkbenchStore {
     this.ui.editingRequirementId = null;
     this.ui.toast = "已删除这项待补";
   }
-  updateStatus(dimension, value) {
-    const item = this.currentItem();
+  updateStatus(dimension, value, contentItemId = null) {
+    const item = this.data.content_items.find((candidate) =>
+      candidate.id === (contentItemId || this.currentItem()?.id)
+    );
     if (!item) return;
     const dimensionRecord = (this.data.status_dimensions || []).find((candidate) => candidate.key === dimension);
     if (!dimensionRecord) return;
     const option = (this.data.status_options || []).find((candidate) => candidate.dimension_id === dimensionRecord.id && candidate.name === value);
-    if (!option) {
+    if (value && !option) {
       this.ui.toast = `状态「${value}」不在项目状态表中，未写入`;
       this.notify();
       return;
     }
     this.commit("更新状态", (data) => {
-      const existing = data.status_assignments.find((candidate) => candidate.content_item_id === item.id && candidate.dimension_id === dimensionRecord.id);
+      const index = data.status_assignments.findIndex((candidate) => candidate.content_item_id === item.id && candidate.dimension_id === dimensionRecord.id);
+      const existing = index >= 0 ? data.status_assignments[index] : null;
+      if (!value) {
+        if (existing) data.status_assignments.splice(index, 1);
+        return;
+      }
       if (existing) {
         existing.option_id = option.id;
         existing.updated_at = now();
@@ -8725,7 +9500,7 @@ class WorkbenchStore {
         existing.mode = mode === "flow" ? "flow" : "grid";
         return;
       }
-      const layout = { id: uid(), content_item_id: item.id, template_id: null, schema_version: data.schema_version, name: mode === "flow" ? "流式排版" : "默认网格", mode: mode === "flow" ? "flow" : "grid", grid_definition: { columns: [1, 1, 1], rows: [1, 1, 1] }, settings: {}, created_at: now(), updated_at: now() };
+      const layout = { id: uid(), content_item_id: item.id, template_id: null, schema_version: ENTITY_SCHEMA_VERSION, name: mode === "flow" ? "流式排版" : "默认网格", mode: mode === "flow" ? "flow" : "grid", grid_definition: { columns: [1, 1, 1], rows: [1, 1, 1] }, settings: {}, created_at: now(), updated_at: now() };
       data.layout_instances.push(layout);
       data.layout_sections.push({ id: uid(), layout_instance_id: layout.id, name: "第 1 段", page_index: 0, order_index: 0, grid_definition: layout.grid_definition, settings: {}, created_at: now(), updated_at: now() });
     });
@@ -9910,7 +10685,52 @@ class WorkbenchStore {
 
 // 「工作台」is a left-nav entry (openWorkbench); authoring still uses route "editor".
 // "workbench" is accepted as a session alias and normalized to "editor".
-const ROUTES = ["overview", "map", "workbench", "free-layout", "explorer", "mapping", "inbox", "board", "media", "backlog", "updates", "publish", "versions", "settings", "editor"];
+const ROUTES = ["overview", "editor", "explorer", "mapping", "inbox", "publish", "settings"];
+const ROUTE_ALIASES = {
+  overview: { route: "overview", courseTreeFilter: "all" },
+  map: { route: "overview", courseTreeFilter: "all" },
+  workbench: { route: "editor" },
+  "free-layout": { route: "editor", notice: "旧版排版入口已停用；课程正文与历史排版数据仍保留。" },
+  layout: { route: "editor", notice: "旧版排版入口已停用；课程正文与历史排版数据仍保留。" },
+  structure: { route: "editor" },
+  flow: { route: "editor", notice: "Flow 已合并到正文；可在正文中继续排序和查看素材。" },
+  preview: { route: "editor", notice: "Preview 已合并到正文；可在发布页面查看实际输出。" },
+  board: { route: "overview", courseTreeFilter: "open" },
+  media: { route: "overview", courseTreeFilter: "all", focusLeft: true },
+  backlog: { route: "overview", courseTreeFilter: "requirements" },
+  updates: { route: "inbox" },
+  versions: { route: "settings", settingsSection: "history" },
+};
+function resolveReaderDestination(route, mode = "writing", rightPanel = "assistant", fallback = "overview") {
+  const value = String(route || "");
+  const alias = ROUTE_ALIASES[value] || {};
+  const aliasedRoute = typeof alias === "string" ? alias : alias.route;
+  const candidate = aliasedRoute || value;
+  const canonical = ROUTES.includes(candidate) ? candidate : fallback;
+  const legacyMode = String(mode || "");
+  const legacyPanel = String(rightPanel || "");
+  const panelAlias = legacyPanel === "versions"
+    ? { route: "settings", settingsSection: "history" }
+    : legacyPanel === "requirements" || legacyPanel === "status"
+    ? { route: "overview", courseTreeFilter: "requirements" }
+    : legacyPanel === "media"
+    ? { focusLeft: true }
+    : {};
+  const modeRemoved = ["flow", "preview", "layout", "structure"].includes(legacyMode);
+  return {
+    route: modeRemoved ? "editor" : (panelAlias.route || canonical),
+    courseTreeFilter: alias.courseTreeFilter || panelAlias.courseTreeFilter || null,
+    settingsSection: alias.settingsSection || panelAlias.settingsSection || null,
+    focusLeft: Boolean(alias.focusLeft || panelAlias.focusLeft),
+    notice: alias.notice || (modeRemoved
+      ? legacyMode === "flow"
+        ? "Flow 已合并到正文；可在正文中继续排序和查看素材。"
+        : legacyMode === "preview"
+        ? "Preview 已合并到正文；可在发布页面查看实际输出。"
+        : "旧版排版入口已停用；课程正文与历史排版数据仍保留。"
+      : ""),
+  };
+}
 /**
  * Directory failures from the shell's `explicit_project_dir`, i.e. the cases
  * where the stored path genuinely is not a usable project directory.
@@ -9940,7 +10760,7 @@ function shouldKeepProjectPointer(error) {
   return !UNUSABLE_PROJECT_DIR_ERRORS.some((reason) => message.includes(reason));
 }
 
-const RIGHT_PANEL_KEYS = ["media", "requirements", "status", "assistant", "properties", "versions"];
+const RIGHT_PANEL_KEYS = ["assistant"];
 
 /**
  * Minimal canonical invariants the UI can break on its own.
@@ -10217,16 +11037,18 @@ function markDataUrl(url) {
 }
 
 function emptyProject(title = "未命名课程") {
-  const project = { id: uid(), title, description: "", language: "zh-CN", schema_version: "1.0.0", created_at: now(), updated_at: now(), archived: false, settings: {} };
+  const project = { id: uid(), title, description: "", language: "zh-CN", schema_version: "1.1.0", created_at: now(), updated_at: now(), archived: false, settings: {} };
   const dimensionKeys = Object.keys(STATUS);
   const dimensionNames = { content: "正文", media: "媒体", layout: "排版", review: "审核", publish: "发布", update: "更新" };
   const status_dimensions = dimensionKeys.map((key, index) => ({ id: uid(), project_id: project.id, key, name: dimensionNames[key], order_index: index, allow_custom: true }));
   const status_options = status_dimensions.flatMap((dimension) => STATUS[dimension.key].map((name, index) => ({ id: uid(), dimension_id: dimension.id, key: `${dimension.key}_${index}`, name, order_index: index, is_terminal: index === STATUS[dimension.key].length - 1 })));
   return {
-    schema_version: "1.0.0",
+    schema_version: "1.1.0",
     project,
     stages: [], content_items: [], documents: [], blocks: [], groups: [], requirements: [],
-    assets: [], asset_usages: [], status_dimensions, status_options, status_assignments: [],
+    assets: [], asset_usages: [], resource_items: [], source_evidence: [], resource_usages: [],
+    style_profiles: [], presentation_documents: [], slide_plans: [],
+    status_dimensions, status_options, status_assignments: [],
     layout_templates: [], layout_instances: [], layout_sections: [], layout_pages: [], placements: [],
     inbox_items: [], export_presets: [], course_seeds: [], blueprint_drafts: [], blueprint_nodes: [],
     conversation_sources: [], conversations: [], messages: [], context_packs: [], context_pack_items: [],
@@ -10743,6 +11565,7 @@ function render() {
     if (!preserveCenterState) scroll = scroll.filter((item) => item.selector !== ".center");
     cancelActivePointerDrag?.();
     closeActiveBlockOverflowMenu?.();
+    stopPreviewMedia(root);
     root.innerHTML = store.ui.screen === "launcher" ? views.launcherView() : views.shellView();
   } finally {
     rendering = false;
@@ -11123,6 +11946,18 @@ function stopMediaPreview() {
     image.removeAttribute("src")
   );
 }
+
+function youtubeEmbedUrl(candidate) {
+  const video = candidate?.video;
+  const videoId = String(video?.provider_video_id || "");
+  if (
+    candidate?.medium !== "video" || video?.provider_id !== "youtube_data_api" ||
+    video?.embeddable !== true || video?.region_availability === "restricted" ||
+    !/^[A-Za-z0-9_-]{11}$/.test(videoId)
+  ) return "";
+  return `https://www.youtube-nocookie.com/embed/${videoId}?playsinline=1&rel=0`;
+}
+
 function openDeleteConfirmation(action, id, source = null) {
   const key = String(id || "");
   if (!key) return;
@@ -11250,6 +12085,14 @@ function handleAction(action, element, event) {
       store.ui.palette = store.ui.capture = store.ui.preflight = store.ui.snapshot = false;
       store.ui.assetPicker = null;
       store.ui.assetImagePreviewId = null;
+      store.ui.blockPropertiesOpen = false;
+      store.notify();
+      return;
+    case "open-block-properties":
+      if (!store.data.blocks.some((block) => block.id === element.dataset.id)) return;
+      rememberDialogReturnFocus(element);
+      store.ui.selectedBlockId = element.dataset.id;
+      store.ui.blockPropertiesOpen = true;
       store.notify();
       return;
     case "open-asset-image": {
@@ -11285,6 +12128,42 @@ function handleAction(action, element, event) {
         syncPlayButton();
         store.say("视频无法播放，请检查编码格式或文件内容。");
       });
+      return;
+    }
+    case "resource-video-play": {
+      const candidateId = element.dataset.id;
+      const candidate = store.ui.resourceTask?.candidates?.find((entry) => entry.id === candidateId);
+      const src = youtubeEmbedUrl(candidate);
+      const container = element.closest(".resource-video-preview");
+      if (!src || !container || container.querySelector("iframe[data-resource-video-player]")) return;
+      const frame = globalThis.document.createElement("iframe");
+      frame.dataset.resourceVideoPlayer = "true";
+      frame.className = "resource-video-frame";
+      frame.src = src;
+      frame.title = `YouTube 视频预览：${candidate.title || "教学视频"}`;
+      frame.loading = "lazy";
+      frame.referrerPolicy = "strict-origin-when-cross-origin";
+      frame.allow = "accelerometer; autoplay; encrypted-media; gyroscope; picture-in-picture; web-share";
+      frame.allowFullscreen = true;
+      const stopButton = globalThis.document.createElement("button");
+      stopButton.type = "button";
+      stopButton.className = "secondary";
+      stopButton.dataset.action = "resource-video-stop";
+      stopButton.dataset.id = candidateId;
+      stopButton.textContent = "停止视频预览";
+      element.hidden = true;
+      container.appendChild(frame);
+      container.appendChild(stopButton);
+      return;
+    }
+    case "resource-video-stop": {
+      const container = element.closest(".resource-video-preview");
+      const frame = container?.querySelector("iframe[data-resource-video-player]");
+      frame?.removeAttribute("src");
+      frame?.remove();
+      element.remove();
+      const playButton = container?.querySelector('[data-action="resource-video-play"]');
+      if (playButton) playButton.hidden = false;
       return;
     }
     case "retry-asset-preview":
@@ -11342,30 +12221,320 @@ function handleAction(action, element, event) {
     case "toggle-left": store.ui.leftCollapsed = !store.ui.leftCollapsed; store.scheduleSessionSave(); store.notify(); return;
     case "toggle-right": store.ui.rightCollapsed = !store.ui.rightCollapsed; store.scheduleSessionSave(); store.notify(); return;
     case "route": {
-      const nextRoute = String(element.dataset.route || "");
+      const destination = resolveReaderDestination(
+        element.dataset.route,
+        store.ui.mode,
+        store.ui.rightPanel,
+        store.ui.route,
+      );
+      const nextRoute = destination.route;
       const previousRoute = store.ui.route;
-      if (nextRoute !== previousRoute) {
-        store.cancelPreflight({ clearContext: true });
-        store.cancelActiveExport();
-        store.releaseAssetViewerSource();
-        stopPreviewMedia(root);
-        root.querySelectorAll?.("img[data-animated-preview]").forEach((image) =>
-          image.removeAttribute("src")
-        );
-        store.ui.assetImagePreviewId = null;
-        if (previousRoute === "mapping" && nextRoute !== "mapping") {
-          store.closeMappingPreview();
+      const nextFilter = destination.courseTreeFilter || store.ui.courseTreeFilter || "all";
+      const nextSettingsSection = destination.settingsSection ||
+        (nextRoute === "settings" && previousRoute === "settings" ? store.ui.settingsSection : "general");
+      const stateChanged = nextRoute !== previousRoute ||
+        nextFilter !== store.ui.courseTreeFilter ||
+        nextSettingsSection !== store.ui.settingsSection ||
+        destination.focusLeft && store.ui.leftCollapsed;
+      if (stateChanged) {
+        if (nextRoute !== previousRoute) {
+          store.cancelPreflight({ clearContext: true });
+          store.cancelActiveExport();
+          store.releaseAssetViewerSource();
+          stopPreviewMedia(root);
+          root.querySelectorAll?.("img[data-animated-preview]").forEach((image) =>
+            image.removeAttribute("src")
+          );
+          store.ui.assetImagePreviewId = null;
+          if (previousRoute === "mapping" && nextRoute !== "mapping") {
+            store.closeMappingPreview();
+          }
+          if (previousRoute === "explorer") store.clearExplorerPreview();
         }
-        if (previousRoute === "explorer") store.clearExplorerPreview();
         store.ui.route = nextRoute;
+        store.ui.courseTreeFilter = nextFilter;
+        store.ui.settingsSection = nextSettingsSection;
+        if (destination.focusLeft) store.ui.leftCollapsed = false;
+        if (destination.notice) store.ui.toast = destination.notice;
         store.scheduleSessionSave();
-        if (nextRoute === "versions") void store.refreshSnapshots();
+        if (nextRoute === "settings" && (previousRoute !== "settings" || nextSettingsSection === "history")) void store.refreshSnapshots();
+        if (nextRoute === "settings" && previousRoute !== "settings") void store.refreshResourceProviders();
         if (nextRoute === "explorer" && store.ui.explorerSelected) {
           void store.selectExplorerEntry(store.ui.explorerSelected);
         } else store.notify();
       }
       return;
     }
+    case "media-filter":
+      store.ui.mediaFilter = element.dataset.filter || "all";
+      store.notify();
+      return;
+    case "course-tree-filter":
+      store.ui.courseTreeFilter = element.dataset.filter || "all";
+      store.notify();
+      return;
+    case "course-tree-search":
+      store.ui.courseTreeQuery = String(element.value || "").slice(0, 256);
+      store.notify();
+      return;
+    case "resource-provider-refresh":
+      void store.refreshResourceProviders();
+      return;
+    case "resource-provider-save": {
+      const providerId = element.dataset.provider;
+      const input = Array.from(root.querySelectorAll("input[data-resource-secret]") || [])
+        .find((candidate) => candidate.dataset.resourceSecret === providerId);
+      const value = String(input?.value || "");
+      if (input) input.value = "";
+      void store.setResourceProviderSecret(providerId, value);
+      return;
+    }
+    case "resource-provider-delete":
+      void store.deleteResourceProviderSecret(element.dataset.provider);
+      return;
+    case "resource-prepare": {
+      const searchTypes = Array.from(root.querySelectorAll("input[data-resource-search]") || [])
+        .filter((input) => input.checked).map((input) => input.dataset.resourceSearch);
+      const budget = root.querySelector("[data-resource-budget]")?.value;
+      void store.prepareResourceDiscovery(element.dataset.id, searchTypes, budget);
+      return;
+    }
+    case "resource-start":
+      void store.startResourceDiscovery();
+      return;
+    case "resource-refresh":
+      void store.refreshResourceTask();
+      return;
+    case "resource-cancel":
+      void store.cancelResourceDiscovery();
+      return;
+    case "resource-retry":
+      void store.retryResourceDiscovery();
+      return;
+    case "resource-accept": {
+      const candidateId = element.dataset.id;
+      const card = element.closest("[data-resource-candidate]");
+      const taskId = element.dataset.task;
+      const candidate = store.ui.resourceTask?.candidates?.find((entry) => entry.id === candidateId);
+      const use = String(card?.querySelector("[data-resource-use]")?.value || "").trim();
+      const existingResourceId = String(card?.querySelector("[data-resource-existing]")?.value || "").trim();
+      const mergeConfirmed = card?.querySelector("[data-resource-merge-confirm]")?.checked === true;
+      const lessonId = element.dataset.lesson;
+      const questions = String(card?.querySelector("[data-resource-questions]")?.value || "")
+        .split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+      const action = element.dataset.acceptAction === "insert_citation" ? "insert_citation" : "keep";
+      if (!use) {
+        store.ui.resourceError = "请填写这项资源在课程中的教学用途。";
+        store.notify();
+        return;
+      }
+      if (existingResourceId && !mergeConfirmed) {
+        store.ui.resourceError = "请确认候选与所选资源属于同一事件后再合并来源。";
+        store.notify();
+        return;
+      }
+      const mergeTarget = existingResourceId && store.data.resource_items?.find((resource) =>
+        resource.id === existingResourceId && resource.medium === candidate?.medium
+      );
+      if (existingResourceId && !mergeTarget) {
+        store.ui.resourceError = "所选已有资源不可用或媒体类型不匹配，请重新选择。";
+        store.notify();
+        return;
+      }
+      if (!existingResourceId && mergeConfirmed) {
+        store.ui.resourceError = "请选择要合并的已有资源，或取消合并确认。";
+        store.notify();
+        return;
+      }
+      if (candidate?.status === "accepted" && !candidate.accepted_resource_id) {
+        store.ui.resourceError = "候选已标记保存，但没有资源绑定。请刷新任务结果后重试。";
+        store.notify();
+        return;
+      }
+      let videoSelection;
+      let manualVideoTiming;
+      if (candidate?.medium === "video" && !candidate.accepted_resource_id) {
+        videoSelection = { mode: "full", start_sec: null, end_sec: null, timing_evidence_id: null };
+        const mode = card?.querySelector("[data-resource-video-mode]")?.value;
+        const startValue = String(card?.querySelector("[data-resource-timing-start]")?.value || "").trim();
+        const endValue = String(card?.querySelector("[data-resource-timing-end]")?.value || "").trim();
+        const timingConfirmed = card?.querySelector("[data-resource-timing-confirm]")?.checked === true;
+        const hasManualTiming = Boolean(startValue || endValue || timingConfirmed);
+        if (hasManualTiming) {
+          const duration = candidate.video?.total_duration_sec;
+          const start = Number(startValue);
+          const end = Number(endValue);
+          if (mode === "clip") {
+            store.ui.resourceError = "已有时间证据片段和人工片段不能同时选择。";
+            store.notify();
+            return;
+          }
+          if (!Number.isFinite(duration) || duration <= 0) {
+            store.ui.resourceError = "总时长未知，不能记录视频片段；请保留整段视频。";
+            store.notify();
+            return;
+          }
+          if (!timingConfirmed || !startValue || !endValue || !Number.isFinite(start) ||
+            !Number.isFinite(end) || start < 0 || end <= start || end > duration) {
+            store.ui.resourceError = `请输入 0 到 ${duration} 秒内的有效范围，并确认已人工查看片段。`;
+            store.notify();
+            return;
+          }
+          manualVideoTiming = { start_sec: start, end_sec: end, confirmed: true };
+          videoSelection = undefined;
+        } else if (mode === "clip") {
+          const timingId = card?.querySelector("[data-resource-timing]")?.value;
+          const evidence = candidate.source_evidence?.find((entry) => entry.id === timingId);
+          const start = evidence?.locator?.start_sec;
+          const end = evidence?.locator?.end_sec;
+          if (!evidence || !Number.isFinite(start) || !Number.isFinite(end) || end <= start) {
+            store.ui.resourceError = "请选择带有效起止时间的来源证据，或改为保留整段视频。";
+            store.notify();
+            return;
+          }
+          videoSelection = { mode: "clip", start_sec: start, end_sec: end, timing_evidence_id: evidence.id };
+        }
+      }
+      void store.acceptResourceCandidate({
+        task_id: taskId,
+        candidate_id: candidateId,
+        lesson_id: lessonId,
+        ...(existingResourceId ? { existing_resource_id: existingResourceId, merge_confirmed: true } : {}),
+        teaching_use: use,
+        discussion_questions: questions,
+        ...(videoSelection ? { video_selection: videoSelection } : {}),
+        ...(manualVideoTiming ? { manual_video_timing: manualVideoTiming } : {}),
+        action,
+        block_id: null,
+      });
+      return;
+    }
+    case "presentation-style-extract": {
+      const sourceAssetId = root.querySelector("[data-presentation-source]")?.value;
+      if (sourceAssetId) void store.extractPresentationStyle(sourceAssetId);
+      return;
+    }
+    case "presentation-style-save": {
+      const draft = store.ui.presentationStyleDraft;
+      const markdown = String(root.querySelector("[data-presentation-style-draft]")?.value || "");
+      if (draft?.style_draft_id) void store.savePresentationStyle({ style_draft_id: draft.style_draft_id, markdown });
+      return;
+    }
+    case "presentation-style-update": {
+      const profileId = element.dataset.id;
+      const markdown = String(Array.from(root.querySelectorAll("[data-presentation-profile]") || [])
+        .find((input) => input.dataset.presentationProfile === profileId)?.value || "");
+      const expectedRevision = Number(element.dataset.revision);
+      if (profileId && Number.isSafeInteger(expectedRevision)) {
+        void store.savePresentationStyle({ style_profile_id: profileId, expected_revision: expectedRevision, markdown });
+      }
+      return;
+    }
+    case "presentation-target-inspect": {
+      const documentId = root.querySelector("[data-presentation-document-select]")?.value;
+      const document = store.data.presentation_documents.find((row) => row.id === documentId);
+      if (document?.current_asset_id) void store.inspectPresentationTarget(document.current_asset_id, { force: true });
+      return;
+    }
+    case "presentation-slide-ai-prepare": {
+      const profileId = root.querySelector("[data-presentation-style-select]")?.value;
+      const documentId = root.querySelector("[data-presentation-document-select]")?.value;
+      const profile = store.data.style_profiles.find((row) => row.id === profileId);
+      const document = store.data.presentation_documents.find((row) => row.id === documentId);
+      const item = store.currentItem();
+      const insertAfter = String(root.querySelector("[data-presentation-insert-after]")?.value || "") || null;
+      const instruction = String(root.querySelector("[data-presentation-slide-instruction]")?.value || "");
+      store.updatePresentationField("presentationStyleProfileId", profileId || "");
+      store.updatePresentationField("presentationDocumentId", documentId || "");
+      store.updatePresentationField("presentationInsertAfterSlideId", insertAfter || "");
+      store.updatePresentationField("presentationSlideInstruction", instruction);
+      if (!profile || !document || !item || !instruction.trim()) {
+        store.ui.presentationError = "请选择版式、工作副本和当前课程，并描述补充页目标。";
+        store.notify();
+        return;
+      }
+      const asset = store.data.assets.find((row) => row.id === document.current_asset_id);
+      const report = store.ui.presentationTargetReport;
+      const reportMatches = Boolean(report && store.ui.presentationTargetReportAssetId === document.current_asset_id &&
+        String(report.source_sha256 || "").toLowerCase() === String(asset?.checksum || "").toLowerCase());
+      if (insertAfter && (!reportMatches || !report.ordered_slides?.some((slide) => slide.slide_id === insertAfter))) {
+        store.ui.presentationError = "插入位置必须来自当前工作副本的真实页序；请重新读取页序或选择追加到末尾。";
+        store.notify();
+        return;
+      }
+      void store.preparePresentationAiContext({
+        document_id: document.id,
+        lesson_id: item.id,
+        style_profile_id: profile.id,
+        style_revision: profile.revision,
+        target_asset_id: document.current_asset_id,
+        insert_after_slide_id: insertAfter,
+        instruction,
+      });
+      return;
+    }
+    case "presentation-slide-ai-generate":
+      void store.generatePresentationSlideWithAi();
+      return;
+    case "presentation-slide-ai-cancel":
+      store.cancelPresentationAi();
+      return;
+    case "presentation-slide-propose": {
+      const profileId = root.querySelector("[data-presentation-style-select]")?.value;
+      const documentId = root.querySelector("[data-presentation-document-select]")?.value;
+      const profile = store.data.style_profiles.find((entry) => entry.id === profileId);
+      const document = store.data.presentation_documents.find((entry) => entry.id === documentId);
+      const item = store.currentItem();
+      const title = String(root.querySelector("[data-presentation-slide-title]")?.value || "").trim();
+      const body = String(root.querySelector("[data-presentation-slide-body]")?.value || "")
+        .split(/\r?\n/).map((line) => line.trim()).filter(Boolean)
+        .map((text) => ({ kind: "bullet", text }));
+      const insertAfter = String(root.querySelector("[data-presentation-insert-after]")?.value || "") || null;
+      const notes = String(root.querySelector("[data-presentation-slide-notes]")?.value || "");
+      store.updatePresentationField("presentationStyleProfileId", profileId || "");
+      store.updatePresentationField("presentationDocumentId", documentId || "");
+      store.updatePresentationField("presentationInsertAfterSlideId", insertAfter || "");
+      store.updatePresentationField("presentationSlideTitle", title);
+      store.updatePresentationField("presentationSlideBody", String(root.querySelector("[data-presentation-slide-body]")?.value || ""));
+      store.updatePresentationField("presentationSlideNotes", notes);
+      if (!profile || !document || !item || !title) {
+        store.ui.presentationError = "请选择版式、工作副本和当前课程，并填写补充页标题。";
+        store.notify();
+        return;
+      }
+      const asset = store.data.assets.find((row) => row.id === document.current_asset_id);
+      const report = store.ui.presentationTargetReport;
+      const reportMatches = Boolean(report && store.ui.presentationTargetReportAssetId === document.current_asset_id &&
+        String(report.source_sha256 || "").toLowerCase() === String(asset?.checksum || "").toLowerCase());
+      if (insertAfter && (!reportMatches || !report.ordered_slides?.some((slide) => slide.slide_id === insertAfter))) {
+        store.ui.presentationError = "插入位置必须来自当前工作副本的真实页序；请重新读取页序或选择追加到末尾。";
+        store.notify();
+        return;
+      }
+      void store.proposePresentationSlide({
+        document_id: document.id,
+        lesson_id: item.id,
+        style_profile_id: profile.id,
+        style_revision: profile.revision,
+        target_asset_id: document.current_asset_id,
+        insert_after_slide_id: insertAfter,
+        spec: {
+          layout_ref: profile.variant_id,
+          title,
+          body,
+          image_asset_ids: [],
+          source_ids: [],
+          speaker_notes: notes,
+        },
+      });
+      return;
+    }
+    case "presentation-slide-preview":
+      void store.previewPresentationSlide();
+      return;
+    case "presentation-slide-export":
+      void store.exportPresentationSlide(element.dataset.outputMode);
+      return;
     case "explorer-retry":
       if (store.ui.explorerSelected) void store.selectExplorerEntry(store.ui.explorerSelected);
       return;
@@ -11387,7 +12556,7 @@ function handleAction(action, element, event) {
     case "move-lesson": store.moveLesson(element.dataset.id, element.dataset.direction); return;
     case "toggle-stage-collapse": store.toggleStageCollapse(element.dataset.id); return;
     case "locate-current-lesson": store.locateCurrentLesson(); return;
-    case "select-project-properties": store.selectPropertyTarget("project"); return;
+    case "select-project-properties": store.ui.route = "settings"; void store.refreshSnapshots(); void store.refreshResourceProviders(); store.scheduleSessionSave(); store.notify(); return;
     case "select-stage-properties": store.selectPropertyTarget("stage", element.dataset.id); return;
     case "delete-lesson": openDeleteConfirmation(action, element.dataset.id, element); return;
     case "close-tab": {
@@ -11399,14 +12568,14 @@ function handleAction(action, element, event) {
         store.ui.selectedBlockId = null;
         store.ui.focusRequirementId = null;
         if (next) store.openItem(next.content_item_id);
-        else { store.ui.activeId = null; store.ui.route = "map"; store.notify(); }
+        else { store.ui.activeId = null; store.ui.route = "overview"; store.notify(); }
       }
       store.scheduleSessionSave();
       store.notify();
       return;
     }
     case "mode": store.setMode(element.dataset.mode); return;
-    case "preview": store.setMode("preview"); store.ui.route = "editor"; store.scheduleSessionSave(); store.notify(); return;
+    case "preview": store.ui.route = "publish"; store.setMode("writing", { silent: true }); store.scheduleSessionSave(); store.notify(); return;
     case "undo": store.undo(); return;
     case "redo": store.redo(); return;
     case "save-project": void store.flush(); return;
@@ -11425,7 +12594,7 @@ function handleAction(action, element, event) {
     case "submit-snapshot": store.saveVersion(root.querySelector("[data-snapshot-name]")?.value, root.querySelector("[data-snapshot-note]")?.value); return;
     case "refresh-snapshots": void store.refreshSnapshots(); return;
     case "restore-version": void store.restoreVersion(element.dataset.id); return;
-    case "right-panel": store.ui.rightPanel = element.dataset.panel; store.ui.rightCollapsed = false; store.scheduleSessionSave(); if (store.ui.rightPanel === "versions") void store.refreshSnapshots(); else store.notify(); return;
+    case "right-panel": store.ui.rightPanel = "assistant"; store.ui.rightCollapsed = false; store.scheduleSessionSave(); store.notify(); return;
     case "insert-block":
       // A placeholder must always carry a Requirement, never just a block.
       // Media opens the shared picker; insertAsset performs the mutation.
@@ -12082,6 +13251,56 @@ function bindDocumentImportRow(row) {
 
 function bindEvents() {
   bindActionControls(root);
+  const presentationStyle = root.querySelector("[data-presentation-style-select]");
+  const presentationDocument = root.querySelector("[data-presentation-document-select]");
+  const presentationMode = root.querySelector("[data-presentation-mode]");
+  const presentationInsert = root.querySelector("[data-presentation-insert-after]");
+  if (presentationStyle && !store.ui.presentationStyleProfileId) {
+    store.ui.presentationStyleProfileId = presentationStyle.value;
+  }
+  if (presentationDocument && !store.ui.presentationDocumentId) {
+    store.ui.presentationDocumentId = presentationDocument.value;
+  }
+  presentationStyle?.addEventListener("change", () => {
+    store.updatePresentationField("presentationStyleProfileId", presentationStyle.value, { notify: true });
+  });
+  presentationDocument?.addEventListener("change", () => {
+    store.updatePresentationField("presentationDocumentId", presentationDocument.value, { notify: true });
+    const document = store.data.presentation_documents.find((row) => row.id === presentationDocument.value);
+    if (document?.current_asset_id) void store.inspectPresentationTarget(document.current_asset_id);
+  });
+  presentationMode?.addEventListener("change", () => {
+    store.updatePresentationField("presentationMode", presentationMode.value, { notify: true });
+  });
+  presentationInsert?.addEventListener("change", () => {
+    store.updatePresentationField("presentationInsertAfterSlideId", presentationInsert.value, { notify: true });
+  });
+  for (const [selector, field] of [
+    ["[data-presentation-slide-instruction]", "presentationSlideInstruction"],
+    ["[data-presentation-slide-title]", "presentationSlideTitle"],
+    ["[data-presentation-slide-body]", "presentationSlideBody"],
+    ["[data-presentation-slide-notes]", "presentationSlideNotes"],
+  ]) {
+    const input = root.querySelector(selector);
+    input?.addEventListener("input", () => store.updatePresentationField(field, input.value));
+    input?.addEventListener("change", () => store.updatePresentationField(field, input.value));
+  }
+  const presentationConsent = root.querySelector("[data-presentation-ai-consent]");
+  presentationConsent?.addEventListener("change", () => {
+    store.ui.presentationAiConsent = presentationConsent.checked === true;
+    const generate = root.querySelector('[data-action="presentation-slide-ai-generate"]');
+    if (generate) generate.disabled = !store.ui.presentationAiConsent || Boolean(store.ui.presentationBusy);
+  });
+  if (presentationDocument && !store.ui.presentationTargetInspectingAssetId) {
+    const document = store.data.presentation_documents.find((row) => row.id === presentationDocument.value);
+    const target = document && store.data.assets.find((asset) => asset.id === document.current_asset_id);
+    const report = store.ui.presentationTargetReport;
+    const matches = Boolean(target && report && store.ui.presentationTargetReportAssetId === target.id &&
+      String(report.source_sha256 || "").toLowerCase() === String(target.checksum || "").toLowerCase());
+    if (target && !matches && store.ui.presentationTargetAttemptedAssetId !== target.id) {
+      void store.inspectPresentationTarget(target.id);
+    }
+  }
   const readerCenter = root?.querySelector?.(".center");
   if (readerCenter?.dataset?.readerIdentity) {
     readerCenter.addEventListener("scroll", () => {
@@ -12388,7 +13607,7 @@ function bindEvents() {
   const typeProperty = root.querySelector("[data-block-type]");
   if (typeProperty) typeProperty.addEventListener("change", () => store.setBlockType(typeProperty.dataset.blockId, typeProperty.value));
 
-  root.querySelectorAll("select[data-status-dim]").forEach((element) => element.addEventListener("change", () => store.updateStatus(element.dataset.statusDim, element.value)));
+  root.querySelectorAll("select[data-status-dim]").forEach((element) => element.addEventListener("change", () => store.updateStatus(element.dataset.statusDim, element.value, element.dataset.statusItemId || undefined)));
   root.querySelector("select[data-board-dimension]")?.addEventListener("change", (event) => store.setBoardDimension(event.target.value));
   // The 属性 panel edits the same Requirement rows as the 待补 panel, through
   // the same store call, so a type chosen here shows up everywhere at once.
@@ -12942,7 +14161,7 @@ function bindCourseMapDrag() {
           target.marker?.classList.add("active");
         }
       },
-      canCommit: (target) => store.ui.route === "map" && Boolean(target.stage),
+      canCommit: (target) => store.ui.route === "overview" && Boolean(target.stage),
       commit: (target) => store.moveLessonToPosition(sourceId, target.stageId, target.beforeId),
     });
   }
@@ -13083,6 +14302,7 @@ if (bridge.isNative()) {
 if (typeof globalThis.addEventListener === "function") {
   if (bridge.isNative()) {
     globalThis.addEventListener("beforeunload", () => {
+      stopPreviewMedia(root);
       void flushAndClose();
     });
   } else {
@@ -13093,6 +14313,7 @@ if (typeof globalThis.addEventListener === "function") {
     const saveLatestBrowserSession = () => {
       if (pageExitSessionSent) return;
       pageExitSessionSent = true;
+      stopPreviewMedia(root);
       const session = store.session();
       void store.persistSessionDirect(session).catch((error) =>
         store.reportSessionFailure(error, session)

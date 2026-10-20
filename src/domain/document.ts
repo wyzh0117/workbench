@@ -1,4 +1,5 @@
 import {
+  CURRENT_SCHEMA_VERSION,
   type Block,
   type BlockGroup,
   type BlockType,
@@ -32,7 +33,7 @@ export function createDocument(
   const document: Document = {
     id: id(),
     content_item_id: contentItemId,
-    schema_version: data.schema_version,
+    schema_version: CURRENT_SCHEMA_VERSION,
     created_at: now(),
     updated_at: now(),
   };
@@ -474,6 +475,9 @@ export function deleteBlock(data: ProjectData, blockId: string): void {
   data.asset_usages = data.asset_usages.filter((usage) =>
     usage.block_id !== blockId
   );
+  for (const usage of data.resource_usages) {
+    if (usage.block_id === blockId) usage.block_id = null;
+  }
   data.placements = data.placements.filter((placement) =>
     placement.block_id !== blockId
   );

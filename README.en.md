@@ -31,6 +31,8 @@ Create course stages and lessons, then edit lesson content, arrange materials, a
 - Plan and reorder course stages and lessons.
 - Edit lesson notes and page layouts, then preview them.
 - Organize images, video, PDF, DOCX, EPUB, LaTeX, and Markdown files.
+- Find teaching cases and videos from selected course materials, review their sources, then save or cite them explicitly.
+- Extract an editable style from an existing PowerPoint and export a supplemental slide as a single-slide file or an appended copy.
 - Track missing content and course completion.
 - Review AI suggestions and export Markdown, HTML, PDF, PPTX, or a full project package.
 

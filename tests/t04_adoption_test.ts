@@ -993,7 +993,7 @@ Deno.test("failed import keeps the editable plan, shows a persistent safe reason
     await store.confirmImportMapping();
     await acceptDocumentImportDialog(store);
     assert(state.adopts.length === 2, "a second confirmation must retry the same plan");
-    assert(String(store.ui.route) === "map", "successful retry must open the course map");
+    assert(String(store.ui.route) === "overview", "successful retry must open project overview");
     assert(!store.ui.importMappingError, "success must clear the persistent error");
     assert(
       store.data.blocks.some((block) => block.type === "heading" && block.content === "导论") &&

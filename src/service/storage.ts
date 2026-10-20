@@ -11,6 +11,7 @@ import {
 } from "../domain/assets.ts";
 import { createSnapshot as createDomainSnapshot } from "../domain/workflow.ts";
 import {
+  CURRENT_PROJECT_SCHEMA_VERSION,
   CURRENT_SCHEMA_VERSION,
   type ProjectData,
   type Snapshot,
@@ -762,7 +763,7 @@ function unreadableInspection(
   return {
     status: "unreadable",
     schema_version: null,
-    supported_schema_version: CURRENT_SCHEMA_VERSION,
+    supported_schema_version: CURRENT_PROJECT_SCHEMA_VERSION,
     problem: {
       code,
       path,
@@ -854,7 +855,7 @@ export async function inspectProjectDirectory(
       return {
         status: "no_project_json",
         schema_version: null,
-        supported_schema_version: CURRENT_SCHEMA_VERSION,
+        supported_schema_version: CURRENT_PROJECT_SCHEMA_VERSION,
         problem: {
           code: "project_json_missing",
           path: PROJECT_FILE,
@@ -882,7 +883,7 @@ export async function inspectProjectDirectory(
     return {
       status: "malformed_json",
       schema_version: null,
-      supported_schema_version: CURRENT_SCHEMA_VERSION,
+        supported_schema_version: CURRENT_PROJECT_SCHEMA_VERSION,
       problem: {
         code: "malformed_json",
         path: PROJECT_FILE,
@@ -3215,4 +3216,4 @@ export async function openProjectDirectory(
   return store;
 }
 
-export { CURRENT_SCHEMA_VERSION };
+export { CURRENT_PROJECT_SCHEMA_VERSION, CURRENT_SCHEMA_VERSION };

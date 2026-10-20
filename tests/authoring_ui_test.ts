@@ -9,7 +9,7 @@ import { createEmptyProjectData } from "../src/domain/index.ts";
 import { buildBlueprintDraft, createCourseSeed } from "../src/domain/course.ts";
 import { validateProjectData } from "../src/domain/store.ts";
 import type { ProjectData } from "../src/domain/types.ts";
-import { courseMap, lessonView } from "../app/authoring.js";
+import { courseMap, lessonProgress, lessonView } from "../app/authoring.js";
 import { AssetPreviewCache, staticImagePoster, stopPreviewMedia } from "../app/canvas.js";
 import { createViews } from "../app/views.js";
 
@@ -1146,25 +1146,31 @@ Deno.test("Flow drop targets insert before the indicator and null appends", asyn
   }
 });
 
-Deno.test("Workbench exposes Flow and migrates the removed Layout route to Free Layout", async () => {
+Deno.test("removed Flow and layout routes resume in the canonical editor", async () => {
   const { store, restore } = await bootStore();
   try {
-    store.addMapItem("Flow 页面合同");
-    store.addBlock("paragraph", "Flow 预览正文");
+    store.addMapItem("旧视图迁移");
+    store.addBlock("paragraph", "保留的课程正文");
+    store.createLayout("grid");
+    const legacyData = JSON.stringify({
+      layouts: store.data.layout_instances,
+      pages: store.data.layout_pages,
+      placements: store.data.placements,
+    });
     store.ui.screen = "project";
     store.ui.route = "editor";
     store.ui.mode = "structure";
     const { createViews } = await import(`../app/views.js?flow-contract-${importCounter}`);
     const html = () => createViews(store).shellView() as string;
     const workbench = html();
-    assert(workbench.includes('data-mode="structure"'), "the second Workbench view remains Flow");
-    assert(workbench.includes("data-flow-drag-handle"), "Flow rows expose their own drag handle");
-    assert(workbench.includes('data-action="flow-select-block"'), "the full Flow row returns to its body block");
-    assert(!workbench.includes('data-mode="layout"'), "Workbench no longer exposes the Layout tab");
-    assert(workbench.includes('data-route="free-layout"'), "Free Layout is a top-level navigation route");
+    assert(workbench.includes("保留的课程正文"), "the canonical editor keeps the real lesson body");
+    assert(!workbench.includes('data-mode="structure"'), "Flow is no longer a top-level editor mode");
+    assert(!workbench.includes("data-flow-drag-handle"), "the editor does not show the removed Flow surface");
+    assert(!workbench.includes('data-route="free-layout"'), "Free Layout is not a top-level route");
+    assert(!workbench.includes("GRID CANVAS"), "legacy layouts are not editable from the lesson editor");
 
     store.setMode("layout");
-    assert(store.ui.route === "free-layout", "legacy Layout actions open the Free Layout page");
+    assert(store.ui.route === "editor", "legacy Layout mode returns to the canonical editor");
     assert(store.ui.mode === "writing", "the removed Layout tab is never restored");
 
     const migratedLayoutSession = store.normalizeReaderState(store.data, {
@@ -1172,21 +1178,25 @@ Deno.test("Workbench exposes Flow and migrates the removed Layout route to Free 
       mode: "layout",
       tabs: [{ content_item_id: store.currentItem()!.id, mode: "layout", pinned: false, scroll_top: 0 }],
     });
-    assert(migratedLayoutSession.route === "free-layout", "legacy editor Layout sessions migrate to the Free Layout route");
+    assert(migratedLayoutSession.route === "editor", "legacy editor Layout sessions migrate to the canonical editor");
     assert(migratedLayoutSession.mode === "writing", "legacy Layout session modes return to the body editor");
     assert(
       (migratedLayoutSession.tabs as Array<{ mode: string }>)[0]?.mode === "writing",
       "legacy lesson tabs cannot reopen the removed Layout tab",
     );
+    const migratedLayoutRoute = store.normalizeReaderState(store.data, {
+      route: "free-layout",
+      mode: "writing",
+    });
+    assert(migratedLayoutRoute.route === "editor", "legacy Free Layout links open the canonical editor");
     const migratedStructureRoute = store.normalizeReaderState(store.data, { route: "structure", mode: "writing" });
     assert(migratedStructureRoute.route === "editor", "the removed Structure page returns to Workbench");
-    assert(migratedStructureRoute.mode === "structure", "legacy Structure sessions open the Flow tab");
-
-    store.createLayout("grid");
-    store.ui.route = "free-layout";
-    const freeLayout = html();
-    assert(freeLayout.includes("GRID CANVAS"), "Free Layout keeps the existing Grid renderer");
-    assert(!freeLayout.includes("Flow 是一维文档流"), "Grid renderer contains no legacy Flow page branch");
+    assert(migratedStructureRoute.mode === "writing", "legacy Structure sessions return to the body editor");
+    assert(JSON.stringify({
+      layouts: store.data.layout_instances,
+      pages: store.data.layout_pages,
+      placements: store.data.placements,
+    }) === legacyData, "opening a legacy route preserves its read-only layout data");
   } finally {
     restore();
   }
@@ -2056,7 +2066,7 @@ Deno.test("cross-page move rejects an occupied target atomically and accepts a f
   }
 });
 
-Deno.test("paged canvas stays finite and editor, preview, and publish show real page data", async () => {
+Deno.test("legacy paged layout remains stored while editor and publish stay available", async () => {
   const { store, restore } = await bootStore();
   try {
     store.addMapItem("分页界面课");
@@ -2082,34 +2092,19 @@ Deno.test("paged canvas stays finite and editor, preview, and publish show real 
     store.ui.route = "free-layout";
     store.ui.mode = "writing";
     let html = createViews(store).shellView() as string;
-    assert(html.includes("data-action=\"select-layout-page\""), "editor renders selectable page identities");
-    assert(html.includes("data-action=\"toggle-pagination-edit\""), "editor exposes a separate pagination edit toggle");
-    // 启用分页 must land the user in the state where the new page controls are
-    // usable; a read-only canvas right after converting read as a dead button.
-    assert(html.includes('data-page-readonly="false"'), "confirming the conversion opens pagination editing");
-    assert(html.includes("data-action=\"page-duplicate\""), "pagination editing exposes page structure actions");
-    assert(html.includes("data-action=\"resize-placement\""), "pagination editing exposes placement actions");
-    assert(html.includes("退出分页编辑"), "the exit action names only the editing mode");
-    assert(html.includes("有限页面"), "editor identifies finite page geometry");
+    assert(html.includes("分页中的真实正文"), "the lesson editor continues to render canonical body content");
+    assert(!html.includes("select-layout-page"), "the editor does not expose legacy page navigation");
+    assert(!html.includes("toggle-pagination-edit"), "the editor does not expose pagination editing");
+    assert(!html.includes("page-duplicate"), "the editor does not expose legacy page mutation");
+    assert(!html.includes("resize-placement"), "the editor does not expose legacy placement mutation");
+    assert(!html.includes("GRID CANVAS"), "the editor does not render a second layout projection");
+    assert(store.data.layout_pages.length === 1, "legacy page records remain available for history and export");
+    assert(store.data.placements.length === before + 1, "legacy placement records are preserved");
 
-    const togglePaginationEditing = () =>
-      (store as unknown as { togglePaginationEditing: () => void }).togglePaginationEditing();
-    togglePaginationEditing();
-    html = createViews(store).shellView() as string;
-    assert(html.includes('data-page-readonly="true"'), "page placements are inert while viewing");
-    assert(!html.includes("data-action=\"page-duplicate\""), "page structure actions stay hidden while viewing");
-    assert(!html.includes("data-action=\"resize-placement\""), "viewing mode hides placement actions");
-    assert(!html.includes("退出分页编辑"), "the exit action only exists while editing");
-    togglePaginationEditing();
-    assert(store.data.layout_instances.at(-1)!.pagination_mode === "paged", "closing pagination edit mode does not change the saved layout mode");
-    html = createViews(store).shellView() as string;
-    assert(html.includes("data-action=\"resize-placement\""), "re-entering pagination editing restores the same controls");
-
-    store.ui.route = "editor";
     store.setMode("preview");
     html = createViews(store).shellView() as string;
-    assert(html.includes("page-preview-sheet"), "preview renders a physical page canvas");
-    assert(html.includes("data-action=\"layout-zoom\""), "preview exposes fit and actual-size controls");
+    assert(store.ui.route === "editor", "legacy Preview mode returns to the canonical editor");
+    assert(!html.includes("page-preview-sheet"), "the editor does not expose a separate Preview surface");
 
     store.ui.route = "publish";
     store.ui.publishFormat = "html";
@@ -2222,14 +2217,8 @@ Deno.test("completion state is derived from real data and drives navigation", as
 
     store.openItem(first!.id);
     store.addBlock("paragraph", "第一课的正文");
-    assert(
-      !store.lesson()!.progress.complete,
-      "a lesson without a layout cannot be complete",
-    );
-
-    store.createLayout("grid");
-    store.autofillGrid();
     for (const dimension of store.data.status_dimensions) {
+      if (dimension.key === "layout") continue;
       const terminal = store.data.status_options.find((option) =>
         option.dimension_id === dimension.id && option.is_terminal
       )!;
@@ -2237,10 +2226,10 @@ Deno.test("completion state is derived from real data and drives navigation", as
     }
     const progress = store.lesson()!.progress;
     assert(
-      progress.complete,
-      `expected a complete lesson, reasons: ${progress.reasons.join("；")}`,
+      progress.complete && !progress.has_layout,
+      `a lesson without layout can be complete, reasons: ${progress.reasons.join("；")}`,
     );
-    assert(progress.percentage === 100, "a complete lesson reports full progress");
+    assert(progress.percentage === 100, "layout does not reduce complete lesson progress");
 
     store.updateStatus("content", "待研究");
     assert(!store.lesson()!.progress.complete, "a non-terminal status blocks completion");
@@ -2650,6 +2639,16 @@ Deno.test("deleting a lesson keeps codes and inbox references valid", async () =
     store.captureToInbox("稍后整理", "灵感");
     const inboxId = store.data.inbox_items[0]!.id;
     store.triageInbox(inboxId, store.data.content_items[1]!.id);
+    const deletedLessonId = store.data.content_items[1]!.id;
+    const survivingLessonId = store.data.content_items[2]!.id;
+    store.data.resource_usages.push(
+      { lesson_id: deletedLessonId } as ProjectData["resource_usages"][number],
+      { lesson_id: survivingLessonId } as ProjectData["resource_usages"][number],
+    );
+    store.data.slide_plans.push(
+      { lesson_id: deletedLessonId } as ProjectData["slide_plans"][number],
+      { lesson_id: survivingLessonId } as ProjectData["slide_plans"][number],
+    );
     assert(
       store.data.inbox_items[0]!.content_item_id !== null,
       "triage targets a lesson",
@@ -2670,6 +2669,16 @@ Deno.test("deleting a lesson keeps codes and inbox references valid", async () =
       "an inbox row targeted at a deleted lesson is released",
     );
     assert(inbox.status === "open", "the released inbox row is actionable again");
+    assert(
+      store.data.resource_usages.length === 1 && store.data.resource_usages[0]?.lesson_id === survivingLessonId,
+      "only usages owned by the deleted lesson are removed",
+    );
+    assert(
+      store.data.slide_plans.length === 1 && store.data.slide_plans[0]?.lesson_id === survivingLessonId,
+      "only slide plans owned by the deleted lesson are removed",
+    );
+    store.data.resource_usages = [];
+    store.data.slide_plans = [];
 
     // A new lesson must not reuse an existing code.
     store.addMapItem("第四课");
@@ -3180,7 +3189,7 @@ function seedImageAsset(
   });
 }
 
-Deno.test("Preview counts mapped Markdown images once and explains video image references", async () => {
+Deno.test("legacy Preview route keeps Markdown media mappings without a separate preview surface", async () => {
   const { store, restore } = await bootStore();
   try {
     store.addMapItem("Preview inline refs");
@@ -3250,11 +3259,11 @@ Deno.test("Preview counts mapped Markdown images once and explains video image r
     const html = createViews(store).shellView() as string;
 
     assert(block.type === "paragraph", "inline Markdown stays in its canonical paragraph block");
-    assert(html.includes("2 个已在正文中显示"), "the Preview summary counts only renderable inline images and GIFs");
-    assert(html.includes("photo.png · 图片") && html.includes("loop.gif · GIF"), "the summary names inline image and GIF assets");
-    assert(!html.includes("clip.mp4 · 视频"), "a video-as-image warning is not counted as successfully displayed media");
-    assert(!html.includes("removed.png"), "stale resolver mappings do not count as visible media");
-    assert(html.includes("Markdown 图片语法只支持图片和 GIF") && html.includes("从媒体库插入视频区块"), "video referenced as a Markdown image gets a clear supported-path message");
+    assert(JSON.stringify(store.data.blocks.find((candidate) => candidate.id === block.id)?.settings.markdown_assets).includes("asset-inline-photo"), "legacy mapped image references remain available to export and history");
+    assert(store.data.asset_usages.filter((usage) => usage.block_id === block.id).length === 3, "canonical media usages remain linked to the lesson");
+    assert(!html.includes("2 个已在正文中显示"), "the removed Preview summary is not rendered");
+    assert(!html.includes('data-mode="preview"'), "Preview is not offered as a separate editor mode");
+    assert(html.includes("保留映射") === false, "legacy mappings are not replaced by a placeholder view");
   } finally {
     restore();
   }
@@ -3493,7 +3502,8 @@ Deno.test("requirement panel shows real anchors and type-specific actions", asyn
     // addPlaceholder leaves the new row in edit mode; show the action cards.
     store.ui.editingRequirementId = null;
     store.ui.rightPanel = "requirements";
-    store.ui.route = "editor";
+    store.ui.route = "overview";
+    store.ui.courseTreeFilter = "requirements";
     store.ui.screen = "project";
     store.notify();
 
@@ -3501,42 +3511,13 @@ Deno.test("requirement panel shows real anchors and type-specific actions", asyn
       `../app/views.js?req-panel-${importCounter}`
     );
     const html = createViews(store).shellView() as string;
-    assert(!html.includes("位置：待补"), "rendered panel must never show 位置：待补");
-    assert(
-      html.includes("位置：S01-02 · 正文 ") || html.includes("位置：S01-02 · 图片 "),
-      "open requirements must show lesson-code anchors",
-    );
+    assert(html.includes("S01-02"), "overview retains the lesson-code anchor beside requirements");
+    assert(html.includes("补充这段文字") && html.includes("补一张图片"), "overview names each real requirement note");
+    assert(html.includes('data-action="focus-requirement"'), "overview can locate a requirement at its source block");
+    assert(html.includes("定位"), "each anchored requirement offers a locate action");
+    assert(html.includes("AI 助手"), "the right panel stays dedicated to AI");
+    assert(!html.includes('data-panel="requirements"'), "requirements do not occupy the right sidebar");
 
-    const items = html.split('class="requirement-item').slice(1).map((chunk) =>
-      chunk.slice(0, chunk.indexOf('class="requirement-item') > 0
-        ? chunk.indexOf('class="requirement-item')
-        : chunk.length)
-    );
-    const textItem = items.find((chunk) =>
-      chunk.includes("<b>文字") || chunk.includes(">文字 ·") ||
-      /<b>文字</.test(chunk)
-    ) ?? "";
-    const imageItem = items.find((chunk) =>
-      chunk.includes("<b>图片") || /<b>图片</.test(chunk)
-    ) ?? "";
-    assert(textItem.length > 0, "text requirement card must render");
-    assert(imageItem.length > 0, "image requirement card must render");
-    assert(textItem.includes(">定位<") || textItem.includes("定位</"), "text req shows 定位");
-    assert(textItem.includes("改备注"), "text req shows 改备注");
-    assert(
-      textItem.includes(">完成<") || textItem.includes("完成</"),
-      "text req shows 完成",
-    );
-    assert(
-      !textItem.includes("选择素材") && !textItem.includes("用素材完成"),
-      "text req must not show media-only actions",
-    );
-    assert(imageItem.includes("选择素材"), "media req shows 选择素材");
-    assert(imageItem.includes("用素材完成"), "media req shows 用素材完成");
-    assert(
-      imageItem.includes(">定位<") || imageItem.includes("定位</"),
-      "media req shows 定位",
-    );
   } finally {
     restore();
   }
@@ -4127,13 +4108,13 @@ Deno.test("openWorkbench returns to the current lesson editor, defaulting to 正
   }
 });
 
-Deno.test("openWorkbench restores 正文/Flow/Preview and migrates legacy Layout to Free Layout", async () => {
+Deno.test("openWorkbench restores the current lesson in the canonical editor", async () => {
   const { store, restore } = await bootStore();
   try {
     store.addMapItem("会话恢复课");
     const lessonId = String(store.ui.activeId || "");
     store.setMode("layout");
-    assert(String(store.ui.route) === "free-layout", "旧排版视图映射到一级自由排版");
+    assert(String(store.ui.route) === "editor", "旧排版视图映射到正文编辑器");
     assert(String(store.ui.mode) === "writing", "旧排版子视图回到正文模式");
     store.ui.route = "inbox";
     store.notify();
@@ -4144,14 +4125,14 @@ Deno.test("openWorkbench restores 正文/Flow/Preview and migrates legacy Layout
     assert(String(store.ui.mode) === "writing", "工作台恢复时回到正文子视图");
 
     store.setMode("preview");
-    store.ui.route = "board";
     store.openWorkbench();
-    assert(String(store.ui.mode) === "preview", "合法 session 恢复预览子视图");
+    assert(String(store.ui.route) === "editor", "Preview mode migrates to the canonical editor");
+    assert(String(store.ui.mode) === "writing", "Preview cannot reopen as a separate editor mode");
 
     store.setMode("structure");
-    store.ui.route = "map";
     store.openWorkbench();
-    assert(String(store.ui.mode) === "structure", "合法 session 恢复结构子视图");
+    assert(String(store.ui.route) === "editor", "Flow mode migrates to the canonical editor");
+    assert(String(store.ui.mode) === "writing", "Flow cannot reopen as a separate editor mode");
   } finally {
     restore();
   }
@@ -4261,7 +4242,7 @@ Deno.test("course map stage header exposes add rename reorder delete actions", a
   assert(viewsSource.includes('data-action="move-stage"'), "stage head has reorder");
   assert(viewsSource.includes('data-action="delete-stage"'), "stage head has delete");
   assert(
-    /function mapView[\s\S]*stage-head[\s\S]*add-stage|add-stage[\s\S]*stage-head/.test(
+    /function mapView[\s\S]*course-tree-stage[\s\S]*add-stage|add-stage[\s\S]*course-tree-stage/.test(
       viewsSource,
     ) || viewsSource.includes("stage-tools") || viewsSource.includes("stage-more"),
     "stage actions live on the course map stage header, not buried elsewhere",
@@ -4747,10 +4728,16 @@ Deno.test("closing a preview stops and resets its media elements", () => {
     removeAttribute: (name: string) => calls.push(`audio-remove:${name}`),
     load: () => calls.push("audio-load"),
   };
-  const scope = { querySelectorAll: () => [video, audio] };
-  assert(stopPreviewMedia(scope) === 2, "both preview players are stopped");
+  const frame = {
+    removeAttribute: (name: string) => calls.push(`frame-remove:${name}`),
+    remove: () => calls.push("frame-remove-node"),
+  };
+  const scope = {
+    querySelectorAll: (selector: string) => selector === "audio,video" ? [video, audio] : [frame],
+  };
+  assert(stopPreviewMedia(scope) === 3, "media elements and embedded players are stopped");
   assert(video.currentTime === 0 && audio.currentTime === 0, "playback positions reset");
-  assert(calls.join(",") === "pause,remove:src,load,audio-pause,audio-remove:src,audio-load", "each source is detached and reloaded");
+  assert(calls.join(",") === "pause,remove:src,load,audio-pause,audio-remove:src,audio-load,frame-remove:src,frame-remove-node", "media and iframe sources are unloaded before removal");
 });
 
 Deno.test("video viewer reacquires a fresh source and releases stale results", async () => {
@@ -4820,7 +4807,7 @@ Deno.test("video viewer reacquires a fresh source and releases stale results", a
   }
 });
 
-Deno.test("property panel follows project and stage targets instead of the active lesson", async () => {
+Deno.test("project and stage details live in settings and the course overview", async () => {
   const { store, restore } = await bootStore();
   try {
     store.addMapItem("当前活跃课时");
@@ -4834,28 +4821,29 @@ Deno.test("property panel follows project and stage targets instead of the activ
     store.selectPropertyTarget("project");
     let html = createViews(store).shellView() as string;
     assert(
-      html.includes(`data-panel-scope="项目 · ${projectTitle}"`),
-      "project properties use the real project title",
+      store.ui.route === "settings" && store.ui.settingsSection === "project" &&
+        html.includes('data-title-surface="settings"'),
+      "project details open the project section in settings",
     );
 
     store.selectPropertyTarget("stage", stage.id);
     html = createViews(store).shellView() as string;
     assert(
-      html.includes(`data-panel-scope="阶段 · ${stage.code} ${stage.title}"`),
-      "stage properties use the selected stage's real code and title",
+      String(store.ui.route) === "overview" && html.includes(stage.code) &&
+        html.includes(stage.title) && html.includes("course-tree-stage"),
+      "stage details stay with the selected stage in the course overview",
     );
 
     store.ui.activeId = null;
     store.ui.propertyTarget = null;
     store.ui.rightPanel = "properties";
+    store.ui.route = "editor";
     html = createViews(store).shellView() as string;
     assert(
-      html.includes(`data-panel-scope="项目 · ${projectTitle}"`),
-      "an empty selection falls back to project properties",
-    );
-    assert(
-      !html.includes('data-panel-scope="课时 ·'),
-      "an empty selection does not claim the current lesson",
+      html.includes("AI 助手") &&
+        !html.includes(`data-panel-scope="项目 · ${projectTitle}"`) &&
+        !html.includes('data-panel-scope="课时 ·'),
+      "the right sidebar remains the AI assistant when legacy property state loads",
     );
   } finally {
     restore();
@@ -4932,7 +4920,7 @@ async function pagedEditingFixture(title: string) {
   return { ...booted, store, pages, render, toggle };
 }
 
-Deno.test("page move target renders available cells on the selected page", async () => {
+Deno.test("legacy page-move state cannot open a canvas inside the lesson editor", async () => {
   const { store, pages, render, restore } = await pagedEditingFixture("跨页目标面板");
   try {
     const placement = store.data.placements[0]!;
@@ -4944,21 +4932,16 @@ Deno.test("page move target renders available cells on the selected page", async
     pageMove.choosePageMoveTarget(pages[1]!.id);
 
     const html = render();
-    assert(
-      html.includes(`选择「${pages[1]!.title}」里的可用位置`),
-      "the target page must render its destination-cell panel",
-    );
-    assert(
-      html.includes(`data-action="move-placement-page-cell"`) &&
-        html.includes(`data-page-id="${pages[1]!.id}"`),
-      "available destination cells must retain their page and move action",
-    );
+    assert(store.data.layout_pages.length === pages.length, "legacy page records remain intact");
+    assert(store.data.placements.some((row) => row.id === placement.id), "legacy placement remains intact");
+    assert(html.includes("跨页目标面板") && !html.includes("move-placement-page-cell"),
+      "the body editor remains available without exposing legacy canvas cells");
   } finally {
     restore();
   }
 });
 
-Deno.test("continuous Grid shows no output-section editor but keeps 启用分页 reachable", async () => {
+Deno.test("legacy continuous Grid remains stored without a visible layout editor", async () => {
   const { store, restore } = await bootStore();
   try {
     store.addMapItem("连续网格分组课");
@@ -4972,13 +4955,9 @@ Deno.test("continuous Grid shows no output-section editor but keeps 启用分页
     assert(store.data.layout_pages.length === 0, "the layout must still be continuous");
     assert(store.data.layout_sections.length > 0, "legacy section rows must still be maintained");
     const html = createViews(store).shellView() as string;
-    assert(!html.includes("输出分区"), "the section editor must not appear before pagination is enabled");
-    assert(!html.includes("＋ 分区"), "the add-section action must not appear before pagination is enabled");
-    assert(!html.includes("data-action=\"grid-new-section\""), "no section mutation may be offered");
-    assert(
-      html.includes("data-action=\"pagination-conversion\""),
-      "启用分页 must stay reachable so a legacy project can still convert",
-    );
+    assert(html.includes("连续网格正文"), "the canonical body remains editable");
+    assert(!html.includes("GRID CANVAS") && !html.includes("pagination-conversion"),
+      "the editor does not expose the removed layout and conversion controls");
     assert(
       store.data.placements.every((placement) => "section_id" in placement),
       "placements must keep their legacy section grouping for export",
@@ -4988,68 +4967,38 @@ Deno.test("continuous Grid shows no output-section editor but keeps 启用分页
   }
 });
 
-Deno.test("exiting pagination editing changes no page or placement data", async () => {
+Deno.test("legacy pagination state remains data-only in the canonical editor", async () => {
   const { store, restore, render, toggle } = await pagedEditingFixture("分页编辑状态课");
   try {
-    const editing = () => Boolean(store.ui.paginationEditing);
-    assert(editing(), "启用分页 must land in pagination editing");
     const pagesBefore = structuredClone(store.data.layout_pages);
     const placementsBefore = structuredClone(store.data.placements);
     const snapshot = JSON.stringify(store.data);
-    const activePageBefore = store.ui.layoutPageId;
-    assert(render().includes("退出分页编辑"), "the editing bar must offer 退出分页编辑");
-
+    const html = render();
+    assert(html.includes("分页编辑状态课"), "the canonical body editor stays available");
+    assert(!html.includes("退出分页编辑") && !html.includes("data-action=\"resize-placement\""),
+      "legacy pagination controls are not exposed from the editor");
     toggle();
-    assert(!editing(), "the action leaves editing mode");
-    assert(store.data.layout_pages === store.data.layout_pages, "page rows keep their identity");
-    assert(
-      JSON.stringify(store.data.layout_pages) === JSON.stringify(pagesBefore),
-      "page ids, titles and order must survive exiting editing mode",
-    );
-    assert(
-      JSON.stringify(store.data.placements) === JSON.stringify(placementsBefore),
-      "exiting editing must move nothing and unplace nothing",
-    );
-    assert(JSON.stringify(store.data) === snapshot, "exiting editing is a pure view-state change");
-    assert(store.ui.layoutPageId === activePageBefore, "the active page must survive exiting editing");
-    assert(store.data.layout_instances.at(-1)!.pagination_mode === "paged", "the layout stays paged");
-    const viewing = render();
-    assert(viewing.includes('data-page-readonly="true"'), "the canvas reads as view-only");
-    assert(!viewing.includes("退出分页编辑"), "the exit action is only offered while editing");
-
-    toggle();
-    assert(editing(), "the same action re-enters editing");
-    assert(store.ui.layoutPageId === activePageBefore, "re-entering restores the same active page");
-    assert(JSON.stringify(store.data) === snapshot, "re-entering editing still changes no data");
+    assert(JSON.stringify(store.data.layout_pages) === JSON.stringify(pagesBefore),
+      "page ids, titles and order survive legacy view-state changes");
+    assert(JSON.stringify(store.data.placements) === JSON.stringify(placementsBefore),
+      "legacy view-state changes do not move or unplace content");
+    assert(JSON.stringify(store.data) === snapshot, "legacy view-state changes never mutate canonical data");
   } finally {
     restore();
   }
 });
 
-Deno.test("an active page renders exactly one visible page title", async () => {
+Deno.test("legacy page selection never creates a second visible editor projection", async () => {
   const { store, restore, render, pages } = await pagedEditingFixture("页面标题去重课");
   try {
-    for (const [index, page] of pages.entries()) {
+    for (const page of pages) {
       store.selectLayoutPage(page.id);
-      for (const editing of [true, false]) {
-        store.ui.paginationEditing = editing;
-        const html = render();
-        const named = html.match(/data-page-id="[^"]+"/g) || [];
-        assert(named.length === 1, `the active page surface must name one page, got ${named.length}`);
-        const title = index === 0 ? "导入与渲染" : page.title;
-        assert(
-          countOf(html, title) === 1,
-          `page title "${title}" must appear once while ${editing ? "editing" : "viewing"}, got ${countOf(html, title)}`,
-        );
-        assert(
-          !/<span>第 \d+ 页<\/span><small>第 \d+ 页<\/small>/.test(html),
-          "the tab strip must never pair an index label with an identical default title",
-        );
-        assert(
-          !/class="page-canvas-size"[^>]*>[^<]*第 \d+ 页[^<]*pt/.test(html.replace(title, "")),
-          "the canvas size badge must carry geometry, not the page title",
-        );
-      }
+      store.ui.paginationEditing = true;
+      const html = render();
+      assert(html.includes("页面标题去重课"), "the body editor remains the single visible projection");
+      assert(!html.includes('data-page-id="'), "legacy page selection is not rendered in the editor");
+      assert(store.data.layout_pages.some((candidate) => candidate.id === page.id),
+        "the selected page remains available to history and export");
     }
   } finally {
     restore();
@@ -5132,6 +5081,89 @@ Deno.test("explicit keep-local resolves a paused conflict without flushing its s
     assert(String(store.saveStatus) === "已保存", "the committed resolve ack clears the conflict state");
     assert(store.externalConflict === null, "the resolved conflict is cleared only after ack");
     assert(bridge.projectDir === resolveRequest?.project_dir, "resolve stays on the active directory");
+  } finally {
+    restore();
+  }
+});
+
+Deno.test("lesson completion does not require a layout", async () => {
+  const { store, restore } = await bootStore();
+  try {
+    store.addMapItem("无排版但已完成");
+    const item = store.currentItem()!;
+    store.addBlock("paragraph", "已完成的正文");
+    store.commit("完成正文状态", (data) => {
+      for (const key of ["content", "media", "review"]) {
+        const dimension = data.status_dimensions.find((row) => row.key === key);
+        const assignment = data.status_assignments.find((row) =>
+          row.content_item_id === item.id && row.dimension_id === dimension?.id
+        );
+        const terminal = data.status_options.find((row) =>
+          row.dimension_id === dimension?.id && row.is_terminal
+        );
+        assert(dimension && assignment && terminal, `${key} status fixture exists`);
+        assignment.option_id = terminal.id;
+      }
+    });
+
+    const progress = lessonProgress(store.data, item.id);
+    assert(!progress.has_layout, "fixture has no layout instance");
+    assert(progress.complete, "layout absence does not block completion");
+    assert(progress.percentage === 100, "completed content reports 100 percent");
+  } finally {
+    restore();
+  }
+});
+
+Deno.test("PowerPoint export renders durability warnings as escaped alerts", async () => {
+  const { store, restore } = await bootStore();
+  try {
+    store.ui.screen = "project";
+    store.ui.route = "publish";
+    store.ui.presentationExport = {
+      output_asset_id: "presentation-output-1",
+      page_count: 2,
+      source_sha256: "source-hash",
+      output_sha256: "output-hash",
+      validation: { status: "valid", checks: [] },
+      durability_warning: "目录同步尚未确认 <待重试>",
+    };
+
+    const html = createViews(store).shellView() as string;
+    assert(html.includes('role="alert">导出文件的持久化确认不完整：'), "export must visibly surface durability uncertainty");
+    assert(html.includes("目录同步尚未确认 &lt;待重试&gt;"), "durability warning text must be HTML-escaped");
+  } finally {
+    restore();
+  }
+});
+
+Deno.test("resource recovery warnings from project and task state remain visible", async () => {
+  const { store, bridge, restore } = await bootStore();
+  try {
+    const openedState = await bridge.readProjectState();
+    assert(
+      store.adoptProjectSnapshot({
+        ...openedState,
+        resource_recovery_warning: "项目恢复状态 <待确认>",
+      }),
+      "project read state with a recovery warning remains adoptable",
+    );
+    store.addMapItem("资源恢复提示测试");
+    store.ui.activeId = store.data.content_items[0]?.id ?? null;
+    store.ui.screen = "project";
+    store.ui.route = "editor";
+    store.ui.resourceTask = {
+      state: "failed",
+      progress: { completed_queries: 0, total_queries: 0 },
+      budget: { completed_requests: 0, max_requests: 0 },
+      errors: [],
+      candidates: [],
+      resource_recovery_warning: "任务回执 <待确认>",
+    };
+
+    const html = createViews(store).shellView() as string;
+    assert(html.includes("项目恢复状态 &lt;待确认&gt;"), "project recovery warning must render safely");
+    assert(html.includes("任务回执 &lt;待确认&gt;"), "task recovery warning must render safely");
   } finally {
     restore();
   }

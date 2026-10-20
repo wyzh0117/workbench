@@ -532,7 +532,10 @@ for (const signal of ["SIGINT", "SIGTERM"] as const) {
 // for a graceful stop. With WORKBENCH_SHUTDOWN_ON_STDIN_EOF=1 the service
 // treats its closed stdin as that request and runs the same clean shutdown
 // path (HTTP stop + DesktopService close) as SIGTERM on POSIX.
-if (Deno.env.get("WORKBENCH_SHUTDOWN_ON_STDIN_EOF") === "1") {
+if (
+  Deno.build.os === "windows" &&
+  Deno.env.get("WORKBENCH_SHUTDOWN_ON_STDIN_EOF") === "1"
+) {
   void (async () => {
     try {
       for await (const _chunk of Deno.stdin.readable) {

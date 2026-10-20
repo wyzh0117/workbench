@@ -29,6 +29,8 @@ import {
   saveProject,
   serializeProject,
 } from "../src/domain/index.ts";
+import { lessonProgress } from "../src/domain/views.ts";
+import { CURRENT_SCHEMA_VERSION } from "../src/domain/types.ts";
 
 function assert(
   condition: unknown,
@@ -167,6 +169,46 @@ Deno.test("Status assignment is one row per content/dimension", () => {
   );
 });
 
+Deno.test("lesson completion does not require layout or count layout gaps", () => {
+  const data = confirmedData();
+  const content = firstContent(data);
+  appendBlock(data, content.id, "heading", "小节", { level: 2 });
+  appendBlock(data, content.id, "paragraph", "正文");
+
+  for (const dimension of data.status_dimensions) {
+    const option = data.status_options.find((candidate) =>
+      candidate.dimension_id === dimension.id &&
+      (dimension.key === "layout" ? !candidate.is_terminal : candidate.is_terminal)
+    );
+    assert(option, `test fixture needs a status option for ${dimension.key}`);
+    assignStatus(data, content.id, dimension.key, option.key);
+  }
+  data.requirements.push({
+    id: "layout-gap",
+    content_item_id: content.id,
+    anchor_block_id: null,
+    type: "image",
+    scope: "layout",
+    layout_instance_id: null,
+    note: "需要排版图片",
+    status: "open",
+    priority: "normal",
+    resolved_asset_id: null,
+    resolved_block_id: null,
+    created_at: "2026-01-01T00:00:00.000Z",
+    resolved_at: null,
+  });
+
+  const progress = lessonProgress(data, content.id);
+  assert(!progress.has_layout, "layout availability remains informational");
+  assert(progress.complete, `layout state must not block completion: ${progress.reasons.join("；")}`);
+  assertEquals(progress.percentage, 100, "layout gaps do not reduce completion percentage");
+  assert(
+    progress.dimensions.some((dimension) => dimension.key === "layout" && !dimension.terminal),
+    "the layout status remains visible for planning",
+  );
+});
+
 Deno.test("Layout placements own grid coordinates; Blocks do not", () => {
   const data = confirmedData();
   const content = firstContent(data);
@@ -175,7 +217,7 @@ Deno.test("Layout placements own grid coordinates; Blocks do not", () => {
     name: "公众号",
     mode: "flow",
   });
-  assertEquals(first.schema_version, data.schema_version);
+  assertEquals(first.schema_version, CURRENT_SCHEMA_VERSION);
   const second = createLayoutInstance(data, content.id, {
     name: "3:4",
     mode: "grid",
@@ -411,14 +453,14 @@ Deno.test("Migration fills schema versions for legacy documents and layouts", ()
   delete (legacy.layout_instances[0] as unknown as Record<string, unknown>)
     .schema_version;
   const migrated = migrateProject(legacy);
-  assertEquals(migrated.documents[0]?.schema_version, migrated.schema_version);
+  assertEquals(migrated.documents[0]?.schema_version, CURRENT_SCHEMA_VERSION);
   assertEquals(
     migrated.layout_templates[0]?.schema_version,
-    migrated.schema_version,
+    CURRENT_SCHEMA_VERSION,
   );
   assertEquals(
     migrated.layout_instances[0]?.schema_version,
-    migrated.schema_version,
+    CURRENT_SCHEMA_VERSION,
   );
 });
 
@@ -431,6 +473,25 @@ Deno.test("Migration rejects malformed canonical collections instead of dropping
   assertThrows(
     () => migrateProject(legacy),
     "migration must not replace malformed canonical data with an empty array",
+  );
+});
+
+Deno.test("Resource canonical records reject missing cross references", () => {
+  const data = confirmedData();
+  data.resource_usages.push({
+    contract_version: 1,
+    id: "orphan-resource-usage",
+    project_id: data.project.id,
+    resource_id: "missing-resource",
+    lesson_id: firstContent(data).id,
+    block_id: null,
+    teaching_use: "课堂讨论",
+    discussion_questions: [],
+    created_at: data.project.created_at,
+  });
+  assertThrows(
+    () => serializeProject(data),
+    "Canonical resource usage must not point to a missing resource",
   );
 });
 

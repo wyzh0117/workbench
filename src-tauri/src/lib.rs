@@ -23,7 +23,11 @@ use tauri_plugin_dialog::DialogExt;
 
 pub mod documents;
 mod paged_export;
+mod presentation_import;
+mod presentation_workflows;
 mod registry;
+mod resource_providers;
+mod resource_workflows;
 
 static ID_COUNTER: AtomicU64 = AtomicU64::new(0);
 static LEASE_GENERATION_COUNTER: AtomicU64 = AtomicU64::new(0);
@@ -1448,35 +1452,119 @@ fn atomic_write_path(target: &Path, contents: &str, keep_backup: bool) -> Result
         .map_err(|failure| failure.message)
 }
 
-fn atomic_write_bytes_path(target: &Path, contents: &[u8]) -> Result<(), String> {
-    let parent = target.parent().ok_or("写入目标没有父目录")?;
-    ensure_directory(parent, "写入目标目录")?;
-    reject_symlink(target, "写入目标")?;
+fn atomic_write_bytes_path_report(
+    target: &Path,
+    contents: &[u8],
+) -> Result<Option<String>, AtomicWriteFailure> {
+    let parent = target.parent().ok_or_else(|| {
+        atomic_failure(
+            "写入目标没有父目录",
+            "target_prepare",
+            "not_committed",
+            false,
+        )
+    })?;
+    ensure_directory(parent, "写入目标目录")
+        .map_err(|error| atomic_failure(error, "target_prepare", "not_committed", false))?;
+    reject_symlink(target, "写入目标")
+        .map_err(|error| atomic_failure(error, "target_prepare", "not_committed", false))?;
     let file_name = target
         .file_name()
-        .ok_or("写入目标文件名无效")?
+        .ok_or_else(|| {
+            atomic_failure(
+                "写入目标文件名无效",
+                "target_prepare",
+                "not_committed",
+                false,
+            )
+        })?
         .to_string_lossy();
     let temporary = parent.join(format!(
         ".{file_name}.tmp-{}-{}",
         std::process::id(),
         native_id("write")
     ));
-    reject_symlink(&temporary, "临时文件")?;
+    reject_symlink(&temporary, "临时文件")
+        .map_err(|error| atomic_failure(error, "temp_prepare", "not_committed", false))?;
     let mut file = OpenOptions::new()
         .write(true)
         .create_new(true)
         .open(&temporary)
-        .map_err(|error| format!("无法创建临时文件: {error}"))?;
-    if let Err(error) = file.write_all(contents).and_then(|_| file.sync_all()) {
+        .map_err(|error| {
+            atomic_failure(
+                format!("无法创建临时文件: {error}"),
+                "temp_create",
+                "not_committed",
+                retryable_transient_io_error(&error),
+            )
+        })?;
+    if let Err(error) = file.write_all(contents) {
+        drop(file);
         let _ = fs::remove_file(&temporary);
-        return Err(format!("无法完成原子写入: {error}"));
+        return Err(atomic_failure(
+            format!("无法写入临时文件: {error}"),
+            "temp_write",
+            "not_committed",
+            retryable_transient_io_error(&error),
+        ));
+    }
+    if let Err(error) = file.sync_all() {
+        drop(file);
+        let _ = fs::remove_file(&temporary);
+        return Err(atomic_failure(
+            format!("无法同步临时文件: {error}"),
+            "temp_sync",
+            "not_committed",
+            retryable_transient_io_error(&error),
+        ));
     }
     drop(file);
-    let result = fs::rename(&temporary, target);
-    if result.is_err() {
+    let rename_result = fs::rename(&temporary, target);
+    let rename_result = if rename_result.is_ok()
+        && atomic_write_failure_requested(target, "canonical_rename_after")
+    {
+        Err(std::io::Error::new(
+            std::io::ErrorKind::Other,
+            "测试注入：rename 已完成但调用返回错误",
+        ))
+    } else {
+        rename_result
+    };
+    let mut post_commit_warnings = Vec::new();
+    if let Err(error) = rename_result {
         let _ = fs::remove_file(&temporary);
+        if fs::read(target).ok().as_deref() == Some(contents) {
+            post_commit_warnings.push(format!(
+                "目标文件已替换，但rename返回错误，已按正文确认提交：{error}"
+            ));
+        } else if target.exists() {
+            return Err(atomic_failure(
+                format!("无法替换目标文件: {error}"),
+                "canonical_rename",
+                "not_committed",
+                retryable_transient_io_error(&error),
+            ));
+        } else {
+            return Err(atomic_failure(
+                format!("无法确认目标文件替换结果: {error}"),
+                "canonical_rename",
+                "outcome_uncertain",
+                false,
+            ));
+        }
     }
-    result.map_err(|error| format!("无法替换目标文件: {error}"))
+    if atomic_write_failure_requested(target, "directory_sync") {
+        post_commit_warnings.push("文件内容已提交，但目录同步失败（测试注入）".into());
+    } else if let Err(error) = sync_directory_best_effort(parent) {
+        post_commit_warnings.push(format!("文件内容已提交，但目录同步失败：{error}"));
+    }
+    Ok((!post_commit_warnings.is_empty()).then(|| post_commit_warnings.join("；")))
+}
+
+fn atomic_write_bytes_path(target: &Path, contents: &[u8]) -> Result<(), String> {
+    atomic_write_bytes_path_report(target, contents)
+        .map(|_| ())
+        .map_err(|failure| failure.message)
 }
 
 fn clear_recovery_journal_path(project_dir: &Path) -> Result<bool, String> {
@@ -2377,7 +2465,7 @@ const CANONICAL_ARRAY_KEYS: [&str; 30] = [
     "publications",
 ];
 
-const CURRENT_PROJECT_SCHEMA_VERSION: &str = "1.0.0";
+const CURRENT_PROJECT_SCHEMA_VERSION: &str = "1.1.0";
 const PROJECT_JSON_LABEL: &str = "project.json";
 
 /// Parent/child id references between the primary collections, in the exact
@@ -2487,6 +2575,10 @@ fn json_type_name(value: &Value) -> &'static str {
 /// carry no field layout, so they take the additive fill path and are reported
 /// as migratable instead of rejected — the same rule the shell applies.
 fn schema_version_state(value: Option<&Value>) -> &'static str {
+    schema_version_state_for(value, CURRENT_PROJECT_SCHEMA_VERSION)
+}
+
+fn schema_version_state_for(value: Option<&Value>, current_schema: &str) -> &'static str {
     match value {
         None | Some(Value::Null) => "absent",
         Some(Value::Number(number)) => match number.as_f64() {
@@ -2511,7 +2603,7 @@ fn schema_version_state(value: Option<&Value>) -> &'static str {
             {
                 return "unsupported";
             }
-            let current: Vec<u64> = CURRENT_PROJECT_SCHEMA_VERSION
+            let current: Vec<u64> = current_schema
                 .split('.')
                 .map(|part| part.parse().unwrap_or(0))
                 .collect();
@@ -3092,6 +3184,7 @@ enum ProjectOpenOutcome {
         fingerprint: FileFingerprint,
         project_id: String,
         lease_generation: String,
+        resource_recovery_warning: Option<String>,
     },
 }
 
@@ -3146,6 +3239,9 @@ fn project_open_inner(project_dir: String) -> Result<Option<ProjectOpenOutcome>,
     }
     match read_project_state(&project_dir) {
         Ok((project, fingerprint)) => {
+            presentation_workflows::cleanup_pending_exports_on_open(&project_dir, &project);
+            let resource_recovery_warning =
+                resource_workflows::recover_project_on_open(&project_dir, &project);
             if let Err(error) =
                 store_project_baseline(&project_dir, fingerprint.clone(), Some(project.clone()))
             {
@@ -3168,6 +3264,7 @@ fn project_open_inner(project_dir: String) -> Result<Option<ProjectOpenOutcome>,
                 fingerprint,
                 project_id,
                 lease_generation,
+                resource_recovery_warning,
             }))
         }
         Err(error) => {
@@ -3201,6 +3298,7 @@ fn project_open_state(project_dir: String) -> Result<Option<Value>, String> {
                 fingerprint,
                 project_id,
                 lease_generation,
+                resource_recovery_warning,
             } => {
                 let mut state = json!({
                     "project": project,
@@ -3208,6 +3306,9 @@ fn project_open_state(project_dir: String) -> Result<Option<Value>, String> {
                     "project_id": project_id,
                     "lease_generation": lease_generation,
                 });
+                if let Some(warning) = resource_recovery_warning {
+                    state["resource_recovery_warning"] = json!(warning);
+                }
                 // Reuse the just-parsed canonical project so native startup
                 // can filter a post-commit journal without reopening project.json.
                 if let Ok(project_dir) = explicit_project_dir(&project_dir, false) {
@@ -9339,13 +9440,13 @@ fn blank_adopt_project(title: &str) -> Result<Value, String> {
         }
     }
     Ok(json!({
-        "schema_version": "1.0.0",
+        "schema_version": CURRENT_PROJECT_SCHEMA_VERSION,
         "project": {
             "id": project_id,
             "title": title,
             "description": "",
             "language": "zh-CN",
-            "schema_version": "1.0.0",
+            "schema_version": CURRENT_PROJECT_SCHEMA_VERSION,
             "created_at": now,
             "updated_at": now,
             "archived": false,
@@ -9359,6 +9460,12 @@ fn blank_adopt_project(title: &str) -> Result<Value, String> {
         "requirements": [],
         "assets": [],
         "asset_usages": [],
+        "source_evidence": [],
+        "resource_items": [],
+        "resource_usages": [],
+        "style_profiles": [],
+        "presentation_documents": [],
+        "slide_plans": [],
         "status_dimensions": status_dimensions,
         "status_options": status_options,
         "status_assignments": [],
@@ -9438,7 +9545,7 @@ fn adopt_add_lesson(
         .push(json!({
             "id": document_id,
             "content_item_id": content_id,
-            "schema_version": CURRENT_PROJECT_SCHEMA_VERSION,
+            "schema_version": "1.0.0",
             "created_at": rfc3339_now(),
             "updated_at": rfc3339_now(),
         }));
@@ -11357,8 +11464,9 @@ fn print_projection_pdf(
     project_dir: &Path,
     output_path: &Path,
 ) -> Result<(), String> {
-    let chrome = chrome_binary()
-        .ok_or("PDF 导出需要本机 Chrome / Edge / Chromium 打印引擎；请安装后重试，或先导出 HTML。")?;
+    let chrome = chrome_binary().ok_or(
+        "PDF 导出需要本机 Chrome / Edge / Chromium 打印引擎；请安装后重试，或先导出 HTML。",
+    )?;
     let staging = unique_export_staging(output_path)?;
     fs::create_dir_all(&staging).map_err(|error| format!("无法创建 PDF 临时目录：{error}"))?;
     let result = (|| {
@@ -11549,8 +11657,9 @@ fn print_html_pdf(
     output_path: &Path,
     content_item_id: Option<&str>,
 ) -> Result<(), String> {
-    let chrome = chrome_binary()
-        .ok_or("PDF 导出需要本机 Chrome / Edge / Chromium 打印引擎；请安装后重试，或先导出 HTML。")?;
+    let chrome = chrome_binary().ok_or(
+        "PDF 导出需要本机 Chrome / Edge / Chromium 打印引擎；请安装后重试，或先导出 HTML。",
+    )?;
     let staging = unique_export_staging(output_path)?;
     fs::create_dir_all(&staging).map_err(|error| format!("无法创建 PDF 临时目录: {error}"))?;
     let result = (|| {
@@ -13675,6 +13784,7 @@ fn ai_store_paths(base: &Path) -> AiStorePaths {
 
 #[cfg_attr(test, allow(dead_code))]
 const AI_KEYCHAIN_SERVICE: &str = "com.ai-course-workbench.ai";
+const RESOURCE_KEYCHAIN_SERVICE: &str = "com.ai-course-workbench.resources";
 
 trait AiCredentialStore {
     fn set(&self, provider_id: &str, value: &str) -> Result<(), String>;
@@ -13776,6 +13886,7 @@ fn keychain_delete_args(account: &str, service: &str) -> Vec<String> {
 
 #[cfg_attr(test, allow(dead_code))]
 struct MacKeychainStore {
+    service: String,
     account_prefix: String,
 }
 
@@ -13786,7 +13897,15 @@ impl MacKeychainStore {
         // stable digest keeps native and browser project credentials isolated.
         let digest = sha256_hex(base.to_string_lossy().as_bytes());
         Self {
+            service: AI_KEYCHAIN_SERVICE.to_owned(),
             account_prefix: format!("project-{}:provider:", &digest[..32]),
+        }
+    }
+
+    fn for_resources() -> Self {
+        Self {
+            service: RESOURCE_KEYCHAIN_SERVICE.to_owned(),
+            account_prefix: "provider:".to_owned(),
         }
     }
 
@@ -13800,7 +13919,7 @@ impl AiCredentialStore for MacKeychainStore {
         // See `keychain_add_args`: the value must be the argument of `-w`, and
         // the write has to be verified by reading it back before we report
         // success.
-        let args = keychain_add_args(&self.account(provider_id), AI_KEYCHAIN_SERVICE, value);
+        let args = keychain_add_args(&self.account(provider_id), &self.service, value);
         let (code, _) = security_command(&args)?;
         if code != 0 {
             return Err(keychain_failure("set"));
@@ -13812,7 +13931,7 @@ impl AiCredentialStore for MacKeychainStore {
     }
 
     fn get(&self, provider_id: &str) -> Result<Option<String>, String> {
-        let args = keychain_get_args(&self.account(provider_id), AI_KEYCHAIN_SERVICE);
+        let args = keychain_get_args(&self.account(provider_id), &self.service);
         let (code, stdout) = security_command(&args)?;
         if code == 44 {
             return Ok(None);
@@ -13828,7 +13947,7 @@ impl AiCredentialStore for MacKeychainStore {
     }
 
     fn delete(&self, provider_id: &str) -> Result<bool, String> {
-        let args = keychain_delete_args(&self.account(provider_id), AI_KEYCHAIN_SERVICE);
+        let args = keychain_delete_args(&self.account(provider_id), &self.service);
         let (code, _) = security_command(&args)?;
         match code {
             0 => Ok(true),
@@ -13846,6 +13965,7 @@ impl AiCredentialStore for MacKeychainStore {
 /// same fail-closed semantics as the macOS store.
 #[cfg_attr(not(target_os = "windows"), allow(dead_code))]
 struct WindowsCredentialStore {
+    service: String,
     account_prefix: String,
 }
 
@@ -13856,7 +13976,15 @@ impl WindowsCredentialStore {
         // project credentials stay isolated and no path leaks into metadata.
         let digest = sha256_hex(base.to_string_lossy().as_bytes());
         Self {
+            service: AI_KEYCHAIN_SERVICE.to_owned(),
             account_prefix: format!("project-{}:provider:", &digest[..32]),
+        }
+    }
+
+    fn for_resources() -> Self {
+        Self {
+            service: RESOURCE_KEYCHAIN_SERVICE.to_owned(),
+            account_prefix: "provider:".to_owned(),
         }
     }
 
@@ -13865,7 +13993,7 @@ impl WindowsCredentialStore {
     }
 
     fn target_name(&self, provider_id: &str) -> String {
-        format!("{}:{}", AI_KEYCHAIN_SERVICE, self.account(provider_id))
+        format!("{}:{}", self.service, self.account(provider_id))
     }
 }
 
@@ -14021,6 +14149,26 @@ fn ai_credential_store(base: &Path) -> Box<dyn AiCredentialStore> {
         #[cfg(not(target_os = "windows"))]
         {
             Box::new(MacKeychainStore::for_base(base))
+        }
+    }
+}
+
+fn resource_credential_store() -> Box<dyn AiCredentialStore> {
+    #[cfg(test)]
+    {
+        return Box::new(TestAiCredentialStore {
+            namespace: RESOURCE_KEYCHAIN_SERVICE.to_owned(),
+        });
+    }
+    #[cfg(not(test))]
+    {
+        #[cfg(target_os = "windows")]
+        {
+            Box::new(WindowsCredentialStore::for_resources())
+        }
+        #[cfg(not(target_os = "windows"))]
+        {
+            Box::new(MacKeychainStore::for_resources())
         }
     }
 }
@@ -18526,6 +18674,67 @@ async fn ai_connection_delete(
     ai_connection_delete_at(&base, &provider_id)
 }
 
+fn resource_provider_id(raw: &str) -> Result<&'static str, String> {
+    match raw.trim() {
+        "brave_search" => Ok("brave_search"),
+        "youtube_data_api" => Ok("youtube_data_api"),
+        _ => Err("invalid_input: 不支持的资源服务。".into()),
+    }
+}
+
+fn resource_provider_statuses() -> Result<Value, String> {
+    let credentials = resource_credential_store();
+    let statuses = [
+        ("brave_search", vec!["web_search"]),
+        ("youtube_data_api", vec!["video_search", "video_metadata"]),
+    ];
+    let mut rows = Vec::with_capacity(statuses.len());
+    for (provider_id, capabilities) in statuses {
+        let credential_present = credentials
+            .get(provider_id)?
+            .is_some_and(|value| !value.trim().is_empty());
+        rows.push(json!({
+            "id": provider_id,
+            "capabilities": capabilities,
+            "credential_present": credential_present,
+        }));
+    }
+    Ok(Value::Array(rows))
+}
+
+#[tauri::command]
+fn resource_providers_list() -> Result<Value, String> {
+    resource_provider_statuses()
+}
+
+#[tauri::command]
+fn resource_secret_set(request: tauri::ipc::Request<'_>) -> Result<Value, String> {
+    let payload = ai_payload(&ai_invoke_args(&request), "resource_secret_set")?;
+    let provider_id = resource_provider_id(&required_string(
+        &payload,
+        &["provider_id", "providerId"],
+        "资源服务 ID",
+    )?)?;
+    let value = required_string(&payload, &["value"], "API Key")?;
+    if value.chars().count() > AI_CREDENTIAL_MAX_CHARS {
+        return Err("secret_invalid: API Key 过长，请确认粘贴的内容是否正确。".into());
+    }
+    resource_credential_store().set(provider_id, &value)?;
+    Ok(json!({ "provider_id": provider_id, "credential_present": true }))
+}
+
+#[tauri::command]
+fn resource_secret_delete(request: tauri::ipc::Request<'_>) -> Result<Value, String> {
+    let payload = ai_payload(&ai_invoke_args(&request), "resource_secret_delete")?;
+    let provider_id = resource_provider_id(&required_string(
+        &payload,
+        &["provider_id", "providerId"],
+        "资源服务 ID",
+    )?)?;
+    resource_credential_store().delete(provider_id)?;
+    Ok(json!({ "provider_id": provider_id, "credential_present": false }))
+}
+
 #[tauri::command]
 fn ai_secret_set(app: AppHandle, request: tauri::ipc::Request<'_>) -> Result<Value, String> {
     // 凭据值只在这里取一次，之后仅出现在写入内容里。
@@ -19087,6 +19296,50 @@ fn asset_rename(input: Value) -> Result<Value, String> {
 mod tests {
 
     use super::*;
+
+    #[test]
+    fn previous_project_schema_gate_rejects_1_1_source_level() {
+        let version = json!("1.1.0");
+        assert_eq!(
+            schema_version_state_for(Some(&version), "1.0.0"),
+            "unsupported"
+        );
+        assert_eq!(schema_version_state(Some(&version)), "current");
+    }
+
+    #[test]
+    fn native_project_open_rejects_future_schema_without_rewriting_file() {
+        let mut current = blank_adopt_project("项目版本门禁").expect("canonical project");
+        current["schema_version"] = json!(CURRENT_PROJECT_SCHEMA_VERSION);
+        current["project"]["schema_version"] = json!(CURRENT_PROJECT_SCHEMA_VERSION);
+        let accepted = inspect_project_value(&current);
+        assert_eq!(accepted["status"], json!("valid"));
+        assert_eq!(accepted["supported_schema_version"], json!("1.1.0"));
+
+        current["schema_version"] = json!("1.2.0");
+        let directory = test_directory("future-project-schema-open");
+        let path = directory.join("project.json");
+        let future_bytes = serde_json::to_vec_pretty(&current).expect("serialize fixture");
+        fs::write(&path, &future_bytes).expect("write future schema fixture");
+        let result = project_open_inner(directory.to_string_lossy().into_owned())
+            .expect("future schema is a classified open result");
+        let Some(ProjectOpenOutcome::Inspection(inspection)) = result else {
+            panic!("future schema must not open as a project");
+        };
+        assert_eq!(inspection["status"], json!("invalid"));
+        assert_eq!(inspection["problem"]["code"], json!("unsupported_schema"));
+        assert_eq!(
+            fs::read(&path).expect("future project remains present"),
+            future_bytes
+        );
+        assert!(
+            !project_lock_path(&directory)
+                .expect("project lock path")
+                .exists(),
+            "rejected future schema must release the newly acquired lease"
+        );
+        let _ = fs::remove_dir_all(directory);
+    }
 
     /// Escape fixture: a link at `link` that must never be followed out of its
     /// root. POSIX uses a symlink. Windows uses a real symlink when the
@@ -19970,6 +20223,28 @@ mod tests {
         assert_eq!(fs::read(backup_path).unwrap(), b"older verified backup");
         project_close(project_dir).unwrap();
         let _ = fs::remove_dir_all(directory);
+    }
+
+    #[test]
+    fn atomic_binary_write_keeps_committed_file_and_reports_post_rename_uncertainty() {
+        for stage in ["canonical_rename_after", "directory_sync"] {
+            let directory = test_directory(&format!("binary-write-{stage}"));
+            let target = directory.join("output.pptx");
+            fail_atomic_write_for_test(&target, stage);
+
+            let warning = match atomic_write_bytes_path_report(&target, b"pptx-bytes") {
+                Ok(warning) => warning,
+                Err(_) => panic!("post-rename faults must remain committed warnings"),
+            };
+            assert!(warning.as_deref().is_some_and(|value| !value.is_empty()));
+            assert_eq!(fs::read(&target).unwrap(), b"pptx-bytes");
+            assert!(fs::read_dir(&directory).unwrap().all(|entry| !entry
+                .unwrap()
+                .file_name()
+                .to_string_lossy()
+                .contains(".tmp-")));
+            let _ = fs::remove_dir_all(directory);
+        }
     }
 
     #[test]
@@ -22663,7 +22938,7 @@ mod tests {
         project["documents"] = json!([{
             "id": "doc-1",
             "content_item_id": "lesson-1",
-            "schema_version": CURRENT_PROJECT_SCHEMA_VERSION,
+            "schema_version": "1.0.0",
             "created_at": "2026-10-06T00:00:00.000Z",
             "updated_at": "2026-10-06T00:00:00.000Z"
         }]);
@@ -26089,12 +26364,33 @@ mod tests {
         assert!(root.join("project.json").exists());
         assert!(root.join(".workspace").exists());
         let canonical = read_project_value(&root).expect("adopted Canonical");
+        assert_eq!(
+            canonical["schema_version"],
+            json!(CURRENT_PROJECT_SCHEMA_VERSION)
+        );
+        assert_eq!(
+            canonical["project"]["schema_version"],
+            json!(CURRENT_PROJECT_SCHEMA_VERSION)
+        );
+        for key in [
+            "source_evidence",
+            "resource_items",
+            "resource_usages",
+            "style_profiles",
+            "presentation_documents",
+            "slide_plans",
+        ] {
+            assert!(
+                canonical[key].is_array(),
+                "{key} must exist in new Canonical projects"
+            );
+        }
         assert!(canonical["layout_pages"].is_array());
         assert!(canonical["documents"]
             .as_array()
             .unwrap()
             .iter()
-            .all(|document| document["schema_version"] == json!(CURRENT_PROJECT_SCHEMA_VERSION)));
+            .all(|document| document["schema_version"] == json!("1.0.0")));
         assert_eq!(
             fs::read(root.join("01-基础/intro.png")).unwrap(),
             original_png,
@@ -29171,7 +29467,23 @@ pub fn run() {
             ai_complete,
             ai_cancel,
             ai_execution_append,
-            ai_execution_list
+            ai_execution_list,
+            resource_providers_list,
+            resource_secret_set,
+            resource_secret_delete,
+            resource_workflows::resource_discovery_prepare,
+            resource_workflows::resource_discovery_start,
+            resource_workflows::resource_discovery_cancel,
+            resource_workflows::resource_discovery_retry,
+            resource_workflows::resource_discovery_plan,
+            resource_workflows::resource_discovery_get,
+            resource_workflows::resource_candidate_accept,
+            presentation_workflows::presentation_style_extract,
+            presentation_workflows::presentation_style_save,
+            presentation_workflows::presentation_slide_prepare_ai_context,
+            presentation_workflows::presentation_slide_propose,
+            presentation_workflows::presentation_slide_preview,
+            presentation_workflows::presentation_slide_export
         ])
         .build(tauri::generate_context!())
         .expect("error while building AI Course Workbench");

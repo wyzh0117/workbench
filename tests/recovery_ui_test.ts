@@ -316,9 +316,9 @@ Deno.test("native project transitions keep A to B to A reader positions and sess
     assert(first.bridge.projectDir === "A", "second switch must return to A");
     assert(store.data.project.id === projects.A.project.id, "A must be canonical after returning");
     assert(store.ui.activeId === projects.A.content_items[0].id, "A's saved lesson must return");
-    assert(store.ui.mode === "structure", "A's saved mode must return");
-    assert(store.ui.rightPanel === "media", "A's saved panel must return");
-    assert(store.ui.route === "media", "A's saved route must return");
+    assert(store.ui.mode === "writing", "A's removed structure mode must return as writing");
+    assert(store.ui.rightPanel === "assistant", "A's removed media panel must normalize to assistant");
+    assert(store.ui.route === "editor", "A's removed media route must normalize to the editor");
     assert(store.tabs[0]?.pinned === true && store.tabs[0]?.scroll_top === 42, "A's saved tab position must return");
 
     // Immediate save and close must continue to use the committed A identity.
@@ -347,7 +347,7 @@ Deno.test("native project transitions keep A to B to A reader positions and sess
     assert(restart.bridge.projectDir === "A", "restart must select the last committed project");
     assert(restarted.data.project.id === projects.A.project.id, "restart must load the committed project");
     assert(restarted.ui.activeId === projects.A.content_items[0].id, "restart must restore A's reading position");
-    assert(restarted.ui.mode === "structure" && restarted.ui.route === "media", "restart must restore A's mode and view");
+    assert(restarted.ui.mode === "writing" && restarted.ui.route === "editor", "restart must normalize A's removed structure/media routes");
   } finally {
     runtime.document = previousDocument;
     runtime.__TAURI__ = previousTauri;

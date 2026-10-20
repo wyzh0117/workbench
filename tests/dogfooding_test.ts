@@ -1007,7 +1007,7 @@ Deno.test("hint text never reaches canonical content", async () => {
   }
 });
 
-Deno.test("a new block is selected and the properties panel opens without stealing focus", async () => {
+Deno.test("a new block is selected without replacing the AI panel or stealing focus", async () => {
   const data = projectWith("新建区块");
   const { bridge } = nativeBridge({ "/tmp/a": data }, "/tmp/a", { next: null });
   const { store, restore } = await bootStore(bridge);
@@ -1019,37 +1019,30 @@ Deno.test("a new block is selected and the properties panel opens without steali
     store.addBlock("paragraph");
     const created = store.data.blocks.at(-1)!;
     assert(store.ui.selectedBlockId === created.id, "the new block must be selected");
-    assert(store.ui.rightPanel === "properties", "属性 must open for the new block");
+    assert(store.ui.rightPanel !== "properties", "block details must not replace the persistent AI panel");
     assert(store.ui.focusField === "", "creating a block must not request focus anywhere");
   } finally {
     restore();
   }
 });
 
-Deno.test("the render that creates a block already shows 属性", async () => {
-  // The panel used to be assigned after `commit`, whose render had already
-  // run: the store was right, the screen still showed the old panel.
+Deno.test("block details open in a local dialog while the AI panel stays present", async () => {
   const dom = await bootDom();
   try {
     const data = projectWith("属性面板");
+    const open = dom.createNode({ action: "open-block-properties" });
+    dom.actionNodes.push(open);
     dom.renderProject(data);
-    const writesBefore = dom.htmlWrites.length;
     dom.store.addBlock("paragraph");
-    assert(
-      dom.htmlWrites.length > writesBefore,
-      "creating a block must render exactly through its commit",
-    );
-    const html = dom.lastHtml();
-    assert(
-      html.includes(
-        'class="right-tab active" data-action="right-panel" data-panel="properties"',
-      ),
-      "the render that adds the block must already show 属性 as the open panel",
-    );
-    assert(
-      dom.store.ui.selectedBlockId === data.blocks.at(-1)!.id,
-      "the new block must be selected in the same render",
-    );
+    const created = dom.store.data.blocks.at(-1)!;
+    assert(dom.store.ui.selectedBlockId === created.id, "the new block is selected");
+    assert(dom.lastHtml().includes("AI 助手"), "the persistent AI panel remains visible");
+    assert(dom.lastHtml().includes('data-action="open-block-properties"'), "the block menu exposes 属性");
+    open.dataset.id = created.id;
+    open.fire("click", { target: open });
+    assert(dom.lastHtml().includes('class="modal block-properties-modal"'), "属性 opens in a local dialog");
+    assert(dom.lastHtml().includes("data-block-text"), "the dialog retains block editing controls");
+    assert(dom.lastHtml().includes("AI 助手"), "the AI panel remains behind the dialog");
   } finally {
     dom.restore();
   }
@@ -1337,9 +1330,9 @@ Deno.test("a real click on the course title opens the inline editor and it stays
   const dom = await bootDom();
   try {
     const data = projectWith("在线改名");
-    const title = dom.createNode({ action: "edit-project-title" });
+    const title = dom.createNode({ action: "edit-project-title", titleSurface: "map" });
     dom.actionNodes.push(title);
-    dom.renderProject(data);
+    dom.renderProject(data, { route: "overview" });
     assert(dom.store.ui.editingProjectTitle === false, "the title starts as text");
 
     title.fire("click", { target: title });
@@ -1470,7 +1463,7 @@ Deno.test("the preview draws the real grid geometry and lists unplaced content",
   }
 });
 
-Deno.test("preview markup carries grid position, span, section and unplaced content", async () => {
+Deno.test("legacy free-layout data remains intact while its route opens the editor", async () => {
   const dom = await bootDom();
   try {
     const data = projectWith("网格预览渲染");
@@ -1494,30 +1487,14 @@ Deno.test("preview markup carries grid position, span, section and unplaced cont
     dom.store.data.placements[0]!.section_id = section.id;
     dom.store.renameSection(section.id, "第一页");
 
-    const html = dom.renderProject(data, { mode: "preview" });
-    assert(html.includes("preview-paper-grid"), "Grid mode must use the grid paper");
-    assert(html.includes("preview-grid-cell"), "each placement must render as a grid cell");
-    assert(
-      /grid-row:\d+\/\d+;grid-column:\d+\/\d+/.test(html),
-      "the cell must carry the real row/column span",
-    );
-    const cell = html.slice(html.indexOf("preview-grid-cell"));
-    assert(cell.includes("grid-column:2/4"), "the resized placement must show its span");
-    assert(html.includes("第一页"), "the section must be named on its own canvas");
-    assert(
-      html.includes("还没有放进网格"),
-      "content that is not on the canvas must be listed instead of drawn as flow",
-    );
-    assert(
-      html.includes("还没上画布的正文"),
-      "the unplaced block must be visible with its text",
-    );
-    // Flow mode still renders the plain paper.
-    const flow = dom.renderProject(data, { mode: "preview", route: "editor" });
-    dom.store.setLayoutMode("flow");
-    const flowHtml = dom.renderProject(data, { mode: "preview" });
-    assert(flow.includes("preview-paper"), "the preview must render at all");
-    assert(!flowHtml.includes("preview-grid-cell"), "Flow mode must not draw grid cells");
+    const savedPlacement = structuredClone(placement);
+    const html = dom.renderProject(data, { route: "free-layout", mode: "writing" });
+    assert(html.includes("workbench-page"), "legacy free-layout opens the current editor");
+    assert(!html.includes("preview-paper-grid") && !html.includes("data-grid-surface"),
+      "the removed Grid canvas is not rendered");
+    assert(dom.store.data.layout_instances.length > 0, "legacy layout rows remain in project data");
+    assert(JSON.stringify(dom.store.data.placements[0]) === JSON.stringify(savedPlacement),
+      "legacy placement geometry and section binding remain intact");
   } finally {
     dom.restore();
   }
@@ -1656,7 +1633,7 @@ Deno.test("P2-4 a grid block lands on the first free cell and can be moved delib
   }
 });
 
-Deno.test("P2-2 and P2-4 markup matches the interaction model it promises", async () => {
+Deno.test("legacy placement data does not render removed Grid interaction controls", async () => {
   const data = projectWith("交互外观");
   const item = data.content_items[0]!;
   appendBlock(data, item.id, "paragraph", "留在下面的第二段");
@@ -1672,26 +1649,18 @@ Deno.test("P2-2 and P2-4 markup matches the interaction model it promises", asyn
     const blocks = store.blocks(item);
     store.placeBlock(blocks[0]!.id);
     const placement = store.data.placements[0]!;
-    store.startMovePlacement(placement.id);
-    const movingHtml = shellMarkup(store);
-    assert(
-      String(movingHtml).includes("grid-moving-banner"),
-      "the move state must say which block is moving",
-    );
-    assert(
-      String(movingHtml).includes("grid-cell-target"),
-      "the move state must show where the block can go",
-    );
-    store.cancelMovePlacement();
+    const savedPlacement = structuredClone(placement);
     const html = shellMarkup(store);
     assert(
-      !html.includes("grid-cell-target"),
-      "cell targets must disappear once the move is cancelled",
+      html.includes("留在下面的第二段"),
+      "legacy route keeps the current lesson content readable",
     );
     assert(
-      html.includes("data-action=\"place-block\"") && html.includes("data-placement="),
-      "the strip and the canvas must both be present",
+      !html.includes("data-grid-surface") && !html.includes("data-action=\"place-block\""),
+      "the removed Grid interaction surface is not rendered",
     );
+    assert(JSON.stringify(store.data.placements[0]) === JSON.stringify(savedPlacement),
+      "the legacy placement record remains unchanged");
   } finally {
     restore();
   }
@@ -2005,6 +1974,457 @@ Deno.test("a single lesson reports gaps instead of a made-up percentage", async 
       !mapItem.includes("progress.percentage"),
       "课程地图 的每一课 must not show a percentage either",
     );
+  } finally {
+    restore();
+  }
+});
+
+function addSecondLesson(data: ProjectData) {
+  const first = data.content_items[0]!;
+  const id = crypto.randomUUID();
+  const document = createDocument(data, id);
+  const second = {
+    ...structuredClone(first),
+    id,
+    code: "S01-02",
+    title: "第二课",
+    order_index: 1,
+    document_id: document.id,
+    created_at: now(),
+    updated_at: now(),
+  };
+  data.content_items.push(second);
+  initializeContentStatuses(data, id);
+  return second;
+}
+
+async function resourceAcceptDom(
+  data: ProjectData,
+  candidate: Record<string, any>,
+  targetLessonId: string,
+  plannedLessonIds: string[],
+  fields: Record<string, { value?: string; checked?: boolean }>,
+) {
+  const dom = await bootDom();
+  const action = dom.createNode({
+    action: "resource-accept",
+    task: "task-ui-test",
+    id: candidate.id,
+    lesson: targetLessonId,
+    acceptAction: "keep",
+  });
+  const card: any = dom.createNode({ resourceCandidate: candidate.id });
+  card.querySelector = (selector: string) => fields[selector] ?? null;
+  action.closest = (selector: string) => selector === "[data-resource-candidate]" ? card : null;
+  dom.actionNodes.push(action);
+  const calls: Array<{ command: string; input: Record<string, any> }> = [];
+  dom.store.runCanonicalMutation = async (command: string, input: Record<string, any>) => {
+    calls.push({ command, input: structuredClone(input) });
+    return {};
+  };
+  dom.store.refreshResourceTask = async () => {};
+  dom.renderProject(data, {
+    route: "inbox",
+    activeId: targetLessonId,
+    resourcePlan: { content_item_ids: plannedLessonIds },
+    resourceTask: { task_id: "task-ui-test", state: "completed", candidates: [candidate] },
+  });
+  return {
+    ...dom,
+    action,
+    calls,
+    click: async () => {
+      action.fire("click", { target: action });
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    },
+  };
+}
+
+Deno.test("accepted resource can be explicitly reused in another planned lesson", async () => {
+  const data = projectWith("跨课资源");
+  const first = data.content_items[0]!;
+  const second = addSecondLesson(data);
+  const resourceId = "resource-shared-ui-test";
+  const evidenceId = "source-shared-ui-test";
+  data.source_evidence.push({
+    id: evidenceId,
+    project_id: data.project.id,
+    provider_id: "brave_search",
+    request_id: "request-shared-ui-test",
+    url: "https://example.test/event",
+    title: "救援案例来源",
+    event_date: "2026-09-12",
+    fetched_at: now(),
+    evidence_access: "metadata_only",
+    fact_check: "unchecked",
+    limitations: [],
+  } as any);
+  data.resource_items.push({
+    contract_version: 1,
+    id: resourceId,
+    project_id: data.project.id,
+    medium: "case",
+    title: "洪灾响应案例",
+    source_ids: [evidenceId],
+    factual_summary: "同一事件的案例摘要",
+    claims: [],
+    revision: 1,
+    created_at: now(),
+    updated_at: now(),
+  } as any);
+  data.resource_usages.push({
+    contract_version: 1,
+    id: "usage-shared-ui-test",
+    project_id: data.project.id,
+    resource_id: resourceId,
+    lesson_id: first.id,
+    teaching_use: "用于第一课讨论",
+    discussion_questions: [],
+    created_at: now(),
+    updated_at: now(),
+  } as any);
+  const candidate = {
+    id: "candidate-shared-ui-test",
+    project_id: data.project.id,
+    lesson_id: first.id,
+    medium: "case",
+    status: "accepted",
+    accepted_resource_id: resourceId,
+    title: "洪灾响应候选",
+    factual_summary: "已审核的候选",
+    url: "https://example.test/event",
+    source_evidence: [],
+    claims: [],
+    limitations: [],
+  };
+  const dom = await resourceAcceptDom(data, candidate, second.id, [first.id, second.id], {
+    "[data-resource-use]": { value: "用于第二课案例比较" },
+    "[data-resource-questions]": { value: "讨论两课的应急措施" },
+  });
+  try {
+    assert(dom.lastHtml().includes("已保存为"), "the candidate shows its readable saved-resource binding");
+    assert(dom.lastHtml().includes("洪灾响应案例"), "the saved resource title is visible");
+    assert(dom.lastHtml().includes(`已用于：${first.code} ${first.title}`), "the existing lesson usage is visible");
+    assert(dom.lastHtml().includes("添加到当前课"), "the other planned lesson has an explicit reuse action");
+    assert(dom.lastHtml().includes(`data-lesson="${second.id}"`), "the action targets the selected lesson");
+    assert(!dom.lastHtml().includes("本候选将作为新资源保存"), "a bound candidate is never described as a new resource");
+
+    await dom.click();
+    assert(dom.calls.length === 1, "reuse dispatches one canonical accept");
+    assert(dom.calls[0]!.command === "resource.candidate.accept", "reuse uses the canonical accept action");
+    assert(dom.calls[0]!.input.candidate_id === candidate.id, "reuse keeps the candidate identity");
+    assert(dom.calls[0]!.input.lesson_id === second.id, "reuse targets the selected planned lesson");
+    assert(!dom.calls[0]!.input.existing_resource_id, "same-candidate reuse does not masquerade as event merging");
+  } finally {
+    dom.restore();
+  }
+});
+
+Deno.test("resource merge needs a readable same-event confirmation", async () => {
+  const data = projectWith("显式资源合并");
+  const lesson = data.content_items[0]!;
+  const evidenceId = "source-existing-merge-ui-test";
+  const resourceId = "resource-existing-merge-ui-test";
+  data.source_evidence.push({
+    id: evidenceId,
+    project_id: data.project.id,
+    provider_id: "brave_search",
+    request_id: "request-existing-merge-ui-test",
+    url: "https://example.test/old-event",
+    title: "区县防洪复盘",
+    event_date: "2026-05-03",
+    fetched_at: now(),
+    evidence_access: "metadata_only",
+    fact_check: "unchecked",
+    limitations: [],
+  } as any);
+  data.resource_items.push({
+    contract_version: 1,
+    id: resourceId,
+    project_id: data.project.id,
+    medium: "case",
+    title: "2026 汛情复盘",
+    source_ids: [evidenceId],
+    factual_summary: "既有来源摘要",
+    claims: [],
+    revision: 1,
+    created_at: now(),
+    updated_at: now(),
+  } as any);
+  const candidate = {
+    id: "candidate-new-event-source-ui-test",
+    project_id: data.project.id,
+    lesson_id: lesson.id,
+    medium: "case",
+    status: "pending",
+    title: "另一篇防洪报道",
+    factual_summary: "候选报道摘要",
+    url: "https://example.test/new-source",
+    source_evidence: [],
+    claims: [],
+    limitations: [],
+  };
+  const fields = {
+    "[data-resource-use]": { value: "比较不同来源的复盘结论" },
+    "[data-resource-questions]": { value: "" },
+    "[data-resource-existing]": { value: resourceId },
+    "[data-resource-merge-confirm]": { checked: false },
+  };
+  const dom = await resourceAcceptDom(data, candidate, lesson.id, [lesson.id], fields);
+  try {
+    assert(dom.lastHtml().includes("2026 汛情复盘"), "the existing target is listed by readable title");
+    assert(dom.lastHtml().includes("2026-05-03"), "the picker includes the source date");
+    assert(dom.lastHtml().includes("区县防洪复盘"), "the picker includes the source name");
+    assert(dom.lastHtml().includes("属于同一事件"), "the separate confirmation describes the merge choice");
+
+    await dom.click();
+    assert(dom.calls.length === 0, "a selected target without explicit confirmation writes nothing");
+    assert(dom.store.ui.resourceError.includes("确认"), "the missing confirmation is explained");
+    fields["[data-resource-merge-confirm]"].checked = true;
+    await dom.click();
+    assert(Number(dom.calls.length) === 1, "confirmed merge dispatches once");
+    assert(dom.calls[0]!.input.existing_resource_id === resourceId, "the chosen resource is explicit");
+    assert(dom.calls[0]!.input.merge_confirmed === true, "the merge confirmation is explicit");
+    assert(dom.calls[0]!.input.candidate_id === candidate.id, "different candidate identity is preserved");
+  } finally {
+    dom.restore();
+  }
+});
+
+Deno.test("manual video timing is confirmed, bounded and sent without a metadata clip claim", async () => {
+  const data = projectWith("人工视频片段");
+  const lesson = data.content_items[0]!;
+  const candidate = {
+    id: "candidate-video-ui-test",
+    project_id: data.project.id,
+    lesson_id: lesson.id,
+    medium: "video",
+    status: "pending",
+    title: "应急处置教学视频",
+    factual_summary: "平台元数据摘要",
+    url: "https://www.youtube.com/watch?v=abcdefghijk",
+    source_evidence: [{
+      id: "source-video-duration-ui-test",
+      provider_id: "youtube_data_api",
+      request_id: "request-video-duration-ui-test",
+      url: "https://www.youtube.com/watch?v=abcdefghijk",
+      title: "应急处置教学视频",
+      fetched_at: now(),
+      evidence_access: "metadata_only",
+      fact_check: "unchecked",
+      limitations: ["只有平台元数据"],
+    }],
+    video: {
+      provider_id: "youtube_data_api",
+      provider_video_id: "abcdefghijk",
+      total_duration_sec: 300,
+      duration_evidence_id: "source-video-duration-ui-test",
+      embeddable: false,
+      region_availability: "available",
+      metadata_limitations: ["没有字幕证据"],
+    },
+    claims: [],
+    limitations: [],
+  };
+  const fields = {
+    "[data-resource-use]": { value: "分析这段处置过程" },
+    "[data-resource-questions]": { value: "" },
+    "[data-resource-video-mode]": { value: "clip" },
+    "[data-resource-timing-start]": { value: "30" },
+    "[data-resource-timing-end]": { value: "90" },
+    "[data-resource-timing-confirm]": { checked: true },
+  };
+  const dom = await resourceAcceptDom(data, candidate, lesson.id, [lesson.id], fields);
+  try {
+    assert(dom.lastHtml().includes("5:00"), "the authoritative total duration is shown");
+    assert(dom.lastHtml().includes("人工查看记录，不代表字幕或口播已校验"), "the UI does not claim transcript verification");
+
+    await dom.click();
+    assert(dom.calls.length === 0, "manual timing and an existing evidence clip cannot be combined");
+    assert(dom.store.ui.resourceError.includes("不能同时选择"), "the conflicting clip modes are explained");
+    fields["[data-resource-video-mode]"].value = "full";
+    await dom.click();
+    assert(Number(dom.calls.length) === 1, "a confirmed manual clip can be accepted");
+    assert(JSON.stringify(dom.calls[0]!.input.manual_video_timing) === JSON.stringify({
+      start_sec: 30,
+      end_sec: 90,
+      confirmed: true,
+    }), "the request carries only user-entered times and confirmation");
+    assert(!dom.calls[0]!.input.video_selection, "manual timing is not labelled as provider timing evidence");
+  } finally {
+    dom.restore();
+  }
+});
+
+Deno.test("AI slide generation requires context consent and discards stale replies", async () => {
+  const data = projectWith("AI 补充页");
+  const lesson = data.content_items[0]!;
+  const sourceAsset = {
+    id: "ppt-source-ai-ui",
+    project_id: data.project.id,
+    title: "课堂课件",
+    filename: "class.pptx",
+    checksum: "a".repeat(64),
+    archived: false,
+  };
+  const targetAsset = {
+    ...sourceAsset,
+    id: "ppt-target-ai-ui",
+    title: "课堂课件工作副本",
+    checksum: "b".repeat(64),
+  };
+  const profile = {
+    id: "style-ai-ui",
+    project_id: data.project.id,
+    source_asset_id: sourceAsset.id,
+    variant_id: "variant-main",
+    revision: 1,
+    markdown_hash: "c".repeat(64),
+  };
+  const document = {
+    id: "document-ai-ui",
+    project_id: data.project.id,
+    source_asset_id: sourceAsset.id,
+    current_asset_id: targetAsset.id,
+    revision: 1,
+  };
+  data.assets.push(sourceAsset as any, targetAsset as any);
+  data.style_profiles = [profile as any];
+  data.presentation_documents = [document as any];
+
+  const calls: Array<{ name: string; input: any }> = [];
+  let connection: any = null;
+  let completionMode: "deferred" | "valid" | "invalid_source" = "deferred";
+  let resolveCompletion = (_value: unknown) => {};
+  const slideSpec = {
+    layout_ref: profile.variant_id,
+    title: "洪水预警信息",
+    body: [{ kind: "bullet", text: "核对预警等级与发布时间" }],
+    image_asset_ids: [],
+    source_ids: [],
+    speaker_notes: "",
+  };
+  const aiResult = (spec: unknown) => ({
+    status: 200,
+    headers: { "content-type": "application/json" },
+    body: { choices: [{ message: { content: JSON.stringify(spec) } }] },
+    response_kind: "json",
+  });
+  const bridge = {
+    projectDir: "/tmp/presentation-ai-ui",
+    command: async (name: string, input: any = {}) => {
+      calls.push({ name, input });
+      if (name === "presentation.slide.prepare_ai_context") {
+        return {
+          generation_id: input.generation_id,
+          session_generation: input.session_generation,
+          editor_generation: input.editor_generation,
+          project_id: data.project.id,
+          document_id: document.id,
+          lesson_id: lesson.id,
+          lesson_snapshot_sha256: "d".repeat(64),
+          style_profile_id: profile.id,
+          style_revision: profile.revision,
+          style_markdown_sha256: profile.markdown_hash,
+          target_asset_id: targetAsset.id,
+          target_asset_sha256: targetAsset.checksum,
+          variant_id: profile.variant_id,
+          insert_after_slide_id: null,
+          insertion_order: 1,
+          provider_id: input.provider_id,
+          model: input.model,
+          context_sha256: "e".repeat(64),
+          snapshot_binding_sha256: "f".repeat(64),
+          context: { system: "只输出 SlideSpec JSON", user: "课程内容和补充页目标" },
+          allowed_source_ids: ["source-approved"],
+          allowed_image_asset_ids: [],
+        };
+      }
+      if (name === "ai.complete") {
+        if (completionMode === "deferred") {
+          return await new Promise((resolve) => { resolveCompletion = resolve; });
+        }
+        const spec = completionMode === "invalid_source"
+          ? { ...slideSpec, source_ids: ["source-unapproved"] }
+          : slideSpec;
+        return aiResult(spec);
+      }
+      if (name === "presentation.slide.propose") return { id: "slide-plan-ai-ui", revision: 1, spec: input.spec };
+      return {};
+    },
+  };
+  const { store, restore } = await bootStore(bridge);
+  try {
+    store.data = data;
+    store.expectedProjectId = data.project.id;
+    store.ui.activeId = lesson.id;
+    store.ui.aiProviderId = "test-provider";
+    store.flush = async () => true;
+    store.saveIdentity = () => ({
+      project_dir: bridge.projectDir,
+      expected_project_id: data.project.id,
+      lease_generation: 1,
+      editor_generation: 7,
+    });
+    store.saveIdentityMatches = () => true;
+    store.aiDescriptor = () => connection;
+    store.aiModel = () => "model-1";
+    const input = {
+      document_id: document.id,
+      lesson_id: lesson.id,
+      style_profile_id: profile.id,
+      style_revision: profile.revision,
+      target_asset_id: targetAsset.id,
+      insert_after_slide_id: null,
+      instruction: "解释如何核验预警信息",
+    };
+
+    assert(await store.preparePresentationAiContext(input) === false,
+      "no configured connection blocks context preparation");
+    assert(calls.length === 0, "missing AI configuration sends no command");
+
+    connection = {
+      id: "test-provider",
+      label: "测试连接",
+      kind: "openai_compatible",
+      api_protocol: "openai-completions",
+      base_url: "https://provider.example.test/v1",
+      chat_path: "/chat/completions",
+      auth_header: "authorization",
+      auth_scheme: "Bearer",
+    };
+    assert(await store.preparePresentationAiContext(input), "a configured connection prepares a review context");
+    assert((await store.generatePresentationSlideWithAi()) === false,
+      "the exact prompt is not sent before explicit consent");
+    assert(!calls.some((call) => call.name === "ai.complete"), "missing consent makes no AI request");
+
+    store.ui.presentationAiConsent = true;
+    const lateGeneration = store.generatePresentationSlideWithAi();
+    await Promise.resolve();
+    store.invalidatePresentationAi();
+    assert(calls.some((call) => call.name === "ai.cancel"), "changing the session cancels the active request");
+    resolveCompletion(aiResult(slideSpec));
+    assert(await lateGeneration === false, "a late response after cancellation is discarded");
+    assert(!calls.some((call) => call.name === "presentation.slide.propose"),
+      "a cancelled response cannot create a slide plan");
+
+    completionMode = "invalid_source";
+    assert(await store.preparePresentationAiContext(input), "a new request gets a fresh context binding");
+    store.ui.presentationAiConsent = true;
+    assert(await store.generatePresentationSlideWithAi() === false,
+      "a model cannot introduce sources outside the prepared allowlist");
+    assert(!calls.some((call) => call.name === "presentation.slide.propose"),
+      "an invalid SlideSpec never reaches the proposal command");
+
+    completionMode = "valid";
+    assert(await store.preparePresentationAiContext(input), "the next one-shot request can be prepared");
+    store.ui.presentationAiConsent = true;
+    assert(await store.generatePresentationSlideWithAi(), "a valid strict SlideSpec reaches preview planning");
+    const proposal = calls.findLast((call) => call.name === "presentation.slide.propose");
+    assert(proposal?.input.generation_source?.authorized === true, "the proposal carries captured user consent");
+    assert(proposal?.input.generation_source?.generation_id, "the proposal uses the one-shot prepared generation ID");
+    assert(proposal?.input.spec.title === slideSpec.title, "the direct JSON SlideSpec is preserved");
+    assert(store.ui.presentationAiPrepared === null, "a used one-shot context is cleared after proposal");
   } finally {
     restore();
   }

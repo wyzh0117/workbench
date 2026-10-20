@@ -41,6 +41,7 @@ import {
   createEmptyProjectData,
   insertPlaceholder,
 } from "../src/domain/index.ts";
+import { CURRENT_SCHEMA_VERSION } from "../src/domain/types.ts";
 import { serializeProject, validateProjectData } from "../src/domain/store.ts";
 import type { Block, ChangeDraft, ProjectData } from "../src/domain/types.ts";
 
@@ -224,7 +225,7 @@ function aiFixture() {
     data.documents.push({
       id: documentId,
       content_item_id: id,
-      schema_version: data.schema_version,
+      schema_version: CURRENT_SCHEMA_VERSION,
       created_at: stamp,
       updated_at: stamp,
     });
@@ -420,7 +421,7 @@ Deno.test("context limits are reported honestly instead of dropping silently", (
     data.documents.push({
       id: documentId,
       content_item_id: id,
-      schema_version: data.schema_version,
+      schema_version: CURRENT_SCHEMA_VERSION,
       created_at: "2026-01-01T00:00:00.000Z",
       updated_at: "2026-01-01T00:00:00.000Z",
     });

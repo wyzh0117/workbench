@@ -65,7 +65,7 @@ Deno.test("Workbench shell keeps one collapse control per local sidebar", async 
   assert(count(source, 'data-action="return-launcher"') === 1, "launcher return must have one control");
   assert(topbar.includes('data-action="return-launcher"'), "topbar must own the launcher return action");
   assert(topbar.includes('class="secondary launcher-return"'), "launcher return must be a named secondary action");
-  assert(topbar.includes("返回项目选择；当前项目不会关闭"), "return action must explain that the project stays open");
+  assert(topbar.includes("返回启动页；当前项目保持打开"), "return action must explain that the project stays open");
   assert(!topbar.includes('data-action="toggle-left"'), "topbar must not duplicate the left collapse action");
   assert(!topbar.includes('data-action="toggle-right"'), "topbar must not duplicate the right collapse action");
   assert(main.includes('case "return-launcher": store.returnToLauncher(); return;'), "return button must have an explicit action handler");
@@ -110,47 +110,51 @@ Deno.test("Workbench shell keeps one collapse control per local sidebar", async 
   assert(30 + 420 + 30 <= 960, "both narrow collapsed rails must not cover the main work area");
 });
 
-Deno.test("left nav lists 工作台 between 课程地图 and 收件箱 as a real open-workbench entry", async () => {
+Deno.test("top navigation exposes the six project destinations without a duplicate left route list", async () => {
   const source = await Deno.readTextFile(
     new URL("../app/views.js", import.meta.url),
   );
   const main = await Deno.readTextFile(
     new URL("../app/main.js", import.meta.url),
   );
+  const topbar = between(source, "function topbarView", "function leftPanelView");
   const left = between(source, "function leftPanelView", "function centerView");
-  // Order is defined by the nav array; the panel-heading also says「工作台」
-  // and must not be mistaken for the clickable item.
-  const nav = between(left, "const nav = [", "];");
+  const nav = between(topbar, "const primaryNav = [", "];");
   const labels = [
-    "项目概览",
-    "课程地图",
+    "概览",
     "工作台",
+    "文件",
     "收件箱",
-    "制作看板",
-    "媒体库",
-    "待补总览",
-    "更新中心",
-    "发布中心",
-    "版本历史",
-    "项目设置",
+    "发布",
+    "设置",
   ];
   let cursor = -1;
   for (const label of labels) {
-    const next = nav.indexOf(`"${label}"`);
-    assert(next > cursor, `left nav must list ${label} in order after the previous item`);
+    const next = nav.indexOf('"' + label + '"');
+    assert(next > cursor, "top navigation must list " + label + " in order");
     cursor = next;
   }
   assert(
-    left.includes('data-action="open-workbench"'),
-    "工作台 must be a clickable open-workbench nav item",
+    topbar.includes('data-action="open-workbench"') &&
+      main.includes('case "open-workbench"') && main.includes("openWorkbench("),
+    "工作台 returns to the current lesson through the shared session-restoring action",
   );
   assert(
-    main.includes('case "open-workbench"') && main.includes("openWorkbench("),
-    "open-workbench must dispatch to WorkbenchStore.openWorkbench",
+    topbar.includes('class="project-picker"') &&
+      topbar.includes('data-action="return-launcher"') &&
+      topbar.includes('data-action="open-registry-project"'),
+    "the project selector owns launcher return and recent project switching",
   );
   assert(
-    left.includes('route === "editor"') || left.includes("route === 'editor'"),
-    "工作台 must highlight while the editor route is active",
+    !left.includes('data-action="route" data-route=') &&
+      !left.includes('data-action="open-workbench"'),
+    "the media sidebar does not duplicate top-level project navigation",
+  );
+  assert(
+    left.includes("资料库") && left.includes("全部") && left.includes("案例") &&
+      left.includes("视频") && left.includes("图片") && left.includes("文档") &&
+      left.includes("幻灯片"),
+    "the persistent left sidebar filters the shared media library",
   );
 });
 Deno.test("shared controls align core workbench surfaces without losing compact exceptions", async () => {

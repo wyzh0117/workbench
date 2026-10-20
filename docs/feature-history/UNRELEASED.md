@@ -4,21 +4,23 @@
 
 ---
 
-## 当前状态（2026-10-07）
+## 当前状态（2026-10-21）
 
 ```text
 Latest public release       = v0.2.7，已发布并冻结
 Release/tag/source          = [v0.2.7](https://github.com/wyzh0117/workbench/releases/tag/v0.2.7) / fb050b121c2014ac3226e90d3683b7c6c26391b0
-Rolling content             = 空；v0.2.7 已归档到 [feature history](./v0.2.7.md)
-Previous release            = v0.2.6，tag / DMG / sidecar 保持冻结
+Rolling content             = v3.0.0 候选已实现；验收含 PARTIAL / UNVERIFIED，尚无 tag 或 Release
+Previous release            = v0.2.7，tag / DMG / sidecar 保持冻结
 V0 = CLOSED；V1 = ACTIVE；V1-T01–T06 保留原 VERIFIED；不创建 V1-T07，不关闭 V1
 ```
 
-本周期的用户可见变化、公开资产与验收限制已归档到 [v0.2.7 feature history](./v0.2.7.md)。尚未完成的验收与性能限制仍保持 PARTIAL，归档不表示它们已闭合。
+已发布版本仍以 [v0.2.7 feature history](./v0.2.7.md) 为准；v3.0.0 候选代码已实现，见 [v3.0.0 草稿](./v3.0.0.md)。32 项验收矩阵仍有 PARTIAL / UNVERIFIED，CI build-only 与发布授权也未完成；该草稿不是发布记录。
 
 ## 当前循环
 
-目前没有超出 v0.2.7 归档的新用户可见变更。File I/O / UI 收尾的剩余实测和性能尾部限制见 [v0.2.7](./v0.2.7.md)、总控 §48 与 [HTML completion report](../reports/io-ui-closure-completion-report.html)。后续修复使用新版本，不改写已发布 tag 或资产。
+v3.0.0 候选包含统一课程工作区、与布局状态分离的课程完成状态、按用户所选课程资料规划并审阅案例/视频来源、显式采纳/引用/同事件来源合并、人工确认视频片段时间，以及 PowerPoint 风格提取、AI/手动单页草稿和副本导出。搜索密钥与 AI 凭据分离。
+
+第一次本地 `.app` build 未显式指定签名身份，`codesign --verify --deep --strict` 因资源封印错误失败。按 release workflow 的 `APPLE_SIGNING_IDENTITY='-'` 重建后 strict verification 通过；这是无 Team ID 的 ad-hoc 签名，不是 Developer ID 签名或公证。对应 ARM64 DMG 的 `hdiutil verify` 通过；第一次 sandbox DMG 尝试因 `hdiutil: Device not configured` 失败，受控重跑未改打包选项并通过。release workflow 已要求资产整理前 strict app verification；Universal macOS 和 Windows build-only CI 结果仍待完成。真实 PowerPoint 无 Repair/编辑/保存重开、第二份真实课件、真实搜索与 AI 推理、150%/200% 文字缩放仍未验证；性能验收为 PARTIAL。具体状态与证据见 [v3.0.0 草稿](./v3.0.0.md)、[32 项验收记录](../v3.0.0-acceptance.md) 和 [UI/性能证据](../acceptance/v3.0.0/README.md)。
 
 ## 下一个开发周期
 

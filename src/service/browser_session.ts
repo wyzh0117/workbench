@@ -31,6 +31,9 @@ const READER_KEYS = [
   "mode",
   "right_panel",
   "route",
+  "course_tree_filter",
+  "media_filter",
+  "settings_section",
   "selected_block_id",
   "layout_page_id",
   "layout_zoom",
@@ -521,6 +524,21 @@ function normalizeSession(value: unknown, projectId: string): BrowserReaderSessi
     }
     if (key === "explorer_filter") {
       if (typeof child !== "string" || child.length > 256) return null;
+      output[key] = child;
+      continue;
+    }
+    if (key === "course_tree_filter") {
+      if (!["all", "open", "requirements", "missing_media", "complete"].includes(String(child))) return null;
+      output[key] = child;
+      continue;
+    }
+    if (key === "media_filter") {
+      if (!["all", "cases", "videos", "images", "documents", "slides"].includes(String(child))) return null;
+      output[key] = child;
+      continue;
+    }
+    if (key === "settings_section") {
+      if (!["general", "history", "ai", "models", "accounts", "project"].includes(String(child))) return null;
       output[key] = child;
       continue;
     }

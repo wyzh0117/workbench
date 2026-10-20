@@ -93,13 +93,20 @@ export function stopPreviewMedia(scope = globalThis.document) {
   const media = scope?.matches?.("audio,video")
     ? [scope]
     : Array.from(scope?.querySelectorAll?.("audio,video") || []);
+  const videoFrames = Array.from(
+    scope?.querySelectorAll?.('iframe[data-resource-video-player]') || [],
+  );
   for (const element of media) {
     try { element.pause(); } catch { /* media may already be detached */ }
     try { element.currentTime = 0; } catch { /* metadata may not be loaded */ }
     element.removeAttribute?.("src");
     try { element.load(); } catch { /* detached media cannot be reloaded */ }
   }
-  return media.length;
+  for (const frame of videoFrames) {
+    frame.removeAttribute?.("src");
+    frame.remove?.();
+  }
+  return media.length + videoFrames.length;
 }
 
 /**

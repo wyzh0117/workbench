@@ -7,7 +7,6 @@ import { listBlocks } from "./document.ts";
 export const COMPLETION_DIMENSION_KEYS = [
   "content",
   "media",
-  "layout",
   "review",
 ] as const;
 
@@ -84,6 +83,7 @@ export function lessonProgress(
   ).length;
   const viewKeys = [
     ...COMPLETION_DIMENSION_KEYS,
+    "layout",
     "publish",
     "update",
   ] as const;
@@ -134,17 +134,14 @@ export function lessonProgress(
     reasons.push(`文字类待补 ${gaps.by_scope.content} 项未完成`);
   }
   if (missingMedia > 0) reasons.push(`图片类待补 ${missingMedia} 项未完成`);
-  if (!hasLayout) reasons.push("还没有排版版本");
   for (const dimension of unfinished) {
     reasons.push(
       `${dimension.label}仍是「${dimension.option || "未设置"}」`,
     );
   }
-  const denominator = blocks.length + gaps.by_scope.content +
-    gaps.by_scope.layout + 2;
+  const denominator = blocks.length + gaps.by_scope.content + 2;
   const numerator = blocks.length - emptyTextBlocks - placeholders +
-    (gaps.by_scope.content + gaps.by_scope.layout === 0 ? 2 : 0) +
-    (hasLayout ? 1 : 0);
+    (gaps.by_scope.content === 0 ? 2 : 0);
   return {
     content_item_id: contentItemId,
     complete: reasons.length === 0,

@@ -1,4 +1,5 @@
 import {
+  CURRENT_PROJECT_SCHEMA_VERSION,
   CURRENT_SCHEMA_VERSION,
   type JsonObject,
   type Project,
@@ -17,6 +18,12 @@ const CANONICAL_ARRAYS = [
   "requirements",
   "assets",
   "asset_usages",
+  "source_evidence",
+  "resource_items",
+  "resource_usages",
+  "style_profiles",
+  "presentation_documents",
+  "slide_plans",
   "status_dimensions",
   "status_options",
   "status_assignments",
@@ -130,14 +137,14 @@ export function createEmptyProjectData(
     title,
     description,
     language,
-    schema_version: CURRENT_SCHEMA_VERSION,
+    schema_version: CURRENT_PROJECT_SCHEMA_VERSION,
     created_at: timestamp,
     updated_at: timestamp,
     archived: false,
     settings: {},
   };
   return {
-    schema_version: CURRENT_SCHEMA_VERSION,
+    schema_version: CURRENT_PROJECT_SCHEMA_VERSION,
     project,
     stages: [],
     content_items: [],
@@ -147,6 +154,12 @@ export function createEmptyProjectData(
     requirements: [],
     assets: [],
     asset_usages: [],
+    source_evidence: [],
+    resource_items: [],
+    resource_usages: [],
+    style_profiles: [],
+    presentation_documents: [],
+    slide_plans: [],
     ...createDefaultStatuses(project.id),
     status_assignments: [],
     layout_templates: [],
@@ -471,18 +484,18 @@ export function validateProjectData(input: unknown): ValidationIssue[] {
     return issues;
   }
   const projectId = project.id;
-  if (input.schema_version !== CURRENT_SCHEMA_VERSION) {
+  if (input.schema_version !== CURRENT_PROJECT_SCHEMA_VERSION) {
     issues.push({
       path: "schema_version",
       code: "unsupported_schema",
-      message: `需要 ${CURRENT_SCHEMA_VERSION}`,
+      message: `需要 ${CURRENT_PROJECT_SCHEMA_VERSION}`,
     });
   }
-  if (project.schema_version !== CURRENT_SCHEMA_VERSION) {
+  if (project.schema_version !== CURRENT_PROJECT_SCHEMA_VERSION) {
     issues.push({
       path: "project.schema_version",
       code: "unsupported_schema",
-      message: `需要 ${CURRENT_SCHEMA_VERSION}`,
+      message: `需要 ${CURRENT_PROJECT_SCHEMA_VERSION}`,
     });
   }
   const collection = (key: string): unknown[] => {
@@ -519,6 +532,36 @@ export function validateProjectData(input: unknown): ValidationIssue[] {
   const usages = ids<AnyRecord>(
     collection("asset_usages"),
     "asset_usages",
+    issues,
+  );
+  const sourceEvidence = ids<AnyRecord>(
+    collection("source_evidence"),
+    "source_evidence",
+    issues,
+  );
+  const resourceItems = ids<AnyRecord>(
+    collection("resource_items"),
+    "resource_items",
+    issues,
+  );
+  const resourceUsages = ids<AnyRecord>(
+    collection("resource_usages"),
+    "resource_usages",
+    issues,
+  );
+  const styleProfiles = ids<AnyRecord>(
+    collection("style_profiles"),
+    "style_profiles",
+    issues,
+  );
+  const presentationDocuments = ids<AnyRecord>(
+    collection("presentation_documents"),
+    "presentation_documents",
+    issues,
+  );
+  const slidePlans = ids<AnyRecord>(
+    collection("slide_plans"),
+    "slide_plans",
     issues,
   );
   const dimensions = ids<AnyRecord>(
@@ -640,6 +683,12 @@ export function validateProjectData(input: unknown): ValidationIssue[] {
       ["requirements", requirements],
       ["assets", assets],
       ["asset_usages", usages],
+      ["source_evidence", sourceEvidence],
+      ["resource_items", resourceItems],
+      ["resource_usages", resourceUsages],
+      ["style_profiles", styleProfiles],
+      ["presentation_documents", presentationDocuments],
+      ["slide_plans", slidePlans],
       ["status_dimensions", dimensions],
       ["status_options", options],
       ["status_assignments", assignments],
@@ -1885,6 +1934,216 @@ export function validateProjectData(input: unknown): ValidationIssue[] {
       });
     }
   }
+  for (const [key, value] of sourceEvidence) {
+    const path = `source_evidence.${key}`;
+    requireSameProject(value, projectId, path, issues);
+    for (const field of ["provider_id", "request_id", "title", "fetched_at"]) {
+      if (typeof value[field] !== "string" || !value[field]) {
+        issues.push({
+          path: `${path}.${field}`,
+          code: "invalid_value",
+          message: "必须是非空字符串",
+        });
+      }
+    }
+    if (value.url !== null && value.url !== undefined && typeof value.url !== "string") {
+      issues.push({ path: `${path}.url`, code: "invalid_value", message: "必须是 URL 或 null" });
+    }
+    requireEnum(value.evidence_access, ["metadata_only", "content_read", "timed_transcript", "unavailable"], `${path}.evidence_access`, issues);
+    requireEnum(value.fact_check, ["unchecked", "supported", "disputed"], `${path}.fact_check`, issues);
+    if (value.evidence_method !== undefined && value.evidence_method !== "manual_video_timing") {
+      issues.push({ path: `${path}.evidence_method`, code: "invalid_value", message: "证据方法无效" });
+    }
+    if (value.confirmed_by_user !== undefined && value.confirmed_by_user !== true) {
+      issues.push({ path: `${path}.confirmed_by_user`, code: "invalid_value", message: "用户确认标记必须为 true" });
+    }
+    if (value.evidence_method === "manual_video_timing") {
+      const locator = isRecord(value.locator) ? value.locator : null;
+      const start = locator?.start_sec;
+      const end = locator?.end_sec;
+      if (
+        value.confirmed_by_user !== true || value.evidence_access !== "metadata_only" ||
+        typeof value.url !== "string" || !value.url || !locator ||
+        !Number.isFinite(start) || !Number.isFinite(end) ||
+        (start as number) < 0 || (end as number) <= (start as number)
+      ) {
+        issues.push({ path, code: "invalid_manual_video_timing", message: "人工确认的视频时间证据无效" });
+      }
+    } else if (value.confirmed_by_user === true) {
+      issues.push({ path: `${path}.evidence_method`, code: "required_reference", message: "用户确认的时间证据必须说明证据方法" });
+    }
+  }
+  for (const [key, value] of resourceItems) {
+    const path = `resource_items.${key}`;
+    requireSameProject(value, projectId, path, issues);
+    requireEnum(value.medium, ["text", "video", "image", "audio", "document", "presentation"], `${path}.medium`, issues);
+    if (!Array.isArray(value.source_ids)) {
+      issues.push({ path: `${path}.source_ids`, code: "invalid_collection", message: "必须是数组" });
+    } else {
+      value.source_ids.forEach((sourceId, index) => requireRef(sourceEvidence, sourceId, `${path}.source_ids[${index}]`, issues, "资源来源证据不存在"));
+    }
+    if (value.video !== null && value.video !== undefined) {
+      if (!isRecord(value.video)) {
+        issues.push({ path: `${path}.video`, code: "invalid_value", message: "必须是对象" });
+      } else {
+        requireNullableRef(sourceEvidence, value.video.duration_evidence_id, `${path}.video.duration_evidence_id`, issues, "视频时长证据不存在");
+        requireEnum(value.video.caption_state, ["available", "unavailable", "unknown"], `${path}.video.caption_state`, issues);
+        requireEnum(value.video.region_availability, ["available", "restricted", "unknown"], `${path}.video.region_availability`, issues);
+        if (value.video.embeddable !== null && typeof value.video.embeddable !== "boolean") {
+          issues.push({ path: `${path}.video.embeddable`, code: "invalid_value", message: "必须是布尔值或 null" });
+        }
+        if (!Array.isArray(value.video.language_evidence_ids)) {
+          issues.push({ path: `${path}.video.language_evidence_ids`, code: "invalid_collection", message: "必须是数组" });
+        } else {
+          value.video.language_evidence_ids.forEach((sourceId, index) => requireRef(sourceEvidence, sourceId, `${path}.video.language_evidence_ids[${index}]`, issues, "语言证据不存在"));
+        }
+      }
+    }
+  }
+  for (const [key, value] of resourceUsages) {
+    const path = `resource_usages.${key}`;
+    requireSameProject(value, projectId, path, issues);
+    requireRef(resourceItems, value.resource_id, `${path}.resource_id`, issues, "正式资源不存在");
+    requireRef(contentItems, value.lesson_id, `${path}.lesson_id`, issues, "引用课次不存在");
+    requireNullableRef(blocks, value.block_id, `${path}.block_id`, issues, "引用正文区块不存在");
+    const lesson = contentItems.get(String(value.lesson_id));
+    if (lesson && lesson.type !== "lesson") {
+      issues.push({ path: `${path}.lesson_id`, code: "invalid_reference_type", message: "资源用途必须关联课次" });
+    }
+    if (value.block_id !== null && value.block_id !== undefined) {
+      const block = blocks.get(String(value.block_id));
+      if (lesson && block && block.document_id !== lesson.document_id) {
+        issues.push({ path: `${path}.block_id`, code: "cross_lesson_reference", message: "资源正文锚点必须属于同一课次" });
+      }
+    }
+    if (value.video_selection !== null && value.video_selection !== undefined) {
+      const selection = value.video_selection;
+      if (!isRecord(selection)) {
+        issues.push({ path: `${path}.video_selection`, code: "invalid_value", message: "必须是对象" });
+      } else {
+        requireEnum(selection.mode, ["full", "clip"], `${path}.video_selection.mode`, issues);
+        requireNullableRef(sourceEvidence, selection.timing_evidence_id, `${path}.video_selection.timing_evidence_id`, issues, "片段时间证据不存在");
+        if (selection.mode === "clip" && (!Number.isFinite(selection.start_sec) || !Number.isFinite(selection.end_sec) || (selection.start_sec as number) < 0 || (selection.end_sec as number) <= (selection.start_sec as number))) {
+          issues.push({ path: `${path}.video_selection`, code: "invalid_video_selection", message: "片段必须有合法的起止时间" });
+        }
+        if (selection.mode === "clip" && selection.timing_evidence_id == null) {
+          issues.push({ path: `${path}.video_selection.timing_evidence_id`, code: "required_reference", message: "片段必须有时间证据" });
+        }
+        if (selection.mode === "clip" && typeof selection.timing_evidence_id === "string") {
+          const timing = sourceEvidence.get(selection.timing_evidence_id);
+          const resource = resourceItems.get(String(value.resource_id));
+          if (timing?.evidence_method === "manual_video_timing") {
+            const locator = isRecord(timing.locator) ? timing.locator : null;
+            const resourceSourceIds = Array.isArray(resource?.source_ids) ? resource.source_ids : [];
+            const video = isRecord(resource?.video) ? resource.video : null;
+            const total = video?.total_duration_sec;
+            const durationEvidence = typeof video?.duration_evidence_id === "string"
+              ? sourceEvidence.get(video.duration_evidence_id)
+              : null;
+            if (
+              timing.confirmed_by_user !== true || timing.evidence_access !== "metadata_only" ||
+              !resourceSourceIds.includes(timing.id) || !locator ||
+              locator.start_sec !== selection.start_sec || locator.end_sec !== selection.end_sec ||
+              !Number.isFinite(total) || (selection.end_sec as number) > (total as number) ||
+              !durationEvidence || durationEvidence.provider_id !== timing.provider_id ||
+              durationEvidence.url !== timing.url || !resourceSourceIds.includes(durationEvidence.id)
+            ) {
+              issues.push({ path: `${path}.video_selection`, code: "invalid_manual_video_timing", message: "片段证据必须由同一视频的有效时长元数据支持" });
+            }
+          } else if (timing?.evidence_access !== "timed_transcript") {
+            issues.push({ path: `${path}.video_selection.timing_evidence_id`, code: "invalid_reference_type", message: "片段需要逐字稿时间证据或用户确认的人工时间证据" });
+          }
+        }
+      }
+    }
+  }
+  for (const [key, value] of styleProfiles) {
+    const path = `style_profiles.${key}`;
+    requireSameProject(value, projectId, path, issues);
+    requireRef(assets, value.source_asset_id, `${path}.source_asset_id`, issues, "风格来源课件不存在");
+    if (!Number.isSafeInteger(value.revision) || (value.revision as number) < 1) {
+      issues.push({ path: `${path}.revision`, code: "invalid_value", message: "revision 必须是正整数" });
+    }
+    for (const field of ["source_sha256", "markdown_hash", "markdown", "variant_id"]) {
+      if (typeof value[field] !== "string" || !value[field]) {
+        issues.push({ path: `${path}.${field}`, code: "invalid_value", message: "必须是非空字符串" });
+      }
+    }
+    if (typeof value.parser_version !== "string" || !value.parser_version) {
+      issues.push({ path: `${path}.parser_version`, code: "invalid_value", message: "必须是非空字符串" });
+    }
+    if (value.parsed_from_hash !== value.markdown_hash) {
+      issues.push({ path: `${path}.parsed_from_hash`, code: "stale_tokens", message: "解析结果必须来自当前 style.md revision" });
+    }
+    if (!isRecord(value.tokens) || !isRecord(value.tokens.editable_rules)) {
+      issues.push({ path: `${path}.tokens.editable_rules`, code: "invalid_value", message: "必须包含可编辑标题和正文规则" });
+    } else {
+      for (const role of ["title", "body"] as const) {
+        const rule = value.tokens.editable_rules[role];
+        if (!isRecord(rule)) {
+          issues.push({ path: `${path}.tokens.editable_rules.${role}`, code: "invalid_value", message: "必须是对象" });
+          continue;
+        }
+        for (const field of ["font_size_hundredth_pt", "x", "y", "width", "height"] as const) {
+          const fieldValue = rule[field];
+          if (fieldValue !== null && (!Number.isFinite(fieldValue) || (field === "font_size_hundredth_pt" && (fieldValue as number) <= 0))) {
+            issues.push({ path: `${path}.tokens.editable_rules.${role}.${field}`, code: "invalid_value", message: "必须是有限数值或 null" });
+          }
+        }
+        if (rule.color !== null && rule.color !== undefined && typeof rule.color !== "string") {
+          issues.push({ path: `${path}.tokens.editable_rules.${role}.color`, code: "invalid_value", message: "必须是颜色字符串或 null" });
+        }
+      }
+    }
+  }
+  for (const [key, value] of presentationDocuments) {
+    const path = `presentation_documents.${key}`;
+    requireSameProject(value, projectId, path, issues);
+    requireRef(assets, value.source_asset_id, `${path}.source_asset_id`, issues, "演示文稿源素材不存在");
+    requireRef(assets, value.current_asset_id, `${path}.current_asset_id`, issues, "当前演示文稿素材不存在");
+    if (!Number.isSafeInteger(value.revision) || (value.revision as number) < 1) {
+      issues.push({ path: `${path}.revision`, code: "invalid_value", message: "revision 必须是正整数" });
+    }
+  }
+  for (const [key, value] of slidePlans) {
+    const path = `slide_plans.${key}`;
+    requireSameProject(value, projectId, path, issues);
+    requireRef(presentationDocuments, value.document_id, `${path}.document_id`, issues, "演示文稿记录不存在");
+    requireRef(contentItems, value.lesson_id, `${path}.lesson_id`, issues, "目标课次不存在");
+    requireRef(styleProfiles, value.style_profile_id, `${path}.style_profile_id`, issues, "风格版本不存在");
+    requireRef(assets, value.target_asset_id, `${path}.target_asset_id`, issues, "目标课件素材不存在");
+    const planDocument = presentationDocuments.get(String(value.document_id));
+    if (planDocument && planDocument.current_asset_id !== value.target_asset_id) {
+      issues.push({ path: `${path}.target_asset_id`, code: "stale_target_asset", message: "幻灯片计划必须针对当前演示文稿素材" });
+    }
+    const planStyle = styleProfiles.get(String(value.style_profile_id));
+    if (planStyle && planStyle.revision !== value.style_revision) {
+      issues.push({ path: `${path}.style_revision`, code: "stale_style_revision", message: "幻灯片计划必须绑定指定风格版本" });
+    }
+    requireEnum(value.status, ["draft", "approved", "exported", "cancelled"], `${path}.status`, issues);
+    if (!Number.isSafeInteger(value.style_revision) || (value.style_revision as number) < 1) {
+      issues.push({ path: `${path}.style_revision`, code: "invalid_value", message: "style_revision 必须是正整数" });
+    }
+    if (!Number.isSafeInteger(value.revision) || (value.revision as number) < 1) {
+      issues.push({ path: `${path}.revision`, code: "invalid_value", message: "revision 必须是正整数" });
+    }
+    if (!isRecord(value.spec)) {
+      issues.push({ path: `${path}.spec`, code: "invalid_value", message: "必须是对象" });
+      continue;
+    }
+    if (typeof value.spec.layout_ref !== "string" || !value.spec.layout_ref) {
+      issues.push({ path: `${path}.spec.layout_ref`, code: "invalid_value", message: "必须是非空字符串" });
+    }
+    for (const field of ["image_asset_ids", "source_ids"] as const) {
+      const targets = field === "image_asset_ids" ? assets : sourceEvidence;
+      const ids = value.spec[field];
+      if (!Array.isArray(ids)) {
+        issues.push({ path: `${path}.spec.${field}`, code: "invalid_collection", message: "必须是数组" });
+      } else {
+        ids.forEach((ref, index) => requireRef(targets, ref, `${path}.spec.${field}[${index}]`, issues, field === "image_asset_ids" ? "幻灯片图片素材不存在" : "幻灯片来源证据不存在"));
+      }
+    }
+  }
   return issues;
 }
 
@@ -1931,7 +2190,7 @@ export type SchemaVersionState =
   | "unsupported"
   | "absent";
 
-const CURRENT_SCHEMA_RANK = CURRENT_SCHEMA_VERSION.split(".").map(Number);
+const CURRENT_SCHEMA_RANK = CURRENT_PROJECT_SCHEMA_VERSION.split(".").map(Number);
 
 /**
  * A project.json file carries its version either as a semver string or, in
@@ -2023,7 +2282,7 @@ export function inspectProjectData(input: unknown): ProjectInspection {
     schema_version: typeof version === "string" || typeof version === "number"
       ? version
       : null,
-    supported_schema_version: CURRENT_SCHEMA_VERSION,
+    supported_schema_version: CURRENT_PROJECT_SCHEMA_VERSION,
     project: null,
   };
   const invalid = (problem: ProjectInspectionProblem): ProjectInspection => ({
@@ -2086,7 +2345,7 @@ export function inspectProjectData(input: unknown): ProjectInspection {
       "unsupported_schema",
       "schema_version",
       `这个 project.json 的版本比当前工作台更新，打开会损坏内容。请升级工作台后重试。`,
-      `不高于 ${CURRENT_SCHEMA_VERSION} 的版本`,
+      `不高于 ${CURRENT_PROJECT_SCHEMA_VERSION} 的版本`,
       String(input.schema_version ?? project.schema_version ?? ""),
     ));
   }
@@ -2216,11 +2475,20 @@ export function migrateProject(input: unknown): ProjectData {
       candidate.schema_version,
       (candidate.project as Record<string, unknown>).schema_version,
     ) !== "unsupported",
-    `不支持的项目文件版本：需要不高于 ${CURRENT_SCHEMA_VERSION} 的版本，请升级工作台后重试`,
+    `不支持的项目文件版本：需要不高于 ${CURRENT_PROJECT_SCHEMA_VERSION} 的版本，请升级工作台后重试`,
   );
   fillMissingArrays(candidate);
   fillSchemaVersions(candidate);
-  candidate.schema_version = CURRENT_SCHEMA_VERSION;
+  for (const value of candidate.style_profiles as unknown[]) {
+    if (!isRecord(value)) continue;
+    value.parser_version ??= "legacy";
+    value.parsed_from_hash ??= value.markdown_hash;
+    if (isRecord(value.tokens) && !isRecord(value.tokens.editable_rules)) {
+      const emptyRule = { font_size_hundredth_pt: null, color: null, x: null, y: null, width: null, height: null };
+      value.tokens.editable_rules = { title: { ...emptyRule }, body: { ...emptyRule } };
+    }
+  }
+  candidate.schema_version = CURRENT_PROJECT_SCHEMA_VERSION;
   const project = candidate.project as Record<string, unknown>;
   project.id ??= id();
   project.title ??= "未命名课程";
@@ -2228,7 +2496,7 @@ export function migrateProject(input: unknown): ProjectData {
   project.language ??= "zh-CN";
   project.created_at ??= now();
   project.updated_at ??= now();
-  project.schema_version = CURRENT_SCHEMA_VERSION;
+  project.schema_version = CURRENT_PROJECT_SCHEMA_VERSION;
   project.settings ??= {};
   project.archived ??= false;
   if ((candidate.status_dimensions as unknown[]).length === 0) {

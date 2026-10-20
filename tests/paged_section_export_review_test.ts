@@ -154,7 +154,7 @@ Deno.test("page copy rebinds anchored requirements and reuses asset rows", () =>
   );
 });
 
-Deno.test("legacy continuous Grid editor preview still shows each section", () => {
+Deno.test("legacy continuous Grid content stays intact while free-layout redirects to the editor", () => {
   const data = createEmptyProjectData("旧分区预览");
   const seed = createCourseSeed(data, {
     source_type: "blank",
@@ -204,6 +204,11 @@ Deno.test("legacy continuous Grid editor preview still shows each section", () =
       ),
     "ambiguous layouts must never pretend their sections form one export page",
   );
+  const legacyLayoutState = JSON.stringify({
+    placements: data.placements,
+    sections: data.layout_sections,
+    blocks: data.blocks,
+  });
   const store = {
     data,
     ui: {
@@ -233,27 +238,23 @@ Deno.test("legacy continuous Grid editor preview still shows each section", () =
     saveStatus: "已保存",
     assetPreview: new Map(),
     bridge: { isNative: () => false },
+    resolveReaderDestination(route: string) {
+      return { route: route === "free-layout" ? "editor" : route };
+    },
     currentItem: () => lesson,
     lesson: (item: typeof lesson) => lessonView(data, item.id),
     resumeLessonId: () => lesson.id,
   };
-  const html = createViews(store).shellView();
-  assert(html.includes("旧分区 A · 第 1 页"), "preview must label the first legacy section");
-  assert(html.includes("旧分区 B · 第 2 页"), "preview must label the second legacy section");
-  assert(html.includes("LEGACY SECTION A BODY"), "preview must render first-section text");
-  assert(html.includes("LEGACY SECTION B BODY"), "preview must render second-section text");
-  store.ui.mode = "writing";
   store.ui.route = "free-layout";
   const editor = createViews(store).shellView();
-  assert(editor.includes(`data-placement="${data.placements[0]?.id}"`), "legacy placements must remain editable");
-  assert(editor.includes(`data-placement="${data.placements[1]?.id}"`), "all legacy placements must remain visible to the editor");
-  // Item 7: a continuous grid no longer offers the legacy 输出分区 editor, which
-  // competed with pagination.  The rows above still prove the section data is
-  // maintained and still drives the export projection; the editor only has to
-  // leave a reachable conversion path.
-  assert(!editor.includes("data-action=\"grid-new-section\""), "the output-section editor stays hidden until pagination is enabled");
-  assert(!editor.includes("输出分区</span>"), "the section strip label is not rendered for a continuous grid");
-  assert(editor.includes("data-action=\"pagination-conversion\""), "启用分页 must stay reachable so legacy sections can still convert");
+  assert(editor.includes("LEGACY SECTION A BODY"), "the first canonical body remains available in the editor");
+  assert(editor.includes("LEGACY SECTION B BODY"), "the second canonical body remains available in the editor");
+  assert(!editor.includes("data-grid-surface"), "the removed free-layout canvas is not rendered");
+  assert(!editor.includes("data-action=\"grid-autofill\""), "legacy grid editing actions are not offered");
+  assert(
+    JSON.stringify({ placements: data.placements, sections: data.layout_sections, blocks: data.blocks }) === legacyLayoutState,
+    "redirecting a legacy route preserves all layout and body records",
+  );
 });
 
 Deno.test("DesktopService exports the selected paged HTML projection end to end", async () => {

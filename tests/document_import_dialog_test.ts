@@ -376,7 +376,7 @@ Deno.test("a media-only folder keeps its single confirm click and imports at onc
       calls.every((call) => call.name !== "folder.read_source"),
       "nothing extra is asked of the shell for a folder without documents",
     );
-    assertEqual(store.ui.route, "map", "and the user lands back on the course map");
+    assertEqual(store.ui.route, "overview", "and the user lands back on project overview");
   } finally {
     restore();
   }

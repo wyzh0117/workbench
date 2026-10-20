@@ -148,6 +148,7 @@ jobs:
           lipo -archs "$APP/Contents/MacOS/ai-course-workbench" || true
           echo "--- codesign ---"
           codesign -dv --verbose=4 "$APP" 2>&1 || true
+          codesign --verify --deep --strict "$APP"
           echo "--- spctl ---"
           spctl --assess --type execute --verbose "$APP" 2>&1 || true
 

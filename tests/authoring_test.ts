@@ -28,7 +28,7 @@ import {
   setRequirementStatus,
   updateBlockContent,
 } from "../src/domain/index.ts";
-import type { ProjectData } from "../src/domain/types.ts";
+import { CURRENT_SCHEMA_VERSION, type ProjectData } from "../src/domain/types.ts";
 import { validateProjectData } from "../src/domain/store.ts";
 
 function assert(condition: unknown, message: string): asserts condition {
@@ -59,7 +59,7 @@ function authoringFixture(): ProjectData {
     data.documents.push({
       id: documentId,
       content_item_id: id,
-      schema_version: data.schema_version,
+      schema_version: CURRENT_SCHEMA_VERSION,
       created_at: "2026-01-01T00:00:00.000Z",
       updated_at: "2026-01-01T00:00:00.000Z",
     });
@@ -357,6 +357,130 @@ Deno.test("asset detach and delete keep blocks, requirements and usages consiste
   assert(
     lessonView(data, "lesson-2")!.blocks.every((candidate) => candidate.asset === null),
     "no block may keep pointing at a removed asset",
+  );
+});
+
+Deno.test("presentation assets cannot be removed while lineage references them", () => {
+  const data = authoringFixture();
+  const source = assetFixture(data, "source.pptx");
+  const current = assetFixture(data, "current.pptx");
+  data.presentation_documents.push({
+    id: "presentation-1",
+    project_id: data.project.id,
+    source_asset_id: source.id,
+    current_asset_id: current.id,
+    revision: 1,
+    created_at: "2026-01-01T00:00:00.000Z",
+    updated_at: "2026-01-01T00:00:00.000Z",
+  });
+  data.slide_plans.push({
+    contract_version: 1,
+    id: "slide-plan-1",
+    project_id: data.project.id,
+    document_id: "presentation-1",
+    lesson_id: "lesson-1",
+    style_profile_id: "style-profile-1",
+    style_revision: 1,
+    target_asset_id: current.id,
+    target_asset_hash: "0".repeat(64),
+    insert_after_slide_id: null,
+    spec: {
+      layout_ref: "title-body",
+      title: "追加页",
+      body: [],
+      image_asset_ids: [source.id],
+      source_ids: [],
+      speaker_notes: "",
+    },
+    revision: 1,
+    created_at: "2026-01-01T00:00:00.000Z",
+    status: "draft",
+  });
+
+  for (const asset of [source, current]) {
+    let rejected = false;
+    try {
+      removeAsset(data, asset.id);
+    } catch {
+      rejected = true;
+    }
+    assert(rejected, "assets in presentation lineage must not be removed");
+    assert(!asset.archived, "rejected removal must not archive the asset");
+  }
+});
+
+Deno.test("deleting a block preserves its resource usage and clears only its anchor", () => {
+  const data = authoringFixture();
+  const block = lessonView(data, "lesson-2")!.blocks[0]!;
+  data.resource_items.push({
+    contract_version: 1,
+    id: "resource-1",
+    project_id: data.project.id,
+    medium: "text",
+    title: "报道",
+    source_ids: [],
+    factual_summary: "已核实的事实摘要",
+    claims: [],
+    revision: 1,
+    created_at: "2026-01-01T00:00:00.000Z",
+    updated_at: "2026-01-01T00:00:00.000Z",
+  });
+  data.resource_usages.push({
+    contract_version: 1,
+    id: "resource-usage-1",
+    project_id: data.project.id,
+    resource_id: "resource-1",
+    lesson_id: "lesson-2",
+    block_id: block.id,
+    teaching_use: "用于讨论",
+    discussion_questions: [],
+    created_at: "2026-01-01T00:00:00.000Z",
+  });
+
+  deleteBlock(data, block.id);
+
+  assert(data.resource_usages.length === 1, "deleting a block must preserve course usage");
+  assert(data.resource_usages[0]!.block_id === null, "deleting a block clears its link");
+  assert(
+    !validateProjectData(data).some((issue) => issue.path.startsWith("resource_usages.")),
+    "the retained course usage remains a valid canonical reference",
+  );
+});
+
+Deno.test("resource usage anchors must stay inside their lesson", () => {
+  const data = authoringFixture();
+  const block = lessonView(data, "lesson-1")!.blocks[0]!;
+  data.resource_items.push({
+    contract_version: 1,
+    id: "resource-1",
+    project_id: data.project.id,
+    medium: "text",
+    title: "报道",
+    source_ids: [],
+    factual_summary: "已核实的事实摘要",
+    claims: [],
+    revision: 1,
+    created_at: "2026-01-01T00:00:00.000Z",
+    updated_at: "2026-01-01T00:00:00.000Z",
+  });
+  data.resource_usages.push({
+    contract_version: 1,
+    id: "resource-usage-1",
+    project_id: data.project.id,
+    resource_id: "resource-1",
+    lesson_id: "lesson-2",
+    block_id: block.id,
+    teaching_use: "用于讨论",
+    discussion_questions: [],
+    created_at: "2026-01-01T00:00:00.000Z",
+  });
+
+  assert(
+    validateProjectData(data).some((issue) =>
+      issue.path === "resource_usages.resource-usage-1.block_id" &&
+      issue.code === "cross_lesson_reference"
+    ),
+    "resource usage may only link to a block in its own lesson",
   );
 });
 

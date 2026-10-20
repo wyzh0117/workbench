@@ -96,6 +96,7 @@ function renderShortBlockCardHtml(): string {
     saveStatus: "已保存",
     assetPreview: new Map(),
     bridge: { isNative: () => false },
+    resolveReaderDestination(route: string) { return { route }; },
     currentItem() {
       return data.content_items.find((candidate) => candidate.id === this.ui.activeId) ??
         null;
@@ -545,6 +546,7 @@ Deno.test("T03 selected block keeps a left accent; handle uses pointer reorder n
     saveStatus: "已保存",
     assetPreview: new Map(),
     bridge: { isNative: () => false },
+    resolveReaderDestination(route: string) { return { route }; },
     currentItem() {
       return data.content_items.find((candidate) => candidate.id === this.ui.activeId) ??
         null;
