@@ -21,7 +21,7 @@
 | **v0.2.6** | **2026-10-05** | `223a594` | [v0.2.6](https://github.com/wyzh0117/workbench/releases/tag/v0.2.6) | 公开可用 / 历史版本 / 冻结 | [中文 feature history](./v0.2.6.md)：Mapping 稳定化与映射后文档选择、带语义图片的跨格式导入、正文 Preview 媒体、Flow 顺序视图、顶层自由排版，以及全局页面重设计。公开 DMG 与 sidecar 已匿名下载和校验；验收限制见 [HTML 报告](../reports/v0.2.6-ui-redesign-completion-report.html) 与[公开资产验证](../reports/evidence/v0.2.6/public-release-verification.md)。 |
 | **v0.2.7** | **2026-10-07** | `fb050b1` | [v0.2.7](https://github.com/wyzh0117/workbench/releases/tag/v0.2.7) | **公开 / Latest / 冻结** | [中文 feature history](./v0.2.7.md)：File I/O 与 UI 可靠性收尾。公开 Universal DMG 与 sidecar 已下载校验；总体验收仍为 PARTIAL，性能尾部与未观察项见版本记录和本地验收报告。 |
 
-当前 `v3.0.0` 候选已实现但尚未公开发布，验收矩阵仍有 PARTIAL / UNVERIFIED，CI build-only 与发布审批待完成。草稿见 [`v3.0.0.md`](./v3.0.0.md)，验收状态见 [`32 项记录`](../v3.0.0-acceptance.md)；公开版本索引只在正式发布后更新。
+用户于 2026-10-21 接受 `v3.0.0` 验收记录中的 PARTIAL / UNVERIFIED 限制并授权发布；tag-triggered Release 尚待完成。各项状态保持原样。候选记录见 [`v3.0.0.md`](./v3.0.0.md)，证据见 [`32 项记录`](../v3.0.0-acceptance.md)；公开版本索引在 Release 实际发布后更新。
 
 ### 关于 v0.2.0
 
