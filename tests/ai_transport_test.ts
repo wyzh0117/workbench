@@ -1,4 +1,5 @@
 import { join } from "node:path";
+import type { ModelMeta } from "../src/ui/contracts.ts";
 import {
   DesktopService,
   MemorySecretStore,
@@ -8,6 +9,7 @@ import {
 import {
   type AiFetch,
   AiTransport,
+  modelMetaInModelsOrder,
   sanitizeExecutionRecord,
   scrubCredentialText,
 } from "../src/service/ai_transport.ts";
@@ -2359,4 +2361,450 @@ Deno.test("temporary model probes and explicit connection tests do not persist s
   } finally {
     await server.close();
   }
+});
+
+/* ------------------------------------------------------------------ *
+ * §4.3 per-model metadata (model_meta) / §4.4 reasoning parameters
+ * ------------------------------------------------------------------ */
+
+const HAN = /\p{Script=Han}/u;
+const META_SECRET_MARKER = "sk-model-meta-must-not-leak-1234";
+
+/** invalidRequest contract: 中文 user_message 句号结尾、英文 technical、中文 action 非空。 */
+function assertInvalidRequestContract(
+  result: { error?: { code?: string; user_message?: string; technical_message?: string; recommended_action?: string | null } | null },
+  message: string,
+): void {
+  const failure = result.error;
+  assert(
+    failure?.code === "invalid_request",
+    `${message}: 期望 invalid_request，实际 ${failure?.code}`,
+  );
+  const userMessage = failure?.user_message ?? "";
+  assert(userMessage.endsWith("。"), `${message}: user_message 必须以中文句号结尾：${userMessage}`);
+  assert(
+    !HAN.test(failure?.technical_message ?? ""),
+    `${message}: technical_message 必须是英文：${failure?.technical_message}`,
+  );
+  assert(
+    HAN.test(failure?.recommended_action ?? ""),
+    `${message}: recommended_action 必须是中文非空：${failure?.recommended_action}`,
+  );
+}
+
+function assertJsonEquals(actual: unknown, expected: unknown, message: string): void {
+  const left = JSON.stringify(actual);
+  const right = JSON.stringify(expected);
+  assert(left === right, `${message}: ${left} !== ${right}`);
+}
+
+const META_PROVIDER = {
+  id: "meta-provider",
+  label: "带模型元数据",
+  kind: "openai_compatible",
+  api_protocol: "openai-completions",
+  base_url: "https://api.example.test",
+  chat_path: "/chat/completions",
+  default_model: "deepseek-chat",
+  models: ["deepseek-chat", "deepseek-reasoner"],
+};
+
+Deno.test("§4.3 model_meta round-trips losslessly in models order through providers.json", async () => {
+  await withDesktop(async ({ desktop, aiHome }) => {
+    const meta = {
+      "deepseek-reasoner": {
+        name: "推理模型",
+        context_window: 131072,
+        max_tokens: 8192,
+        input: ["text", "image"],
+        reasoning_efforts: { off: "off", low: "low", high: "high" },
+      },
+      "deepseek-chat": { name: "对话模型", input: ["text"] },
+      "ghost-model": { max_tokens: 4096 },
+    };
+    // 期望顺序：先按 models 顺序（chat → reasoner），未知 id 保留在后。
+    const ordered = {
+      "deepseek-chat": { name: "对话模型", input: ["text"] },
+      "deepseek-reasoner": {
+        name: "推理模型",
+        context_window: 131072,
+        max_tokens: 8192,
+        input: ["text", "image"],
+        reasoning_efforts: { off: "off", low: "low", high: "high" },
+      },
+      "ghost-model": { max_tokens: 4096 },
+    };
+    const saved = await desktop.commands.execute("ai.connection.save", {
+      provider: { ...META_PROVIDER, model_meta: meta },
+    });
+    assert(!saved.error, `model_meta 必须能保存：${JSON.stringify(saved.error)}`);
+    assertJsonEquals(
+      (saved.value as { provider: { model_meta: unknown } }).provider.model_meta,
+      ordered,
+      "保存返回的 model_meta 必须按 models 顺序且不丢字段",
+    );
+
+    const listed = await desktop.commands.execute("ai.connection.list", {});
+    assert(!listed.error, "ai.connection.list 必须成功");
+    const provider = (listed.value as {
+      providers: Array<{ id: string; models: string[]; model_meta: unknown }>;
+    }).providers.find((entry) => entry.id === "meta-provider");
+    assert(provider, "model_meta 不能导致连接丢失");
+    assertJsonEquals(provider.model_meta, ordered, "读回的 model_meta 必须与保存值等值");
+
+    // providers.json 落盘后逐字段等值（含未知 id 条目）。
+    const raw = JSON.parse(await Deno.readTextFile(join(aiHome, "providers.json")));
+    assertJsonEquals(
+      raw.providers.find((entry: { id: string }) => entry.id === "meta-provider").model_meta,
+      ordered,
+      "providers.json 里的 model_meta 必须完整落盘",
+    );
+
+    // 读 → 写 → 读：把读回的记录原样再存一次，字段不得变化。
+    const resaved = await desktop.commands.execute("ai.connection.save", {
+      provider: { ...provider, model_meta: provider.model_meta },
+    });
+    assert(!resaved.error, `原样重存必须成功：${JSON.stringify(resaved.error)}`);
+    const relisted = await desktop.commands.execute("ai.connection.list", {});
+    const after = (relisted.value as {
+      providers: Array<{ id: string; model_meta: unknown }>;
+    }).providers.find((entry) => entry.id === "meta-provider");
+    assertJsonEquals(after?.model_meta, ordered, "读→写→读后 model_meta 必须等值");
+
+    // §4.3 只按 models 顺序下发：未知 id 条目保留但不下发。
+    const delivered = modelMetaInModelsOrder({
+      models: ["deepseek-chat", "deepseek-reasoner"],
+      model_meta: after?.model_meta as Record<string, ModelMeta>,
+    });
+    assertJsonEquals(
+      delivered.map((entry) => entry.model_id),
+      ["deepseek-chat", "deepseek-reasoner"],
+      "下发顺序必须严格跟随 models",
+    );
+    assertJsonEquals(delivered[0]?.meta, { name: "对话模型", input: ["text"] }, "下发的条目内容必须保真");
+  });
+});
+
+Deno.test("§4.3 model_meta rejects unknown fields, bad values and credential-shaped keys at every level", async () => {
+  await withDesktop(async ({ desktop }) => {
+    const cases: Array<{ meta: unknown; expect: string; label: string }> = [
+      { meta: "text", expect: "必须是以 Model ID 为键的对象", label: "model_meta 必须是对象" },
+      { meta: { m: "text" }, expect: "必须是对象", label: "条目必须是对象" },
+      { meta: { "  ": { name: "x" } }, expect: "Model ID 不能为空", label: "空 Model ID" },
+      { meta: { m: { extra: 1 } }, expect: "不受支持", label: "未知条目字段" },
+      { meta: { m: { name: 5 } }, expect: "必须是文本", label: "name 必须是文本" },
+      { meta: { m: { context_window: 0 } }, expect: "必须是正整数", label: "拒绝 0" },
+      { meta: { m: { context_window: -123456 } }, expect: "必须是正整数", label: "拒绝负数" },
+      { meta: { m: { context_window: 1.5 } }, expect: "必须是正整数", label: "拒绝小数" },
+      { meta: { m: { context_window: "131072" } }, expect: "必须是正整数", label: "拒绝数字文本" },
+      { meta: { m: { context_window: true } }, expect: "必须是正整数", label: "拒绝布尔" },
+      { meta: { m: { max_tokens: 0 } }, expect: "必须是正整数", label: "max_tokens 拒绝 0" },
+      { meta: { m: { input: "text" } }, expect: "必须是输入类型列表", label: "input 必须是数组" },
+      { meta: { m: { input: [] } }, expect: "至少要保留一种输入类型", label: "input 不能为空" },
+      { meta: { m: { input: ["text", "video"] } }, expect: "只支持", label: "input 元素受限" },
+      { meta: { m: { input: [5] } }, expect: "只支持", label: "input 元素必须是文本" },
+      { meta: { m: { reasoning_efforts: "low" } }, expect: "必须是档位到 API 参数值的映射", label: "reasoning_efforts 必须是对象" },
+      { meta: { m: { reasoning_efforts: { ultra: "x" } } }, expect: "不是支持的推理档位", label: "档位受限" },
+      { meta: { m: { reasoning_efforts: { Low: "x" } } }, expect: "不是支持的推理档位", label: "档位大小写受限" },
+      { meta: { m: { reasoning_efforts: { low: "" } } }, expect: "API 参数值必须是非空文本", label: "档位值非空" },
+      { meta: { m: { reasoning_efforts: { low: "   " } } }, expect: "API 参数值必须是非空文本", label: "档位值非空白" },
+      { meta: { m: { reasoning_efforts: { low: 5 } } }, expect: "API 参数值必须是非空文本", label: "档位值必须是文本" },
+      // S2 对拍：形状/类型错误的归属与原生壳一致（不走凭据字段拒绝）。
+      { meta: [{ api_key: META_SECRET_MARKER }], expect: "必须是以 Model ID 为键的对象", label: "model_meta 数组按形状错误拒绝" },
+      { meta: { m: { max_tokens: META_SECRET_MARKER } }, expect: "必须是正整数", label: "max_tokens 值型密钥按类型错误拒绝" },
+      { meta: { m: { max_tokens: { api_key: META_SECRET_MARKER } } }, expect: "必须是正整数", label: "max_tokens 对象值按类型错误拒绝" },
+    ];
+    for (const item of cases) {
+      const result = await desktop.commands.execute("ai.connection.save", {
+        provider: { ...META_PROVIDER, model_meta: item.meta },
+      });
+      assertInvalidRequestContract(result, item.label);
+      assert(
+        (result.error?.user_message ?? "").includes(item.expect),
+        `${item.label}: 错误文案要包含「${item.expect}」，实际 ${result.error?.user_message}`,
+      );
+      assert(
+        !JSON.stringify(result.error).includes(META_SECRET_MARKER),
+        `${item.label}: 错误不得回显坏值`,
+      );
+    }
+
+    // 凭据形状键名：条目字段、推理档位键、Model ID 键逐层拒绝，且不回显坏值。
+    const credentialKeys: Array<{ meta: unknown; path: string; label: string }> = [
+      { meta: { m: { api_key: META_SECRET_MARKER } }, path: "model_meta.m.api_key", label: "条目字段 api_key" },
+      { meta: { m: { reasoning_efforts: { api_key: META_SECRET_MARKER } } }, path: "model_meta.m.reasoning_efforts.api_key", label: "档位键 api_key" },
+      { meta: { m: { auth_token: META_SECRET_MARKER } }, path: "model_meta.m.auth_token", label: "条目字段 auth_token" },
+      { meta: { the_token: { name: "x" } }, path: "model_meta.the_token", label: "Model ID 键" },
+      { meta: { m: { max_token: 1 } }, path: "model_meta.m.max_token", label: "近似 max_tokens 仍拒绝" },
+      { meta: { max_tokens: { name: "x" } }, path: "model_meta.max_tokens", label: "Model ID 键 max_tokens 仍拒绝" },
+      { meta: { m: { reasoning_efforts: { max_tokens: "x" } } }, path: "model_meta.m.reasoning_efforts.max_tokens", label: "档位键 max_tokens 仍拒绝" },
+    ];
+    for (const item of credentialKeys) {
+      const result = await desktop.commands.execute("ai.connection.save", {
+        provider: { ...META_PROVIDER, model_meta: item.meta },
+      });
+      assertInvalidRequestContract(result, item.label);
+      assert(
+        (result.error?.user_message ?? "").includes("不允许的字段") &&
+          (result.error?.user_message ?? "").includes(item.path),
+        `${item.label}: 必须点名被拒字段 ${item.path}，实际 ${result.error?.user_message}`,
+      );
+      assert(
+        !JSON.stringify(result.error).includes(META_SECRET_MARKER),
+        `${item.label}: 错误不得回显字段值`,
+      );
+    }
+
+    const listed = await desktop.commands.execute("ai.connection.list", {});
+    assert(
+      (listed.value as { providers: unknown[] }).providers.length === 0,
+      "被拒绝的 model_meta 不得落盘",
+    );
+  });
+});
+
+Deno.test("§4.3 max_tokens stays credential-shaped outside its model_meta schema slot", async () => {
+  await withDesktop(async ({ desktop }) => {
+    // schema 槽位内：正整数合法，且该豁免只在 model_meta 条目层生效。
+    const accepted = await desktop.commands.execute("ai.connection.save", {
+      provider: {
+        ...META_PROVIDER,
+        model_meta: { "deepseek-chat": { max_tokens: 8192 } },
+      },
+    });
+    assert(!accepted.error, `max_tokens 在 model_meta 里必须合法：${JSON.stringify(accepted.error)}`);
+
+    // 提供商外层同名字段仍然拒绝（豁免不得外溢）。
+    const outer = await desktop.commands.execute("ai.connection.save", {
+      provider: { id: "outer-max-tokens", max_tokens: 12 },
+    });
+    assertInvalidRequestContract(outer, "外层 max_tokens");
+    assert(
+      (outer.error?.user_message ?? "").includes("「max_tokens」"),
+      `外层 max_tokens 必须被点名拒绝：${outer.error?.user_message}`,
+    );
+
+    // model_meta 之外的任意层级同样拒绝。
+    const nested = await desktop.commands.execute("ai.connection.save", {
+      provider: { id: "nested-max-tokens", extra: { m: { max_tokens: 1 } } },
+    });
+    assertInvalidRequestContract(nested, "嵌套 max_tokens");
+    assert(
+      (nested.error?.user_message ?? "").includes("extra.m.max_tokens"),
+      `嵌套 max_tokens 必须被点名拒绝：${nested.error?.user_message}`,
+    );
+  });
+});
+
+Deno.test("§4.3 model_meta input de-duplicates and legacy configs without model_meta stay compatible", async () => {
+  await withDesktop(async ({ desktop, aiHome }) => {
+    // 老文件：没有任何 model_meta，读出来视为 undefined。
+    await Deno.mkdir(aiHome, { recursive: true });
+    await Deno.writeTextFile(
+      join(aiHome, "providers.json"),
+      JSON.stringify({
+        providers: [{ id: "old-file", label: "旧文件连接" }],
+        credential_origins: {},
+      }, null, 2),
+    );
+    const legacy = await desktop.commands.execute("ai.connection.list", {});
+    assert(!legacy.error, "无 model_meta 的老文件必须能读");
+    const oldProvider = (legacy.value as {
+      providers: Array<{ id: string; model_meta?: unknown }>;
+    }).providers.find((entry) => entry.id === "old-file");
+    assert(oldProvider, "老文件连接必须保留");
+    assert(oldProvider.model_meta === undefined, "缺省 model_meta 必须视为 undefined");
+    assert(
+      !JSON.stringify(oldProvider).includes("model_meta"),
+      "缺省 model_meta 不得被补出来",
+    );
+
+    // input 去重、保持声明顺序。
+    const saved = await desktop.commands.execute("ai.connection.save", {
+      provider: {
+        ...META_PROVIDER,
+        model_meta: {
+          "deepseek-chat": { input: ["text", "text", "image", "image", "text"] },
+        },
+      },
+    });
+    assert(!saved.error, `input 去重后必须能保存：${JSON.stringify(saved.error)}`);
+    assertJsonEquals(
+      (saved.value as {
+        provider: { model_meta: Record<string, { input: string[] }> };
+      }).provider.model_meta["deepseek-chat"]?.input,
+      ["text", "image"],
+      "input 必须去重且保持声明顺序",
+    );
+  });
+});
+
+Deno.test("§4.3 model_meta stays inside the 8KB and depth-4 provider limits", async () => {
+  await withDesktop(async ({ desktop }) => {
+    const oversized = await desktop.commands.execute("ai.connection.save", {
+      provider: {
+        ...META_PROVIDER,
+        model_meta: {
+          "deepseek-chat": { name: "x".repeat(9000) },
+        },
+      },
+    });
+    assertInvalidRequestContract(oversized, "model_meta 超过 8KB");
+    assert(
+      (oversized.error?.user_message ?? "").includes("过大"),
+      `8KB 限额必须生效：${oversized.error?.user_message}`,
+    );
+
+    const deep = await desktop.commands.execute("ai.connection.save", {
+      provider: {
+        ...META_PROVIDER,
+        model_meta: {
+          "deepseek-chat": { reasoning_efforts: { low: { x: { y: 1 } } } },
+        },
+      },
+    });
+    assertInvalidRequestContract(deep, "model_meta 超过深度 4");
+    assert(
+      (deep.error?.user_message ?? "").includes("层级过深"),
+      `深度 4 限额必须生效：${deep.error?.user_message}`,
+    );
+
+    // 深度边界内：provider > model_meta > 条目 > reasoning_efforts > 值 = 4 层，合法。
+    const legal = await desktop.commands.execute("ai.connection.save", {
+      provider: {
+        ...META_PROVIDER,
+        model_meta: {
+          "deepseek-chat": {
+            input: ["text"],
+            reasoning_efforts: { low: "low", max: "max" },
+          },
+        },
+      },
+    });
+    assert(!legal.error, `深度 4 内的 model_meta 必须合法：${JSON.stringify(legal.error)}`);
+  });
+});
+
+Deno.test("§4.3 modelMetaInModelsOrder delivers only models-order ids and keeps stored extras", async () => {
+  const provider = {
+    id: "order",
+    models: ["b", "a", "b"],
+    model_meta: {
+      a: { name: "A" },
+      b: { name: "B" },
+      zz: { name: "Z" },
+    },
+  };
+  const delivered = modelMetaInModelsOrder(provider);
+  assertJsonEquals(
+    delivered.map((entry) => entry.model_id),
+    ["b", "a"],
+    "下发必须严格按 models 顺序并去重",
+  );
+  assertJsonEquals(
+    Object.keys(provider.model_meta),
+    ["a", "b", "zz"],
+    "存储里的未知 id 条目必须原样保留（不猜、不删）",
+  );
+  assertJsonEquals(modelMetaInModelsOrder({}), [], "没有 model_meta 时下发为空");
+
+  // B2：models 里的 Object.prototype 属性名不得从原型链读出幽灵条目。
+  const haunted = modelMetaInModelsOrder({
+    models: ["constructor", "toString", "__proto__", "valueOf", "a"],
+    model_meta: { a: { name: "A" } },
+  });
+  assertJsonEquals(
+    haunted.map((entry) => entry.model_id),
+    ["a"],
+    "models 含 constructor/toString/__proto__/valueOf 时只能下发自有条目",
+  );
+  assert(
+    haunted.every((entry) => typeof entry.meta === "object" && entry.meta !== null),
+    "下发的 meta 必须是存档对象，不能是原型链函数",
+  );
+  // 自有同名条目（如真的存了 "toString"）仍是真实数据，照常下发。
+  const own = modelMetaInModelsOrder({
+    models: ["toString"],
+    model_meta: { toString: { name: "别名" } },
+  });
+  assertJsonEquals(
+    own.map((entry) => [entry.model_id, entry.meta]),
+    [["toString", { name: "别名" }]],
+    "自有同名键是真实条目，必须照常下发",
+  );
+});
+
+Deno.test("§4.4 the transport forwards reasoning parameters without rejecting or rewriting them", async () => {
+  const { fetch: stub, calls } = stubFetch(() =>
+    jsonResponse({ choices: [{ message: { content: "OK" } }] })
+  );
+  await withDesktop(async ({ desktop }) => {
+    const cases = [
+      {
+        id: "reason-openai",
+        protocol: "openai-completions",
+        auth: { header: "authorization", scheme: "Bearer" },
+        body: {
+          model: "deepseek-reasoner",
+          messages: [{ role: "user", content: "hello" }],
+          reasoning_effort: "high",
+        },
+        check: (body: Record<string, unknown>) => body.reasoning_effort === "high",
+      },
+      {
+        id: "reason-anthropic",
+        protocol: "anthropic-messages",
+        auth: { header: "x-api-key", scheme: "" },
+        body: {
+          model: "claude-reasoner",
+          messages: [{ role: "user", content: "hello" }],
+          max_tokens: 16,
+          thinking: { type: "enabled", budget_tokens: 2048 },
+        },
+        check: (body: Record<string, unknown>) =>
+          JSON.stringify(body.thinking) === JSON.stringify({ type: "enabled", budget_tokens: 2048 }),
+      },
+    ];
+    for (const item of cases) {
+      const saved = await desktop.commands.execute("ai.connection.save", {
+        provider: {
+          id: item.id,
+          label: item.id,
+          kind: "openai_compatible",
+          api_protocol: item.protocol,
+          base_url: "https://api.example.test",
+          chat_path: "/chat/completions",
+          default_model: item.body.model,
+          models: [item.body.model],
+          model_meta: {
+            [item.body.model]: {
+              max_tokens: 8192,
+              reasoning_efforts: { off: "off", high: "high" },
+            },
+          },
+        },
+      });
+      assert(!saved.error, `${item.id} 配置必须保存：${JSON.stringify(saved.error)}`);
+      const secret = await desktop.commands.execute("ai.secret.set", {
+        provider_id: item.id,
+        value: CREDENTIAL,
+      });
+      assert(!secret.error, `${item.id} 密钥必须保存`);
+
+      const done = await desktop.commands.execute("ai.complete", {
+        request_id: `req-${item.id}`,
+        provider_id: item.id,
+        auth: item.auth,
+        headers: { "content-type": "application/json" },
+        body: item.body,
+        timeout_ms: 5000,
+      });
+      assert(!done.error, `${item.id} 请求不得被服务端拒绝：${JSON.stringify(done.error)}`);
+      const posted = JSON.parse(calls.at(-1)!.init.body as string) as Record<string, unknown>;
+      assert(
+        item.check(posted),
+        `${item.id} 的推理参数必须原样透传（协议请求体在 app/ai.js 构造）：${JSON.stringify(posted)}`,
+      );
+    }
+  }, { fetch: stub });
 });

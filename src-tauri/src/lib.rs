@@ -14001,7 +14001,7 @@ fn ai_read_provider_store_secure(base: &Path) -> Result<Map<String, Value>, Stri
     };
     if let Some(providers) = store.get("providers").and_then(Value::as_array) {
         for provider in providers {
-            if ai_forbidden_field_path(provider, "", ai_credential_field_name).is_some()
+            if ai_stored_provider_forbidden_path(provider).is_some()
                 || ai_inline_credential_field(provider, "").is_some()
             {
                 return Err(ai_migration_failure("provider-metadata"));
@@ -14270,6 +14270,385 @@ fn ai_credential_field_name(name: &str) -> bool {
     .iter()
     .any(|needle| lowered.contains(needle))
 }
+
+/// 浏览器壳 `SAFE_PROVIDER_FIELDS` 的对应文案：两个壳的拒绝提示必须逐字一致。
+const AI_SAFE_PROVIDER_FIELDS: &str = "id / label / kind / base_url / chat_path / api_protocol / auth_header / auth_scheme / default_model / models / model_meta";
+
+/// 设计 §4.3 `model_meta` 的条目字段白名单（浏览器壳 `MODEL_META_FIELDS` 同序）。
+const AI_MODEL_META_FIELDS: [&str; 5] = [
+    "name",
+    "context_window",
+    "max_tokens",
+    "input",
+    "reasoning_efforts",
+];
+const AI_MODEL_META_FIELD_LIST: &str =
+    "name / context_window / max_tokens / input / reasoning_efforts";
+const AI_MODEL_INPUT_TYPES: [&str; 2] = ["text", "image"];
+const AI_REASONING_EFFORT_TIERS: [&str; 7] =
+    ["off", "minimal", "low", "medium", "high", "xhigh", "max"];
+/// `max_tokens` 是唯一会被 `ai_credential_field_name` 的粗规则（含 "token"）误伤的
+/// schema 字段名；它只在 `model_meta.<id>.max_tokens` 这一个位置放行，且取值被严格
+/// 限定为正整数，藏不下任何密钥字符串。其余任何嵌套键名仍逐层按粗规则拒绝。
+const AI_MODEL_META_CREDENTIAL_EXEMPT: &str = "max_tokens";
+
+/// 浏览器壳 `DANGEROUS_FIELDS` 的对应物：`model_meta` 内这些键名同样拒绝。
+fn ai_dangerous_field(name: &str) -> bool {
+    matches!(name, "__proto__" | "constructor" | "prototype")
+}
+
+/// AI 配置校验错误的统一构造：`user_message` 中文（句号结尾）、
+/// `technical_message` 英文、`recommended_action` 中文非空；`details` 只带字段
+/// 路径（或为空），绝不回显坏值。
+fn ai_config_error(
+    user_message: &str,
+    technical_message: &str,
+    recommended_action: &str,
+    details: Value,
+) -> String {
+    json!({
+        "error": {
+            "code": "invalid_request",
+            "user_message": user_message,
+            "technical_message": technical_message,
+            "severity": "blocking",
+            "recoverable": false,
+            "recommended_action": recommended_action,
+            "details": details,
+        }
+    })
+    .to_string()
+}
+
+/// `model_meta` 校验错误：`details` 只带字段路径。
+fn ai_model_meta_error(
+    user_message: &str,
+    technical_message: &str,
+    recommended_action: &str,
+    field: &str,
+) -> String {
+    ai_config_error(
+        user_message,
+        technical_message,
+        recommended_action,
+        json!({ "field": field }),
+    )
+}
+
+/// 与浏览器壳 `forbiddenProviderFieldError` 同一拒绝：点名字段路径（字段名标识
+/// 问题所在），从不回显字段值。
+fn ai_provider_forbidden_error(field_path: &str) -> String {
+    let leaf = field_path.rsplit('.').next().unwrap_or(field_path);
+    // 与浏览器壳 `forbiddenProviderFieldError` 逐字一致（含 requires_credential 的
+    // 括号补充），两个壳必须给出同一提示。
+    let hint = if leaf.eq_ignore_ascii_case("requires_credential") {
+        "「requires_credential」是界面元数据，请勿随配置提交（原生壳会把它当作凭据字段拒绝）。"
+    } else {
+        "密钥请通过「保存密钥」单独提交。"
+    };
+    ai_model_meta_error(
+        &format!("服务商配置中出现了不允许的字段「{field_path}」。"),
+        &format!("Credential-shaped provider field rejected: {field_path}"),
+        &format!("{hint}允许的字段：{AI_SAFE_PROVIDER_FIELDS}。"),
+        field_path,
+    )
+}
+
+/// 保存路径的禁字段扫描：顶层 `model_meta` 子树**跳过**——它由
+/// `ai_validate_model_meta` 以与浏览器壳 `normalizeModelMeta` 完全相同的顺序
+/// 校验（含它自己的凭据键名检查），保证两个壳拒绝同一批载荷、且错误归属一致；
+/// 其余部分沿用 `ai_forbidden_field_path` 的任意层级规则。
+fn ai_provider_forbidden_field_path(value: &Value) -> Option<String> {
+    let Some(fields) = value.as_object() else {
+        return ai_forbidden_field_path(value, "", ai_credential_field_name);
+    };
+    for (key, child) in fields {
+        if key == "model_meta" {
+            continue;
+        }
+        if ai_credential_field_name(key) || ai_dangerous_field(key) {
+            return Some(key.clone());
+        }
+        if let Some(found) = ai_forbidden_field_path(child, key, ai_credential_field_name) {
+            return Some(found);
+        }
+    }
+    None
+}
+
+/// 读入口（历史明文迁移前）的保守扫描：`model_meta` 子树同样逐层检查（仅条目
+/// 字段 `max_tokens` 的键名按 schema 豁免）。手工编辑出的凭据形状字段沿用既有
+/// 语义：整店拒绝迁移，绝不放行。
+fn ai_stored_provider_forbidden_path(value: &Value) -> Option<String> {
+    ai_provider_forbidden_field_path(value).or_else(|| {
+        value
+            .as_object()
+            .and_then(|fields| fields.get("model_meta"))
+            .and_then(ai_model_meta_forbidden_path)
+    })
+}
+
+/// `model_meta` 子树的禁字段扫描：条目字段、推理档位键、Model ID 键逐层检查。
+fn ai_model_meta_forbidden_path(value: &Value) -> Option<String> {
+    let Some(models) = value.as_object() else {
+        return ai_forbidden_field_path(value, "model_meta", ai_credential_field_name);
+    };
+    for (model_id, entry) in models {
+        let entry_path = format!("model_meta.{model_id}");
+        if ai_credential_field_name(model_id) || ai_dangerous_field(model_id) {
+            return Some(entry_path);
+        }
+        let Some(fields) = entry.as_object() else {
+            return ai_forbidden_field_path(entry, &entry_path, ai_credential_field_name);
+        };
+        for (field, child) in fields {
+            let field_path = format!("{entry_path}.{field}");
+            if field != AI_MODEL_META_CREDENTIAL_EXEMPT && ai_credential_field_name(field) {
+                return Some(field_path);
+            }
+            if ai_dangerous_field(field) {
+                return Some(field_path);
+            }
+            if let Some(found) = ai_forbidden_field_path(child, &field_path, ai_credential_field_name)
+            {
+                return Some(found);
+            }
+        }
+    }
+    None
+}
+
+/// 与浏览器壳 `Number.isInteger(x) && x > 0` 同判定：JSON 正整数。
+fn ai_positive_integer(value: &Value) -> bool {
+    if let Some(small) = value.as_u64() {
+        return small > 0;
+    }
+    match value.as_f64() {
+        Some(floating) => floating.is_finite() && floating > 0.0 && floating.fract() == 0.0,
+        None => false,
+    }
+}
+
+/// 与浏览器壳 `MAX_PROVIDER_BYTES` / `MAX_PROVIDER_DEPTH` 同一限额（设计 §4.3
+/// 约束 2）。大小按 JS 字符串长度口径（UTF-16 code unit）计，与
+/// `JSON.stringify(x).length` 对齐，保证两个壳接受同一批配置。
+const AI_MAX_PROVIDER_BYTES: usize = 8 * 1024;
+const AI_MAX_PROVIDER_DEPTH: usize = 4;
+
+/// 与浏览器壳 `assertJsonOnly` 同一深度口径：根为 0 层，每进一层对象/数组
+/// +1，深度 > 4 即拒绝。
+fn ai_json_depth_exceeds(value: &Value, depth: usize) -> bool {
+    if depth > AI_MAX_PROVIDER_DEPTH {
+        return true;
+    }
+    match value {
+        Value::Array(items) => items
+            .iter()
+            .any(|item| ai_json_depth_exceeds(item, depth + 1)),
+        Value::Object(fields) => fields
+            .values()
+            .any(|child| ai_json_depth_exceeds(child, depth + 1)),
+        _ => false,
+    }
+}
+
+/// 单条 Provider 配置的大小/深度限额，与浏览器壳 `normalizeProviderConfig`
+/// 同序（先深度、后大小），错误文案逐字一致。
+fn ai_assert_provider_limits(provider: &Value) -> Result<(), String> {
+    if ai_json_depth_exceeds(provider, 0) {
+        return Err(ai_config_error(
+            "服务商配置层级过深，无法保存。",
+            "Provider config exceeds the supported nesting depth",
+            &format!("请减少配置的嵌套层级（最多 {AI_MAX_PROVIDER_DEPTH} 层）后重试。"),
+            json!({}),
+        ));
+    }
+    let serialized = serde_json::to_string(provider).map_err(|_| {
+        ai_config_error(
+            "服务商配置过大，无法保存。",
+            "Provider config could not be serialised for the size check",
+            "请精简模型元数据或自定义字段（单个服务商配置不超过 8KB）后重试。",
+            json!({}),
+        )
+    })?;
+    if serialized.encode_utf16().count() > AI_MAX_PROVIDER_BYTES {
+        return Err(ai_config_error(
+            "服务商配置过大，无法保存。",
+            "Provider config exceeds 8192 bytes",
+            "请精简模型元数据或自定义字段（单个服务商配置不超过 8KB）后重试。",
+            json!({}),
+        ));
+    }
+    Ok(())
+}
+
+/// 设计 §4.3 `model_meta` 严格校验：条目字段全部白名单（未知字段拒绝）、
+/// `context_window` / `max_tokens` 只接受正整数、`input` 去重后至少一种、
+/// `reasoning_efforts` 的键必须是白名单档位且值为非空文本。未知模型 id 的条目
+/// 保留（不猜、不删）。键名逐层套用 `ai_credential_field_name`，唯一豁免是条目
+/// 字段 `max_tokens`。与浏览器壳 `normalizeModelMeta` 必须拒绝同一批载荷。
+fn ai_validate_model_meta(value: &Value) -> Result<Value, String> {
+    let Some(entries) = value.as_object() else {
+        return Err(ai_model_meta_error(
+            "服务商配置字段「model_meta」必须是以 Model ID 为键的对象。",
+            "Provider field model_meta must be an object keyed by model id",
+            "请为每个 Model ID 提供一个元数据对象，或删除「model_meta」字段。",
+            "model_meta",
+        ));
+    };
+    let mut normalized = Map::new();
+    for (model_id, entry) in entries {
+        let entry_path = format!("model_meta.{model_id}");
+        if ai_credential_field_name(model_id) || ai_dangerous_field(model_id) {
+            return Err(ai_provider_forbidden_error(&entry_path));
+        }
+        if model_id.trim().is_empty() {
+            return Err(ai_model_meta_error(
+                "服务商配置字段「model_meta」的 Model ID 不能为空。",
+                "model_meta keys must be non-empty model ids",
+                "请先在模型目录填写 Model ID，或删除这个空条目。",
+                "model_meta",
+            ));
+        }
+        let Some(fields) = entry.as_object() else {
+            return Err(ai_model_meta_error(
+                &format!("服务商配置字段「{entry_path}」必须是对象。"),
+                "Each model_meta entry must be an object",
+                "请为该 Model ID 填写显示名、容量、输入类型或推理等级，或删除这个条目。",
+                &entry_path,
+            ));
+        };
+        let mut meta = Map::new();
+        for (field, child) in fields {
+            let field_path = format!("{entry_path}.{field}");
+            // 唯一豁免在这里：max_tokens（且仅该条目字段）按 schema 严格限定为
+            // 正整数，键名不按凭据形状拒绝；其余任何键名保持粗规则。
+            let credential_shaped = ai_credential_field_name(field)
+                && field != AI_MODEL_META_CREDENTIAL_EXEMPT;
+            if ai_dangerous_field(field) || credential_shaped {
+                return Err(ai_provider_forbidden_error(&field_path));
+            }
+            if !AI_MODEL_META_FIELDS.contains(&field.as_str()) {
+                return Err(ai_model_meta_error(
+                    &format!("服务商配置字段「{field_path}」不受支持。"),
+                    &format!("Unsupported model_meta field: {field}"),
+                    &format!("每模型元数据只支持 {AI_MODEL_META_FIELD_LIST}。"),
+                    &field_path,
+                ));
+            }
+            match field.as_str() {
+                "name" => {
+                    let Some(text) = child.as_str() else {
+                        return Err(ai_model_meta_error(
+                            &format!("服务商配置字段「{field_path}」必须是文本。"),
+                            "model_meta name must be a string",
+                            "请填写显示名称文本，或删除该字段。",
+                            &field_path,
+                        ));
+                    };
+                    meta.insert("name".into(), Value::String(text.to_owned()));
+                }
+                "context_window" | "max_tokens" => {
+                    if !ai_positive_integer(child) {
+                        return Err(ai_model_meta_error(
+                            &format!("服务商配置字段「{field_path}」必须是正整数。"),
+                            &format!("model_meta {field} must be a positive integer"),
+                            "请填写正整数（不接受 0、负数、小数与非数字），或删除该字段以继承默认值。",
+                            &field_path,
+                        ));
+                    }
+                    meta.insert(field.clone(), child.clone());
+                }
+                "input" => {
+                    let Some(items) = child.as_array() else {
+                        return Err(ai_model_meta_error(
+                            &format!("服务商配置字段「{field_path}」必须是输入类型列表。"),
+                            "model_meta input must be an array of input modalities",
+                            "请勾选「文本」或「图片」，至少保留一种。",
+                            &field_path,
+                        ));
+                    };
+                    let mut input: Vec<String> = Vec::new();
+                    for item in items {
+                        let Some(text) = item
+                            .as_str()
+                            .filter(|value| AI_MODEL_INPUT_TYPES.contains(value))
+                        else {
+                            return Err(ai_model_meta_error(
+                                &format!(
+                                    "服务商配置字段「{field_path}」只支持「文本」与「图片」两种输入类型。"
+                                ),
+                                "model_meta input entries must be \"text\" or \"image\"",
+                                "请只使用「文本」（text）与「图片」（image）两种输入类型。",
+                                &field_path,
+                            ));
+                        };
+                        if !input.iter().any(|existing| existing == text) {
+                            input.push(text.to_owned());
+                        }
+                    }
+                    if input.is_empty() {
+                        return Err(ai_model_meta_error(
+                            &format!("服务商配置字段「{field_path}」至少要保留一种输入类型。"),
+                            "model_meta input must declare at least one modality",
+                            "请至少勾选「文本」或「图片」中的一种。",
+                            &field_path,
+                        ));
+                    }
+                    meta.insert("input".into(), json!(input));
+                }
+                _ => {
+                    // reasoning_efforts：档位 -> API 参数值。
+                    let Some(efforts) = child.as_object() else {
+                        return Err(ai_model_meta_error(
+                            &format!("服务商配置字段「{field_path}」必须是档位到 API 参数值的映射。"),
+                            "model_meta reasoning_efforts must be an object",
+                            "请按档位填写 API 参数值，或删除该字段以关闭推理等级。",
+                            &field_path,
+                        ));
+                    };
+                    let mut normalized_efforts = Map::new();
+                    for (tier, raw_value) in efforts {
+                        let tier_path = format!("{field_path}.{tier}");
+                        if ai_credential_field_name(tier) || ai_dangerous_field(tier) {
+                            return Err(ai_provider_forbidden_error(&tier_path));
+                        }
+                        if !AI_REASONING_EFFORT_TIERS.contains(&tier.as_str()) {
+                            return Err(ai_model_meta_error(
+                                &format!("服务商配置字段「{tier_path}」不是支持的推理档位。"),
+                                "model_meta reasoning_efforts tier is out of range",
+                                &format!(
+                                    "推理档位只支持 {}。",
+                                    AI_REASONING_EFFORT_TIERS.join(" / ")
+                                ),
+                                &tier_path,
+                            ));
+                        }
+                        let Some(text) = raw_value
+                            .as_str()
+                            .filter(|value| !value.trim().is_empty())
+                        else {
+                            return Err(ai_model_meta_error(
+                                &format!(
+                                    "服务商配置字段「{tier_path}」的 API 参数值必须是非空文本。"
+                                ),
+                                "model_meta reasoning_efforts value must be a non-empty string",
+                                "请为每个推理档位填写 API 参数值，或移除这个档位。",
+                                &tier_path,
+                            ));
+                        };
+                        normalized_efforts
+                            .insert(tier.clone(), Value::String(text.to_owned()));
+                    }
+                    meta.insert("reasoning_efforts".into(), Value::Object(normalized_efforts));
+                }
+            }
+        }
+        normalized.insert(model_id.clone(), Value::Object(meta));
+    }
+    Ok(Value::Object(normalized))
+}
+
 
 /// A credential-shaped query parameter is secret even when the field itself is
 /// the otherwise-safe `base_url` metadata field.
@@ -14926,7 +15305,23 @@ fn ai_provider_records(store: &Map<String, Value>) -> Vec<Value> {
         .map(|providers| {
             providers
                 .iter()
-                .map(|provider| ai_sanitize_record(provider, &[]))
+                .map(|provider| {
+                    let mut sanitized = ai_sanitize_record(provider, &[]);
+                    // model_meta 必须先过严格校验再回填：手工编辑的 providers.json
+                    // 可能带非法形状（值型密钥、未知字段名），校验失败时整块丢弃，
+                    // 绝不把未清洗的原值回填给列表视图。校验通过时回填规范化结果，
+                    // 与保存路径、浏览器壳读回完全一致（粗规则会误删 max_tokens 这类
+                    // schema 字段名，所以不能直接沿用 sanitize 的产物）。
+                    if let Some(object) = sanitized.as_object_mut() {
+                        object.remove("model_meta");
+                        if let Some(meta) = provider.get("model_meta") {
+                            if let Ok(validated) = ai_validate_model_meta(meta) {
+                                object.insert("model_meta".into(), validated);
+                            }
+                        }
+                    }
+                    sanitized
+                })
                 .collect::<Vec<Value>>()
         })
         .unwrap_or_default()
@@ -15029,24 +15424,20 @@ fn ai_connection_save_guarded_at(
             json!({ "api_protocol": protocol }),
         ));
     }
-    // 与浏览器壳一致：密钥形状的字段一律拒绝（而不是静默丢弃），
-    // 这样同一份配置在两个壳里的行为完全相同。
-    if let Some(field_path) = ai_forbidden_field_path(provider, "", ai_credential_field_name) {
-        let leaf = field_path.rsplit('.').next().unwrap_or(field_path.as_str());
-        let hint = if leaf.eq_ignore_ascii_case("requires_credential") {
-            "「requires_credential」是界面元数据，请勿随配置提交。"
-        } else {
-            "密钥请通过「保存密钥」单独提交。"
-        };
-        return Err(structured_ai_error(
-            "invalid_request",
-            &format!("Provider 配置中出现了不允许的字段「{field_path}」。"),
-            Some(&format!(
-                "{hint}允许的字段：id / label / kind / base_url / chat_path / api_protocol / auth_header / auth_scheme / default_model / models。"
-            )),
-            json!({ "field": field_path }),
-        ));
+    // 与浏览器壳一致：密钥形状的字段一律拒绝（而不是静默丢弃）——任意层级、
+    // 含 model_meta 子树（仅条目字段 max_tokens 按 schema 豁免）——这样同一份
+    // 配置在两个壳里的行为完全相同。
+    if let Some(field_path) = ai_provider_forbidden_field_path(provider) {
+        return Err(ai_provider_forbidden_error(&field_path));
     }
+    // 设计 §4.3 约束 2：与浏览器壳同一限额（深度 4、整条 8KB），先深度后大小。
+    ai_assert_provider_limits(provider)?;
+    // 设计 §4.3：model_meta 严格校验（未知字段 / 非法取值 / 凭据形状键名拒绝），
+    // 与浏览器壳 normalizeModelMeta 同序、拒绝同一批载荷、错误归属一致。
+    let validated_model_meta = match provider.get("model_meta") {
+        Some(model_meta) => Some(ai_validate_model_meta(model_meta)?),
+        None => None,
+    };
     if let Some(field_path) = ai_inline_credential_field(provider, "") {
         return Err(structured_ai_error(
             "invalid_request",
@@ -15088,6 +15479,11 @@ fn ai_connection_save_guarded_at(
                 "Bearer"
             }),
         );
+    }
+    // 校验过的 model_meta 在粗粒度 ai_strip_sensitive 之后原样写回：max_tokens
+    // 这类 schema 字段名会被粗规则误伤，这里保证两个壳读写往返都不丢字段。
+    if let Some(model_meta) = validated_model_meta {
+        record.insert("model_meta".into(), model_meta);
     }
     let mut record = Value::Object(record);
 
@@ -23336,6 +23732,237 @@ mod tests {
 
         let _ = fs::remove_dir_all(directory);
     }
+
+    #[test]
+    fn ai_connection_save_round_trips_model_meta_without_losing_fields() {
+        let directory = test_directory("ai-model-meta-round-trip");
+        let base = ai_test_base(&directory);
+        let model_meta = json!({
+            "deepseek-reasoner": {
+                "name": "推理模型",
+                "context_window": 131072,
+                "max_tokens": 8192,
+                "input": ["text", "image"],
+                "reasoning_efforts": { "off": "off", "low": "low", "high": "high" }
+            },
+            "deepseek-chat": { "name": "对话模型", "input": ["text"] },
+            "ghost-model": { "max_tokens": 4096 }
+        });
+        let saved = ai_connection_save_at(
+            &base,
+            &json!({
+                "id": "meta-provider",
+                "label": "带模型元数据",
+                "base_url": "https://api.example.test",
+                "default_model": "deepseek-chat",
+                "models": ["deepseek-chat", "deepseek-reasoner"],
+                "model_meta": model_meta,
+            }),
+        )
+        .expect("model_meta 必须能保存");
+        assert_eq!(
+            saved["provider"]["model_meta"], model_meta,
+            "保存返回值必须保留全部条目（含未知 id）"
+        );
+
+        // 列表视图同样不丢字段：未知模型 id 的条目保留（不猜、不删）。
+        let listed = ai_connection_list_at(&base).expect("list must read the store");
+        assert_eq!(listed["providers"][0]["model_meta"], model_meta);
+
+        // 读 -> 写 -> 读：原样重存一次仍然等值。
+        let resaved = ai_connection_save_at(&base, &listed["providers"][0])
+            .expect("原样重存必须成功");
+        assert_eq!(resaved["provider"]["model_meta"], model_meta);
+        let relisted = ai_connection_list_at(&base).expect("list must read the store again");
+        assert_eq!(relisted["providers"][0]["model_meta"], model_meta);
+
+        // 老文件没有 model_meta 时视为未设置，不得被补出来。
+        let legacy_directory = test_directory("ai-model-meta-legacy");
+        let legacy_base = ai_test_base(&legacy_directory);
+        let legacy = ai_connection_save_at(
+            &legacy_base,
+            &json!({ "id": "old-file", "label": "旧文件连接" }),
+        )
+        .expect("无 model_meta 的老配置必须能保存");
+        assert!(
+            legacy["provider"].get("model_meta").is_none(),
+            "缺省 model_meta 必须视为 undefined"
+        );
+
+        let _ = fs::remove_dir_all(directory);
+        let _ = fs::remove_dir_all(legacy_directory);
+    }
+
+    #[test]
+    fn ai_connection_save_rejects_invalid_model_meta_shapes() {
+        let directory = test_directory("ai-model-meta-invalid");
+        let base = ai_test_base(&directory);
+        let cases: Vec<(Value, &str)> = vec![
+            (json!("text"), "必须是以 Model ID 为键的对象"),
+            (json!({ "m": "text" }), "必须是对象"),
+            (json!({ "  ": { "name": "x" } }), "Model ID 不能为空"),
+            (json!({ "m": { "extra": 1 } }), "不受支持"),
+            (json!({ "m": { "name": 5 } }), "必须是文本"),
+            (json!({ "m": { "context_window": 0 } }), "必须是正整数"),
+            (json!({ "m": { "context_window": -123456 } }), "必须是正整数"),
+            (json!({ "m": { "context_window": 1.5 } }), "必须是正整数"),
+            (json!({ "m": { "context_window": "131072" } }), "必须是正整数"),
+            (json!({ "m": { "context_window": true } }), "必须是正整数"),
+            (json!({ "m": { "max_tokens": 0 } }), "必须是正整数"),
+            (json!({ "m": { "input": "text" } }), "必须是输入类型列表"),
+            (json!({ "m": { "input": [] } }), "至少要保留一种输入类型"),
+            (json!({ "m": { "input": ["text", "video"] } }), "只支持"),
+            (json!({ "m": { "input": [5] } }), "只支持"),
+            (json!({ "m": { "reasoning_efforts": "low" } }), "必须是档位到 API 参数值的映射"),
+            (json!({ "m": { "reasoning_efforts": { "ultra": "x" } } }), "不是支持的推理档位"),
+            (json!({ "m": { "reasoning_efforts": { "Low": "x" } } }), "不是支持的推理档位"),
+            (json!({ "m": { "reasoning_efforts": { "low": "" } } }), "API 参数值必须是非空文本"),
+            (json!({ "m": { "reasoning_efforts": { "low": 5 } } }), "API 参数值必须是非空文本"),
+            (
+                json!({ "m": { "reasoning_efforts": { "low": "   " } } }),
+                "API 参数值必须是非空文本",
+            ),
+            // 与浏览器壳同一错误归属（S2 对拍）：形状/类型问题不走凭据字段拒绝，
+            // 与 tests/ai_transport_test.ts 的同名用例逐条对应。
+            (
+                json!([{ "api_key": "sk-model-meta-must-not-leak-1234" }]),
+                "必须是以 Model ID 为键的对象",
+            ),
+            (
+                json!({ "m": { "max_tokens": "sk-model-meta-must-not-leak-1234" } }),
+                "必须是正整数",
+            ),
+            (
+                json!({ "m": { "max_tokens": { "api_key": "sk-model-meta-must-not-leak-1234" } } }),
+                "必须是正整数",
+            ),
+        ];
+        for (model_meta, expected) in cases {
+            let failure = ai_connection_save_at(
+                &base,
+                &json!({ "id": "meta-guard", "model_meta": model_meta }),
+            )
+            .expect_err("非法 model_meta 必须被拒绝");
+            assert!(failure.contains("\"invalid_request\""), "got: {failure}");
+            assert!(
+                failure.contains(expected),
+                "错误文案要包含「{expected}」: {failure}"
+            );
+            assert!(
+                !failure.contains("sk-model-meta-must-not-leak-1234"),
+                "错误不得回显坏值: {failure}"
+            );
+        }
+        assert!(
+            !base.join(AI_PROVIDERS_FILE).exists(),
+            "被拒绝的配置不得落盘"
+        );
+
+        let _ = fs::remove_dir_all(directory);
+    }
+
+    #[test]
+    fn ai_connection_save_rejects_credential_shaped_model_meta_keys() {
+        let directory = test_directory("ai-model-meta-guard");
+        let base = ai_test_base(&directory);
+        let secret = "sk-model-meta-must-not-leak-1234";
+        let cases: Vec<(Value, &str)> = vec![
+            (json!({ "m": { "api_key": secret } }), "model_meta.m.api_key"),
+            (
+                json!({ "m": { "reasoning_efforts": { "api_key": secret } } }),
+                "model_meta.m.reasoning_efforts.api_key",
+            ),
+            (json!({ "m": { "auth_token": secret } }), "model_meta.m.auth_token"),
+            (json!({ "the_token": { "name": "x" } }), "model_meta.the_token"),
+            (json!({ "m": { "max_token": 1 } }), "model_meta.m.max_token"),
+            (json!({ "max_tokens": { "name": "x" } }), "model_meta.max_tokens"),
+            (
+                json!({ "m": { "reasoning_efforts": { "max_tokens": "x" } } }),
+                "model_meta.m.reasoning_efforts.max_tokens",
+            ),
+        ];
+        for (model_meta, path) in cases {
+            let failure =
+                ai_connection_save_at(&base, &json!({ "id": "meta-guard", "model_meta": model_meta }))
+                    .expect_err("凭据形状键名必须被拒绝");
+            assert!(failure.contains("不允许的字段"), "got: {failure}");
+            assert!(failure.contains(path), "必须点名被拒字段 {path}: {failure}");
+            assert!(!failure.contains(secret), "错误不得回显字段值: {failure}");
+        }
+
+        // max_tokens 的豁免只在 model_meta 条目层生效（值必须是正整数）。
+        ai_connection_save_at(
+            &base,
+            &json!({ "id": "meta-guard", "model_meta": { "m": { "max_tokens": 8192 } } }),
+        )
+        .expect("model_meta 条目里的 max_tokens 是 schema 字段，必须合法");
+        assert!(
+            ai_connection_save_at(&base, &json!({ "id": "outer", "max_tokens": 12 }))
+                .expect_err("外层 max_tokens 仍然属于凭据形状字段")
+                .contains("「max_tokens」"),
+            "外层 max_tokens 必须被点名拒绝"
+        );
+        assert!(
+            ai_connection_save_at(
+                &base,
+                &json!({ "id": "nested", "extra": { "m": { "max_tokens": 1 } } }),
+            )
+            .expect_err("model_meta 之外的 max_tokens 必须拒绝")
+            .contains("extra.m.max_tokens"),
+            "嵌套 max_tokens 必须被点名拒绝"
+        );
+
+        let _ = fs::remove_dir_all(directory);
+    }
+
+    #[test]
+    fn ai_connection_save_enforces_provider_size_and_depth_limits() {
+        let directory = test_directory("ai-model-meta-limits");
+        let base = ai_test_base(&directory);
+        // 与浏览器壳同一限额：整条配置 ≤ 8KB、深度 ≤ 4（先深度后大小）。
+        let oversized = ai_connection_save_at(
+            &base,
+            &json!({
+                "id": "big",
+                "model_meta": { "m": { "name": "x".repeat(9000) } },
+            }),
+        )
+        .expect_err("超大 model_meta 必须被拒绝");
+        assert!(oversized.contains("过大"), "got: {oversized}");
+        assert!(oversized.contains("8KB"), "错误必须给出 8KB 限额提示: {oversized}");
+
+        let deep = ai_connection_save_at(
+            &base,
+            &json!({
+                "id": "deep",
+                "model_meta": { "m": { "reasoning_efforts": { "low": { "x": { "y": 1 } } } } },
+            }),
+        )
+        .expect_err("超深 model_meta 必须被拒绝");
+        assert!(deep.contains("层级过深"), "got: {deep}");
+        assert!(deep.contains("最多 4 层"), "错误必须给出深度限额提示: {deep}");
+
+        // 深度边界内（provider > model_meta > 条目 > reasoning_efforts > 值 = 4 层）
+        // 且体积合法的配置必须照常保存、往返。
+        let legal = ai_connection_save_at(
+            &base,
+            &json!({
+                "id": "legal",
+                "model_meta": {
+                    "m": { "input": ["text"], "reasoning_efforts": { "low": "low" } }
+                },
+            }),
+        )
+        .expect("深度 4 内且体积合法的 model_meta 必须能保存");
+        assert_eq!(
+            legal["provider"]["model_meta"]["m"]["reasoning_efforts"]["low"],
+            json!("low")
+        );
+        assert!(base.join(AI_PROVIDERS_FILE).exists());
+
+        let _ = fs::remove_dir_all(directory);
+    }
+
 
     #[test]
     fn ai_execution_append_sanitises_and_truncates_records() {

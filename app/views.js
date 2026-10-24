@@ -37,10 +37,15 @@ import {
 } from "./authoring.js";
 import {
   AI_OFFLINE_PROVIDER_ID,
+  AI_REASONING_HELP_TEXT,
   aiApiProtocolChoices,
   aiChangeDraftDiffRows,
   aiContextPreviewLines,
   aiIsOfflineConnection,
+  aiReasoningNextTier,
+  aiReasoningSummaryLine,
+  aiReasoningSupported,
+  aiReasoningTierOptions,
 } from "./ai.js";
 import {
   buildExplorerTree,
@@ -2952,53 +2957,48 @@ export function createViews(store) {
   }
 
   /**
-   * §9.3 — the existing-connections list.  Rows come from saved connections
-   * only: no Volcengine/Doubao, OpenAI, Anthropic or DeepSeek template cards
-   * (§9.2).  Each row carries the full field set the spec names — display name,
-   * Provider ID, Base URL, protocol, credential state, configured models and
-   * default model — and never renders a secret value.
+   * §9.3 / design §2 — the provider row cards (DSH「设置 → 模型」).  Rows come
+   * from saved API connections only: no Volcengine/Doubao, OpenAI, Anthropic or
+   * DeepSeek template cards (§9.2), no offline connector row and no subscription
+   * row — the subscription block owns its own accounts.  Each row shows exactly
+   * what DSH shows (display name + Provider ID on one line, the「自定义」badge,
+   * the credential dot,「当前使用」, the row actions and inline diagnostics) and
+   * never renders a credential value.
    */
-  function aiConnectionManagerView(choices, configured) {
-    const savedIds = new Set(
-      (Array.isArray(store.ui.aiProviders) ? store.ui.aiProviders : [])
-        .map((provider) => String(provider?.id || "").trim())
-        .filter(Boolean),
-    );
-    const connections = choices.filter((choice) =>
+  function aiProviderRowsView(configured) {
+    const currentId = String(store.ui.aiProviderId || "").trim();
+    const openRowId = store.ui.aiOpenEditor === "row" && store.ui.aiRowDraft
+      ? String(store.ui.aiRowDraft.providerId || store.ui.aiRowDraft.id || "").trim()
+      : "";
+    const rows = aiProviderChoices().filter((choice) =>
       !aiIsOfflineConnection(choice) &&
       String(choice.kind || "") !== "openai_chatgpt_subscription");
-    const protocolLabels = aiApiProtocolChoices();
-    return `<section class="ai-connection-manager" id="ai-connection-manager">
-      <div class="ai-block-head"><div><b>已有模型服务商</b><small>只显示你创建的 API 连接与已保存的订阅账户；API Key 只显示是否已配置，不会回显。</small></div><button class="primary" data-action="ai-create-connection">+ 添加模型服务商</button></div>
-      <div class="ai-connection-list">${connections.length
-        ? connections.map((choice) => {
+    return `<section class="ai-provider-rows" data-ai-provider-rows>
+      ${rows.length
+        ? rows.map((choice) => {
           const id = String(choice.id || "");
-          const active = id === String(store.ui.aiProviderId || "");
+          const active = id === currentId;
           const configuredKey = configured[id] === true;
-          const saved = savedIds.has(id);
-          const models = (Array.isArray(choice.models) ? choice.models : []).filter(Boolean);
-          const protocol = String(choice.api_protocol || "openai-completions");
-          const protocolLabel = protocolLabels.find((entry) => entry.id === protocol)?.label || protocol;
-          const defaultModel = String(choice.default_model || "");
-          return `<article class="ai-connection-row${active ? " active" : ""}" data-provider-id="${esc(id)}">
-            <div class="ai-connection-info">
-              <div class="ai-connection-title"><b>${esc(choice.label || id)}</b>${active
-                ? `<span class="ai-key-state active">当前使用</span>`
-                : ""}<span class="ai-key-state ${configuredKey ? "set" : "unset"}">${
-                  configuredKey ? "凭据已配置" : "未配置凭据"
-                }</span></div>
-              <small>Provider ID：${esc(id)}</small>
-              <small>Base URL：${esc(choice.base_url || "尚未设置")}</small>
-              <small>协议：${esc(protocolLabel)}</small>
-              <small data-ai-connection-models>已配置模型：${
-                models.length ? esc(models.join("、")) : "无（可手动填写 Model ID）"
-              }</small>
-              <small>默认模型：${esc(defaultModel || "未设置")}</small>
-            </div>
-            <div class="ai-connection-actions"><button class="text-button" data-action="ai-use-provider" data-id="${esc(id)}" ${active ? "disabled" : ""}>${active ? "当前连接" : "使用"}</button><button class="text-button" data-action="ai-edit-connection" data-id="${esc(id)}">编辑</button>${saved ? `<button class="text-button danger" data-action="ai-delete-connection" data-id="${esc(id)}">删除</button>` : ""}</div>
+          const editing = id === openRowId;
+          const draft = editing ? store.ui.aiRowDraft : null;
+          const rowError = draft
+            ? String(draft.models_error || store.ui.aiModelsError || "") ||
+              Object.values(draft.errors || {}).filter(Boolean).join(" ")
+            : "";
+          return `<article class="ai-provider-row${active ? " active" : ""}" data-provider-id="${esc(id)}">
+            <header class="ai-provider-row-head">
+              <div class="ai-provider-identity">
+                <b class="ai-provider-name">${esc(choice.label || id)}</b><small class="ai-provider-id">${esc(id)}</small>${String(choice.kind || "") === "fake" || String(choice.kind || "") === "openai_chatgpt_subscription" ? "" : `<span class="ai-badge ai-badge-custom">自定义</span>`}<span class="ai-key-dot ${configuredKey ? "set" : "unset"}"></span><span class="ai-key-label">${configuredKey ? "凭据已配置" : "未配置凭据"}</span>${active ? `<span class="ai-current-use"><span class="ai-key-dot active"></span>当前使用</span>` : ""}
+              </div>
+              <div class="ai-provider-actions">
+                <button class="text-button" data-action="ai-edit-connection" data-id="${esc(id)}" aria-expanded="${editing}">${editing ? "收起" : "编辑"}</button><button class="text-button" data-action="ai-use-provider" data-id="${esc(id)}" ${active ? "disabled" : ""}>${active ? "当前连接" : "使用"}</button><button class="text-button danger" data-action="ai-delete-connection" data-id="${esc(id)}">删除</button>
+              </div>
+            </header>
+            ${rowError ? `<p class="ai-hint danger" data-ai-row-error>${esc(rowError)}</p>` : ""}
+            ${editing && draft ? aiProviderEditorView(draft, "row") : ""}
           </article>`;
         }).join("")
-        : `<p class="ai-hint">还没有 API 连接。点「+ 添加模型服务商」新建一个，填写 Provider ID、Base URL、协议与模型即可。</p>`}</div>
+        : `<p class="ai-hint">还没有 API 连接。点「＋ 添加模型提供商」新建一个，填写 Provider ID、API 地址、协议与模型即可。</p>`}
     </section>`;
   }
 
@@ -3027,149 +3027,258 @@ export function createViews(store) {
   }
 
   /**
-   * Provider/base-url/model form.  It never renders a credential value: the
-   * key field is a masked, unbound `<input type="password">` whose text lives
-   * only in the DOM until 保存密钥 reads it.
+   * The shared provider editor card (design §2.1 + §2.2).  One implementation
+   * serves the row editor and both add-card modes; §2.2 fixes the two orders:
+   * the row editor leads with「API 密钥」and folds everything else into
+   * 「自定义设置」, while the create form shows every field flat and ends with
+   * 「创建提供商」.
    *
-   * Every field carries a `data-focus-key` so a render that lands mid-typing
-   * can put the caret (and the typed text) back where it was.
+   * It never renders a credential value: the key field is a masked input whose
+   * text lives only in the DOM until 保存密钥 reads it — a typed key is never
+   * copied into `ui`, and the eye button only flips the input's `type`.
    */
-  function aiProviderFormView(descriptor, configured) {
-    const form = store.ui.aiProviderForm;
+  function aiProviderEditorView(draft, mode, addTab) {
+    const form = draft;
     if (!form) return "";
-    const providerId = String(form.id || descriptor?.id || "").trim();
-    const isFake = aiIsOfflineConnection(providerId);
-    const isNew = form.isNew === true;
-    const configSaved = (Array.isArray(store.ui.aiProviders) ? store.ui.aiProviders : []).some((provider) => provider?.id === providerId);
-    const discovered = Array.isArray(store.ui.aiModelOptions)
-      ? store.ui.aiModelOptions
-      : [];
-    const chosen = String(store.ui.aiChosenModel || form.default_model || "");
-    const manual = String(store.ui.aiManualModel || "");
-    const busy = store.ui.aiModelsBusy === true;
-    const failure = String(store.ui.aiModelsError || "");
-    const source = String(store.ui.aiModelSource || "");
-    const query = String(store.ui.aiModelQuery || "").trim().toLowerCase();
-    const visibleModels = discovered.filter((id) => !query || id.toLowerCase().includes(query));
-    // §9.6: the catalog is multi-select; ticking is only form state until
-    // 「加入所选模型」and nothing at all persists before 保存连接.
-    const ticked = new Set(
-      (Array.isArray(store.ui.aiModelSelection) ? store.ui.aiModelSelection : [])
-        .map((model) => String(model || "")),
-    );
-    const addedModels = (Array.isArray(form.models) ? form.models : [])
-      .map((model) => String(model || "").trim())
-      .filter(Boolean);
+    const isAdd = mode === "add";
+    const providerId = String(form.providerId || form.id || "").trim();
+    const configured = aiConfiguredMap();
+    const configuredKey = Boolean(providerId) && configured[providerId] === true;
+    const isFake = aiIsOfflineConnection({ kind: form.kind, id: providerId });
+    const configSaved = (Array.isArray(store.ui.aiProviders) ? store.ui.aiProviders : [])
+      .some((provider) => provider?.id === providerId);
     const protocolChoices = aiApiProtocolChoices();
-    return `<div class="ai-provider-form">
-      <label class="field-label">Provider ID<input class="select" data-ai-provider-id data-focus-key="ai-provider-id" placeholder="例如 my-openai-key" value="${
-      esc(providerId)
-    }" ${isFake || configSaved ? "disabled" : ""} autocomplete="off" /></label>
-      ${configSaved
-        ? `<p class="ai-hint">Provider ID 创建后永久固定，不能再修改；显示名称可以随时改。</p>`
-        : `<p class="ai-hint">保存后这个 ID 就永久固定，之后只能改显示名称。</p>`}
-      <label class="field-label">显示名称<input class="select" data-ai-provider-label data-focus-key="ai-provider-label" value="${
-      esc(form.label || descriptor?.label || "")
-    }" /></label>
-      <label class="field-label">Base URL<input class="select" data-ai-base-url data-focus-key="ai-base-url" placeholder="https://api.example.com/v1" value="${
-      esc(form.base_url || "")
-    }" ${isFake ? "disabled" : ""} /></label>
-      ${isFake ? "" : `<label class="field-label">API 协议<select class="select" data-ai-api-protocol data-focus-key="ai-api-protocol">${
-    protocolChoices.map((choice) =>
-      `<option value="${esc(choice.id)}" ${
-        String(form.api_protocol || "openai-completions") === choice.id ? "selected" : ""
-      }>${esc(choice.label)}</option>`).join("")
-  }</select></label>`}
-      ${
-      isFake
-        ? `<p class="ai-hint">「本地确定性连接器」是完全离线的自动化测试通道，不需要地址或密钥，也没有可保存的配置；它不会出现在连接列表里。</p>`
-        : `<p class="ai-hint">这里保存的是地址与模型名，不是密钥；密钥用下面的「保存密钥」单独写入。</p>
-      <div class="ai-run-row">
-        <button class="secondary" data-action="ai-discover-models" data-focus-key="ai-discover" ${
-          busy ? "disabled" : ""
-        }>${busy ? "正在读取模型…" : "读取模型"}</button>
-        <span class="ai-model-source">${
-          source === "remote"
-            ? `已从服务商读取到 ${discovered.length} 个模型`
-            : source === "manual"
-            ? "改为手动填写 Model ID"
-            : "还没有读取过模型"
-        }</span>
+    const secretPlaceholder = configuredKey ? "留空使用已保存凭据" : "输入 API 密钥";
+    const protocolSelect = `<select class="select ai-protocol-select" data-ai-api-protocol data-focus-key="ai-api-protocol">${protocolChoices.map((choice) => `<option value="${esc(choice.id)}" ${String(form.api_protocol || "openai-completions") === choice.id ? "selected" : ""}>${esc(choice.label)}</option>`).join("")}</select>`;
+    const secretBlock = isFake
+      ? `<p class="ai-hint">「本地确定性连接器」是完全离线的自动化测试通道，不需要地址或密钥，也没有可保存的配置；它不会出现在连接列表里。</p>`
+      : `<label class="field-label">API 密钥</label>
+      <div class="ai-secret-row">
+        <input class="select" type="${form.secret_visible === true ? "text" : "password"}" data-ai-secret data-provider-id="${esc(providerId)}" data-focus-key="ai-secret" autocomplete="new-password" placeholder="${secretPlaceholder}" /><button class="icon-button ai-secret-eye" data-action="ai-toggle-secret-visible" aria-pressed="${form.secret_visible === true}" aria-label="${form.secret_visible === true ? "隐藏密钥" : "显示密钥"}" title="${form.secret_visible === true ? "隐藏密钥" : "显示密钥"}"${form.secret_visible === true ? "" : " hidden"}>◉</button>
       </div>
-      ${
-          failure
-            ? `<p class="ai-hint warning" data-ai-models-error>读取模型失败：${
-              esc(failure)
-            }。可以直接在下面手动填写 Model ID，不影响保存。</p>`
-            : ""
-        }
-      ${
-          discovered.length
-            ? `<label class="field-label">搜索模型<input class="select" data-ai-model-search data-focus-key="ai-model-search" placeholder="搜索 Model ID" /></label>
-      <p class="ai-hint">勾选想要的模型再点「加入所选模型」；这一步只改表单，保存连接之前不会写入任何配置。</p>
-      <div class="ai-model-list" data-ai-model-list>${
-              visibleModels.map((id) =>
-                `<button class="ai-model-chip${
-                  ticked.has(id) ? " active" : ""
-                }" data-action="ai-toggle-model-selection" data-id="${
-                  esc(id)
-                }" aria-pressed="${ticked.has(id)}">${esc(store.ui.aiModelLabels?.[id] || id)}${store.ui.aiModelLabels?.[id] ? ` <small>${esc(id)}</small>` : ""}</button>`
-              ).join("")
-            }</div>
-      <div class="ai-run-row"><button class="secondary" data-action="ai-add-selected-models" ${
-              ticked.size ? "" : "disabled"
-            }>加入所选模型${ticked.size ? `（${ticked.size}）` : ""}</button></div>`
-            : ""
-        }
-      ${
-          addedModels.length
-            ? `<p class="ai-hint">这个连接将拥有的模型（点一个设为默认模型）：</p><div class="ai-model-list ai-model-list-added">${
-              addedModels.map((id) =>
-                `<button class="ai-model-chip${
-                  chosen === id && !manual ? " active" : ""
-                }" data-action="ai-pick-model" data-id="${
-                  esc(id)
-                }" aria-pressed="${chosen === id && !manual}">${
-                  esc(store.ui.aiModelLabels?.[id] || id)
-                }${chosen === id && !manual ? " <small>默认</small>" : ""}</button>`
-              ).join("")
-            }</div>`
-            : `<p class="ai-hint">还没有加入任何模型；读取失败时也可以直接手动填写 Model ID。</p>`
-        }
-      <label class="field-label">手动输入 Model ID（读取失败或需要未列出的模型时使用）<input class="select" data-ai-model-manual data-focus-key="ai-model-manual" placeholder="例如 deepseek-chat" value="${
-          esc(manual || (discovered.length ? "" : chosen))
-        }" /></label>
-      <p class="ai-hint">将要使用的模型：<b data-ai-model-preview>${
-          esc(manual || chosen || "（还没有选择）")
-        }</b><span data-ai-model-preview-note>${
-          manual ? "（手动填写）" : discovered.length ? "（来自读取结果）" : ""
-        }</span></p>`
-    }
-      <div class="ai-run-row">
-        <button class="primary" data-action="ai-save-provider" ${
-      isFake ? "disabled" : ""
-    }>保存配置</button>
-        <button class="secondary" data-action="ai-cancel-provider">取消</button>
+      <p class="ai-hint" data-ai-auth-hint>粘贴 API Key（不会回显）</p>
+      <div class="ai-run-row"><button class="secondary" data-action="ai-save-secret" data-provider-id="${esc(providerId)}">保存密钥</button><button class="text-button danger" data-action="ai-delete-secret" data-provider-id="${esc(providerId)}" ${configuredKey ? "" : "disabled"}>删除本机保存的密钥</button></div>`;
+    const nameField = `<label class="field-label">显示名称<input class="select" data-ai-provider-label data-focus-key="ai-provider-label" placeholder="显示名称" value="${esc(form.label || "")}" /></label>`;
+    const addressField = `<label class="field-label">API 地址<input class="select" data-ai-base-url data-focus-key="ai-base-url" placeholder="https://gateway.example/v1" value="${esc(form.base_url || "")}" ${isFake ? "disabled" : ""} /></label>`;
+    const protocolField = `<label class="field-label">API 协议${isFake ? "" : protocolSelect}</label>`;
+    const advanced = `<button class="ai-collapse-toggle" data-action="ai-toggle-advanced" aria-expanded="${form.advanced_open === true}">${form.advanced_open === true ? "▾" : "›"} 自定义设置</button>${form.advanced_open === true ? `<div class="ai-advanced">${nameField}${addressField}${protocolField}${aiModelCatalogView(form, addTab)}</div>` : ""}`;
+    const createFields = `<label class="field-label">Provider ID<input class="select" data-ai-provider-id data-focus-key="ai-provider-id" placeholder="acme-gateway" value="${esc(providerId)}" ${isFake ? "disabled" : ""} autocomplete="off" /></label>
+      <p class="ai-hint">以小写字母开头的标识，在请求中唯一标识该提供商，并用于派生凭据名。</p>
+      ${nameField}
+      ${addressField}
+      ${protocolField}
+      ${secretBlock}
+      <div class="ai-editor-divider"></div>
+      ${aiModelCatalogView(form, addTab)}`;
+    return `<div class="ai-provider-editor" data-ai-editor="${isAdd ? "add" : "row"}">
+      ${isAdd ? createFields : `${secretBlock}
+      <div class="ai-editor-divider"></div>
+      ${advanced}`}
+      <div class="ai-run-row ai-editor-actions">
+        <button class="secondary" data-action="ai-test-connection" ${store.ui.aiConnectionTestStatus?.state === "busy" ? "disabled" : ""}>${store.ui.aiConnectionTestStatus?.state === "busy" ? "正在测试…" : "测试连接"}</button><span class="ai-connection-test ${esc(store.ui.aiConnectionTestStatus?.state || "")}" data-ai-connection-test>${esc(store.ui.aiConnectionTestStatus?.message || "测试使用固定短提示，不会读取课程内容。")}</span><button class="secondary" data-action="ai-cancel-provider">取消</button><button class="primary ai-save-button" data-action="ai-save-provider" ${isFake ? "disabled" : ""}>${isAdd ? "创建提供商" : "保存"}</button>
       </div>
-      ${isFake ? "" : `<div class="ai-run-row"><button class="secondary" data-action="ai-test-connection" ${store.ui.aiConnectionTestStatus?.state === "busy" ? "disabled" : ""}>${store.ui.aiConnectionTestStatus?.state === "busy" ? "正在测试…" : "测试连接"}</button><span class="ai-connection-test ${esc(store.ui.aiConnectionTestStatus?.state || "")}" data-ai-connection-test>${esc(store.ui.aiConnectionTestStatus?.message || "测试使用固定短提示，不会读取课程内容。")}</span></div>`}
-      <p class="ai-hint">配置状态：${configSaved ? "连接配置已保存" : "连接配置尚未保存"}</p>
-      <p class="ai-hint">凭据状态：${
-      isFake
-        ? "不需要密钥（离线连接器）。"
-        : configured[providerId]
-        ? "已配置密钥。"
-        : "未配置密钥；运行时会以「缺少密钥」提示，不会伪造回答。"
-    }</p>
-      ${
-      isFake ? "" : `<div class="ai-run-row">
-        <input class="select" type="password" data-ai-secret data-provider-id="${esc(providerId)}" data-focus-key="ai-secret" autocomplete="off" placeholder="${configured[providerId] ? "粘贴新 API Key 以替换本机密钥" : "粘贴 API Key（不会回显）"}" />
-        <button class="secondary" data-action="ai-save-secret" data-provider-id="${esc(providerId)}">保存密钥</button>
+      <div class="ai-editor-status">
+        <p class="ai-hint">配置状态：${configSaved ? "连接配置已保存" : "连接配置尚未保存"}</p>
+        <p class="ai-hint">凭据状态：${isFake ? "不需要密钥（离线连接器）。" : configuredKey ? "已配置密钥。" : "未配置密钥；运行时会以「缺少密钥」提示，不会伪造回答。"}</p>
       </div>
-      <div class="ai-run-row"><button class="text-button danger" data-action="ai-delete-secret" data-provider-id="${esc(providerId)}" ${
-        configured[providerId] ? "" : "disabled"
-      }>删除本机保存的密钥</button></div>`
-    }
     </div>`;
+  }
+
+  /**
+   * The「推理等级」block (design §2.1 ai-reasoning / UI spec §2.5): a switch,
+   * then — only while it is on — one row per tier pairing the「档位」select with
+   * its「API 参数值」input.  The switch being off means the field does not
+   * exist at all: the model does not reason and no request is injected with a
+   * reasoning parameter.  The Off row's value input is disabled — Off only
+   * turns thinking off — but a value already written for it is shown and kept.
+   */
+  function aiReasoningView(row) {
+    const record = row && typeof row === "object" ? row : {};
+    const key = esc(String(record.key || ""));
+    const enabled = record.reasoning_enabled === true;
+    const helpOpen = record.reasoning_help_open === true;
+    const tiers = Array.isArray(record.tiers) ? record.tiers : [];
+    const help = helpOpen
+      ? `<p class="ai-hint" data-ai-reasoning-help>${esc(AI_REASONING_HELP_TEXT)}</p>`
+      : "";
+    const cols = tiers.length
+      ? `<div class="ai-reasoning-row ai-reasoning-cols" aria-hidden="true"><span>档位</span><span>API 参数值</span></div>`
+      : "";
+    const rows = tiers.map((tierRow, index) => {
+      const tierKey = esc(String(tierRow?.key || `tier-${index + 1}`));
+      const tier = String(tierRow?.tier || "");
+      const isOff = tier === "off";
+      const invalid = !isOff && String(tierRow?.value ?? "").trim() === "";
+      const options = aiReasoningTierOptions(tiers, tier)
+        .map((choice) => `<option value="${esc(choice)}" ${choice === tier ? "selected" : ""}>${esc(choice)}</option>`)
+        .join("");
+      return `<div class="ai-reasoning-row" data-tier-key="${tierKey}">
+        <select class="select ai-tier-select" data-action="ai-change-tier" data-ai-tier-name data-key="${key}" data-tier-key="${tierKey}" aria-label="档位 ${index + 1}">${options}</select>
+        <input class="select ai-tier-value" data-ai-tier-value data-key="${key}" data-tier-key="${tierKey}" value="${esc(String(tierRow?.value ?? ""))}" placeholder="${isOff ? "关闭思考" : esc(tier)}" aria-label="${esc(tier)} API 参数值" aria-invalid="${invalid}" ${isOff ? "disabled" : ""} />
+        <button class="text-button danger" data-action="ai-remove-tier" data-key="${key}" data-tier-key="${tierKey}">移除</button>
+      </div>`;
+    }).join("");
+    const body = enabled
+      ? `${cols}<div class="ai-reasoning-rows" data-ai-reasoning-rows>${rows}</div>
+        <button class="text-button" data-action="ai-add-tier" data-key="${key}" ${aiReasoningNextTier(tiers) ? "" : "disabled"}>添加档位</button>`
+      : "";
+    return `<div class="ai-reasoning" data-ai-reasoning>
+      <div class="ai-reasoning-head">
+        <label class="switch"><input type="checkbox" data-action="ai-toggle-model-reasoning" data-key="${key}" ${enabled ? "checked" : ""} /><span class="switch-track" aria-hidden="true"></span>推理等级</label>
+        <button class="icon-button ai-reasoning-help" data-action="ai-toggle-reasoning-help" data-key="${key}" aria-expanded="${helpOpen}" aria-label="推理等级说明" title="推理等级说明">?</button>
+      </div>
+      ${help}${body}
+    </div>`;
+  }
+
+  /**
+   * One「模型目录」row (design §4.1 `ModelRow`).  The head is one line — the
+   * order buttons, the monospace Model ID, 编辑/收起 and 移除 — and the body
+   * holds Model ID / 显示名称 / the two capacity columns / 输入类型 / the
+   * ai-reasoning block.  A row keeps its own key, so moving it never resets
+   * what was typed in it.
+   */
+  function aiModelRowView(row, protocol) {
+    const record = row && typeof row === "object" ? row : {};
+    const key = esc(String(record.key || ""));
+    const expanded = record.expanded === true;
+    const id = String(record.id || "");
+    const errors = record.errors && typeof record.errors === "object" ? record.errors : {};
+    const messages = [errors.id, errors.context_window, errors.max_tokens, errors.input, errors.reasoning]
+      .filter((message) => typeof message === "string" && message);
+    const textOn = record.input_text !== false;
+    const imageOn = record.input_image === true;
+    return `<div class="ai-model-row${expanded ? " expanded" : ""}" data-model-key="${key}">
+      <div class="ai-model-row-head">
+        <button class="icon-button ai-model-move" data-action="ai-move-model" data-key="${key}" data-dir="up" aria-label="上移模型" title="上移">↑</button><button class="icon-button ai-model-move" data-action="ai-move-model" data-key="${key}" data-dir="down" aria-label="下移模型" title="下移">↓</button><code class="ai-model-id" title="${esc(id)}">${esc(id)}</code><button class="text-button" data-action="ai-edit-model" data-key="${key}" aria-expanded="${expanded}">${expanded ? "收起" : "编辑"}</button><button class="text-button danger" data-action="ai-remove-model" data-key="${key}">移除</button>
+      </div>
+      ${expanded
+        ? `<div class="ai-model-row-body">
+        <label class="field-label">Model ID<input class="select" data-ai-model-id data-key="${key}" data-focus-key="ai-model-id-${key}" placeholder="模型 ID" value="${esc(id)}" /></label>
+        <label class="field-label">显示名称<input class="select" data-ai-model-name data-key="${key}" placeholder="留空显示 Model ID" value="${esc(record.name || "")}" /></label>
+        <div class="ai-model-caps">
+          <label class="field-label">上下文窗口<input class="select" data-ai-model-context data-key="${key}" placeholder="使用提供商默认值" value="${esc(record.context_window || "")}" /></label>
+          <label class="field-label">最大输出 token<input class="select" data-ai-model-max-tokens data-key="${key}" placeholder="使用提供商默认值" value="${esc(record.max_tokens || "")}" /></label>
+        </div>
+        <fieldset class="ai-model-input-type"><legend>输入类型</legend>
+          <label><input type="checkbox" data-ai-model-input-text data-key="${key}" ${textOn ? "checked" : ""} ${imageOn ? "" : "disabled"} />文本</label>
+          <label><input type="checkbox" data-ai-model-input-image data-key="${key}" ${imageOn ? "checked" : ""} ${textOn ? "" : "disabled"} />图片</label>
+        </fieldset>
+        ${aiReasoningSupported(protocol) ? aiReasoningView(record) : ""}
+        ${messages.map((message) => `<p class="ai-hint danger" data-ai-model-error>${esc(message)}</p>`).join("")}
+      </div>`
+        : messages.map((message) => `<p class="ai-hint danger" data-ai-model-error>${esc(message)}</p>`).join("")}
+    </div>`;
+  }
+
+  /**
+   * 「模型目录」(design §2.1 / §4.1): the model rows,「＋ 添加模型」and the
+   * manual fallback §9.5/§9.6 require —「获取可用模型」opens the「选择模型」
+   * dialog instead of dropping chips into the form.  §2.2 E: the third-party
+   * tab leads with「获取可用模型」, the custom tab with「＋ 添加模型」.
+   */
+  function aiModelCatalogView(form, addTab) {
+    const rows = Array.isArray(form?.modelRows) ? form.modelRows : [];
+    const busy = store.ui.aiModelsBusy === true;
+    const failure = String(form?.models_error || store.ui.aiModelsError || "");
+    const discoverFirst = addTab !== "custom";
+    // design §2.1: the ai-reasoning block renders only for a protocol that can
+    // carry reasoning parameters (§4.4) — all three of this project's do.
+    const protocol = String(form?.api_protocol || "openai-completions");
+    return `<div class="ai-model-section" data-ai-model-flavor="${esc(addTab || "row")}">
+      <div class="ai-model-head">
+        <b>模型目录</b>
+        <div class="ai-model-head-actions"><button class="text-button" data-action="ai-reset-models">恢复默认模型</button><button class="${discoverFirst ? "secondary" : "text-button"}" data-action="ai-discover-models" data-focus-key="ai-discover" ${busy ? "disabled" : ""}>${busy ? "正在获取…" : "获取可用模型"}</button></div>
+      </div>
+      ${failure ? `<p class="ai-hint warning" data-ai-models-error>读取模型失败：${esc(failure)}。可以直接在下面手动填写 Model ID，不影响保存。</p>` : ""}
+      ${rows.length
+        ? `<div class="ai-model-rows" data-ai-model-rows>${rows.map((row) => aiModelRowView(row, protocol)).join("")}</div>`
+        : `<div class="ai-model-empty">模型选择器中将不显示任何模型；目录外 ID 仍可直接发送。</div>`}
+      <div class="ai-run-row"><button class="${discoverFirst ? "text-button" : "secondary"}" data-action="ai-add-manual-model" data-focus-key="ai-add-model">＋ 添加模型</button></div>
+      <p class="ai-hint">仅声明上游模型实际能够处理的输入类型与推理能力。</p>
+    </div>`;
+  }
+
+  /**
+   * 「选择模型」(design §4.2): the candidate dialog opened by「获取可用模型」.
+   * The ticks ARE the model list —「更新列表」adopts the ticked candidates and
+   * removes the configured ones that were unticked — and an update that would
+   * empty a non-empty list is refused (fetchKeepOne).  A hidden candidate keeps
+   * its tick, so searching can never quietly drop a model.
+   */
+  function aiModelPickerView() {
+    const picker = store.ui.aiModelPicker;
+    if (!picker || picker.open !== true) return "";
+    const search = String(picker.search || "");
+    const query = search.trim().toLowerCase();
+    const candidates = Array.isArray(picker.models) ? picker.models : [];
+    const selected = picker.selected instanceof Set ? picker.selected : new Set();
+    const visible = candidates.filter((model) =>
+      !query ||
+      String(model?.id || "").toLowerCase().includes(query) ||
+      String(model?.name || "").toLowerCase().includes(query));
+    const wouldEmpty = typeof store.aiPickerWouldEmpty === "function"
+      ? store.aiPickerWouldEmpty()
+      : false;
+    return `<div class="overlay ai-picker-overlay" data-action="ai-picker-close" data-stop-click="true">
+      <section class="modal ai-model-picker" role="dialog" aria-modal="true" aria-labelledby="ai-model-picker-title" data-stop-click="true">
+        <header class="modal-head"><div><span class="eyebrow">模型目录</span><h2 id="ai-model-picker-title">选择模型</h2></div><button class="icon-button" data-action="ai-picker-close" aria-label="关闭选择模型" title="关闭">×</button></header>
+        <p class="muted">勾选的模型即为模型列表</p>
+        <label class="field-label">搜索<input class="select" data-ai-picker-search data-focus-key="ai-picker-search" placeholder="搜索 Model ID" value="${esc(search)}" /></label>
+        <div class="ai-run-row"><button class="text-button" data-action="ai-picker-select-all">全选</button><button class="text-button" data-action="ai-picker-clear-all">取消全选</button></div>
+        ${candidates.length
+          ? `<ul class="ai-picker-list">${candidates.map((model) => {
+            const modelId = String(model?.id || "");
+            const modelName = String(model?.name || modelId);
+            return `<li class="ai-picker-row" data-ai-picker-row data-search="${esc(`${modelId} ${modelName}`)}"><label><input type="checkbox" data-action="ai-picker-toggle" data-id="${esc(modelId)}" ${selected.has(modelId) ? "checked" : ""} /><code class="ai-model-id" title="${esc(modelName)}">${esc(modelId)}</code></label></li>`;
+          }).join("")}</ul>`
+          : ""}
+        ${!candidates.length
+          ? `<p class="ai-hint">没有可显示的模型。可以手工添加 Model ID。</p>`
+          : !visible.length
+          ? `<p class="ai-hint">没有匹配的模型。</p>`
+          : ""}
+        ${wouldEmpty ? `<p class="ai-hint warning" data-ai-picker-keep-one>请至少保留一个勾选的模型。</p>` : ""}
+        <div class="modal-actions">
+          <button class="secondary" data-action="ai-picker-close">取消</button>
+          <button class="primary" data-action="ai-picker-confirm" ${wouldEmpty ? "disabled" : ""} title="${wouldEmpty ? "请至少保留一个勾选的模型。" : ""}">更新列表</button>
+        </div>
+      </section>
+    </div>`;
+  }
+
+  /**
+   * 「＋ 添加模型提供商」(design §2 / §2.2 C): a dashed full-width entry that
+   * expands into the segmented add card.  Both API segments render through the
+   * SAME editor card; the subscription segment renders the existing
+   * subscription block.  Switching segments never drops the add draft and only
+   * one editor card is open at a time (design §4.1).
+   */
+  function aiAddCardView(configured) {
+    if (store.ui.aiOpenEditor !== "add") {
+      return `<section class="ai-add-card"><button class="ai-add-trigger" data-action="ai-create-connection">＋ 添加模型提供商</button></section>`;
+    }
+    const tab = ["third-party", "custom", "subscription"].includes(store.ui.aiAddTab)
+      ? store.ui.aiAddTab
+      : "third-party";
+    const tabs = [
+      ["third-party", "第三方模型提供商"],
+      ["custom", "自定义模型 API"],
+      ["subscription", "订阅登录"],
+    ];
+    const hints = {
+      "third-party": "填写服务商的地址、协议与 API 密钥，然后获取它自己的模型列表。",
+      "custom": "连接中转站、自部署服务或其他兼容 OpenAI / Anthropic 协议的接口，需填写 API 地址、协议和模型。",
+      "subscription": "使用服务商的订阅账号授权，不使用 API 密钥。",
+    };
+    return `<section class="ai-add-card">
+      <div class="ai-add-card-body">
+        <div class="ai-segmented" role="tablist" data-ai-add-tabs>${tabs.map(([id, label]) => `<button class="ai-segment${tab === id ? " active" : ""}" role="tab" aria-selected="${tab === id}" data-action="ai-add-tab" data-tab="${id}">${label}</button>`).join("")}</div>
+        <p class="ai-hint" data-ai-add-tab-hint>${hints[tab]}</p>
+        <div class="ai-add-panel" role="tabpanel">${tab === "subscription" ? aiSubscriptionSettingsView(store, configured) : aiProviderEditorView(store.ui.aiAddDraft, "add", tab)}</div>
+        <button class="ai-add-trigger" data-action="ai-create-connection">收起</button>
+      </div>
+    </section>`;
   }
 
   function aiResultView() {
@@ -3181,6 +3290,14 @@ export function createViews(store) {
     return `<div class="ai-block">
       <div class="ai-block-head"><b>AI 回答</b><button class="icon-button" data-action="ai-close-result" aria-label="收起 AI 回答" title="收起回答">×</button></div>
       <pre class="ai-answer">${esc(result.answer)}</pre>
+      ${
+      result.reasoning
+        ? `<p class="ai-hint" data-ai-reasoning-used>${esc(aiReasoningSummaryLine(result.reasoning))}</p>`
+        : ""
+    }
+      ${(Array.isArray(result.warnings) ? result.warnings : [])
+      .map((warning) => `<p class="ai-hint warning" data-ai-reasoning-warning>${esc(warning)}</p>`)
+      .join("")}
       ${
       pendingDraft
         ? `<button class="primary full" data-action="ai-open-draft" data-id="${esc(pendingDraft)}">打开修改对照</button>`
@@ -3284,6 +3401,11 @@ export function createViews(store) {
       }">${esc(AI_EXECUTION_STATUS_LABELS[record.status] || record.status || "未知状态")}</span></div>
         <dl><dt>范围</dt><dd>${esc(scope.label || scope.kind || "未记录范围")}</dd>
         <dt>服务商</dt><dd>${esc(providerText)}</dd>
+        ${
+        record.reasoning_tier || record.reasoning_tier_source
+          ? `<dt>推理档位</dt><dd>${esc(aiReasoningSummaryLine(record))}</dd>`
+          : ""
+      }
         <dt>结果</dt><dd>${esc(AI_EXECUTION_OUTCOME_LABELS[record.outcome] || record.outcome || "未记录")}${
         review.state ? ` · 审核：${esc(AI_REVIEW_LABELS[review.state] || review.state)}` : ""
       }</dd>${
@@ -3838,17 +3960,12 @@ export function createViews(store) {
       return `<div class="overlay" data-action="close-overlay"><div class="capture modal" role="dialog" aria-modal="true" aria-labelledby="save-version-title" aria-busy="${store.snapshotSaving}" data-stop-click="true"><div class="modal-head"><div><span class="eyebrow">长期历史</span><h2 id="save-version-title">保存版本</h2></div><button class="icon-button" data-action="close-overlay" aria-label="关闭保存版本" title="关闭保存版本">×</button></div><label class="field-label">版本名称<input data-snapshot-name data-focus-key="snapshot-name" value="${esc(store.snapshotName)}" placeholder="例如：第一课正文定稿" /></label><label class="field-label">备注<textarea data-snapshot-note data-focus-key="snapshot-note" placeholder="记录这个节点为什么重要">${esc(store.snapshotNote)}</textarea></label>${store.snapshotError ? `<p class="error-text" role="alert">${esc(store.snapshotError)}</p>` : store.snapshotSaving ? `<p class="muted" role="status">正在写入并确认历史版本…</p>` : ""}<div class="modal-actions"><button class="secondary" data-action="close-overlay">取消</button><button class="primary" data-action="submit-snapshot" ${store.snapshotSaving ? "disabled" : ""}>${store.snapshotSaving ? "正在保存…" : store.snapshotError ? "重试保存" : "保存版本"}</button></div></div></div>`;
     }
     if (store.ui.aiSettingsOpen) {
-      const choices = aiProviderChoices();
+      // DSH「设置 → 模型」(design §2 / §2.2): title + intro sentence, the save
+      // notice, the provider row cards, then the dashed「＋ 添加模型提供商」entry.
+      // The modal shell, its dialog a11y contract and the footer note are
+      // unchanged; nothing here renders a credential value.
       const configured = aiConfiguredMap();
-      const editableChoices = choices.filter((choice) => choice.kind !== "openai_chatgpt_subscription" && !aiIsOfflineConnection(choice));
-      const form = store.ui.aiProviderForm;
-      // A brand-new connection exists only as form state (§9.4): it is not in
-      // `ai.connection.list` yet, so the editor renders from the form itself.
-      const formDescriptor = form
-        ? editableChoices.find((choice) => choice.id === String(form.id || "").trim()) ||
-          (form.isNew === true ? form : null)
-        : null;
-      return `<div class="overlay ai-settings-overlay" data-action="ai-settings-backdrop"><section class="modal ai-settings-modal" role="dialog" aria-modal="true" aria-labelledby="ai-settings-title" data-stop-click="true"><header class="modal-head"><div><span class="eyebrow">应用设置 · 模型</span><h2 id="ai-settings-title">AI 模型</h2></div><button class="icon-button" data-action="ai-close-settings" aria-label="关闭设置" title="关闭设置">×</button></header><p class="muted">设置连接、协议、模型与本机凭据。配置保存、模型发现和连接测试分别显示状态。</p>${formDescriptor ? aiProviderFormView(formDescriptor, configured) : ""}${aiConnectionManagerView(choices, configured)}${aiSubscriptionSettingsView(store, configured)}${formDescriptor ? "" : `<p class="ai-hint">选择一个 API 连接进行管理，或新建连接。</p>`}<div class="ai-settings-foot"><span>AI 配置仅保存连接元数据；密钥和订阅令牌写入${esc(store.aiStorageLabel ? store.aiStorageLabel() : "本机系统钥匙串")}，课程文件不含凭据。</span><button class="secondary" data-action="ai-close-settings">完成</button></div></section></div>`;
+      return `<div class="overlay ai-settings-overlay" data-action="ai-settings-backdrop"><section class="modal ai-settings-modal" role="dialog" aria-modal="true" aria-labelledby="ai-settings-title" data-stop-click="true"><header class="modal-head"><div><span class="eyebrow">应用设置 · 模型</span><h2 id="ai-settings-title">模型</h2></div><button class="icon-button" data-action="ai-close-settings" aria-label="关闭设置" title="关闭设置">×</button></header><p class="muted">填入各提供商的 API 密钥即可使用其模型。</p>${store.ui.aiSaveStatus ? `<p class="ai-save-status" role="status" aria-live="polite">${esc(store.ui.aiSaveStatus)}</p>` : ""}${aiProviderRowsView(configured)}${aiAddCardView(configured)}<div class="ai-settings-foot"><span>AI 配置仅保存连接元数据；密钥和订阅令牌写入${esc(store.aiStorageLabel ? store.aiStorageLabel() : "本机系统钥匙串")}，课程文件不含凭据。</span><button class="secondary" data-action="ai-close-settings">完成</button></div></section>${aiModelPickerView()}</div>`;
     }
     return "";
   }

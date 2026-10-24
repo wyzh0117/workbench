@@ -150,6 +150,9 @@ import {
  * @property {JsonValue} usage
  * @property {string} finish_reason
  * @property {string} raw_kind
+ * @property {{ status: string, tier: string, source: string, value: string }} [reasoning] the
+ *   reasoning tier this request spoke for (design §4.4), page-side only
+ * @property {string[]} [warnings] readable hints, never a failed request
  */
 
 /**
@@ -169,6 +172,23 @@ import {
  * @property {string} auth_scheme "" means the bare value (Anthropic)
  * @property {string} default_model
  * @property {string[]} models
+ * @property {Record<string, AiModelMeta>} [model_meta] per-model metadata
+ *   (design §4.3): display name, capacities, input types and reasoning tiers,
+ *   keyed by Model ID.  It is metadata, never a credential.
+ */
+
+/**
+ * One `model_meta` entry (design §4.3).  Every field is optional: an absent
+ * field means "inherit the adapter default".  Field names are pinned to the
+ * service contract (`src/ui/contracts.ts` `ModelMeta`) — a rename here would
+ * make the two ends disagree about what is stored.
+ *
+ * @typedef {Object} AiModelMeta
+ * @property {string} [name]
+ * @property {number} [context_window]
+ * @property {number} [max_tokens]
+ * @property {Array<"text" | "image">} [input]
+ * @property {Record<string, string>} [reasoning_efforts]
  */
 
 /**
@@ -192,6 +212,10 @@ import {
  * @property {string} instruction
  * @property {{ item_count: number, chars: number, source_types: string[] }} context
  * @property {{ provider_id: string, model: string, label: string }} provider
+ * @property {string} reasoning_tier the reasoning tier the request spoke for
+ *   ("" when the model does not reason; only the fixed enum can appear)
+ * @property {string} reasoning_tier_source "requested" | "default" | "none":
+ *   whether the tier was named by the caller or taken as the strongest one
  * @property {{ tools: string[], mcp: string[], skills: string[] }} capabilities
  * @property {string} status
  * @property {string | null} error_code
@@ -1858,7 +1882,7 @@ export function normalizeAiConnection(connection) {
     ? [...new Set(record.models.map((model) => stringOf(model).trim()).filter(Boolean))]
     : [];
   const anthropic = apiProtocol === "anthropic-messages";
-  return {
+  const resolved = /** @type {AiProviderConnection & { model_meta?: Record<string, any> }} */ ({
     id,
     label: stringOf(record.label).trim() || id,
     kind,
@@ -1871,7 +1895,14 @@ export function normalizeAiConnection(connection) {
       : stringOf(record.auth_scheme),
     default_model: stringOf(record.default_model).trim(),
     models,
-  };
+  });
+  // design §4.3 — per-model metadata rides along with the connection.  It is
+  // copied defensively (and never rewritten here: the transport owns the
+  // validation rules), and the key is only added when the record really has
+  // one, so an old record stays exactly as it was.
+  const meta = copyModelMetaMap(record.model_meta);
+  if (meta) resolved.model_meta = meta;
+  return resolved;
 }
 
 /**
@@ -1937,8 +1968,717 @@ export function aiDiscoveredModelIds(response) {
 }
 
 /* ------------------------------------------------------------------ *
+ * Model rows, capacity inputs and `model_meta` (design §4.1 / §4.3)
+ * ------------------------------------------------------------------ */
+
+/**
+ * The service rejects ANY field name shaped like a credential
+ * (`/key|token|secret|credential|password|authorization/i`) at every level —
+ * and a Model ID doubles as a `model_meta` key, so an id such as
+ * `gpt-token-preview` would make the whole save fail (design §4.3.1).  The
+ * model id itself may still be listed in `models`; it just cannot carry a
+ * `model_meta` entry.  The UI checks this before submitting and says so.
+ */
+export const AI_MODEL_META_ID_PATTERN =
+  /key|token|secret|credential|password|authorization/i;
+
+/** §3 wording: a readable hint instead of a server-side refusal. */
+export const AI_MODEL_META_ID_MESSAGE =
+  "Model ID 含有 key/token/secret 等字样，不能携带模型元数据；容量、显示名等元数据不会保存。";
+
+/** §3 wording, verbatim. */
+export const AI_MODEL_ID_REQUIRED_MESSAGE = "Model ID 不能为空。";
+
+/** §3 wording, verbatim: one sentence per duplicated id.
+ *
+ * @param {string} id
+ * @returns {string}
+ */
+export function aiModelIdDuplicateMessage(id) {
+  return `Model ID 不能重复：${id}`;
+}
+
+/** §3 wording, verbatim: both capacity fields share one rule and one message. */
+export const AI_CAPACITY_INVALID_MESSAGE =
+  "容量必须是正整数，可用 K/M 后缀（K=1000、M=1000000）。";
+
+/** Input types: at least one of「文本」/「图片」must stay on (design §2.4). */
+export const AI_MODEL_INPUT_REQUIRED_MESSAGE = "输入类型至少要保留一种。";
+
+const CAPACITY_PATTERN = /^(\d+(?:\.\d+)?)([km])?$/i;
+
+/**
+ * Parse one capacity input the way DSH does (UI spec §2.7): plain digits with
+ * an optional decimal K/M suffix (K=1000, M=1000000, decimal), resolving to a
+ * positive integer.  An empty input is not an error — it means "inherit the
+ * adapter default", so the field is simply not written (design §4.5).
+ *
+ * @param {unknown} value
+ * @returns {{ ok: true, value?: number } | { ok: false, message: string }}
+ */
+export function aiParseCapacity(value) {
+  const text = String(value ?? "").trim();
+  if (!text) return { ok: true };
+  const match = CAPACITY_PATTERN.exec(text);
+  if (!match) return { ok: false, message: AI_CAPACITY_INVALID_MESSAGE };
+  const factor = match[2] ? (match[2].toLowerCase() === "k" ? 1000 : 1000000) : 1;
+  const scaled = Number(match[1]) * factor;
+  const rounded = Math.round(scaled);
+  if (!Number.isFinite(scaled) || Math.abs(rounded - scaled) > 1e-6 || rounded <= 0) {
+    return { ok: false, message: AI_CAPACITY_INVALID_MESSAGE };
+  }
+  return { ok: true, value: rounded };
+}
+
+/**
+ * The display form of a stored capacity (DSH `formatCapacity`): whole millions
+ * read as `xM`, whole thousands as `xK`, anything else verbatim.  Only ever
+ * used to fill the input back in — storage always keeps the integer.
+ *
+ * @param {unknown} value
+ * @returns {string}
+ */
+export function aiFormatCapacity(value) {
+  const number = typeof value === "number" ? value : Number(value);
+  if (!Number.isFinite(number) || number <= 0) return "";
+  if (number % 1000000 === 0) return `${number / 1000000}M`;
+  if (number % 1000 === 0) return `${number / 1000}K`;
+  return String(number);
+}
+
+/* ------------------------------------------------------------------ *
+ * Reasoning tiers (design §2.1 ai-reasoning / §4.4)
+ * ------------------------------------------------------------------ */
+
+/**
+ * The reasoning tiers, ascending (design §1): the exact lowercase enum the
+ * service accepts as `model_meta.<id>.reasoning_efforts` keys.  A tier is used
+ * at most once per model row (design §2.1).
+ */
+export const AI_REASONING_TIERS = Object.freeze([
+  "off",
+  "minimal",
+  "low",
+  "medium",
+  "high",
+  "xhigh",
+  "max",
+]);
+
+/** Turning the switch on starts from exactly these four rows (DSH `INITIAL_LEVELS`). */
+export const AI_REASONING_INITIAL_TIERS = Object.freeze(["off", "low", "medium", "high"]);
+
+/** §3 wording, verbatim: a declaration without a single thinking tier. */
+export const AI_REASONING_REQUIRED_MESSAGE = "推理等级至少要有一个思考档位，或关闭推理等级。";
+
+/** §3 wording, verbatim: a thinking tier with no API parameter value. */
+export const AI_REASONING_VALUE_REQUIRED_MESSAGE = "每个思考档位都要填写 API 参数值。";
+
+/**
+ * The「?」help text (design §2.1).  It names the two columns, the default-tier
+ * rule the parent asked for, and what off means on the wire.
+ */
+export const AI_REASONING_HELP_TEXT =
+  "档位=模型能力档，API 参数值=发送给该协议的参数值，默认与档位名相同；如有不同，以模型提供商的 API 文档为准。开启后，未指定档位时使用最强档；调用时可指定档位，off 表示不下发推理参数。Off 行只表示关闭思考，已写入的参数值会保留但不发送。";
+
+/**
+ * design §4.4: an Anthropic budget must be a plain number.  Anything else is
+ * sent WITHOUT a thinking parameter and explained here instead of failing.
+ */
+export const AI_REASONING_ANTHROPIC_BUDGET_HINT =
+  "该档位的 API 参数值不是数字，未向 Anthropic 协议下发 thinking 参数；请改为预算数字或改用 OpenAI 协议。";
+
+/**
+ * The default spelling of a tier's API parameter value: the tier name itself
+ * (DSH `defaultValue`, with the Off entry kept as text because the service
+ * contract stores non-empty strings — an Off value is never sent anyway).
+ *
+ * @param {string} tier
+ * @returns {string}
+ */
+export function aiReasoningDefaultValue(tier) {
+  return AI_REASONING_TIERS.includes(tier) ? tier : String(tier || "");
+}
+
+/**
+ * @param {unknown} protocol one of `AI_API_PROTOCOLS`
+ * @returns {boolean} whether the wire may carry a reasoning parameter at all
+ */
+export function aiReasoningSupported(protocol) {
+  return aiIsKnownApiProtocol(protocol);
+}
+
+/**
+ * DSH `addLevel`: the next tier to offer「添加档位」is the one right above the
+ * highest already used (in escalation order), falling back to the first unused
+ * one; `null` when every tier already has a row.
+ *
+ * @param {unknown} tiers
+ * @returns {string | null}
+ */
+export function aiReasoningNextTier(tiers) {
+  const used = (Array.isArray(tiers) ? tiers : [])
+    .map((entry) => stringOf(recordOf(entry).tier));
+  const highest = Math.max(-1, ...used.map((tier) => AI_REASONING_TIERS.indexOf(tier)));
+  return AI_REASONING_TIERS.find((candidate, index) =>
+      index > highest && !used.includes(candidate)) ??
+    AI_REASONING_TIERS.find((candidate) => !used.includes(candidate)) ??
+    null;
+}
+
+/**
+ * The options of one row's「档位」select (DSH `choicesFor`): its own tier is
+ * always choosable, every other tier only while unused — 每档只能用一次.
+ *
+ * @param {unknown} tiers
+ * @param {string} current
+ * @returns {string[]}
+ */
+export function aiReasoningTierOptions(tiers, current) {
+  const used = (Array.isArray(tiers) ? tiers : [])
+    .map((entry) => stringOf(recordOf(entry).tier));
+  return [
+    ...AI_REASONING_TIERS.includes(current) ? [] : [current],
+    ...AI_REASONING_TIERS.filter((choice) => choice === current || !used.includes(choice)),
+  ];
+}
+
+/**
+ * DSH `changeLevel`: only a custom spelling carries between two thinking
+ * tiers.  A value that is still spelled as the old tier — or any move to or
+ * from Off — resets to the new tier's own name.
+ *
+ * @param {string} from previous tier
+ * @param {string} to new tier
+ * @param {string} value the row's stored API parameter value
+ * @returns {string} the value the row keeps
+ */
+export function aiReasoningChangedValue(from, to, value) {
+  const text = String(value ?? "");
+  const carried = text.trim().length > 0 && text !== from && from !== "off" && to !== "off";
+  return carried ? text : aiReasoningDefaultValue(to);
+}
+
+/**
+ * One tier row of a model row's「推理等级」block (design §2.1).
+ *
+ * @typedef {Object} AiReasoningTierRow
+ * @property {string} key row-local identity, stable across edits
+ * @property {string} tier one of AI_REASONING_TIERS
+ * @property {string} value the API parameter value sent for it
+ */
+
+/**
+ * The per-model tier declaration, resolved for BOTH storage shapes: a draft
+ * row keeps its own `tiers`, a fresh row reads the map it was seeded from.
+ * Only the fixed enum ever becomes a row — a hand-edited key outside it can
+ * reach neither the render nor the submit path (design §4.5).
+ *
+ * @param {unknown} value
+ * @returns {{ enabled: boolean, touched: boolean, tiers: AiReasoningTierRow[] }}
+ */
+export function aiReasoningStateFrom(value) {
+  const record = recordOf(value);
+  const rawTiers = Array.isArray(record.tiers) ? record.tiers : null;
+  const declared = Object.prototype.hasOwnProperty.call(record, "reasoning_efforts")
+    ? record.reasoning_efforts
+    : recordOf(record.meta_base).reasoning_efforts;
+  const declaredMap = declared && typeof declared === "object" && !Array.isArray(declared)
+    ? declared
+    : null;
+  if (rawTiers !== null) {
+    return {
+      enabled: record.reasoning_enabled === true,
+      touched: record.reasoning_touched === true,
+      tiers: rawTiers.map((entry, index) => {
+        const tier = stringOf(recordOf(entry).tier);
+        return {
+          key: stringOf(recordOf(entry).key) || `tier-${index + 1}`,
+          tier,
+          value: stringOf(recordOf(entry).value).trim(),
+        };
+      }).filter((entry) => AI_REASONING_TIERS.includes(entry.tier)),
+    };
+  }
+  if (!declaredMap) return { enabled: false, touched: false, tiers: [] };
+  return {
+    enabled: true,
+    touched: false,
+    tiers: Object.entries(declaredMap)
+      .filter(([tier]) => AI_REASONING_TIERS.includes(tier))
+      .map(([tier, tierValue], index) => ({
+        key: `tier-${index + 1}`,
+        tier,
+        value: stringOf(tierValue).trim(),
+      })),
+  };
+}
+
+/**
+ * A defensive copy of one `model_meta` map.  Dangerous key names are dropped
+ * the same way the service's clone does, and `null`/non-objects read as
+ * "no metadata".  Returns `null` when the record carries no map at all, so an
+ * old connection record never grows a `model_meta` key it did not have.
+ *
+ * @param {unknown} value
+ * @returns {Record<string, any> | null}
+ */
+export function copyModelMetaMap(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  /** @type {Record<string, any>} */
+  const copy = {};
+  for (const [modelId, entry] of Object.entries(value)) {
+    if (DANGEROUS_FIELD_NAMES.has(modelId)) continue;
+    copy[modelId] = copyModelMetaEntry(entry) ?? {};
+  }
+  return copy;
+}
+
+/**
+ * A defensive copy of one `model_meta` entry.  Returns `undefined` for values
+ * that are not entries at all, so "this row has no metadata" stays
+ * distinguishable from "this row has an empty entry".
+ *
+ * @param {unknown} entry
+ * @returns {Record<string, any> | undefined}
+ */
+export function copyModelMetaEntry(entry) {
+  if (!entry || typeof entry !== "object" || Array.isArray(entry)) return undefined;
+  /** @type {Record<string, any>} */
+  const copy = {};
+  for (const [field, child] of Object.entries(entry)) {
+    if (DANGEROUS_FIELD_NAMES.has(field)) continue;
+    if (field === "reasoning_efforts" && child && typeof child === "object" && !Array.isArray(child)) {
+      /** @type {Record<string, string>} */
+      const efforts = {};
+      for (const [tier, tierValue] of Object.entries(child)) {
+        if (DANGEROUS_FIELD_NAMES.has(tier)) continue;
+        efforts[tier] = typeof tierValue === "string" ? tierValue : String(tierValue ?? "");
+      }
+      copy[field] = efforts;
+    } else if (field === "input" && Array.isArray(child)) {
+      copy[field] = [...new Set(child.filter((item) => item === "text" || item === "image"))];
+    } else if (field === "context_window" || field === "max_tokens") {
+      copy[field] = typeof child === "number" ? child : Number(child);
+    } else {
+      copy[field] = child;
+    }
+  }
+  return copy;
+}
+
+/** Prototype-polluting names, dropped at every level of a copied map. */
+const DANGEROUS_FIELD_NAMES = new Set(["__proto__", "constructor", "prototype"]);
+
+/**
+ * One model row of the「模型目录」editor (design §4.1 `ModelRow`).  Capacity
+ * and id/name fields stay INPUT TEXT while they are typed; only the save
+ * parses them.  `input` is `null` until the row actually declares one (the
+ * provider published it or the user ticked a box), so an untouched row means
+ * "inherit the adapter default" and writes no metadata at all.
+ *
+ * @typedef {Object} AiModelRow
+ * @property {string} key stable row identity; reordering never changes it
+ * @property {string} id
+ * @property {string} name
+ * @property {string} context_window
+ * @property {string} max_tokens
+ * @property {boolean} input_text
+ * @property {boolean} input_image
+ * @property {boolean} input_declared
+ * @property {boolean} expanded
+ * @property {boolean} reasoning_enabled the「推理等级」switch (design §2.1)
+ * @property {boolean} reasoning_touched the switch has been operated at least once
+ * @property {boolean} [reasoning_help_open] the「?」explanation is showing
+ * @property {AiReasoningTierRow[]} tiers tier rows, in row order
+ * @property {Record<string, string>} errors
+ * @property {Record<string, any>} [meta_base] the entry this row was seeded from
+ */
+
+/**
+ * Shape one model row.  `key` is assigned by the caller when the row is new;
+ * everything else is normalised here so a row never carries a non-string into
+ * a render.
+ *
+ * @param {unknown} value
+ * @param {string} key
+ * @returns {AiModelRow}
+ */
+export function aiNormalizeModelRow(value, key) {
+  const record = recordOf(value);
+  const input = Array.isArray(record.input)
+    ? [...new Set(record.input.filter((item) => item === "text" || item === "image"))]
+    : null;
+  // design §2.1: the「推理等级」block.  A draft row keeps the tier rows it was
+  // editing; a fresh row shows exactly what is stored (or nothing at all).
+  const reasoning = aiReasoningStateFrom(record);
+  return {
+    key: String(key || record.key || ""),
+    id: String(record.id ?? "").trim(),
+    name: String(record.name ?? "").trim(),
+    context_window: String(record.context_window ?? "").trim(),
+    max_tokens: String(record.max_tokens ?? "").trim(),
+    input_text: input ? input.includes("text") : record.input_text !== false,
+    input_image: input ? input.includes("image") : record.input_image === true,
+    input_declared: input !== null || record.input_declared === true,
+    expanded: record.expanded === true,
+    reasoning_enabled: reasoning.enabled,
+    reasoning_touched: reasoning.touched,
+    tiers: reasoning.tiers,
+    errors: recordOf(record.errors),
+    meta_base: copyModelMetaEntry(record.meta_base),
+  };
+}
+
+/**
+ * Build the rows of the「模型目录」from a connection record (design §4.1).
+ * Explicit `modelRows` win (a draft keeps its own edit state), otherwise the
+ * rows come from `models` plus the matching `model_meta` entry — so editing a
+ * connection that already carries metadata shows exactly what is stored.
+ *
+ * @param {unknown} record
+ * @returns {AiModelRow[]}
+ */
+export function aiModelRowsFromRecord(record) {
+  const source = recordOf(record);
+  const usedKeys = new Set();
+  /**
+   * @param {unknown} preferred
+   * @param {number} index
+   * @returns {string}
+   */
+  const nextKey = (preferred, index) => {
+    const candidate = stringOf(preferred) || `model-row-${index + 1}`;
+    if (!usedKeys.has(candidate)) {
+      usedKeys.add(candidate);
+      return candidate;
+    }
+    let suffix = usedKeys.size + 1;
+    while (usedKeys.has(`model-row-${suffix}`)) suffix += 1;
+    usedKeys.add(`model-row-${suffix}`);
+    return `model-row-${suffix}`;
+  };
+  if (Array.isArray(source.modelRows)) {
+    return source.modelRows.map((row, index) =>
+      aiNormalizeModelRow(row, nextKey(recordOf(row).key, index)));
+  }
+  const metaMap = copyModelMetaMap(source.model_meta) || {};
+  const ids = Array.isArray(source.models)
+    ? [...new Set(source.models.map((model) => stringOf(model).trim()).filter(Boolean))]
+    : [];
+  return ids.map((id, index) => {
+    const entry = metaMap[id];
+    const row = aiNormalizeModelRow({
+      id,
+      name: entry?.name,
+      context_window: typeof entry?.context_window === "number"
+        ? aiFormatCapacity(entry.context_window)
+        : "",
+      max_tokens: typeof entry?.max_tokens === "number"
+        ? aiFormatCapacity(entry.max_tokens)
+        : "",
+      input: entry?.input,
+      input_declared: Array.isArray(entry?.input),
+      meta_base: entry,
+    }, `model-row-${index + 1}`);
+    return row;
+  });
+}
+
+/**
+ * Collect the model ids of the rows in row order (design §4.3 `models`).
+ *
+ * @param {unknown} rows
+ * @returns {string[]}
+ */
+export function aiModelIdsFromRows(rows) {
+  const ids = [];
+  for (const row of Array.isArray(rows) ? rows : []) {
+    const id = String(recordOf(row).id ?? "").trim();
+    if (id) ids.push(id);
+  }
+  return [...new Set(ids)];
+}
+
+/**
+ * Build the `model_meta` map to submit from the edited rows (design §4.3).
+ *
+ * Semantics, in order of importance:
+ *   - a row's own fields are authoritative — clearing a field DELETES it, so a
+ *     fully cleared catalog submits the explicit empty map `model_meta: {}`;
+ *   - entries whose id has no row survive as-is (rule 3: unknown ids are kept,
+ *     never guessed away), so editing never silently drops metadata;
+ *   - `reasoning_efforts` is written from the row's tier rows (design §2.1):
+ *     keys are the fixed lowercase enum in row order and values are the row's
+ *     API parameter value, so a user-defined key name can never enter the map;
+ *     an untouched row keeps exactly what it was seeded with — including a
+ *     stored `false`, which the row still shows as 「开关关闭」 until the switch
+ *     is operated.  The SUBMITTED map is different: the service contract only
+ *     accepts a map or an absent field, so a non-map seed (a stored `false`)
+ *     is normalized away on submit — otherwise such a connection could never
+ *     be saved at all.
+ *   - a row whose id looks like a credential field name gets NO entry and a
+ *     readable issue (design §4.3.1) — the model id itself still saves.
+ *
+ * @param {unknown} rows
+ * @param {unknown} baseMeta map to keep orphan entries from
+ * @returns {{ meta: Record<string, any>, issues: Array<{ key: string, field: string, message: string }> }}
+ */
+export function aiModelMetaFromRows(rows, baseMeta) {
+  /** @type {Record<string, any>} */
+  const meta = {};
+  const issues = [];
+  const list = Array.isArray(rows) ? rows : [];
+  const rowIds = new Set();
+  for (const row of list) {
+    const id = String(recordOf(row).id ?? "").trim();
+    if (id) rowIds.add(id);
+  }
+  const base = copyModelMetaMap(baseMeta) || {};
+  for (const [modelId, entry] of Object.entries(base)) {
+    if (!rowIds.has(modelId)) meta[modelId] = entry;
+  }
+  for (const row of list) {
+    const record = recordOf(row);
+    const id = String(record.id ?? "").trim();
+    if (!id) continue;
+    const entry = {
+      ...(copyModelMetaEntry(record.meta_base) ?? base[id] ?? {}),
+    };
+    const name = String(record.name ?? "").trim();
+    if (name) entry.name = name;
+    else delete entry.name;
+    const context = aiParseCapacity(record.context_window);
+    if (!context.ok) {
+      delete entry.context_window;
+      issues.push({ key: String(record.key || ""), field: "context_window", message: context.message });
+    } else if (typeof context.value === "number") entry.context_window = context.value;
+    else delete entry.context_window;
+    const maximum = aiParseCapacity(record.max_tokens);
+    if (!maximum.ok) {
+      delete entry.max_tokens;
+      issues.push({ key: String(record.key || ""), field: "max_tokens", message: maximum.message });
+    } else if (typeof maximum.value === "number") entry.max_tokens = maximum.value;
+    else delete entry.max_tokens;
+    // design §2.1/§4.5 — the reasoning declaration is rebuilt from the tier
+    // rows (fixed lowercase enum, row order, values kept verbatim) so no
+    // hand-written key name can ride along into the submitted map.  A row the
+    // switch was never touched on keeps the entry exactly as seeded.
+    const reasoning = aiReasoningStateFrom(record);
+    if (reasoning.enabled) {
+      /** @type {Record<string, string>} */
+      const efforts = {};
+      for (const tierRow of reasoning.tiers) {
+        // §4.5: every stored value is non-empty; an empty one only exists in a
+        // hand-edited record and falls back to the tier name (its own default).
+        efforts[tierRow.tier] = tierRow.value.trim() || aiReasoningDefaultValue(tierRow.tier);
+      }
+      entry.reasoning_efforts = efforts;
+    } else if (reasoning.touched) {
+      delete entry.reasoning_efforts;
+    }
+    if (record.input_declared === true) {
+      const checked = new Set([
+        ...(record.input_text !== false ? ["text"] : []),
+        ...(record.input_image === true ? ["image"] : []),
+      ]);
+      // The stored order is preserved so re-saving never rewrites a list the
+      // user did not touch; newly ticked types append in 「文本」/「图片」order.
+      const declared = Array.isArray(entry.input)
+        ? /** @type {string[]} */ (entry.input)
+        : /** @type {string[]} */ ([]);
+      const input = [
+        ...declared.filter((item) => checked.has(item)),
+        ...["text", "image"].filter((item) => checked.has(item) && !declared.includes(item)),
+      ];
+      if (input.length) entry.input = input;
+      else {
+        delete entry.input;
+        issues.push({
+          key: String(record.key || ""),
+          field: "input",
+          message: AI_MODEL_INPUT_REQUIRED_MESSAGE,
+        });
+      }
+    }
+    if (!Object.keys(entry).length) continue;
+    if (AI_MODEL_META_ID_PATTERN.test(id)) {
+      // The id stays in `models`; only its metadata entry is refused, so the
+      // save can never fail on a credential-shaped key name.
+      issues.push({
+        key: String(record.key || ""),
+        field: "id",
+        message: AI_MODEL_META_ID_MESSAGE,
+      });
+      continue;
+    }
+    meta[id] = entry;
+  }
+  // §4.5 hard constraint: a `reasoning_efforts` map only ever carries the
+  // fixed lowercase tier keys — a hand-written key name (say `api_key`) must
+  // reach neither the render nor the submit path.  Entries this function kept
+  // verbatim (rule 3: unknown ids are never guessed away) get the same filter;
+  // a non-map value such as a stored `false` is normalized away: the service
+  // accepts a map or an absent field and refuses anything else, so submitting
+  // it verbatim would make the whole provider impossible to save.
+  for (const entry of Object.values(meta)) {
+    const efforts = recordOf(entry).reasoning_efforts;
+    if (!efforts || typeof efforts !== "object" || Array.isArray(efforts)) {
+      delete entry.reasoning_efforts;
+      continue;
+    }
+    /** @type {Record<string, string>} */
+    const cleaned = {};
+    for (const [tier, tierValue] of Object.entries(efforts)) {
+      if (!AI_REASONING_TIERS.includes(tier)) continue;
+      cleaned[tier] = typeof tierValue === "string" ? tierValue : String(tierValue ?? "");
+    }
+    entry.reasoning_efforts = cleaned;
+  }
+  return { meta, issues };
+}
+
+/**
+ * One candidate row of the「选择模型」picker.  The provider only has to publish
+ * an id; whatever else it publishes (display name, capacities, input types) is
+ * copied into the editable row when the candidate is adopted (design §4.2).
+ *
+ * @typedef {Object} AiDiscoveredModel
+ * @property {string} id
+ * @property {string} name
+ * @property {string} context_window
+ * @property {string} max_tokens
+ * @property {boolean} input_text
+ * @property {boolean} input_image
+ * @property {boolean} input_declared
+ */
+
+/**
+ * Discovery results with everything the provider actually published (§4.2):
+ * display names come from `display_names`, capacities and input types from the
+ * raw entry when the shell passes them through.  Ids stay verbatim and deduped
+ * in provider order.
+ *
+ * @param {unknown} response
+ * @returns {AiDiscoveredModel[]}
+ */
+export function aiDiscoveredModelEntries(response) {
+  const result = recordOf(response);
+  const labels = recordOf(result.display_names);
+  /** @type {AiDiscoveredModel[]} */
+  const entries = [];
+  const seen = new Set();
+  for (const item of Array.isArray(result.models) ? result.models : []) {
+    const record = recordOf(item);
+    const id = String(record.id ?? (typeof item === "string" ? item : "")).trim();
+    if (!id || seen.has(id)) continue;
+    seen.add(id);
+    const name = String(record.label ?? record.name ?? labels[id] ?? "").trim();
+    const input = Array.isArray(record.input)
+      ? [...new Set(record.input.filter((one) => one === "text" || one === "image"))]
+      : null;
+    entries.push({
+      id,
+      name,
+      context_window: typeof record.context_window === "number"
+        ? aiFormatCapacity(record.context_window)
+        : "",
+      max_tokens: typeof record.max_tokens === "number"
+        ? aiFormatCapacity(record.max_tokens)
+        : "",
+      input_text: input ? input.includes("text") : true,
+      input_image: input ? input.includes("image") : false,
+      input_declared: input !== null,
+    });
+  }
+  return entries;
+}
+
+/* ------------------------------------------------------------------ *
  * Request building
  * ------------------------------------------------------------------ */
+
+/**
+ * design §4.4 — which reasoning tier this request speaks for.
+ *
+ * The switch on a model row is the user's explicit「开启」(design §4.4: only an
+ * explicitly enabled model is ever injected with reasoning parameters), so
+ * `reasoning_efforts` being present IS the gate: absent means the model does
+ * not reason and nothing is injected.  A request may name its tier through
+ * `reasoning_tier` (a future composer selection); naming `off` means "no
+ * thinking" and sends nothing.  An unnamed request uses the model's STRONGEST
+ * configured thinking tier (off < minimal < low < medium < high < xhigh < max),
+ * matching the ruling this stage was given.
+ *
+ * @param {unknown} efforts the model's `reasoning_efforts` map (or nothing)
+ * @param {unknown} requestedTier the tier this request names, if any
+ * @returns {{ status: "unset" | "off" | "ready" | "unavailable", tier: string, source: "none" | "requested" | "default", value: string, warning: string }}
+ */
+export function aiResolveReasoningTier(efforts, requestedTier) {
+  const map = efforts && typeof efforts === "object" && !Array.isArray(efforts)
+    ? /** @type {Record<string, any>} */ (efforts)
+    : null;
+  const requested = String(requestedTier ?? "").trim();
+  if (!map) return { status: "unset", tier: "", source: "none", value: "", warning: "" };
+  if (requested) {
+    if (requested === "off") {
+      return { status: "off", tier: "off", source: "requested", value: "", warning: "" };
+    }
+    const declared = typeof map[requested] === "string" ? map[requested].trim() : "";
+    if (declared) {
+      return { status: "ready", tier: requested, source: "requested", value: declared, warning: "" };
+    }
+    return {
+      status: "unavailable",
+      tier: requested,
+      source: "requested",
+      value: "",
+      warning: `推理档位 ${requested || "（空）"} 不在该模型的推理等级里或没有 API 参数值，这次请求没有下发推理参数。`,
+    };
+  }
+  for (const tier of [...AI_REASONING_TIERS].reverse()) {
+    if (tier === "off") continue;
+    const value = typeof map[tier] === "string" ? map[tier].trim() : "";
+    if (value) return { status: "ready", tier, source: "default", value, warning: "" };
+  }
+  return { status: "off", tier: "off", source: "default", value: "", warning: "" };
+}
+
+/**
+ * design §4.4: an Anthropic `thinking.budget_tokens` must be a plain positive
+ * number written in the tier's API parameter value.  Anything else resolves to
+ * `null` — the request still goes out, just without a thinking parameter.
+ *
+ * @param {string} value
+ * @returns {number | null}
+ */
+export function aiAnthropicThinkingBudget(value) {
+  const text = String(value ?? "").trim();
+  if (!/^\d+$/.test(text)) return null;
+  const budget = Number(text);
+  return Number.isSafeInteger(budget) && budget > 0 ? budget : null;
+}
+
+/**
+ * The one line the result area / execution record shows for a resolved tier
+ * (parent requirement: the user must always see what was actually sent).
+ *
+ * @param {unknown} reasoning
+ * @returns {string}
+ */
+export function aiReasoningSummaryLine(reasoning) {
+  // Accepts both the call-side `{ reasoning: { tier, source } }` and the flat
+  // execution-record fields, so one sentence serves both displays.
+  const outer = recordOf(reasoning);
+  const info = recordOf(outer.reasoning || outer);
+  const tier = stringOf(info.tier || outer.reasoning_tier);
+  const source = stringOf(info.source || outer.reasoning_tier_source);
+  if (!tier) return "推理档位：未开启（不下发推理参数）";
+  if (tier === "off") return "推理档位：off（不下发推理参数）";
+  return source === "default"
+    ? `推理档位：${tier}（未选择档位，使用最强档 ${tier}）`
+    : `推理档位：${tier}`;
+}
 
 /**
  * Build the one request shape every transport understands.  The returned
@@ -1960,9 +2700,14 @@ export function aiDiscoveredModelIds(response) {
  *   instruction?: string,
  *   wants_changes?: boolean,
  *   base_url?: string,
+ *   reasoning_tier?: string,
  * }} input `preset` is a deprecated alias for `connection` and must be a
- *   record; a bare id string fails with `not_configured`.
- * @returns {{ provider_id: string, api_protocol: string, url: string, headers: Record<string, string>, body: Record<string, any>, response_kind: string, auth: { header: string, scheme: string } }}
+ *   record; a bare id string fails with `not_configured`.  `reasoning_tier`
+ *   names the reasoning level this request speaks for (design §4.4); leave it
+ *   out to use the model's strongest configured thinking tier.
+ * @returns {{ provider_id: string, api_protocol: string, url: string, headers: Record<string, string>, body: Record<string, any>, response_kind: string, auth: { header: string, scheme: string }, warnings: string[], reasoning: { status: string, tier: string, source: string, value: string } }}
+ *   `warnings` and `reasoning` are page-side only — the transport lambda picks
+ *   the contract fields and never forwards them across the bridge.
  */
 export function buildAiProviderCall(input) {
   const request = recordOf(input);
@@ -2050,6 +2795,29 @@ export function buildAiProviderCall(input) {
     responseKind = "anthropic";
   }
 
+  // design §4.4 — reasoning parameters are protocol-shaped and never stuffed
+  // in unconditionally: the model must explicitly declare them (`reasoning_efforts`
+  // present = the row switch is on), the tier that speaks for this request must
+  // resolve to a thinking tier with a value, and `off` never sends anything.
+  const reasoning = aiResolveReasoningTier(
+    recordOf(connection.model_meta)[model]?.reasoning_efforts,
+    request.reasoning_tier,
+  );
+  /** @type {string[]} */
+  const warnings = [];
+  if (reasoning.warning) warnings.push(reasoning.warning);
+  if (reasoning.status === "ready") {
+    if (protocol === "anthropic-messages") {
+      const budget = aiAnthropicThinkingBudget(reasoning.value);
+      // §4.4: a non-numeric value means NO thinking parameter — and a readable
+      // hint, never a failed request.
+      if (budget !== null) body.thinking = { type: "enabled", budget_tokens: budget };
+      else warnings.push(AI_REASONING_ANTHROPIC_BUDGET_HINT);
+    } else {
+      body.reasoning_effort = reasoning.value;
+    }
+  }
+
   return {
     // Only fields the transport contract needs cross the bridge.
     provider_id: connection.id,
@@ -2059,6 +2827,15 @@ export function buildAiProviderCall(input) {
     body,
     response_kind: responseKind,
     auth,
+    // Page-side only: the transport lambda above picks the contract fields and
+    // never forwards these two.
+    warnings,
+    reasoning: {
+      status: reasoning.status,
+      tier: reasoning.tier,
+      source: reasoning.source,
+      value: reasoning.status === "ready" ? reasoning.value : "",
+    },
   };
 }
 
@@ -2787,7 +3564,7 @@ export class FakeAiConnector {
  */
 export class HttpAiConnector {
   /**
-   * @param {{ connection?: AiProviderConnection | Record<string, unknown>, preset?: AiProviderConnection | Record<string, unknown> | string, model?: string, base_url?: string, transport?: (call: any, options: { signal?: AbortSignal, timeout_ms: number }) => Promise<unknown>, timeout_ms?: number }} options
+   * @param {{ connection?: AiProviderConnection | Record<string, unknown>, preset?: AiProviderConnection | Record<string, unknown> | string, model?: string, base_url?: string, reasoning_tier?: string, transport?: (call: any, options: { signal?: AbortSignal, timeout_ms: number }) => Promise<unknown>, timeout_ms?: number }} options
    */
   constructor(options) {
     const request = recordOf(options);
@@ -2795,6 +3572,9 @@ export class HttpAiConnector {
     this.connection = connection;
     this.model = stringOf(request.model) || connection.default_model;
     this.base_url = stringOf(request.base_url) || connection.base_url;
+    // design §4.4: the reasoning tier this connection's calls speak for by
+    // default; a request may name its own (see `complete`).
+    this.reasoning_tier = stringOf(request.reasoning_tier);
     this.transport = typeof request.transport === "function"
       ? request.transport
       : null;
@@ -2816,7 +3596,7 @@ export class HttpAiConnector {
   }
 
   /**
-   * @param {{ instruction?: string, context?: AiContext | { system: string, user: string } | null, wants_changes?: boolean, timeout_ms?: number }} [request]
+   * @param {{ instruction?: string, context?: AiContext | { system: string, user: string } | null, wants_changes?: boolean, timeout_ms?: number, reasoning_tier?: string }} [request]
    * @param {{ signal?: AbortSignal }} [options]
    * @returns {Promise<AiCompletion>}
    */
@@ -2840,6 +3620,7 @@ export class HttpAiConnector {
       context: request.context ?? null,
       instruction: request.instruction,
       wants_changes: request.wants_changes === true,
+      reasoning_tier: stringOf(request.reasoning_tier) || this.reasoning_tier,
     });
     if (!this.transport) {
       throw new AiFailure(
@@ -2867,6 +3648,10 @@ export class HttpAiConnector {
       usage: normalized.usage,
       finish_reason: normalized.finish_reason,
       raw_kind: normalized.raw_kind,
+      // design §4.4 transparency: which tier the request actually spoke for,
+      // and every readable hint the body builder had to add (or skip on).
+      reasoning: call.reasoning,
+      warnings: call.warnings,
     };
   }
 }
@@ -4175,6 +4960,8 @@ export const AI_EXECUTION_OUTCOME = [
  *   instruction?: string,
  *   context?: AiContext | { item_count?: number, chars?: number, source_types?: string[] } | null,
  *   provider?: { provider_id?: string, model?: string, label?: string },
+ *   reasoning_tier?: string,
+ *   reasoning_tier_source?: string,
  *   status?: string,
  *   error_code?: string | null,
  *   error_message?: string,
@@ -4236,6 +5023,17 @@ export function buildAiExecutionRecord(input = {}) {
       model: stringOf(provider.model),
       label: stringOf(provider.label),
     },
+    // design §4.4: which reasoning tier the request spoke for, and whether it
+    // was named by the caller or taken as the model's strongest tier.  Only
+    // the fixed enum ever lands here — never a user-typed field name.
+    reasoning_tier: AI_REASONING_TIERS.includes(stringOf(request.reasoning_tier))
+      ? stringOf(request.reasoning_tier)
+      : "",
+    reasoning_tier_source: ["requested", "default", "none"].includes(
+        stringOf(request.reasoning_tier_source),
+      )
+      ? stringOf(request.reasoning_tier_source)
+      : "none",
     // V0 calls no tools, no MCP server and no Skill: the record says so
     // truthfully instead of implying capabilities that were not used.
     capabilities: { tools: [], mcp: [], skills: [] },

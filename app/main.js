@@ -85,14 +85,30 @@ import {
 } from "./publication.js";
 import {
   AI_FAILURE_CODES,
+  AI_MODEL_ID_REQUIRED_MESSAGE,
+  AI_MODEL_INPUT_REQUIRED_MESSAGE,
+  AI_REASONING_INITIAL_TIERS,
+  AI_REASONING_REQUIRED_MESSAGE,
+  AI_REASONING_VALUE_REQUIRED_MESSAGE,
   AiFailure,
   FakeAiConnector,
   HttpAiConnector,
   AI_OFFLINE_PROVIDER_ID,
   aiApiProtocolChoices,
+  aiDiscoveredModelEntries,
   aiDiscoveredModelIds,
   aiIsKnownApiProtocol,
   aiIsOfflineConnection,
+  aiModelIdDuplicateMessage,
+  aiModelIdsFromRows,
+  aiModelMetaFromRows,
+  aiModelRowsFromRecord,
+  aiNormalizeModelRow,
+  aiParseCapacity,
+  aiReasoningChangedValue,
+  aiReasoningDefaultValue,
+  aiReasoningNextTier,
+  copyModelMetaMap,
   applyAiChangeDraft,
   assembleAiContext,
   buildAiExecutionRecord,
@@ -1741,6 +1757,10 @@ class WorkbenchStore {
       aiInstruction: "",
       aiProviderId: "fake",
       aiModel: "",
+      // design §4.4: the reasoning tier the next request speaks for.  Empty
+      // means "use the strongest configured thinking tier of that model"; a
+      // future composer picker names one.  UI-only — never a key, never saved.
+      aiReasoningTier: "",
       aiSettingsOpen: false,
       aiSubscriptionAttempt: null,
       aiInclude: { requirements: true, assets: true, completion: true, nearby: true },
@@ -1754,7 +1774,22 @@ class WorkbenchStore {
       aiExecutionsOpen: false,
       aiProviders: [],
       aiConfigured: {},
-      aiProviderForm: null,
+      /**
+       * DSH-style editor state (design §4.1).  Exactly one editor card is open
+       * at a time (`aiOpenEditor`), but the row editor and the add card keep
+       * their OWN draft (`aiRowDraft` / `aiAddDraft`), so opening one never
+       * throws away what was typed in the other.  `ui.aiProviderForm` stays as
+       * a compatibility alias for the open draft (defined below).  A draft
+       * never carries a credential value: its `secret` slot is always empty and
+       * the typed key lives only in the masked DOM input.
+       */
+      aiOpenEditor: null,
+      aiRowDraft: null,
+      aiAddDraft: null,
+      aiAddTab: "third-party",
+      aiSaveStatus: null,
+      /** The「选择模型」candidate picker (design §4.1); its dialog lands in P2. */
+      aiModelPicker: { open: false, search: "", selected: new Set(), models: [], loading: false, error: null },
       aiRunId: null,
       /** Whether the next run should ask the model for concrete changes. */
       aiWantsChanges: false,
@@ -1821,6 +1856,23 @@ class WorkbenchStore {
       /** One-shot: the next adoption may move an invalid project.json aside. */
       replaceInvalidProject: false,
     };
+    // §4.1 compatibility alias — `ui.aiProviderForm` is what older code and
+    // tests read as "the provider form being edited".  It resolves to whichever
+    // editor draft is open (the row card's draft for a row editor, the add
+    // card's draft otherwise) and writes land in that same slot, so both drafts
+    // survive and every legacy read keeps working.  It is deliberately not
+    // enumerable: a draft is UI state and must never ride along inside a
+    // serialized payload.
+    Object.defineProperty(this.ui, "aiProviderForm", {
+      configurable: true,
+      enumerable: false,
+      get: () => (this.ui.aiOpenEditor === "row" ? this.ui.aiRowDraft : this.ui.aiAddDraft),
+      set: (value) => {
+        const draft = value ? this.aiNormalizeDraft(value) : null;
+        if (this.ui.aiOpenEditor === "row") this.ui.aiRowDraft = draft;
+        else this.ui.aiAddDraft = draft;
+      },
+    });
     this.tabs = [];
     this.history = [];
     this.future = [];
@@ -3086,6 +3138,9 @@ class WorkbenchStore {
       : "openai-completions";
     const anthropic = apiProtocol === "anthropic-messages";
     const kind = String(entry?.kind || "") || "openai_compatible";
+    const model_meta = Array.isArray(entry?.modelRows)
+      ? aiModelMetaFromRows(entry.modelRows, entry.model_meta).meta
+      : copyModelMetaMap(entry?.model_meta) || undefined;
     return {
       id,
       label: String(entry?.label || "").trim() || id,
@@ -3102,6 +3157,9 @@ class WorkbenchStore {
       models: [...new Set((Array.isArray(entry?.models) ? entry.models : [])
         .map((model) => String(model || "").trim())
         .filter(Boolean))],
+      // design §4.3: per-model metadata travels with the record.  A draft edits
+      // it through its model rows, a saved record carries it verbatim.
+      ...(model_meta ? { model_meta } : {}),
       requires_credential: !aiIsOfflineConnection({ kind, id }),
     };
   }
@@ -3187,6 +3245,8 @@ class WorkbenchStore {
       connection: descriptor,
       model: this.aiModel(),
       base_url: descriptor.base_url,
+      // design §4.4: "" = the strongest configured thinking tier of that model.
+      reasoning_tier: String(this.ui.aiReasoningTier || ""),
       transport: (call, options = {}) =>
         this.bridge.command("ai.complete", {
           request_id: this.ui.aiRunId,
@@ -3429,6 +3489,10 @@ class WorkbenchStore {
           suggestion_id: suggestionId,
           change_draft_id: draftId,
           outcome,
+          // design §4.4 transparency: which reasoning tier the request spoke
+          // for and every readable hint the body builder had to add.
+          reasoning: completion?.reasoning || null,
+          warnings: Array.isArray(completion?.warnings) ? completion.warnings : [],
         };
       }
     }
@@ -3442,6 +3506,8 @@ class WorkbenchStore {
       instruction,
       context,
       provider: { provider_id: descriptor.id, model: completion?.model || this.aiModel(), label: descriptor.label },
+      reasoning_tier: String(completion?.reasoning?.tier || ""),
+      reasoning_tier_source: String(completion?.reasoning?.source || "none"),
       status: failure ? (failure.code === "cancelled" ? "cancelled" : "failed") : status,
       error_code: failure ? failure.code : null,
       error_message: failure ? failure.message : "",
@@ -3669,6 +3735,7 @@ class WorkbenchStore {
   resetAiState() {
     this.ui.aiContext = null;
     this.ui.aiContextOpen = false;
+    this.ui.aiReasoningTier = "";
     this.ui.aiDraftId = null;
     this.ui.aiResult = null;
     this.ui.aiError = null;
@@ -3678,6 +3745,18 @@ class WorkbenchStore {
     this.ui.aiExecutions = [];
     this.ui.aiExecutionsOpen = false;
     this.ui.aiProviderForm = null;
+    this.ui.aiOpenEditor = null;
+    this.ui.aiRowDraft = null;
+    this.ui.aiAddDraft = null;
+    this.ui.aiSaveStatus = null;
+    this.ui.aiModelPicker = {
+      open: false,
+      search: "",
+      selected: new Set(),
+      models: [],
+      loading: false,
+      error: null,
+    };
     this.refreshAiSideFiles();
   }
   /** Both shells keep provider metadata local and API Keys in macOS Keychain. */
@@ -3718,6 +3797,85 @@ class WorkbenchStore {
       return [];
     }
   }
+  /**
+   * Shape one editor draft (design §4.1).  A typed API Key is NEVER part of it:
+   * `secret` exists only as an always-empty shape slot, and the real value
+   * lives solely in the masked DOM input until 保存密钥 reads it — nothing under
+   * `ui` may carry a credential value into a render, a log or a session file.
+   */
+  aiNormalizeDraft(source = {}, { isNew = false, advancedOpen = false } = {}) {
+    const record = source && typeof source === "object" ? source : {};
+    const id = String(record.providerId || record.id || "").trim();
+    const fresh = typeof record.isNew === "boolean"
+      ? record.isNew
+      : typeof record.is_saved === "boolean"
+      ? !record.is_saved
+      : isNew === true;
+    const modelRows = aiModelRowsFromRecord(record);
+    return {
+      providerId: id,
+      // `id` / `isNew` are compatibility mirrors of the §4.1 names: legacy code
+      // and tests reach this object through `ui.aiProviderForm`.
+      id,
+      label: String(record.label || "").trim(),
+      base_url: String(record.base_url || "").trim(),
+      api_protocol: aiIsKnownApiProtocol(record.api_protocol)
+        ? String(record.api_protocol)
+        : "openai-completions",
+      chat_path: String(record.chat_path || "").trim(),
+      default_model: String(record.default_model || "").trim(),
+      // The「模型目录」rows are the truth for the catalog: `models` mirrors
+      // their ids in row order (design §4.1/§4.3), and every row keeps the
+      // `model_meta` entry it was seeded from, so re-saving a connection that
+      // already carries metadata cannot drop a field (design §4.5).
+      models: aiModelIdsFromRows(modelRows),
+      model_meta: copyModelMetaMap(record.model_meta) || undefined,
+      kind: String(record.kind || "") || "openai_compatible",
+      requires_credential: record.requires_credential !== false,
+      is_saved: !fresh,
+      isNew: fresh,
+      secret: "",
+      secret_visible: record.secret_visible === true,
+      advanced_open: typeof record.advanced_open === "boolean"
+        ? record.advanced_open
+        : advancedOpen === true,
+      modelRows,
+      errors: record.errors && typeof record.errors === "object" ? { ...record.errors } : {},
+      models_error: typeof record.models_error === "string" ? record.models_error : null,
+    };
+  }
+  /** The draft the one open editor card is showing (design §4.1). */
+  aiActiveDraft() {
+    return this.ui.aiOpenEditor === "row" ? this.ui.aiRowDraft : this.ui.aiAddDraft;
+  }
+  /**
+   * Sync one editor field into the open draft WITHOUT a re-render, so the caret
+   * and any IME composition survive typing (design §4.2).  The API key field is
+   * not wired through here at all.
+   */
+  aiSyncDraftField(field, value) {
+    const draft = this.aiActiveDraft();
+    if (!draft || typeof field !== "string" || field === "secret") return;
+    if (field === "api_protocol") draft.api_protocol = String(value || "openai-completions");
+    else if (field === "providerId" || field === "id") {
+      draft.providerId = String(value ?? "").trim();
+      draft.id = draft.providerId;
+    } else if (["label", "base_url", "chat_path", "default_model"].includes(field)) {
+      draft[field] = String(value ?? "");
+    }
+  }
+  /** Close / cancel / save-secret must empty the temporary key inputs (design §4.1). */
+  aiClearTemporarySecretInputs() {
+    for (const input of root.querySelectorAll?.("[data-ai-secret], [data-ai-temporary-secret]") || []) {
+      input.value = "";
+    }
+  }
+  /**
+   * Open one row's inline editor card (design §2).  The row draft lives in its
+   * own slot, so the add card's draft survives untouched; re-opening the same
+   * row keeps what was typed there, a different row starts from its saved
+   * record, and opening a row collapses the add card (one editor at a time).
+   */
   aiEditProvider(id, { preserveSelection = false } = {}) {
     const providerId = String(id || this.ui.aiProviderId || "").trim();
     if (!providerId) return;
@@ -3730,11 +3888,16 @@ class WorkbenchStore {
       this.notify();
       return;
     }
-    this.ui.aiProviderForm = {
+    const reuse = this.ui.aiRowDraft &&
+        String(this.ui.aiRowDraft.providerId || this.ui.aiRowDraft.id || "").trim() === providerId
+      ? this.ui.aiRowDraft
+      : null;
+    this.ui.aiRowDraft = reuse || this.aiNormalizeDraft({
       ...descriptor,
       models: Array.isArray(descriptor.models) ? descriptor.models : [],
-      isNew: false,
-    };
+    }, { isNew: false, advancedOpen: false });
+    this.ui.aiOpenEditor = "row";
+    this.ui.aiSaveStatus = null;
     this.ui.aiChosenModel = descriptor.default_model || descriptor.models?.[0] || "";
     this.ui.aiManualModel = "";
     this.ui.aiModelOptions = Array.isArray(descriptor.models) ? [...descriptor.models] : [];
@@ -3742,62 +3905,578 @@ class WorkbenchStore {
     this.ui.aiModelSource = this.ui.aiModelOptions.length ? "saved" : "";
     this.ui.aiModelsError = "";
     this.ui.aiSettingsOpen = true;
-    // 设置 always opens (or refreshes) the form.  It used to toggle shut on a
+    // 设置 always opens (or refreshes) the editor.  It used to toggle shut on a
     // second click, which closed the address/key fields exactly when the user
     // was looking for them.
-    this.ui.focusField = "ai-provider-label";
+    this.ui.focusField = "ai-secret";
     this.notify();
   }
   /**
-   * Open an EMPTY provider form (§9.4).  The Provider ID is a field the user
-   * types: it is pre-filled with a suggestion only so the form is never blank,
-   * and it becomes permanent once the connection is saved.  Nothing here touches
-   * the shell — a created-but-unsaved connection has no credential slot and
-   * cannot be selected for a run.
+   * The「＋ 添加模型提供商」entry toggles the add card (design §2 / §2.2 C).
+   * Open it and the create form starts EMPTY: the Provider ID is a field the
+   * user types (placeholder `acme-gateway`), it becomes permanent once the
+   * connection is saved, and nothing is generated or templated (§9.2).
+   * Collapsing the card keeps the add draft — a half-filled form is never
+   * thrown away by a misclick (design §4.1).
    */
   aiCreateConnection() {
-    const ids = new Set(
-      (Array.isArray(this.ui.aiProviders) ? this.ui.aiProviders : [])
-        .map((provider) => String(provider?.id || "").trim())
-        .filter(Boolean),
-    );
-    let id;
-    do { id = `connection-${uid()}`; } while (ids.has(id));
-    this.ui.aiProviderForm = this.connectionRecord({
-      id,
-      label: "",
-      base_url: "",
-      api_protocol: "openai-completions",
-      default_model: "",
-      models: [],
-    });
-    this.ui.aiProviderForm.isNew = true;
+    if (this.ui.aiOpenEditor === "add") {
+      this.aiClearTemporarySecretInputs();
+      this.ui.aiOpenEditor = null;
+      this.notify();
+      return;
+    }
+    if (!this.ui.aiAddDraft) {
+      this.ui.aiAddDraft = this.aiNormalizeDraft({
+        id: "",
+        label: "",
+        base_url: "",
+        api_protocol: "openai-completions",
+        chat_path: "/chat/completions",
+        default_model: "",
+        models: [],
+      }, { isNew: true, advancedOpen: true });
+    }
+    this.ui.aiOpenEditor = "add";
+    this.ui.aiSaveStatus = null;
+    this.ui.aiSettingsOpen = true;
     this.ui.aiChosenModel = "";
     this.ui.aiManualModel = "";
     this.ui.aiModelOptions = [];
     this.ui.aiModelSelection = [];
     this.ui.aiModelSource = "";
     this.ui.aiModelsError = "";
-    this.ui.aiSettingsOpen = true;
     // The id is the first thing a user must decide, so it gets the caret.
     this.ui.focusField = "ai-provider-id";
     this.notify();
   }
-  aiToggleSettings() {
-    if (this.ui.aiSettingsOpen) return this.aiCloseSettings();
-    this.ui.aiSettingsOpen = true;
-    if (!this.ui.aiProviderForm) {
-      const selected = (this.ui.aiProviders || []).find((entry) => entry?.id === this.ui.aiProviderId);
-      if (selected?.kind !== "openai_chatgpt_subscription") this.aiEditProvider(this.ui.aiProviderId, { preserveSelection: true });
+  /** design §2/§4.1: switching the add card's segment never drops its draft. */
+  aiSetAddTab(tab) {
+    const value = ["third-party", "custom", "subscription"].includes(tab) ? tab : "third-party";
+    if (this.ui.aiAddTab === value) return;
+    this.ui.aiAddTab = value;
+    this.notify();
+  }
+  /** design §2.1:「自定义设置」is a plain fold over the open draft's fields. */
+  aiToggleAdvanced() {
+    const draft = this.aiActiveDraft();
+    if (!draft) return;
+    draft.advanced_open = draft.advanced_open !== true;
+    this.notify();
+  }
+  /**
+   * design §2.1: the eye button flips the key input between password and text
+   * and does nothing else — no re-render (the typed key would die with the old
+   * input), no reading of the value, no copying it into state.
+   */
+  aiToggleSecretVisible() {
+    const draft = this.aiActiveDraft();
+    const input = root.querySelector("[data-ai-secret]") || null;
+    const visible = input && typeof input.getAttribute === "function"
+      ? String(input.getAttribute("type") || "password") !== "text"
+      : !(draft && draft.secret_visible === true);
+    if (draft) draft.secret_visible = visible;
+    if (input && typeof input.setAttribute === "function") {
+      input.setAttribute("type", visible ? "text" : "password");
+    }
+    const button = root.querySelector('[data-action="ai-toggle-secret-visible"]') || null;
+    if (button && typeof button.setAttribute === "function") {
+      const label = visible ? "隐藏密钥" : "显示密钥";
+      button.setAttribute("aria-pressed", visible ? "true" : "false");
+      button.setAttribute("aria-label", label);
+      button.setAttribute("title", label);
+      button.removeAttribute("hidden");
+    }
+  }
+  /* ---------------------------------------------- 模型目录行（design §4.1） */
+
+  /** The model row carrying this local key in the open draft. */
+  aiModelRowByKey(key) {
+    const draft = this.aiActiveDraft();
+    const rows = Array.isArray(draft?.modelRows) ? draft.modelRows : [];
+    return rows.find((row) => row && row.key === key) || null;
+  }
+
+  /** A row key no current row uses (design §4.1 `key` is row-local and stable). */
+  aiNextModelRowKey(rows) {
+    const used = new Set((Array.isArray(rows) ? rows : []).map((row) => String(row?.key || "")));
+    for (let index = 1; index < 10000; index += 1) {
+      const key = `model-row-${index}`;
+      if (!used.has(key)) return key;
+    }
+    return `model-row-${Date.now()}`;
+  }
+
+  /** Keep `models` mirroring the rows in row order (design §4.3). */
+  aiSyncDraftModels(draft) {
+    if (!draft) return;
+    draft.models = aiModelIdsFromRows(draft.modelRows);
+  }
+
+  /** design §4.2:「编辑」/「收起」one model row. */
+  aiToggleModelRow(key) {
+    const row = this.aiModelRowByKey(key);
+    if (!row) return;
+    row.expanded = row.expanded !== true;
+    this.notify();
+  }
+
+  /** design §4.2:「移除」deletes exactly one row. */
+  aiRemoveModelRow(key) {
+    const draft = this.aiActiveDraft();
+    if (!draft) return;
+    const rows = Array.isArray(draft.modelRows) ? draft.modelRows : [];
+    const next = rows.filter((row) => row && row.key !== key);
+    if (next.length === rows.length) return;
+    draft.modelRows = next;
+    this.aiSyncDraftModels(draft);
+    if (draft.default_model && !draft.models.includes(draft.default_model)) {
+      draft.default_model = draft.models[0] || "";
     }
     this.notify();
   }
-  aiCloseSettings() {
-    for (const input of root.querySelectorAll?.("[data-ai-secret], [data-ai-temporary-secret]") || []) {
-      input.value = "";
+
+  /**
+   * design §4.2:「↑」「↓」move one row.  The row object travels untouched, so
+   * its expanded state and any half-typed capacity input move with it.
+   */
+  aiMoveModelRow(key, dir) {
+    const draft = this.aiActiveDraft();
+    if (!draft) return;
+    const rows = Array.isArray(draft.modelRows) ? [...draft.modelRows] : [];
+    const index = rows.findIndex((row) => row && row.key === key);
+    const target = dir === "up" ? index - 1 : index + 1;
+    if (index < 0 || target < 0 || target >= rows.length) return;
+    [rows[index], rows[target]] = [rows[target], rows[index]];
+    draft.modelRows = rows;
+    this.aiSyncDraftModels(draft);
+    this.notify();
+  }
+
+  /**
+   * design §4.2:「＋ 添加模型」adds ONE hand-filled row, expands it and puts the
+   * caret in its Model ID field.  This is the manual fallback §9.5 keeps open
+   * when「获取可用模型」has nothing to offer.
+   */
+  aiAddManualModel() {
+    const draft = this.aiActiveDraft();
+    if (!draft) return;
+    const rows = Array.isArray(draft.modelRows) ? [...draft.modelRows] : [];
+    const key = this.aiNextModelRowKey(rows);
+    rows.push(aiNormalizeModelRow({ id: "", expanded: true }, key));
+    draft.modelRows = rows;
+    this.aiSyncDraftModels(draft);
+    this.ui.focusField = `ai-model-id-${key}`;
+    this.notify();
+  }
+
+  /**
+   * design §4.2: a row field syncs as it is typed, WITHOUT a re-render, so the
+   * caret and any IME composition survive.  Validation waits for the field to
+   * be left (below), and the save re-checks everything.
+   */
+  aiSyncModelRowField(key, field, value) {
+    const row = this.aiModelRowByKey(key);
+    if (!row || !["id", "name", "context_window", "max_tokens"].includes(field)) return;
+    row[field] = String(value ?? "");
+    if (field === "id") this.aiSyncDraftModels(this.aiActiveDraft());
+  }
+
+  /** @returns {string} the message for one row field, or "" when it is fine. */
+  aiModelRowIssue(row, field) {
+    if (!row) return "";
+    const draft = this.aiActiveDraft();
+    const rows = Array.isArray(draft?.modelRows) ? draft.modelRows : [];
+    if (field === "id") {
+      const id = String(row.id || "").trim();
+      if (!id) return AI_MODEL_ID_REQUIRED_MESSAGE;
+      const duplicate = rows.some((other) =>
+        other && other !== row && String(other.id || "").trim() === id);
+      return duplicate ? aiModelIdDuplicateMessage(id) : "";
     }
+    if (field === "context_window" || field === "max_tokens") {
+      const parsed = aiParseCapacity(row[field]);
+      return parsed.ok ? "" : parsed.message;
+    }
+    if (field === "input") {
+      return row.input_declared !== false && !row.input_text && !row.input_image
+        ? AI_MODEL_INPUT_REQUIRED_MESSAGE
+        : "";
+    }
+    if (field === "reasoning") {
+      // design §3 wording: no thinking tier at all (including an open switch
+      // with zero rows) and a thinking tier without an API parameter value are
+      // the two refusals, each with its own sentence.
+      if (row.reasoning_enabled !== true) return "";
+      const tiers = Array.isArray(row.tiers) ? row.tiers : [];
+      const thinking = tiers.filter((entry) => entry && entry.tier !== "off");
+      if (!thinking.length) return AI_REASONING_REQUIRED_MESSAGE;
+      if (thinking.some((entry) => String(entry.value ?? "").trim() === "")) {
+        return AI_REASONING_VALUE_REQUIRED_MESSAGE;
+      }
+      return "";
+    }
+    return "";
+  }
+
+  /**
+   * design §7: leaving a field shows its message on that row.  A field that is
+   * already fine never re-renders — a blur must not swallow the click on the
+   * button right next to it.
+   */
+  aiValidateModelRowField(key, field) {
+    const row = this.aiModelRowByKey(key);
+    if (!row) return;
+    const message = this.aiModelRowIssue(row, field);
+    const previous = row.errors?.[field] || "";
+    if (message === previous) return;
+    row.errors = { ...(row.errors || {}) };
+    if (message) row.errors[field] = message;
+    else delete row.errors[field];
+    this.notify();
+  }
+
+  /** design §7: every row is checked before a save; the first message wins. */
+  aiValidateModelRows() {
+    const draft = this.aiActiveDraft();
+    if (!draft || !Array.isArray(draft.modelRows)) return "";
+    let first = "";
+    for (const row of draft.modelRows) {
+      const errors = {};
+      for (const field of ["id", "context_window", "max_tokens", "input", "reasoning"]) {
+        const message = this.aiModelRowIssue(row, field);
+        if (message) {
+          errors[field] = message;
+          if (!first) first = message;
+        }
+      }
+      row.errors = errors;
+    }
+    return first;
+  }
+
+  /**
+   * design §2.4: the input-type checkboxes — at least one of「文本」/「图片」
+   * stays on.  The last untick is refused (and the row says why) rather than
+   * stored, so a row can never declare zero input types.
+   */
+  aiToggleModelRowInput(key, kind, checked) {
+    const row = this.aiModelRowByKey(key);
+    if (!row) return;
+    const field = kind === "image" ? "input_image" : "input_text";
+    const text = field === "input_text" ? Boolean(checked) : row.input_text !== false;
+    const image = field === "input_image" ? Boolean(checked) : row.input_image === true;
+    if (!text && !image) {
+      this.ui.toast = AI_MODEL_INPUT_REQUIRED_MESSAGE;
+      this.notify();
+      return;
+    }
+    row.input_text = text;
+    row.input_image = image;
+    row.input_declared = true;
+    row.errors = { ...(row.errors || {}) };
+    delete row.errors.input;
+    this.notify();
+  }
+
+  /* ------------------------------- 推理等级（design §2.1 / §4.4） ------------------------------- */
+
+  /** The tier row carrying this local key inside one model row. */
+  aiReasoningTierByKey(modelKey, tierKey) {
+    const row = this.aiModelRowByKey(modelKey);
+    if (!row) return null;
+    return (Array.isArray(row.tiers) ? row.tiers : [])
+      .find((entry) => entry && entry.key === tierKey) || null;
+  }
+
+  /**
+   * design §2.1: the「推理等级」switch.  Off→on ALWAYS starts from the four
+   * initial rows (off/low/medium/high) — a tier deleted earlier is not
+   * restored (放弃修改走「取消」) — and on→off empties the declaration: the
+   * model does not reason and no request is ever injected (design §4.4).
+   */
+  aiToggleModelReasoning(modelKey) {
+    const row = this.aiModelRowByKey(modelKey);
+    if (!row) return;
+    row.reasoning_touched = true;
+    if (row.reasoning_enabled === true) {
+      row.reasoning_enabled = false;
+      row.tiers = [];
+    } else {
+      row.reasoning_enabled = true;
+      row.tiers = AI_REASONING_INITIAL_TIERS.map((tier, index) => ({
+        key: `tier-${index + 1}`,
+        tier,
+        value: aiReasoningDefaultValue(tier),
+      }));
+    }
+    row.errors = { ...(row.errors || {}) };
+    delete row.errors.reasoning;
+    this.notify();
+  }
+
+  /** design §2.1: the「?」button spells out the two columns and the dispatch rule. */
+  aiToggleReasoningHelp(modelKey) {
+    const row = this.aiModelRowByKey(modelKey);
+    if (!row) return;
+    row.reasoning_help_open = row.reasoning_help_open !== true;
+    this.notify();
+  }
+
+  /** design §2.1:「添加档位」appends the next unused tier in escalation order. */
+  aiAddTierRow(modelKey) {
+    const row = this.aiModelRowByKey(modelKey);
+    if (!row || row.reasoning_enabled !== true) return;
+    const tiers = Array.isArray(row.tiers) ? [...row.tiers] : [];
+    const tier = aiReasoningNextTier(tiers);
+    if (!tier) return;
+    const used = new Set(tiers.map((entry) => String(entry?.key || "")));
+    let index = tiers.length + 1;
+    while (used.has(`tier-${index}`)) index += 1;
+    tiers.push({ key: `tier-${index}`, tier, value: aiReasoningDefaultValue(tier) });
+    row.tiers = tiers;
+    this.notify();
+  }
+
+  /** design §2.1:「移除」deletes exactly one tier row. */
+  aiRemoveTierRow(modelKey, tierKey) {
+    const row = this.aiModelRowByKey(modelKey);
+    if (!row || row.reasoning_enabled !== true) return;
+    const tiers = Array.isArray(row.tiers) ? row.tiers : [];
+    const next = tiers.filter((entry) => entry && entry.key !== tierKey);
+    if (next.length === tiers.length) return;
+    row.tiers = next;
+    row.reasoning_touched = true;
+    this.notify();
+  }
+
+  /**
+   * UI spec §2.5: changing a row keeps a custom API parameter value only
+   * between two thinking tiers — a value still spelled as the old tier, or any
+   * move to or from off, resets to the new tier name.  每档只能用一次: a tier
+   * another row already uses is refused.
+   */
+  aiChangeTierName(modelKey, tierKey, to) {
+    const row = this.aiModelRowByKey(modelKey);
+    const tierRow = this.aiReasoningTierByKey(modelKey, tierKey);
+    if (!row || !tierRow || row.reasoning_enabled !== true) return;
+    const next = String(to || "").trim();
+    if (next === tierRow.tier) return;
+    const tiers = Array.isArray(row.tiers) ? row.tiers : [];
+    if (tiers.some((entry) => entry && entry !== tierRow && entry.tier === next)) return;
+    tierRow.value = aiReasoningChangedValue(tierRow.tier, next, tierRow.value);
+    tierRow.tier = next;
+    row.reasoning_touched = true;
+    row.errors = { ...(row.errors || {}) };
+    delete row.errors.reasoning;
+    this.notify();
+  }
+
+  /**
+   * UI spec §2.5: the API parameter value syncs as it is typed without a
+   * re-render.  A cleared field stores the tier name while the input keeps the
+   * empty text the user sees until they leave it.
+   */
+  aiSyncTierValue(modelKey, tierKey, text) {
+    const tierRow = this.aiReasoningTierByKey(modelKey, tierKey);
+    if (!tierRow || tierRow.tier === "off") return;
+    const value = String(text ?? "").trim();
+    tierRow.value = value === "" ? aiReasoningDefaultValue(tierRow.tier) : value;
+  }
+
+  /**
+   * UI spec §2.5: leaving the field fills the tier name back in when nothing
+   * usable is stored and repairs the displayed text in place — a blur must not
+   * swallow the click on「移除」right next to it — then re-checks the row.
+   */
+  aiValidateTierValue(modelKey, tierKey) {
+    const row = this.aiModelRowByKey(modelKey);
+    const tierRow = this.aiReasoningTierByKey(modelKey, tierKey);
+    if (!row || !tierRow) return;
+    if (tierRow.tier !== "off" && String(tierRow.value ?? "").trim() === "") {
+      tierRow.value = aiReasoningDefaultValue(tierRow.tier);
+    }
+    for (const input of root.querySelectorAll?.("[data-ai-tier-value]") || []) {
+      if (String(input?.dataset?.key || "") !== String(modelKey) ||
+        String(input?.dataset?.tierKey || "") !== String(tierKey)) continue;
+      if (typeof input.setAttribute === "function") {
+        input.setAttribute("value", String(tierRow.value ?? ""));
+        input.setAttribute("aria-invalid", String(
+          tierRow.tier !== "off" && String(tierRow.value ?? "").trim() === "",
+        ));
+      }
+      break;
+    }
+    this.aiValidateModelRowField(modelKey, "reasoning");
+  }
+  /** design §3:「恢复默认模型」= back to the list this connection was saved with. */
+  aiResetModels() {
+    const draft = this.aiActiveDraft();
+    if (!draft) return;
+    if (globalThis.confirm?.("恢复这个提供商的默认模型目录？当前的模型编辑会被丢弃。") === false) return;
+    const saved = (Array.isArray(this.ui.aiProviders) ? this.ui.aiProviders : [])
+      .find((provider) => provider && provider.id === String(draft.providerId || draft.id || "")) || null;
+    // This project ships no preset catalog (§9.2): the "default" of a
+    // connection is only ever what was last saved for it.
+    const rows = saved
+      ? aiModelRowsFromRecord(saved)
+      : [];
+    draft.modelRows = rows;
+    this.aiSyncDraftModels(draft);
+    draft.model_meta = copyModelMetaMap(saved?.model_meta) || undefined;
+    draft.default_model = String(saved?.default_model || "") || draft.models[0] || "";
+    draft.models_error = null;
+    this.notify();
+  }
+
+  /* ------------------------------------------ 「选择模型」（design §4.2） */
+
+  /** The candidate rows the search currently shows.  Hidden rows keep their
+   *  ticks: filtering is a view concern and never edits `selected`. */
+  aiPickerVisibleModels() {
+    const picker = this.ui.aiModelPicker;
+    const models = Array.isArray(picker?.models) ? picker.models : [];
+    const query = String(picker?.search || "").trim().toLowerCase();
+    if (!query) return models;
+    return models.filter((model) =>
+      String(model?.id || "").toLowerCase().includes(query) ||
+      String(model?.name || "").toLowerCase().includes(query));
+  }
+
+  /** design §4.2: the search box filters by id AND display name, in place. */
+  aiPickerSearch(value) {
+    const picker = this.ui.aiModelPicker;
+    if (!picker || !picker.open) return;
+    picker.search = String(value ?? "");
+  }
+
+  /** design §4.2: tick / untick one candidate. */
+  aiPickerToggle(id) {
+    const picker = this.ui.aiModelPicker;
+    const model = String(id || "").trim();
+    if (!picker || !picker.open || !model) return;
+    const selected = new Set(picker.selected);
+    if (selected.has(model)) selected.delete(model);
+    else selected.add(model);
+    picker.selected = selected;
+    this.notify();
+  }
+
+  /** design §4.2:「全选」adds every VISIBLE result — hidden ticks are untouched. */
+  aiPickerSelectAll() {
+    const picker = this.ui.aiModelPicker;
+    if (!picker || !picker.open) return;
+    const selected = new Set(picker.selected);
+    for (const model of this.aiPickerVisibleModels()) selected.add(model.id);
+    picker.selected = selected;
+    this.notify();
+  }
+
+  /** design §4.2:「取消全选」clears every tick, visible or not. */
+  aiPickerClearAll() {
+    const picker = this.ui.aiModelPicker;
+    if (!picker || !picker.open) return;
+    picker.selected = new Set();
+    this.notify();
+  }
+
+  /**
+   * design §4.2:「更新列表」= the ticks ARE the model list.  Ticked candidates
+   * become catalog rows (copying whatever the provider published), rows whose
+   * id is a candidate but unticked are removed, and configured ids the
+   * provider never listed are kept.  Half-filled rows without an id are never
+   * touched.
+   */
+  aiPickerPlan() {
+    const draft = this.aiActiveDraft();
+    const picker = this.ui.aiModelPicker;
+    const rows = Array.isArray(draft?.modelRows) ? draft.modelRows : [];
+    const candidates = Array.isArray(picker?.models) ? picker.models : [];
+    const candidateIds = new Set(candidates.map((model) => String(model?.id || "")));
+    const selected = picker?.selected instanceof Set ? picker.selected : new Set();
+    const kept = rows.filter((row) =>
+      row && (!row.id || !candidateIds.has(row.id) || selected.has(row.id)));
+    const present = new Set(kept.map((row) => String(row?.id || "")).filter(Boolean));
+    const added = candidates.filter((model) =>
+      selected.has(model.id) && !present.has(model.id));
+    return { kept, added };
+  }
+
+  /** design §4.2 (fetchKeepOne): an update that would empty a non-empty list
+   *  is refused, because an empty list would mean "no models at all" here. */
+  aiPickerWouldEmpty() {
+    const draft = this.aiActiveDraft();
+    const rows = Array.isArray(draft?.modelRows) ? draft.modelRows : [];
+    const current = rows.filter((row) => row && String(row.id || "").trim()).length;
+    if (!current) return false;
+    const { kept, added } = this.aiPickerPlan();
+    return kept.filter((row) => row && String(row.id || "").trim()).length + added.length === 0;
+  }
+
+  /** design §4.2:「更新列表」applies the ticks to the model rows. */
+  aiPickerConfirm() {
+    const draft = this.aiActiveDraft();
+    const picker = this.ui.aiModelPicker;
+    if (!draft || !picker || !picker.open) return;
+    if (this.aiPickerWouldEmpty()) {
+      this.ui.toast = "请至少保留一个勾选的模型。";
+      this.notify();
+      return;
+    }
+    const { kept, added } = this.aiPickerPlan();
+    const rows = [...kept];
+    for (const model of added) {
+      const key = this.aiNextModelRowKey(rows);
+      // Only what the provider actually published is copied; a label that is
+      // just the id again is not a display name (§4.2).
+      const name = String(model?.name || "").trim();
+      rows.push(aiNormalizeModelRow({
+        id: String(model?.id || "").trim(),
+        name: name === String(model?.id || "").trim() ? "" : name,
+        context_window: String(model?.context_window || ""),
+        max_tokens: String(model?.max_tokens || ""),
+        input_text: model?.input_text !== false,
+        input_image: model?.input_image === true,
+        input_declared: model?.input_declared === true,
+      }, key));
+    }
+    draft.modelRows = rows;
+    this.aiSyncDraftModels(draft);
+    if (!draft.default_model || !draft.models.includes(draft.default_model)) {
+      draft.default_model = draft.models[0] || "";
+    }
+    this.aiCloseModelPicker();
+    this.ui.toast = `模型目录已更新为 ${draft.models.length} 个模型，保存连接后才会生效。`;
+    this.notify();
+  }
+
+  /** design §4.2:「取消」drops the ticks and changes nothing. */
+  aiCloseModelPicker() {
+    this.ui.aiModelPicker = {
+      open: false,
+      search: "",
+      selected: new Set(),
+      models: [],
+      loading: false,
+      error: null,
+    };
+    this.notify();
+  }
+  aiToggleSettings() {
+    if (this.ui.aiSettingsOpen) return this.aiCloseSettings();
+    // design §8: opening the modal shows the provider row cards first; an
+    // editor card opens only when the user asks for one.
+    this.ui.aiSettingsOpen = true;
+    this.notify();
+  }
+  aiCloseSettings() {
+    this.aiClearTemporarySecretInputs();
     this.ui.aiSettingsOpen = false;
-    this.ui.aiProviderForm = null;
+    this.ui.aiOpenEditor = null;
+    this.ui.aiRowDraft = null;
+    this.ui.aiAddDraft = null;
+    this.ui.aiSaveStatus = null;
+    this.ui.aiModelPicker = { open: false, search: "", selected: new Set(), models: [], loading: false, error: null };
     this.ui.aiConnectionTestStatus = null;
     this.ui.focusField = "";
     this.notify();
@@ -3878,7 +4557,7 @@ class WorkbenchStore {
     const saved = (Array.isArray(this.ui.aiProviders) ? this.ui.aiProviders : [])
       .find((entry) => entry && entry.id === id) || null;
     const label = String(saved?.label || "").trim() || id;
-    if (globalThis.confirm?.(`删除连接「${label}」及其本机密钥？此操作不会改动课程内容。`) === false) return false;
+    if (globalThis.confirm?.(`删除连接「${label}」？本机保存的密钥会一并删除。`) === false) return false;
     try {
       await this.bridge.command("ai.connection.delete", { provider_id: id });
     } catch (error) {
@@ -3895,7 +4574,13 @@ class WorkbenchStore {
       this.ui.aiModel = "";
       this.scheduleSessionSave();
     }
-    if (this.ui.aiProviderForm?.id === id) this.ui.aiProviderForm = null;
+    // A deleted connection takes its drafts with it (design §4.1).
+    for (const slot of ["aiRowDraft", "aiAddDraft"]) {
+      const draft = this.ui[slot];
+      if (draft && String(draft.providerId || draft.id || "").trim() === id) this.ui[slot] = null;
+    }
+    if (!this.ui.aiRowDraft && this.ui.aiOpenEditor === "row") this.ui.aiOpenEditor = null;
+    if (!this.ui.aiAddDraft && this.ui.aiOpenEditor === "add") this.ui.aiOpenEditor = null;
     await this.aiLoadProviders();
     this.ui.toast = `已删除连接「${id}」及其本机密钥`;
     this.notify();
@@ -3908,6 +4593,11 @@ class WorkbenchStore {
    */
   async aiDiscoverModels() {
     const form = this.ui.aiProviderForm || {};
+    // The model catalog lives inside「自定义设置」(design §2.1): a discovery run
+    // must leave the user looking at its results — or at the manual fallback
+    // the failure message points to — so the fold opens with the request
+    // instead of hiding what came back.
+    if (form && typeof form === "object") form.advanced_open = true;
     const providerId = String(form.id || this.ui.aiProviderId || "").trim();
     const baseUrl = String(
       (root.querySelector("[data-ai-base-url]") || {}).value || form.base_url || "",
@@ -3949,11 +4639,13 @@ class WorkbenchStore {
     }
     this.ui.aiModelsBusy = true;
     this.ui.aiModelsError = "";
+    this.ui.aiModelPicker = { ...(this.ui.aiModelPicker || {}), loading: true, error: null };
     this.notify();
     let models = [];
     let displayNames = {};
+    let discovery = null;
     try {
-      const result = useSavedCredential
+      discovery = useSavedCredential
         ? await this.bridge.command("ai.models.list", { provider_id: providerId })
         : await this.bridge.command("ai.models.probe", {
           provider: {
@@ -3968,15 +4660,22 @@ class WorkbenchStore {
           },
           temporary_credential: temporaryKey,
         });
-      models = aiDiscoveredModelIds(result);
-      displayNames = result?.display_names && typeof result.display_names === "object"
-        ? Object.fromEntries(Object.entries(result.display_names).filter(([, label]) => typeof label === "string"))
+      models = aiDiscoveredModelIds(discovery);
+      displayNames = discovery?.display_names && typeof discovery.display_names === "object"
+        ? Object.fromEntries(Object.entries(discovery.display_names).filter(([, label]) => typeof label === "string"))
         : {};
     } catch (error) {
       this.ui.aiModelsBusy = false;
       this.ui.aiModelsError = this.aiFailureFrom(error).message;
+      this.ui.aiModelPicker = {
+        ...(this.ui.aiModelPicker || {}),
+        open: false,
+        loading: false,
+        error: this.ui.aiModelsError,
+      };
       this.ui.aiModelSource = "manual";
-      this.ui.focusField = "ai-model-manual";
+      // The manual fallback is the「＋ 添加模型」row now (design §4.2).
+      this.ui.focusField = "ai-add-model";
       this.notify();
       return [];
     }
@@ -3985,7 +4684,7 @@ class WorkbenchStore {
     if (!models.length) {
       this.ui.aiModelsError = "服务商没有返回任何模型名";
       this.ui.aiModelSource = "manual";
-      this.ui.focusField = "ai-model-manual";
+      this.ui.focusField = "ai-add-model";
       this.notify();
       return [];
     }
@@ -3997,16 +4696,43 @@ class WorkbenchStore {
     // anything from an older discovery round once the list changed.
     this.ui.aiModelSelection = [];
     if (!models.includes(this.ui.aiChosenModel)) this.ui.aiChosenModel = models[0];
+    // design §4.2: a successful read opens the「选择模型」dialog.  Ticks start
+    // from what the catalog already holds: nothing listed yet means "take the
+    // whole answer", otherwise the configured ids stay ticked.
+    const entries = aiDiscoveredModelEntries(discovery);
+    const configured = aiModelIdsFromRows(this.aiActiveDraft()?.modelRows);
+    const selected = new Set(configured.length ? configured : entries.map((entry) => entry.id));
+    this.ui.aiModelPicker = {
+      open: true,
+      search: "",
+      selected,
+      models: entries,
+      loading: false,
+      error: null,
+    };
     this.notify();
     return models;
   }
-  /** Pick one of the discovered models.  Manual entry always wins if filled. */
-  aiPickModel(id) {
-    const model = String(id || "").trim();
-    if (!model) return;
-    this.ui.aiChosenModel = model;
-    this.ui.aiManualModel = "";
-    if (this.ui.aiProviderForm) this.ui.aiProviderForm.default_model = model;
+  /**
+   * design §4.2: open the「选择模型」dialog.  With no candidate list yet this
+   * simply runs「获取可用模型」first — the dialog only ever shows what the
+   * provider itself listed (§9.2: no shipped catalog to fall back on).
+   */
+  aiOpenModelPicker() {
+    const picker = this.ui.aiModelPicker;
+    const candidates = Array.isArray(picker?.models) ? picker.models : [];
+    if (!candidates.length) {
+      void this.aiDiscoverModels();
+      return;
+    }
+    const configured = aiModelIdsFromRows(this.aiActiveDraft()?.modelRows);
+    picker.open = true;
+    picker.search = "";
+    picker.selected = new Set(
+      configured.length ? configured : candidates.map((entry) => entry.id),
+    );
+    picker.error = null;
+    picker.loading = false;
     this.notify();
   }
   /**
@@ -4037,46 +4763,7 @@ class WorkbenchStore {
       return;
     }
     form.id = id;
-    this.notify();
-  }
-  /** §9.6: tick or untick one model in the discovered catalog. */
-  aiToggleModelSelection(id) {
-    const model = String(id || "").trim();
-    if (!model) return;
-    const selection = new Set(
-      Array.isArray(this.ui.aiModelSelection) ? this.ui.aiModelSelection : [],
-    );
-    if (selection.has(model)) selection.delete(model);
-    else selection.add(model);
-    this.ui.aiModelSelection = [...selection];
-    this.notify();
-  }
-  /**
-   * Move the ticked catalog entries into the connection's model list.  Still
-   * only a form: nothing reaches the shell until 保存 (§9.5).
-   */
-  aiAddSelectedModels() {
-    const form = this.ui.aiProviderForm;
-    if (!form) return;
-    const chosen = (Array.isArray(this.ui.aiModelSelection) ? this.ui.aiModelSelection : [])
-      .map((model) => String(model || "").trim())
-      .filter(Boolean);
-    if (!chosen.length) {
-      this.ui.toast = "先在模型目录里勾选至少一个模型。";
-      this.notify();
-      return;
-    }
-    const models = [...new Set([
-      ...(Array.isArray(form.models) ? form.models : []),
-      ...chosen,
-    ])];
-    form.models = models;
-    if (!form.default_model) {
-      form.default_model = chosen[0];
-      this.ui.aiChosenModel = chosen[0];
-    }
-    this.ui.aiModelSelection = [];
-    this.ui.toast = `已加入 ${chosen.length} 个模型，保存连接后才会生效。`;
+    form.providerId = id;
     this.notify();
   }
   async aiTestConnection() {
@@ -4086,7 +4773,7 @@ class WorkbenchStore {
     const current = {
       base_url: String(root.querySelector("[data-ai-base-url]")?.value || form.base_url || "").trim(),
       api_protocol: String(root.querySelector("[data-ai-api-protocol]")?.value || form.api_protocol || "openai-completions"),
-      default_model: String(root.querySelector("[data-ai-model-manual]")?.value || this.ui.aiChosenModel || form.default_model || "").trim(),
+      default_model: String(form.default_model || this.ui.aiChosenModel || "").trim(),
     };
     if (!saved ||
       String(saved.base_url || "").trim() !== current.base_url ||
@@ -4163,6 +4850,21 @@ class WorkbenchStore {
    */
   rememberProviderForm(input = {}) {
     const current = this.ui.aiProviderForm || {};
+    const rows = Array.isArray(current.modelRows) ? current.modelRows : [];
+    const rowIds = aiModelIdsFromRows(rows);
+    const requested = Array.isArray(input.models)
+      ? [...new Set(input.models.map((model) => String(model || "").trim()).filter(Boolean))]
+      : null;
+    const rowsMatch = requested === null ||
+      (requested.length === rowIds.length &&
+        requested.every((modelId, index) => modelId === rowIds[index]));
+    // A caller that names a different model list (the programmatic path) wins:
+    // the rows are rebuilt from it, each id keeping the metadata it carried.
+    // The editor path passes the row ids themselves, so its rows — expanded
+    // state, half-typed capacities and all — survive untouched.
+    const modelRows = rowsMatch
+      ? rows
+      : aiModelRowsFromRecord({ models: requested ?? [], model_meta: current.model_meta });
     this.ui.aiProviderForm = {
       ...current,
       id: String(input.id || current.id || "").trim(),
@@ -4172,7 +4874,8 @@ class WorkbenchStore {
         input.api_protocol || current.api_protocol || "openai-completions",
       ),
       default_model: String(input.default_model || "").trim(),
-      models: Array.isArray(input.models) ? input.models : current.models || [],
+      models: requested ?? (Array.isArray(current.models) ? current.models : []),
+      modelRows,
     };
   }
 
@@ -4181,6 +4884,15 @@ class WorkbenchStore {
     const id = String(input.id || this.ui.aiProviderForm?.id || this.ui.aiProviderId || "").trim();
     if (!id) {
       this.ui.toast = "请先选择要配置的服务商";
+      this.notify();
+      return false;
+    }
+    // design §7: a model row is validated as it is left AND again here, so a
+    // bad Model ID or capacity cannot reach the transport.  The message lands
+    // on the offending row.
+    const rowIssue = this.aiValidateModelRows();
+    if (rowIssue) {
+      this.ui.toast = `模型目录没有保存：${rowIssue}`;
       this.notify();
       return false;
     }
@@ -4222,11 +4934,39 @@ class WorkbenchStore {
       this.notify();
       return false;
     }
+    const draftForm = this.ui.aiProviderForm;
     const chosenModels = Array.isArray(input.models)
       ? input.models
-      : Array.isArray(this.ui.aiProviderForm?.models)
-      ? this.ui.aiProviderForm.models
+      : Array.isArray(draftForm?.models)
+      ? draftForm.models
       : [];
+    const models = [...new Set(chosenModels.map((model) => String(model || "").trim()).filter(Boolean))];
+    /**
+     * design §4.3 / §4.5 — `model_meta` rides with the save.  An explicitly
+     * passed map (including the explicit empty map `{}`) wins, so「清空元数据」
+     * is a real submission and not "forget to send it"; otherwise the map is
+     * rebuilt from the model rows, which is what makes editing and re-saving an
+     * already-decorated connection lossless.  Rows whose id looks like a
+     * credential field name get NO entry (design §4.3.1) — the id itself still
+     * saves — and the row says so instead of the transport refusing the whole
+     * provider.
+     */
+    let modelMeta;
+    let metaIssues = [];
+    if (Object.prototype.hasOwnProperty.call(input, "model_meta")) {
+      modelMeta = copyModelMetaMap(input.model_meta) || {};
+    } else if (draftForm && Array.isArray(draftForm.modelRows)) {
+      const built = aiModelMetaFromRows(draftForm.modelRows, draftForm.model_meta);
+      modelMeta = built.meta;
+      metaIssues = built.issues;
+    } else if (existing && existing.model_meta) {
+      modelMeta = copyModelMetaMap(existing.model_meta) || {};
+    }
+    for (const issue of metaIssues) {
+      const row = (Array.isArray(draftForm?.modelRows) ? draftForm.modelRows : [])
+        .find((candidate) => candidate && candidate.key === issue.key);
+      if (row) row.errors = { ...(row.errors || {}), [issue.field]: issue.message };
+    }
     const provider = {
       id,
       label: String(input.label || id).trim() || id,
@@ -4236,8 +4976,9 @@ class WorkbenchStore {
       api_protocol: protocol,
       auth_header: protocol === "anthropic-messages" ? "x-api-key" : "authorization",
       auth_scheme: protocol === "anthropic-messages" ? "" : "Bearer",
-      default_model: String(input.default_model || "").trim(),
-      models: [...new Set(chosenModels.map((model) => String(model || "").trim()).filter(Boolean))],
+      default_model: String(input.default_model || "").trim() || models[0] || "",
+      models,
+      ...(modelMeta ? { model_meta: modelMeta } : {}),
     };
     const hasCredential = this.ui.aiConfigured?.[id] === true;
     const boundOrigin = this.ui.aiCredentialOrigins?.[id] || null;
@@ -4271,6 +5012,7 @@ class WorkbenchStore {
     this.ui.aiProviderForm = {
       ...(this.ui.aiProviderForm || {}),
       id: provider.id,
+      providerId: provider.id,
       label: provider.label,
       base_url: provider.base_url,
       chat_path: provider.chat_path,
@@ -4279,7 +5021,13 @@ class WorkbenchStore {
       auth_scheme: provider.auth_scheme,
       default_model: provider.default_model,
       models: provider.models,
+      model_meta: copyModelMetaMap(provider.model_meta) || undefined,
+      isNew: false,
+      is_saved: true,
     };
+    // design §2: the save notice「已保存 {显示名}。」stays until the user moves
+    // to another editor.
+    this.ui.aiSaveStatus = `已保存 ${provider.label}。`;
     await this.aiLoadProviders();
     // The saved model is now the model: mirror it back into the form state so
     // the preview line cannot keep showing a choice that was not saved.
@@ -4372,6 +5120,8 @@ class WorkbenchStore {
     }
     await this.aiLoadProviders();
     this.ui.aiError = null;
+    // design §4.1: a stored key empties the temporary input right away.
+    this.aiClearTemporarySecretInputs();
     const configured = Boolean(this.ui.aiConfigured?.[providerId]);
     this.ui.toast = configured
       ? `API Key 已保存到${this.aiStorageLabel()}，并已读回确认（不回显，也不进入课程文件）`
@@ -11646,11 +12396,29 @@ function handleAction(action, element, event) {
       return;
     case "ai-refresh-executions": void store.aiLoadExecutions(); return;
     case "ai-edit-provider": store.aiEditProvider(element.dataset.id); return;
-    case "ai-edit-connection":
-      store.aiEditProvider(element.dataset.id, { preserveSelection: true });
+    case "ai-edit-connection": {
+      const rowId = String(element.dataset.id || "").trim();
+      const openRowId = store.ui.aiOpenEditor === "row" && store.ui.aiRowDraft
+        ? String(store.ui.aiRowDraft.providerId || store.ui.aiRowDraft.id || "").trim()
+        : "";
+      // design §2: the row button reads「编辑」/「收起」— a second click on the
+      // open row collapses its editor card instead of reopening it.
+      if (rowId && rowId === openRowId) {
+        store.aiClearTemporarySecretInputs();
+        store.ui.aiOpenEditor = null;
+        store.notify();
+        return;
+      }
+      store.aiEditProvider(rowId, { preserveSelection: true });
       return;
+    }
     case "ai-use-provider": store.aiSetProvider(element.dataset.id); return;
     case "ai-create-connection": store.aiCreateConnection(); return;
+    case "ai-add-tab": store.aiSetAddTab(element.dataset.tab); return;
+    case "ai-toggle-advanced": store.aiToggleAdvanced(); return;
+    case "ai-toggle-secret-visible": store.aiToggleSecretVisible(); return;
+    case "ai-add-manual-model": store.aiAddManualModel(); return;
+    case "ai-reset-models": store.aiResetModels(); return;
     case "ai-delete-connection": void store.aiDeleteConnection(element.dataset.id); return;
     case "ai-toggle-settings":
       if (!store.ui.aiSettingsOpen) rememberDialogReturnFocus(element);
@@ -11663,44 +12431,69 @@ function handleAction(action, element, event) {
     case "ai-subscription-logout": void store.aiSubscriptionLogout(element.dataset.id || ""); return;
     case "ai-test-connection": void store.aiTestConnection(); return;
     case "ai-save-provider": {
-      const read = (selector) => root.querySelector(selector)?.value ?? "";
-      // The model actually used is the manual Model ID when filled, otherwise
-      // the one chosen from the discovered list.  Both are real user input;
-      // neither comes from a hardcoded table in the app.
-      const manual = read("[data-ai-model-manual]").trim();
-      const chosen = manual || String(store.ui.aiChosenModel || "").trim();
-      // §9.6: the connection owns exactly the models the user added to the
-      // catalog, plus whatever they are typing right now.
-      const models = [...new Set([
-        ...((Array.isArray(store.ui.aiProviderForm?.models) ? store.ui.aiProviderForm.models : [])
-          .map((model) => String(model || "").trim())
-          .filter(Boolean)),
-        chosen,
-      ].filter(Boolean))];
+      // A field the open editor renders wins over the draft; a field folded
+      // away by「自定义设置」falls back to the draft's synced value, so a
+      // collapsed row can still be saved (design §2.1).
+      const draft = store.ui.aiProviderForm;
+      const read = (selector, fallback) => {
+        const field = root.querySelector(selector);
+        return field && field.value !== undefined
+          ? String(field.value ?? "").trim()
+          : String(fallback ?? "").trim();
+      };
+      // §9.6 / design §4.3: the connection owns exactly the model rows the
+      // user edited — ids in row order, metadata carried by the rows.
+      const models = aiModelIdsFromRows(Array.isArray(draft?.modelRows) ? draft.modelRows : []);
+      const wanted = String(draft?.default_model || "").trim();
       void store.aiSaveProvider({
         // The typed id wins: a save that lands before the field's change event
         // would otherwise write the placeholder id the form was opened with.
-        id: read("[data-ai-provider-id]").trim() ||
-          store.ui.aiProviderForm?.id || store.ui.aiProviderId,
-        label: read("[data-ai-provider-label]"),
-        base_url: read("[data-ai-base-url]"),
-        api_protocol: read("[data-ai-api-protocol]") || "openai-completions",
-        default_model: chosen,
+        id: read("[data-ai-provider-id]", draft?.id || store.ui.aiProviderId),
+        label: read("[data-ai-provider-label]", draft?.label),
+        base_url: read("[data-ai-base-url]", draft?.base_url),
+        api_protocol: read("[data-ai-api-protocol]", draft?.api_protocol) || "openai-completions",
+        default_model: models.includes(wanted) ? wanted : models[0] || "",
         models,
       });
       return;
     }
     case "ai-discover-models": void store.aiDiscoverModels(); return;
-    case "ai-pick-model": store.aiPickModel(element.dataset.id); return;
-    case "ai-toggle-model-selection": store.aiToggleModelSelection(element.dataset.id); return;
-    case "ai-add-selected-models": store.aiAddSelectedModels(); return;
-    case "ai-cancel-provider": store.ui.aiProviderForm = null; store.notify(); return;
+    case "ai-open-model-picker": store.aiOpenModelPicker(); return;
+    case "ai-picker-toggle": store.aiPickerToggle(element.dataset.id); return;
+    case "ai-picker-select-all": store.aiPickerSelectAll(); return;
+    case "ai-picker-clear-all": store.aiPickerClearAll(); return;
+    case "ai-picker-confirm": store.aiPickerConfirm(); return;
+    case "ai-picker-close": store.aiCloseModelPicker(); return;
+    case "ai-edit-model": store.aiToggleModelRow(element.dataset.key); return;
+    case "ai-remove-model": store.aiRemoveModelRow(element.dataset.key); return;
+    case "ai-move-model": store.aiMoveModelRow(element.dataset.key, element.dataset.dir); return;
+    // design §2.1: the「推理等级」switch, its tier rows and the「?」help.
+    case "ai-toggle-model-reasoning": store.aiToggleModelReasoning(element.dataset.key); return;
+    case "ai-toggle-reasoning-help": store.aiToggleReasoningHelp(element.dataset.key); return;
+    case "ai-add-tier": store.aiAddTierRow(element.dataset.key); return;
+    case "ai-remove-tier": store.aiRemoveTierRow(element.dataset.key, element.dataset.tierKey); return;
+    case "ai-change-tier":
+      store.aiChangeTierName(element.dataset.key, element.dataset.tierKey, element.value);
+      return;
+    case "ai-cancel-provider":
+      // design §4.1: cancel closes the editor and empties the temporary key
+      // input; the draft itself stays in its own slot.
+      store.aiClearTemporarySecretInputs();
+      store.ui.aiOpenEditor = null;
+      store.notify();
+      return;
     case "ai-save-secret": {
       const input = root.querySelector("[data-ai-secret]");
       const value = input ? input.value : "";
-      const providerId = String(element.dataset.providerId || input?.dataset.providerId || "").trim();
+      const typedId = String(root.querySelector("[data-ai-provider-id]")?.value || "").trim();
+      const providerId = typedId || String(element.dataset.providerId || input?.dataset.providerId || "").trim();
       // The field is cleared immediately: a credential must not stay in the DOM.
       if (input) input.value = "";
+      if (!providerId) {
+        store.ui.toast = "请先填写 Provider ID，再保存密钥。";
+        store.notify();
+        return;
+      }
       void store.aiSaveSecret(value, providerId);
       return;
     }
@@ -12134,30 +12927,51 @@ function bindEvents() {
     });
   });
 
-  // P2-1: the manual Model ID is a first-class choice.  Typing in it updates the
-  // "将要使用的模型" line in place — no re-render, so the caret and IME survive —
-  // and 保存配置 reads the same value.
-  const manualModel = root.querySelector("[data-ai-model-manual]");
-  if (manualModel) {
-    const syncModelPreview = () => {
-      const typed = String(manualModel.value || "").trim();
-      store.ui.aiManualModel = typed;
-      const target = root.querySelector("[data-ai-model-preview]");
-      if (target) {
-        target.textContent = typed || store.ui.aiChosenModel || "（还没有选择）";
-      }
-      const note = root.querySelector("[data-ai-model-preview-note]");
-      if (note) {
-        note.textContent = typed
-          ? "（手动填写）"
-          : store.ui.aiModelSource === "remote"
-          ? "（来自读取结果）"
-          : "";
-      }
-      store.scheduleSessionSave();
-    };
-    manualModel.addEventListener("input", syncModelPreview);
-    manualModel.addEventListener("change", syncModelPreview);
+  // design §4.2: the「模型目录」rows.  Every field syncs into its row as it is
+  // typed — no re-render, so the caret and any IME composition survive — and
+  // is only checked when the user leaves it (design §7).
+  for (
+    const field of root.querySelectorAll(
+      "[data-ai-model-id], [data-ai-model-name], [data-ai-model-context], [data-ai-model-max-tokens]",
+    )
+  ) {
+    if (typeof field.addEventListener !== "function") continue;
+    const key = String(field.dataset.key || "");
+    const name = field.hasAttribute("data-ai-model-id")
+      ? "id"
+      : field.hasAttribute("data-ai-model-name")
+      ? "name"
+      : field.hasAttribute("data-ai-model-context")
+      ? "context_window"
+      : "max_tokens";
+    field.addEventListener("input", () =>
+      store.aiSyncModelRowField(key, name, field.value));
+    field.addEventListener("blur", () => store.aiValidateModelRowField(key, name));
+  }
+  // design §2.1:「API 参数值」fields — typed into without a re-render, checked
+  // when left (UI spec §2.5 repairs an empty field to its tier name).
+  for (const tierField of root.querySelectorAll("[data-ai-tier-value]")) {
+    if (typeof tierField.addEventListener !== "function") continue;
+    const modelKey = String(tierField.dataset.key || "");
+    const tierKey = String(tierField.dataset.tierKey || "");
+    tierField.addEventListener("input", () =>
+      store.aiSyncTierValue(modelKey, tierKey, tierField.value));
+    tierField.addEventListener("blur", () =>
+      store.aiValidateTierValue(modelKey, tierKey));
+  }
+  // design §2.4: the「文本」/「图片」checkboxes — at least one type stays on.
+  for (
+    const box of root.querySelectorAll(
+      "[data-ai-model-input-text], [data-ai-model-input-image]",
+    )
+  ) {
+    if (typeof box.addEventListener !== "function") continue;
+    box.addEventListener("change", () =>
+      store.aiToggleModelRowInput(
+        String(box.dataset.key || ""),
+        box.hasAttribute("data-ai-model-input-image") ? "image" : "text",
+        Boolean(box.checked),
+      ));
   }
   // The Provider ID is a form field until 保存 (§9.4): editing it writes only
   // the unsaved form, and the store refuses to re-name a saved connection.
@@ -12167,14 +12981,47 @@ function bindEvents() {
     providerIdField.addEventListener("change", commitProviderId);
     providerIdField.addEventListener("blur", commitProviderId);
   }
-  const modelSearch = root.querySelector("[data-ai-model-search]");
-  if (modelSearch) {
-    modelSearch.addEventListener("input", () => {
-      const query = String(modelSearch.value || "").trim().toLowerCase();
-      for (const chip of root.querySelectorAll("[data-ai-model-list] .ai-model-chip")) {
-        chip.hidden = query !== "" && !String(chip.textContent || "").toLowerCase().includes(query);
+  // design §4.2: the「选择模型」search filters by id AND display name in the
+  // DOM — typing must not re-render — and hiding a candidate never unticks it.
+  const pickerSearch = root.querySelector("[data-ai-picker-search]");
+  if (pickerSearch && typeof pickerSearch.addEventListener === "function") {
+    const syncPickerSearch = () => {
+      const query = String(pickerSearch.value || "").trim().toLowerCase();
+      store.aiPickerSearch(pickerSearch.value);
+      for (const row of root.querySelectorAll("[data-ai-picker-row]")) {
+        const haystack = String(row.dataset.search || "").toLowerCase();
+        row.hidden = query !== "" && !haystack.includes(query);
       }
-    });
+    };
+    pickerSearch.addEventListener("input", syncPickerSearch);
+  }
+  // design §4.2: editor fields sync into the open draft as they are typed and
+  // never through a re-render, so the caret and any IME composition survive.
+  // The API key field is deliberately absent: a credential never becomes UI
+  // state, so its value stays in the masked DOM node alone.
+  for (const [selector, field] of [
+    ["[data-ai-provider-label]", "label"],
+    ["[data-ai-base-url]", "base_url"],
+    ["[data-ai-api-protocol]", "api_protocol"],
+  ]) {
+    const fieldInput = root.querySelector(selector);
+    if (!fieldInput || typeof fieldInput.addEventListener !== "function") continue;
+    const syncDraftField = () => store.aiSyncDraftField(field, fieldInput.value);
+    fieldInput.addEventListener("input", syncDraftField);
+    fieldInput.addEventListener("change", syncDraftField);
+  }
+  // design §2.1: the eye button only appears while the key field has text, and
+  // clicking it only flips the input's type — the value is never read here.
+  const secretField = root.querySelector("[data-ai-secret]");
+  if (secretField && typeof secretField.addEventListener === "function") {
+    const eyeButton = root.querySelector('[data-action="ai-toggle-secret-visible"]');
+    const syncEyeVisibility = () => {
+      if (eyeButton && typeof eyeButton.toggleAttribute === "function") {
+        eyeButton.toggleAttribute("hidden", !String(secretField.value || "").length);
+      }
+    };
+    secretField.addEventListener("input", syncEyeVisibility);
+    syncEyeVisibility();
   }
 
   // P2-4 / Item 14 (§15.3): the whole placement Grid — left click to move,

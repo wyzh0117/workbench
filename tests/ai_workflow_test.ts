@@ -13,6 +13,7 @@ import {
   AI_EXECUTION_STATUS,
   AI_FAILURE_CODES,
   AI_OFFLINE_PROVIDER_ID,
+  AI_REASONING_ANTHROPIC_BUDGET_HINT,
   AiFailure,
   FakeAiConnector,
   HttpAiConnector,
@@ -3067,3 +3068,200 @@ Deno.test("buildAiExecutionRecord truncates and normalises unsafe input", () => 
   void (null as ChangeDraft | null);
   void (null as Block | null);
 });
+
+/* ------------------------------------------------------------------ *
+ * design §4.4 — reasoning parameters, per protocol and never unconditionally
+ * ------------------------------------------------------------------ */
+
+/** A connection whose model declares reasoning tiers (the row switch is on). */
+function reasoningConnection(
+  protocol: string,
+  efforts: Record<string, string>,
+  overrides: Partial<ConnectionFixture> = {},
+): ConnectionFixture {
+  const anthropic = protocol === "anthropic-messages";
+  return connectionFixture({
+    id: "reasoning-connection",
+    label: "推理连接",
+    api_protocol: protocol,
+    base_url: "https://reasoning.example.test/v1",
+    chat_path: "/chat/completions",
+    auth_header: anthropic ? "x-api-key" : "authorization",
+    auth_scheme: anthropic ? "" : "Bearer",
+    default_model: "think-model",
+    models: ["think-model"],
+    model_meta: { "think-model": { reasoning_efforts: { ...efforts } } },
+    ...overrides,
+  });
+}
+
+function reasoningCall(
+  protocol: string,
+  efforts: Record<string, string>,
+  extra: Record<string, unknown> = {},
+) {
+  return buildAiProviderCall({
+    connection: reasoningConnection(protocol, efforts),
+    model: "think-model",
+    instruction: "解释这一段",
+    ...extra,
+  });
+}
+
+Deno.test("§4.4 the two OpenAI protocols send reasoning_effort of the resolved tier", () => {
+  for (const protocol of ["openai-completions", "openai-responses"]) {
+    // Unnamed request: the strongest configured thinking tier (the ruling of
+    // this stage; off &lt; minimal &lt; low &lt; medium &lt; high &lt; xhigh &lt; max).
+    const call = reasoningCall(protocol, {
+      off: "off",
+      low: "low",
+      medium: "medium",
+      high: "high",
+    });
+    assertEquals(call.body.reasoning_effort, "high", protocol + " 默认必须下发最强档 high");
+    assert(!("thinking" in call.body), protocol + " 不得写 anthropic 的 thinking 参数");
+    assertEquals(call.reasoning.tier, "high", "必须报告实际使用的档位");
+    assertEquals(call.reasoning.source, "default", "未点名档位必须标记为默认档");
+    assertEquals(call.warnings, [], "正常下发不得有提示");
+
+    // A request that names a tier uses THAT tier own API parameter value.
+    const named = reasoningCall(protocol, { off: "off", low: "minimal-value", high: "high" }, {
+      reasoning_tier: "low",
+    });
+    assertEquals(named.body.reasoning_effort, "minimal-value", "点名档位必须用它的 API 参数值");
+    assertEquals(named.reasoning.source, "requested", "点名档位要标记为 requested");
+  }
+});
+
+Deno.test("§4.4 off sends nothing at all, whatever the tier row stored", () => {
+  const call = reasoningCall("openai-completions", { off: "off-value", high: "high" }, {
+    reasoning_tier: "off",
+  });
+  assert(!("reasoning_effort" in call.body), "off 档位不写任何推理参数");
+  assert(!("thinking" in call.body), "off 档位不写 thinking");
+  assertEquals(call.reasoning.status, "off", "off 必须被如实报告");
+  assert(
+    !JSON.stringify(call.body).includes("off-value"),
+    "off 行保留的参数值不得下发",
+  );
+});
+Deno.test("§4.4 a model that does not reason is never injected with reasoning parameters", () => {
+  // Switch off means the field does not exist: no request may grow one.
+  for (const protocol of ["openai-completions", "openai-responses", "anthropic-messages"]) {
+    const plain = connectionFixture({
+      id: "plain",
+      api_protocol: protocol,
+      auth_header: protocol === "anthropic-messages" ? "x-api-key" : "authorization",
+      auth_scheme: protocol === "anthropic-messages" ? "" : "Bearer",
+    });
+    const call = buildAiProviderCall({ connection: plain, model: "test-model", instruction: "你好" });
+    assert(!("reasoning_effort" in call.body), protocol + " 未开启推理等级不得注入");
+    assert(!("thinking" in call.body), protocol + " 未开启推理等级不得注入 thinking");
+    assertEquals(call.reasoning.status, "unset", "未开启必须如实报告");
+    assertEquals(call.warnings, [], "未开启不得产生提示");
+  }
+  // A declaration for ANOTHER model is not a declaration for this one.
+  const own = reasoningCall("openai-completions", { high: "high" }, {});
+  assert(own.body.reasoning_effort === "high", "本模型自己的声明照常生效（对照组）");
+  const foreign = buildAiProviderCall({
+    connection: reasoningConnection("openai-completions", { high: "high" }),
+    model: "another-model",
+    instruction: "你好",
+  });
+  assert(!("reasoning_effort" in foreign.body), "别的模型的推理等级不得串用");
+});
+
+Deno.test("§4.4 anthropic sends thinking.budget_tokens only for a plain number", () => {
+  const budget = reasoningCall("anthropic-messages", { off: "off", medium: "2048" });
+  assertEquals(
+    budget.body.thinking,
+    { type: "enabled", budget_tokens: 2048 },
+    "纯数字参数值必须写成 thinking.budget_tokens",
+  );
+  assert(!("reasoning_effort" in budget.body), "anthropic 协议不写 reasoning_effort");
+
+  // A non-numeric value sends NOTHING and says so readably — never a failure.
+  const hinted = reasoningCall("anthropic-messages", { off: "off", high: "high" });
+  assert(!("thinking" in hinted.body), "非数字参数值不得写 thinking");
+  assert(!("reasoning_effort" in hinted.body), "anthropic 协议不写 reasoning_effort");
+  assertEquals(hinted.reasoning.status, "ready", "档位本身是选中的，只是参数值不可用");
+  assert(
+    hinted.warnings.includes(AI_REASONING_ANTHROPIC_BUDGET_HINT),
+    "必须给出可读提示而不是失败",
+  );
+  assert(
+    hinted.warnings.some((line) => line.includes("请改为预算数字或改用 OpenAI 协议")),
+    "提示必须给出下一步",
+  );
+});
+
+Deno.test("§4.4 a named tier outside the declaration injects nothing but explains", () => {
+  const call = reasoningCall("openai-completions", { off: "off", low: "low" }, {
+    reasoning_tier: "xhigh",
+  });
+  assert(!("reasoning_effort" in call.body), "未声明的档位不得猜测下发");
+  assertEquals(call.reasoning.status, "unavailable", "必须如实报告档位不可用");
+  assert(
+    call.warnings.some((line) => line.includes("没有下发推理参数")),
+    "必须解释这次没有下发推理参数",
+  );
+});
+Deno.test("§4.4 HttpAiConnector reports the tier it spoke for and its warnings", async () => {
+  const posted: any[] = [];
+  const connector = new HttpAiConnector({
+    connection: reasoningConnection("anthropic-messages", { off: "off", high: "high" }),
+    model: "think-model",
+    transport: (call: any) => {
+      posted.push(call);
+      return Promise.resolve({
+        ok: true,
+        status: 200,
+        headers: { "content-type": "application/json" },
+        body: {
+          model: "think-model",
+          content: [{ type: "text", text: ANSWER_JSON }],
+          stop_reason: "end_turn",
+        },
+      });
+    },
+  });
+  const completion = await connector.complete({ instruction: "解释这一段" });
+  assertEquals(posted.length, 1, "必须真的发出一次请求");
+  assert(!("thinking" in posted[0].body), "非数字参数值不得写 thinking");
+  assertEquals(completion.reasoning?.tier, "high", "完成结果必须带上实际档位");
+  assert(
+    (completion.warnings || []).includes(AI_REASONING_ANTHROPIC_BUDGET_HINT),
+    "可读提示必须随完成结果透传到界面",
+  );
+  // A per-request tier overrides the default and is reported as requested.
+  const named = await connector.complete({ instruction: "解释这一段", reasoning_tier: "off" });
+  assertEquals(named.reasoning?.tier, "off", "点名 off 必须如实报告");
+  assertEquals(named.reasoning?.source, "requested", "点名档位标记为 requested");
+  assert(!("thinking" in posted[1].body), "off 不下发任何推理参数");
+});
+
+Deno.test("§4.4 the execution record only ever carries the fixed tier enum", () => {
+  const clean = buildAiExecutionRecord({
+    project_id: "project-1",
+    reasoning_tier: "high",
+    reasoning_tier_source: "default",
+    status: "succeeded",
+  });
+  assertEquals(clean.reasoning_tier, "high", "合法档位必须进执行记录");
+  assertEquals(clean.reasoning_tier_source, "default", "默认档来源必须可读");
+  const tainted = buildAiExecutionRecord({
+    project_id: "project-1",
+    reasoning_tier: "api_key",
+    reasoning_tier_source: "hacked",
+    status: "succeeded",
+  });
+  assertEquals(tainted.reasoning_tier, "", "非枚举档位名必须被丢弃");
+  assertEquals(tainted.reasoning_tier_source, "none", "非法来源必须归一到 none");
+  assert(
+    !JSON.stringify(tainted).includes("api_key"),
+    "凭据形状的字段名不得进入执行记录",
+  );
+});
+
+
+

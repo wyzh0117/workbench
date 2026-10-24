@@ -261,6 +261,28 @@ export interface ExportResult {
   warnings?: string[];
 }
 
+/** One input modality a model row may declare (design §4.3 / UI spec §2.4). */
+export type ModelInputType = "text" | "image";
+
+/**
+ * Per-model metadata carried by `AiProviderConfig.model_meta` (design §4.3).
+ * Every field is optional: an absent field means "inherit the adapter default".
+ * `reasoning_efforts` maps a reasoning tier (off/minimal/low/medium/high/xhigh/
+ * max) to the API parameter value sent for it; `off` only means "no thinking".
+ */
+export interface ModelMeta {
+  /** Display name; empty/absent means the UI shows the Model ID. */
+  name?: string;
+  /** Positive integer context window; 0 / negatives / fractions are invalid. */
+  context_window?: number;
+  /** Positive integer output token cap; 0 / negatives / fractions are invalid. */
+  max_tokens?: number;
+  /** At least one modality, de-duplicated; absent = inherit. */
+  input?: ModelInputType[];
+  /** Reasoning tier -> API parameter value; each tier appears at most once. */
+  reasoning_efforts?: Record<string, string>;
+}
+
 export interface DesktopBridge {
   readProject(): Promise<unknown | null>;
   openProjectState?(): Promise<ProjectReadState & { lease_generation: string }>;

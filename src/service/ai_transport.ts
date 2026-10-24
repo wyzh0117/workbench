@@ -20,6 +20,7 @@
 import { createHash } from "node:crypto";
 import { dirname, join, normalize } from "node:path";
 import { id } from "../domain/util.ts";
+import type { ModelInputType, ModelMeta } from "../ui/contracts.ts";
 import { error, redactSecrets, ServiceError } from "./errors.ts";
 import {
   MacKeychainSecretStore,
@@ -38,6 +39,12 @@ export interface AiProviderConfig {
   auth_scheme?: string;
   default_model?: string;
   models?: string[];
+  /**
+   * Per-model metadata (design §4.3), keyed by Model ID.  Entries whose id is
+   * not in `models` are kept as stored (never guessed, never deleted); only the
+   * `models` order is delivered (`modelMetaInModelsOrder`).
+   */
+  model_meta?: Record<string, ModelMeta>;
   [field: string]: unknown;
 }
 
@@ -169,10 +176,56 @@ const MAX_RECORDS_BYTES = 4 * 1024 * 1024;
  */
 const CREDENTIAL_FIELD = /key|token|secret|credential|password|authorization/i;
 const DANGEROUS_FIELDS = new Set(["__proto__", "constructor", "prototype"]);
+/**
+ * The allow-list the refusal message quotes.  Must stay word-for-word equal to
+ * `AI_SAFE_PROVIDER_FIELDS` in `src-tauri/src/lib.rs`: both transports refuse
+ * the same payloads and must explain the same field set (design §4.3 adds
+ * `model_meta`; `api_protocol` was already legal on both sides).
+ */
 const SAFE_PROVIDER_FIELDS =
-  "id / label / kind / base_url / chat_path / auth_header / auth_scheme / default_model / models";
+  "id / label / kind / base_url / chat_path / api_protocol / auth_header / auth_scheme / default_model / models / model_meta";
 const PROVIDER_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/;
 const HEADER_NAME_PATTERN = /^[A-Za-z0-9!#$%&'*+.^_`|~-]+$/;
+
+// ---------------------------------------------------------- design §4.3 model_meta
+
+/** Per-model metadata fields, in the order `normalizeModelMeta` persists them. */
+const MODEL_META_FIELDS = [
+  "name",
+  "context_window",
+  "max_tokens",
+  "input",
+  "reasoning_efforts",
+] as const;
+const MODEL_META_FIELD_SET = new Set<string>(MODEL_META_FIELDS);
+const MODEL_META_FIELD_LIST = MODEL_META_FIELDS.join(" / ");
+const MODEL_INPUT_TYPE_SET = new Set<string>(["text", "image"]);
+
+/** Type guard so callers keep the literal union after the set membership check. */
+function isModelInputType(value: unknown): value is ModelInputType {
+  return typeof value === "string" && MODEL_INPUT_TYPE_SET.has(value);
+}
+/** Reasoning tiers, ascending (design §1 / UI spec §2.5). */
+const REASONING_EFFORT_TIERS = [
+  "off",
+  "minimal",
+  "low",
+  "medium",
+  "high",
+  "xhigh",
+  "max",
+] as const;
+const REASONING_EFFORT_TIER_SET = new Set<string>(REASONING_EFFORT_TIERS);
+/**
+ * `max_tokens` is the single schema field name the blunt CREDENTIAL_FIELD
+ * substring rule misreads ("…token").  It is tolerated ONLY as the
+ * `model_meta.<model>.max_tokens` field, where `normalizeModelMeta` accepts a
+ * positive integer and nothing else — a credential string cannot hide under
+ * it.  Every other nested key name keeps the blunt rule at every depth, and the
+ * native shell applies the identical exemption (`ai_model_meta_forbidden_path`
+ * in `src-tauri/src/lib.rs`), so both transports still refuse the same payloads.
+ */
+const MODEL_META_CREDENTIAL_EXEMPT = "max_tokens";
 
 const defaultAiFetch: AiFetch = (input, init) => fetch(input, init);
 
@@ -468,6 +521,21 @@ function notConfigured(
   });
 }
 
+/** The shared refusal for a credential-shaped (or prototype-polluting) field
+ * name at any depth.  Field *names* identify the problem; field *values* are
+ * never echoed.  `src-tauri/src/lib.rs` states the same wording. */
+function forbiddenProviderFieldError(field: string): ServiceError {
+  const leaf = field.split(".").at(-1) ?? field;
+  const hint = leaf === "requires_credential"
+    ? "「requires_credential」是界面元数据，请勿随配置提交（原生壳会把它当作凭据字段拒绝）。"
+    : "密钥请通过「保存密钥」单独提交。";
+  return invalidRequest(
+    `服务商配置中出现了不允许的字段「${field}」。`,
+    `Credential-shaped provider field rejected: ${field}`,
+    `${hint}允许的字段：${SAFE_PROVIDER_FIELDS}。`,
+  );
+}
+
 /** Clone a JSON value while dropping prototype-polluting field names. */
 function cloneJsonValue(value: unknown, depth = 0): unknown {
   if (depth > MAX_PROVIDER_DEPTH) return undefined;
@@ -486,7 +554,13 @@ function cloneJsonValue(value: unknown, depth = 0): unknown {
   return output;
 }
 
-/** Reject credentials (and non-JSON values) hidden anywhere in a config. */
+/** Reject credentials (and non-JSON values) hidden anywhere in a config.
+ *
+ * The top-level `model_meta` subtree is owned by `normalizeModelMeta`, which
+ * applies this same blunt rule to every nested key name — with the single
+ * documented `max_tokens` schema-field exemption — and rejects anything outside
+ * its own allow-list, so this walk skips it rather than misreading that schema
+ * key as a credential.  Everything else keeps the arbitrary-depth rule. */
 function findForbiddenField(value: unknown, path = ""): string | null {
   if (Array.isArray(value)) {
     for (let index = 0; index < value.length; index += 1) {
@@ -499,6 +573,7 @@ function findForbiddenField(value: unknown, path = ""): string | null {
   for (const [key, child] of Object.entries(value)) {
     const field = path ? `${path}.${key}` : key;
     if (DANGEROUS_FIELDS.has(key) || CREDENTIAL_FIELD.test(key)) return field;
+    if (!path && key === "model_meta") continue;
     const found = findForbiddenField(child, field);
     if (found) return found;
   }
@@ -545,6 +620,7 @@ function assertJsonOnly(value: unknown, depth = 0): void {
     throw invalidRequest(
       "服务商配置层级过深，无法保存。",
       "Provider config exceeds the supported nesting depth",
+      `请减少配置的嵌套层级（最多 ${MAX_PROVIDER_DEPTH} 层）后重试。`,
     );
   }
   if (value === undefined || value === null) return;
@@ -568,6 +644,192 @@ function isSafeProviderId(value: string): boolean {
   return PROVIDER_ID_PATTERN.test(value) && !DANGEROUS_FIELDS.has(value);
 }
 
+/**
+ * Design §4.3 `model_meta`: strictly validated per-model metadata.  The outer
+ * provider object still passes unknown fields through (unchanged policy), but
+ * everything inside `model_meta` is allow-listed: unknown fields are rejected,
+ * and every nested key name — model-id keys, entry fields, reasoning tiers —
+ * keeps the blunt `CREDENTIAL_FIELD` rule at every depth, with the single
+ * documented `max_tokens` exemption (`MODEL_META_CREDENTIAL_EXEMPT`).
+ *
+ * Entries whose id is not in `models` are kept as stored (never guessed, never
+ * deleted); the returned map is ordered `models`-first so delivery follows the
+ * model catalog order (design §4.3 rule 3).
+ */
+function normalizeModelMeta(
+  value: unknown,
+  models: readonly string[] | undefined,
+): Record<string, ModelMeta> {
+  if (!isPlainRecord(value)) {
+    throw invalidRequest(
+      "服务商配置字段「model_meta」必须是以 Model ID 为键的对象。",
+      "Provider field model_meta must be an object keyed by model id",
+      "请为每个 Model ID 提供一个元数据对象，或删除「model_meta」字段。",
+    );
+  }
+  const entries = new Map<string, ModelMeta>();
+  for (const [modelId, rawEntry] of Object.entries(value)) {
+    const entryPath = `model_meta.${modelId}`;
+    if (DANGEROUS_FIELDS.has(modelId) || CREDENTIAL_FIELD.test(modelId)) {
+      throw forbiddenProviderFieldError(entryPath);
+    }
+    if (!modelId.trim()) {
+      throw invalidRequest(
+        "服务商配置字段「model_meta」的 Model ID 不能为空。",
+        "model_meta keys must be non-empty model ids",
+        "请先在模型目录填写 Model ID，或删除这个空条目。",
+      );
+    }
+    if (!isPlainRecord(rawEntry)) {
+      throw invalidRequest(
+        `服务商配置字段「${entryPath}」必须是对象。`,
+        "Each model_meta entry must be an object",
+        "请为该 Model ID 填写显示名、容量、输入类型或推理等级，或删除这个条目。",
+      );
+    }
+    const meta: ModelMeta = {};
+    for (const [field, child] of Object.entries(rawEntry)) {
+      const fieldPath = `${entryPath}.${field}`;
+      // The single documented exemption lives here: `max_tokens` (and only that
+      // exact entry field) is schema-typed below as a positive integer, so its
+      // name is not misread as a credential; every other nested key name keeps
+      // the blunt rule at every depth.
+      const credentialShaped = CREDENTIAL_FIELD.test(field) &&
+        field !== MODEL_META_CREDENTIAL_EXEMPT;
+      if (DANGEROUS_FIELDS.has(field) || credentialShaped) {
+        throw forbiddenProviderFieldError(fieldPath);
+      }
+      if (!MODEL_META_FIELD_SET.has(field)) {
+        throw invalidRequest(
+          `服务商配置字段「${fieldPath}」不受支持。`,
+          `Unsupported model_meta field: ${field}`,
+          `每模型元数据只支持 ${MODEL_META_FIELD_LIST}。`,
+        );
+      }
+      // Same convention as the outer fields: `undefined` means "not filled in".
+      if (child === undefined) continue;
+      if (field === "name") {
+        if (typeof child !== "string") {
+          throw invalidRequest(
+            `服务商配置字段「${fieldPath}」必须是文本。`,
+            "model_meta name must be a string",
+            "请填写显示名称文本，或删除该字段。",
+          );
+        }
+        meta.name = child;
+      } else if (field === "context_window" || field === "max_tokens") {
+        if (typeof child !== "number" || !Number.isInteger(child) || child <= 0) {
+          throw invalidRequest(
+            `服务商配置字段「${fieldPath}」必须是正整数。`,
+            `model_meta ${field} must be a positive integer`,
+            "请填写正整数（不接受 0、负数、小数与非数字），或删除该字段以继承默认值。",
+          );
+        }
+        meta[field] = child;
+      } else if (field === "input") {
+        if (!Array.isArray(child)) {
+          throw invalidRequest(
+            `服务商配置字段「${fieldPath}」必须是输入类型列表。`,
+            "model_meta input must be an array of input modalities",
+            "请勾选「文本」或「图片」，至少保留一种。",
+          );
+        }
+        const input: ModelInputType[] = [];
+        for (const item of child) {
+          if (!isModelInputType(item)) {
+            throw invalidRequest(
+              `服务商配置字段「${fieldPath}」只支持「文本」与「图片」两种输入类型。`,
+              'model_meta input entries must be "text" or "image"',
+              "请只使用「文本」（text）与「图片」（image）两种输入类型。",
+            );
+          }
+          if (!input.includes(item)) input.push(item);
+        }
+        if (input.length === 0) {
+          throw invalidRequest(
+            `服务商配置字段「${fieldPath}」至少要保留一种输入类型。`,
+            "model_meta input must declare at least one modality",
+            "请至少勾选「文本」或「图片」中的一种。",
+          );
+        }
+        meta.input = input;
+      } else {
+        // reasoning_efforts: tier -> API parameter value.
+        if (!isPlainRecord(child)) {
+          throw invalidRequest(
+            `服务商配置字段「${fieldPath}」必须是档位到 API 参数值的映射。`,
+            "model_meta reasoning_efforts must be an object",
+            "请按档位填写 API 参数值，或删除该字段以关闭推理等级。",
+          );
+        }
+        const efforts: Record<string, string> = {};
+        for (const [tier, rawValue] of Object.entries(child)) {
+          const tierPath = `${fieldPath}.${tier}`;
+          if (DANGEROUS_FIELDS.has(tier) || CREDENTIAL_FIELD.test(tier)) {
+            throw forbiddenProviderFieldError(tierPath);
+          }
+          if (!REASONING_EFFORT_TIER_SET.has(tier)) {
+            throw invalidRequest(
+              `服务商配置字段「${tierPath}」不是支持的推理档位。`,
+              "model_meta reasoning_efforts tier is out of range",
+              `推理档位只支持 ${REASONING_EFFORT_TIERS.join(" / ")}。`,
+            );
+          }
+          if (typeof rawValue !== "string" || rawValue.trim().length === 0) {
+            throw invalidRequest(
+              `服务商配置字段「${tierPath}」的 API 参数值必须是非空文本。`,
+              "model_meta reasoning_efforts value must be a non-empty string",
+              "请为每个推理档位填写 API 参数值，或移除这个档位。",
+            );
+          }
+          // Object keys are unique by construction and case variants are
+          // rejected by the tier allow-list above, so each tier occurs once.
+          efforts[tier] = rawValue;
+        }
+        meta.reasoning_efforts = efforts;
+      }
+    }
+    entries.set(modelId, meta);
+  }
+  const ordered: Record<string, ModelMeta> = {};
+  const seen = new Set<string>();
+  for (const modelId of models ?? []) {
+    if (seen.has(modelId)) continue;
+    seen.add(modelId);
+    const meta = entries.get(modelId);
+    if (meta !== undefined) ordered[modelId] = meta;
+  }
+  for (const [modelId, meta] of entries) {
+    if (!seen.has(modelId)) ordered[modelId] = meta;
+  }
+  return ordered;
+}
+
+/**
+ * Design §4.3 delivery rule: per-model metadata is emitted strictly in `models`
+ * order.  Entries for ids outside `models` stay stored (never guessed away) but
+ * are not delivered here.
+ */
+export function modelMetaInModelsOrder(
+  provider: Pick<AiProviderConfig, "models" | "model_meta">,
+): Array<{ model_id: string; meta: ModelMeta }> {
+  const map = provider.model_meta;
+  if (!isPlainRecord(map)) return [];
+  const delivered: Array<{ model_id: string; meta: ModelMeta }> = [];
+  const seen = new Set<string>();
+  for (const modelId of provider.models ?? []) {
+    if (typeof modelId !== "string" || seen.has(modelId)) continue;
+    seen.add(modelId);
+    // `models` may hold any spelling — never read through the prototype chain
+    // (`constructor`, `toString`, …): only own stored entries count.
+    const meta = Object.hasOwn(map, modelId) ? map[modelId] : undefined;
+    if (meta !== undefined && isPlainRecord(meta)) {
+      delivered.push({ model_id: modelId, meta });
+    }
+  }
+  return delivered;
+}
+
 /** Validate and normalise one provider config coming from the renderer. */
 export function normalizeProviderConfig(value: unknown): AiProviderConfig {
   if (!isPlainRecord(value)) {
@@ -587,17 +849,7 @@ export function normalizeProviderConfig(value: unknown): AiProviderConfig {
   }
   const forbidden = findForbiddenField(value);
   const inlineCredential = findInlineCredentialField(value);
-  if (forbidden) {
-    const leaf = forbidden.split(".").at(-1) ?? forbidden;
-    const hint = leaf === "requires_credential"
-      ? "「requires_credential」是界面元数据，请勿随配置提交（原生壳会把它当作凭据字段拒绝）。"
-      : "密钥请通过「保存密钥」单独提交。";
-    throw invalidRequest(
-      `服务商配置中出现了不允许的字段「${forbidden}」。`,
-      `Credential-shaped provider field rejected: ${forbidden}`,
-      `${hint}允许的字段：${SAFE_PROVIDER_FIELDS}。`,
-    );
-  }
+  if (forbidden) throw forbiddenProviderFieldError(forbidden);
   if (inlineCredential) {
     throw invalidRequest(
       `服务商配置中出现了不允许的密钥查询参数「${inlineCredential}」。`,
@@ -611,6 +863,7 @@ export function normalizeProviderConfig(value: unknown): AiProviderConfig {
     throw invalidRequest(
       "服务商配置过大，无法保存。",
       `Provider config exceeds ${MAX_PROVIDER_BYTES} bytes`,
+      "请精简模型元数据或自定义字段（单个服务商配置不超过 8KB）后重试。",
     );
   }
   const cloned = cloneJsonValue(JSON.parse(serialized)) as AiProviderConfig;
@@ -659,6 +912,12 @@ export function normalizeProviderConfig(value: unknown): AiProviderConfig {
         "Provider field models must be an array of strings",
       );
     }
+  }
+  const rawModelMeta = value.model_meta;
+  if (rawModelMeta !== undefined) {
+    // Strictly validated and rebuilt in `models` order; the clone above keeps
+    // the raw subtree only until this overwrite.
+    normalized.model_meta = normalizeModelMeta(rawModelMeta, normalized.models);
   }
   return normalized;
 }
@@ -2359,6 +2618,12 @@ function normalizeAuth(
   return { header: header.toLowerCase(), scheme };
 }
 
+/**
+ * The request body is protocol-shaped upstream (`app/ai.js`) and forwarded
+ * verbatim: design §4.4 reasoning parameters (`reasoning_effort` for the two
+ * OpenAI protocols, `thinking.budget_tokens` for `anthropic-messages`) are
+ * built there, and this transport must never reject or rewrite them.
+ */
 function serializeBody(value: unknown): string {
   if (typeof value === "string") return value;
   if (value === undefined || value === null) {

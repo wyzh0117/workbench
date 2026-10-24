@@ -497,3 +497,123 @@ Deno.test("§9.5 discovery works for a connection that has no models yet", () =>
   // Nothing discovered is persisted by the plan itself (§9.5).
   assertEquals(fresh.models, [], "生成探测计划不能改动连接的模型目录");
 });
+
+/* ------------------------------------------------------------------ *
+ * design §4.3 / §4.3.1 — per-model metadata (model_meta)
+ * ------------------------------------------------------------------ */
+
+Deno.test("design §4.3 normalizeAiConnection passes model_meta through untouched", () => {
+  const meta = {
+    "model-a": {
+      name: "甲模型",
+      context_window: 128000,
+      max_tokens: 8192,
+      input: ["text", "image"],
+      reasoning_efforts: { off: "off", medium: "medium" },
+    },
+  };
+  const normalized = normalizeAiConnection(formRecord({ model_meta: meta }));
+  assertEquals(
+    normalized.model_meta,
+    meta,
+    "model_meta 必须逐字段原样透传（name/context_window/max_tokens/input/reasoning_efforts）",
+  );
+  // Defensive copy: editing the result must not reach the caller's record.
+  const copy = normalized.model_meta as Record<string, any>;
+  copy["model-a"]!.name = "被改坏了";
+  copy["model-a"]!.reasoning_efforts!.medium = "被改坏了";
+  assertEquals(meta["model-a"]!.name, "甲模型", "显示名不得被返回值牵连");
+  assertEquals(
+    meta["model-a"]!.reasoning_efforts!.medium,
+    "medium",
+    "推理档位不得被返回值牵连",
+  );
+  // An empty map is a real (clearing) value and must survive as an object.
+  assertEquals(
+    normalizeAiConnection(formRecord({ model_meta: {} })).model_meta,
+    {},
+    "显式空 map 必须原样保留，用来清空元数据",
+  );
+  // A record without the field must not grow one.
+  assert(
+    !("model_meta" in normalizeAiConnection(formRecord())),
+    "没有 model_meta 的连接不得凭空长出该字段",
+  );
+  // Metadata never changes the catalog itself.
+  assertEquals(
+    normalizeAiConnection(formRecord({ model_meta: { "gpt-token-preview": { name: "x" } } })).models,
+    ["model-a", "model-b"],
+    "model_meta 的键不进入 models",
+  );
+});
+
+Deno.test("design §4.3.1 only model_meta.<id>.max_tokens is exempt from the credential rule", () => {
+  const CREDENTIAL_FIELD = /key|token|secret|credential|password|authorization/i;
+  for (
+    const field of ["model_meta", "name", "context_window", "input", "reasoning_efforts"]
+  ) {
+    assert(
+      !CREDENTIAL_FIELD.test(field),
+      `元数据字段名「${field}」不得命中凭据形状正则`,
+    );
+  }
+  // The ONE documented exemption: the name does hit the blunt rule, which is
+  // why the transport exempts exactly this path and nothing else (§4.3.1).
+  assert(CREDENTIAL_FIELD.test("max_tokens"), "max_tokens 命中正则，因此只做路径级豁免");
+  // A Model ID doubles as a map key, so a credential-shaped id cannot carry an
+  // entry — while the id itself stays a perfectly normal catalog member.
+  assert(CREDENTIAL_FIELD.test("gpt-token-preview"), "含 token 的 Model ID 命中正则");
+  assert(!CREDENTIAL_FIELD.test("model-a"), "普通 Model ID 不命中正则");
+});
+
+/* ------------------------------------------------------------------ *
+ * design §4.5 — reasoning_efforts 落盘形状（P3 契约的前端侧）
+ * ------------------------------------------------------------------ */
+
+Deno.test("design §4.5 reasoning_efforts 只带固定小写档位键，自定义键名不进提交 map", () => {
+  const CREDENTIAL_FIELD = /key|token|secret|credential|password|authorization/i;
+  // A hand-written key inside the map must reach neither the rows nor the
+  // submitted map — the tier enum is the only spelling that survives.
+  const stored = {
+    "model-a": { reasoning_efforts: { api_key: "evil", Low: "x", low: "low", high: "high" } },
+    "orphan-model": { reasoning_efforts: { token: "evil2", max: "max" } },
+  };
+  const rows = aiModule.aiModelRowsFromRecord({ models: ["model-a"], model_meta: stored });
+  const row = rows[0]!;
+  assert(
+    row.reasoning_enabled === true,
+    "对象形式的 reasoning_efforts 必须显示为开关打开",
+  );
+  assert(
+    row.tiers.map((tier: { tier: string }) => tier.tier).join(",") === "low,high",
+    "渲染路径只接受固定小写枚举档位（api_key / Low 必须被丢掉）",
+  );
+  const built = aiModule.aiModelMetaFromRows(rows, stored).meta;
+  const text = JSON.stringify(built);
+  assert(!text.includes("evil"), "自定义键名的值也不得牵出用户键名");
+  assert(!text.includes("api_key"), "凭据形状的键名不得进入提交 map");
+  assert(!text.includes("token"), "未知 id 条目同样只留固定档位键");
+  assert(
+    JSON.stringify(built["model-a"].reasoning_efforts) ===
+      JSON.stringify({ low: "low", high: "high" }),
+    "行内档位按行序重建，键必须是精确小写枚举",
+  );
+  assert(
+    JSON.stringify(built["orphan-model"].reasoning_efforts) === JSON.stringify({ max: "max" }),
+    "未知 id 条目保留（规则 3）但也过同一道键名过滤",
+  );
+  for (const entry of Object.values(built) as Array<Record<string, any>>) {
+    for (const tier of Object.keys(entry.reasoning_efforts || {})) {
+      assert(
+        (aiModule.AI_REASONING_TIERS as readonly string[]).includes(tier),
+        "档位键必须落在 off|minimal|low|medium|high|xhigh|max 之内",
+      );
+      assert(!CREDENTIAL_FIELD.test(tier), "档位键不得命中凭据形状正则");
+      assert(
+        String(entry.reasoning_efforts[tier]).trim().length > 0,
+        "档位值必须 trim 后非空（服务层 §4.5 同一规则）",
+      );
+    }
+  }
+});
+
