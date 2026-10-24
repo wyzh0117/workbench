@@ -8,7 +8,7 @@
 
 ```text
 Latest public release       = [v3.0.1](https://github.com/wyzh0117/workbench/releases/tag/v3.0.1)，已发布并冻结
-Release/tag/source          = v3.0.1 / （发布后补记：tag 对象与源码提交号）
+Release/tag/source          = v3.0.1 / 0230acdfa08942aa7f4a7f2977a2eb9030e16393 / ad4c04207d8a69c6e8dd2b271c17edf12670dd53
 Rolling content             = 无；v3.0.1 用户可见变更已冻结到 v3.0.1.md
 Previous release            = [v3.0.0](https://github.com/wyzh0117/workbench/releases/tag/v3.0.0)，tag / 资产保持冻结
 V0 = CLOSED；V1 = ACTIVE；V1-T01–T06 保留原 VERIFIED；不创建 V1-T07，不关闭 V1
@@ -16,12 +16,12 @@ V0 = CLOSED；V1 = ACTIVE；V1-T01–T06 保留原 VERIFIED；不创建 V1-T07�
 
 v3.0.1 于 2026-10-24（+0800）发布，内容已全部冻结进 [`v3.0.1.md`](./v3.0.1.md)（唯一用户可见变化：AI 模型配置界面与逻辑按 DeepSeek Harness「设置 → 模型」重做）。
 
-**发布后补记（打 tag 公开发布后逐项回填）：**
+**发布后补记（2026-10-24 已全部回填）：**
 
-1. tag `v3.0.1` 的 tag 对象与源码提交号 → 回填上方三元组、[`README.md`](./README.md) 索引表「源码提交」列与 [`v3.0.1.md`](./v3.0.1.md) 头部。
-2. 公开 Release 页面与发布 workflow run 链接、是否 draft / prerelease。
-3. 公开安装包校验（字节数、SHA-256、sidecar 一致性、`hdiutil` / 版本号 / 架构核对、签名与公证状态以 workflow 判定为准）→ 回填 [`v3.0.1.md`](./v3.0.1.md) 的「发布记录」。
-4. [`.github/release-notes/v3.0.1.md`](../../.github/release-notes/v3.0.1.md) 的 Release verification 段。
+1. ✅ tag `v3.0.1`（tag 对象 `0230acdfa08942aa7f4a7f2977a2eb9030e16393`）与源码提交 `ad4c04207d8a69c6e8dd2b271c17edf12670dd53` → 已回填上方三元组、[`README.md`](./README.md) 索引表与 [`v3.0.1.md`](./v3.0.1.md) 头部。
+2. ✅ 公开 Release [v3.0.1](https://github.com/wyzh0117/workbench/releases/tag/v3.0.1)（非 draft、非 prerelease），workflow run [#40082412943](https://github.com/wyzh0117/workbench/actions/runs/40082412943) 结论 success。
+3. ✅ 公开安装包已匿名下载校验（DMG 16,123,741 字节 / Windows 安装包 5,534,385 字节，SHA-256 与 sidecar 一致；包内版本 3.0.1、架构 `x86_64 arm64`；ad-hoc 签名、未签名未公证）→ 见 [`v3.0.1.md`](./v3.0.1.md)「发布记录」。
+4. ✅ [`.github/release-notes/v3.0.1.md`](../../.github/release-notes/v3.0.1.md) 的 Release verification 段已写入并同步到公开正文。
 
 ## 下一个开发周期
 
