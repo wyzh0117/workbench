@@ -32,6 +32,7 @@ import {
   getPublicationCapabilities,
 } from "../app/publication.js";
 import { renderPublishHtml, renderPublishPdf } from "../src/service/publish.ts";
+import { createEscapeLink } from "./helpers/fs_links.ts";
 import {
   getExportStreamMetrics,
   setExportStreamDiagnosticsEnabled,
@@ -134,11 +135,18 @@ async function persistedDiskAssetProject(directory: string, size: number) {
   }
 }
 
+// The OS temp root without env access: probe once with the same allocator the
+// service uses for its export staging directories.
+const TEMP_ROOT = await (async () => {
+  const probe = await Deno.makeTempDir({ prefix: "acw-export-temp-root-" });
+  await Deno.remove(probe, { recursive: true }).catch(() => {});
+  return dirname(probe);
+})();
+
 async function exportTempArtifacts(): Promise<Set<string>> {
-  const root = Deno.env.get("TMPDIR") || "/tmp";
   const names = new Set<string>();
   try {
-    for await (const entry of Deno.readDir(root)) {
+    for await (const entry of Deno.readDir(TEMP_ROOT)) {
       if (entry.name.startsWith("acw-export-download-")) names.add(entry.name);
     }
   } catch { /* test temp root may not be readable on every platform */ }
@@ -853,7 +861,11 @@ Deno.test("desktop command boundary exposes preview, preflight, and export", asy
 Deno.test("folder preview skips circular links and keeps long Unicode names portable", async () => {
   const root = await Deno.makeTempDir({ prefix: "acw-import-edge-" });
   await Deno.writeTextFile(`${root}/中文.md`, "");
-  await Deno.symlink(root, `${root}/loop`);
+  const looped = await createEscapeLink(root, `${root}/loop`, "dir");
+  if (!looped) {
+    console.warn("[skip] Windows lacks symlink privilege; circular-link skip not exercised");
+    return;
+  }
   const preview = await previewImport([{ path: root }]);
   assert(
     preview.items[0]?.children.length === 1,
@@ -1000,7 +1012,11 @@ Deno.test("full project preflight rejects asset symlinks that escape the project
   const root = await Deno.makeTempDir({ prefix: "acw-export-root-" });
   const outside = await Deno.makeTempDir({ prefix: "acw-export-outside-" });
   await Deno.writeTextFile(`${outside}/secret.png`, "private");
-  await Deno.symlink(outside, `${root}/assets`);
+  const linked = await createEscapeLink(outside, `${root}/assets`, "dir");
+  if (!linked) {
+    console.warn("[skip] Windows lacks symlink privilege; symlinked-asset rejection not exercised");
+    return;
+  }
   addAsset(data, data.project.id, {
     type: "image",
     filename: "secret.png",
@@ -1030,7 +1046,11 @@ Deno.test("export refuses a symlink at the final output target", async () => {
   });
   const outsideFile = `${outside}/secret.md`;
   await Deno.writeTextFile(outsideFile, "must-stay-private");
-  await Deno.symlink(outsideFile, `${root}/result.md`);
+  const linked = await createEscapeLink(outsideFile, `${root}/result.md`, "file");
+  if (!linked) {
+    console.warn("[skip] Windows lacks symlink privilege; output-link rejection not exercised");
+    return;
+  }
   const preset = createExportPreset(data, {
     name: "result",
     output_type: "markdown",
@@ -1382,10 +1402,27 @@ Deno.test("browser export downloads staged bytes over HTTP and release or shutdo
   const base = `http://127.0.0.1:${port}`;
   const child = new Deno.Command(Deno.execPath(), {
     args: ["run", "--allow-all", new URL("../scripts/dev_server.ts", import.meta.url).pathname],
-    env: { PROJECT_ROOT: directory, PORT: String(port) },
+    env: {
+      PROJECT_ROOT: directory,
+      PORT: String(port),
+      // Windows has no SIGTERM: the service treats a closed stdin as the same
+      // graceful stop request (see scripts/dev_server.ts).
+      WORKBENCH_SHUTDOWN_ON_STDIN_EOF: "1",
+    },
+    stdin: "piped",
     stdout: "null",
     stderr: "null",
   }).spawn();
+  const requestShutdown = () => {
+    if (Deno.build.os === "windows") {
+      try {
+        // close() rejects (rather than throws) if stdin is already gone.
+        void child.stdin!.close().catch(() => {});
+      } catch { /* stdin already closed */ }
+    } else {
+      child.kill("SIGTERM");
+    }
+  };
   const activeReaders = new Set<ReadableStreamDefaultReader<Uint8Array>>();
   let childExited = false;
   const cancelReaderBounded = async (reader: ReadableStreamDefaultReader<Uint8Array>) => {
@@ -1542,7 +1579,7 @@ Deno.test("browser export downloads staged bytes over HTTP and release or shutdo
     const beforeShutdown = await exportTempArtifacts();
     const ownedAtShutdown = [...beforeShutdown].filter((name) => !stagesBefore.has(name));
     assert(ownedAtShutdown.length > 0, "a pending download should retain its staged files until service shutdown");
-    child.kill("SIGTERM");
+    requestShutdown();
     let shutdownTimeoutId: ReturnType<typeof setTimeout> | undefined;
     const status = await Promise.race([
       child.status,
@@ -1553,14 +1590,14 @@ Deno.test("browser export downloads staged bytes over HTTP and release or shutdo
       if (shutdownTimeoutId !== undefined) clearTimeout(shutdownTimeoutId);
     });
     childExited = true;
-    assert(status.success, "SIGTERM should run DesktopService close and stop the HTTP server cleanly");
+    assert(status.success, "the shutdown signal should run DesktopService close and stop the HTTP server cleanly");
     const afterShutdown = await exportTempArtifacts();
     assert(ownedAtShutdown.every((name) => !afterShutdown.has(name)), "service shutdown should remove every owned export stage");
   } finally {
     for (const reader of activeReaders) {
       if (!await cancelReaderBounded(reader)) console.error("active HTTP reader cleanup exceeded one second");
     }
-    try { child.kill("SIGTERM"); } catch { /* already exited */ }
+    try { requestShutdown(); } catch { /* already exited */ }
     if (!childExited) {
       let cleanupTimeout: ReturnType<typeof setTimeout> | undefined;
       const exited = await Promise.race([

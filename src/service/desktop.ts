@@ -3,7 +3,22 @@ import { applyChangeDraft } from "../domain/ai.ts";
 import { Buffer } from "node:buffer";
 import { createHash } from "node:crypto";
 import { join, normalize } from "node:path";
-import type { AssetType, JsonObject, ProjectData } from "../domain/types.ts";
+import type {
+  AssetType,
+  JsonObject,
+  ProjectData,
+  SlidePlanGenerationSource,
+} from "../domain/types.ts";
+import type {
+  PresentationSlideExportInput,
+  PresentationSlidePrepareAiContextInput,
+  PresentationSlidePrepareAiContextResult,
+  PresentationSlidePreviewInput,
+  PresentationSlideProposeInput,
+  PresentationStyleSaveInput,
+  ResourceCandidateAcceptInput,
+  ResourceDiscoveryPrepareInput,
+} from "../ui/contracts.ts";
 import { addAssetUsage } from "../domain/assets.ts";
 import {
   buildBlueprintDraft,
@@ -32,7 +47,22 @@ import { CommandBus, type CommandContext, QueryBus } from "./commands.ts";
 import { EventBus } from "./events.ts";
 import { error, ServiceError } from "./errors.ts";
 import { JobManager } from "./jobs.ts";
-import { MacKeychainSecretStore, type SecretStore } from "./security.ts";
+import { createDefaultSecretStore, type SecretStore } from "./security.ts";
+import {
+  createResourceProviders,
+  type ResourceProviderId,
+  type ResourceProviders,
+} from "./resource_providers.ts";
+import { ResourceDiscoveryService } from "./resource_discovery.ts";
+import {
+  exportSlide,
+  extractStyle,
+  prepareSlideGenerationContext,
+  previewSlide,
+  proposeSlide,
+  saveStyle,
+} from "./presentation_workflow.ts";
+import { isPathWithin } from "./fs_paths.ts";
 import { DiagnosticLogger } from "./diagnostics.ts";
 import {
   createSearchIndex,
@@ -74,6 +104,8 @@ import { ProjectRegistryStore } from "./project_registry.ts";
 import type { ImportMappingPlan } from "./folder_mapping.ts";
 import { scanFolderDocuments } from "./folder_mapping.ts";
 import type { ExportPreset } from "../domain/types.ts";
+
+const RESOURCE_SECRET_SERVICE = "com.ai-course-workbench.resources";
 
 function decodeBase64(value: string): Uint8Array {
   const binary = atob(value);
@@ -245,7 +277,7 @@ async function readAssetPreviewBatch(store: ProjectDirectoryStore, input: unknow
         continue;
       }
       const realTarget = await Deno.realPath(before.path);
-      if (realTarget !== root && !realTarget.startsWith(`${root}/`)) {
+      if (!isPathWithin(root, realTarget)) {
         items.push(itemError("asset_path_invalid", "素材路径越过课程目录。"));
         continue;
       }
@@ -599,6 +631,8 @@ export class DesktopService {
   readonly jobs = new JobManager();
   readonly audit = new AuditLog();
   readonly secrets: SecretStore;
+  readonly resourceProviders: ResourceProviders;
+  readonly resourceDiscovery: ResourceDiscoveryService;
   readonly diagnostics: DiagnosticLogger;
   readonly search: SearchService;
   readonly connectors = new ConnectorRegistry();
@@ -606,6 +640,13 @@ export class DesktopService {
   readonly commands: CommandBus;
   readonly queries: QueryBus;
   private readonly importPreviews = new Map<string, ImportPreviewSlot>();
+  private readonly preparedSlideGenerations = new Map<string, {
+    result: PresentationSlidePrepareAiContextResult;
+    input: PresentationSlidePrepareAiContextInput;
+    fingerprint: FileFingerprint;
+    lease_generation: string;
+    created_at: number;
+  }>();
   private readonly exportArtifacts = new Map<string, ExportArtifactSlot>();
   /** In-flight `ai.complete` requests, shared across project directories. */
   private readonly aiRequests = new Map<string, AbortController>();
@@ -613,12 +654,15 @@ export class DesktopService {
   private aiTransportInstance: AiTransport | null = null;
   private aiTransportDirectory: string | null = null;
   private closing = false;
+  private activeProject: ProjectData | null = null;
+  private resourceGeneration = 0;
 
   constructor(
     directory: string,
     options: ProjectDirectoryOptions = {},
-    secrets: SecretStore = new MacKeychainSecretStore(),
+    secrets?: SecretStore,
     aiOptions: AiTransportOptions = {},
+    resourceSecrets?: SecretStore,
   ) {
     this.store = new ProjectDirectoryStore(directory, options);
     this.browserSession = new BrowserSessionStore(this.store.directory);
@@ -632,9 +676,20 @@ export class DesktopService {
         ? new MemorySearchIndex()
         : createSearchIndex(join(directory, ".workspace")),
     );
-    this.secrets = secrets;
+    this.secrets = secrets ?? createDefaultSecretStore();
+    this.resourceProviders = createResourceProviders({
+      secrets: resourceSecrets ?? createDefaultSecretStore({
+        service: RESOURCE_SECRET_SERVICE,
+        accountPrefix: "provider:",
+      }),
+    });
+    const service = this;
     this.context = {
-      project: null,
+      get project() { return service.activeProject; },
+      set project(project) {
+        service.activeProject = project;
+        service.resourceGeneration += 1;
+      },
       eventBus: this.events,
       audit: this.audit,
       source: "user",
@@ -652,6 +707,16 @@ export class DesktopService {
       },
     );
     this.queries = new QueryBus(this.context);
+    this.resourceDiscovery = new ResourceDiscoveryService(
+      this.store.directory,
+      this.resourceProviders,
+      () => this.context.project,
+      () => this.resourceGeneration,
+      async (data, input) => {
+        const committed = await this.commitCanonicalMutation(data, input);
+        return { project: committed.project, ...(committed.mutation_ack ? { mutation_ack: committed.mutation_ack } : {}) };
+      },
+    );
     this.registerCommands();
     this.registerQueries();
   }
@@ -2874,12 +2939,12 @@ export class DesktopService {
       this.commands.register(command, async () => {
         throw error(
           "subscription_native_only",
-          "ChatGPT 订阅登录需要 macOS 桌面版的系统浏览器回调和系统钥匙串。",
-          "Sign in with ChatGPT is supported by the native Tauri runtime only",
+          "ChatGPT 订阅登录需要桌面版（macOS / Windows）的系统浏览器回调和系统凭据存储。",
+          "Sign in with ChatGPT is supported by the native desktop runtime only",
           {
             recoverable: false,
             recommended_action:
-              "请在 macOS 桌面版 Workbench 的 AI 设置中管理订阅账户。",
+              "请在桌面版 Workbench 的 AI 设置中管理订阅账户。",
             details: {},
           },
         );
@@ -3046,6 +3111,247 @@ export class DesktopService {
         },
       };
     });
+    this.commands.register("resource.providers.secret.set", async (input) => {
+      const candidate = input && typeof input === "object"
+        ? input as { provider_id?: unknown; value?: unknown }
+        : {};
+      if (typeof candidate.provider_id !== "string" || typeof candidate.value !== "string") {
+        throw error("invalid_input", "资源服务凭据请求无效。", "Invalid resource credential payload", {
+          recoverable: false,
+          recommended_action: null,
+          details: {},
+        });
+      }
+      await this.resourceProviders.setCredential(
+        candidate.provider_id as ResourceProviderId,
+        candidate.value,
+      );
+      return {
+        value: { provider_id: candidate.provider_id, credential_present: true },
+        audit: { object_type: "resource_provider", object_id: candidate.provider_id, action: "credential_set" },
+      };
+    });
+    this.commands.register("resource.providers.secret.delete", async (input) => {
+      const providerId = input && typeof input === "object" &&
+          typeof (input as { provider_id?: unknown }).provider_id === "string"
+        ? (input as { provider_id: string }).provider_id
+        : "";
+      await this.resourceProviders.deleteCredential(providerId as ResourceProviderId);
+      return {
+        value: { provider_id: providerId, credential_present: false },
+        audit: { object_type: "resource_provider", object_id: providerId, action: "credential_delete" },
+      };
+    });
+    this.commands.register("resource.discovery.prepare", async (input) => {
+      const plan = await this.resourceDiscovery.prepare(input as ResourceDiscoveryPrepareInput);
+      return { value: plan };
+    });
+    this.commands.register("resource.discovery.start", async (input) => {
+      return { value: await this.resourceDiscovery.start(input as { plan_id: string; input_hash: string; authorized: true }) };
+    });
+    this.commands.register("resource.discovery.cancel", async (input) => {
+      const taskId = input && typeof input === "object" ? String((input as { task_id?: unknown }).task_id ?? "") : "";
+      return { value: await this.resourceDiscovery.cancel(taskId) };
+    });
+    this.commands.register("resource.discovery.retry", async (input) => {
+      const candidate = input && typeof input === "object" ? input as { task_id?: unknown; candidate_id?: unknown } : {};
+      return { value: await this.resourceDiscovery.retry(String(candidate.task_id ?? ""), typeof candidate.candidate_id === "string" ? candidate.candidate_id : undefined) };
+    });
+    this.commands.register("resource.candidate.accept", async (input) => {
+      const accepted = await this.resourceDiscovery.accept(input as ResourceCandidateAcceptInput);
+      const candidate = input as ResourceCandidateAcceptInput;
+      return {
+        value: accepted.result,
+        ...(accepted.mutation_ack ? { mutation_ack: accepted.mutation_ack } : {}),
+        audit: {
+          object_type: "resource_usage",
+          object_id: accepted.result.usage.id,
+          action: candidate.action,
+          metadata: { resource_id: accepted.result.resource.id, lesson_id: accepted.result.usage.lesson_id },
+        },
+      };
+    });
+    this.commands.register("presentation.style.extract", async (input) => {
+      const project = this.context.project;
+      if (!project) {
+        throw error("project_not_open", "请先打开课程项目。", "Presentation extraction requires an open project");
+      }
+      const sourceAssetId = input && typeof input === "object"
+        ? (input as { source_asset_id?: unknown }).source_asset_id
+        : undefined;
+      if (typeof sourceAssetId !== "string" || !sourceAssetId) {
+        throw error("invalid_input", "请选择 PowerPoint 文件。", "Missing source_asset_id");
+      }
+      return {
+        value: await extractStyle(project, sourceAssetId, async () => new Uint8Array()),
+      };
+    });
+    this.commands.register("presentation.style.save", async (input) => {
+      const project = this.context.project;
+      const binding = canonicalMutationBinding(
+        input,
+        this.store,
+        project?.project.id ?? null,
+      );
+      if (!project || !binding) {
+        throw error("mutation_binding_required", "版式保存请求绑定无效，请重新打开课程后重试。", "Presentation style save requires a bound project mutation");
+      }
+      const candidate = structuredClone(project);
+      const result = await saveStyle(candidate, input as PresentationStyleSaveInput);
+      const committed = await this.commitCanonicalMutation(candidate, input);
+      return {
+        value: result,
+        ...(committed.mutation_ack ? { mutation_ack: committed.mutation_ack } : {}),
+        audit: {
+          object_type: "style_profile",
+          object_id: result.style_profile.id,
+          action: "save",
+          metadata: { revision: result.style_profile.revision },
+        },
+      };
+    });
+    this.commands.register("presentation.slide.propose", async (input) => {
+      const project = this.context.project;
+      const binding = canonicalMutationBinding(
+        input,
+        this.store,
+        project?.project.id ?? null,
+      );
+      if (!project || !binding) {
+        throw error("mutation_binding_required", "补充页方案请求绑定无效，请重新打开课程后重试。", "Slide proposal requires a bound project mutation");
+      }
+      const proposal = input as PresentationSlideProposeInput;
+      const generationSource = proposal.generation_source as SlidePlanGenerationSource | undefined;
+      if (generationSource?.mode === "ai") {
+        const prepared = this.preparedSlideGenerations.get(generationSource.generation_id);
+        this.preparedSlideGenerations.delete(generationSource.generation_id);
+        if (!prepared || Date.now() - prepared.created_at > 10 * 60_000) {
+          throw error("generation_authorization_required", "AI 方案上下文已过期或与当前项目变化不一致，请重新准备。", "AI slide proposal must consume a matching one-shot prepared context");
+        }
+        const current = await this.store.readProjectSnapshot();
+        const lease = this.store.leaseGeneration;
+        const sourceMatches = generationSource.authorized === true &&
+          generationSource.session_generation === prepared.input.session_generation &&
+          generationSource.provider_id === prepared.result.provider_id &&
+          generationSource.model === prepared.result.model &&
+          generationSource.context_sha256 === prepared.result.context_sha256 &&
+          generationSource.lesson_snapshot_sha256 === prepared.result.lesson_snapshot_sha256 &&
+          generationSource.style_markdown_sha256 === prepared.result.style_markdown_sha256 &&
+          generationSource.snapshot_binding_sha256 === prepared.result.snapshot_binding_sha256;
+        const proposalMatches = proposal.document_id === prepared.input.document_id &&
+          proposal.lesson_id === prepared.input.lesson_id &&
+          proposal.style_profile_id === prepared.input.style_profile_id &&
+          proposal.style_revision === prepared.input.style_revision &&
+          proposal.target_asset_id === prepared.input.target_asset_id &&
+          proposal.insert_after_slide_id === prepared.input.insert_after_slide_id &&
+          proposal.instruction === prepared.input.instruction;
+        const allowedSources = new Set(prepared.result.allowed_source_ids);
+        const allowedImages = new Set(prepared.result.allowed_image_asset_ids);
+        if (!sourceMatches || !proposalMatches || !proposal.spec ||
+          !Array.isArray(proposal.spec.source_ids) ||
+          !Array.isArray(proposal.spec.image_asset_ids) ||
+          proposal.spec.source_ids.some((id) => !allowedSources.has(id)) ||
+          proposal.spec.image_asset_ids.some((id) => !allowedImages.has(id)) ||
+          !current.project || current.project.project.id !== prepared.result.project_id ||
+          binding.project_id !== prepared.result.project_id ||
+          binding.editor_generation !== prepared.input.editor_generation ||
+          binding.lease_generation !== prepared.lease_generation || lease !== prepared.lease_generation ||
+          !sameFingerprint(current.fingerprint, prepared.fingerprint) ||
+          !sameFingerprint(binding.expected_fingerprint, prepared.fingerprint)) {
+          throw error("generation_authorization_required", "AI 方案上下文已变化，请重新准备后再生成。", "Prepared slide generation bindings no longer match the active project");
+        }
+      } else if (generationSource && generationSource.mode !== "manual") {
+        throw error("generation_authorization_required", "AI 方案来源无效，请重新准备。", "Slide plan generation source is invalid");
+      }
+      const candidate = structuredClone(project);
+      const plan = proposeSlide(candidate, proposal);
+      const committed = await this.commitCanonicalMutation(candidate, input);
+      return {
+        value: plan,
+        ...(committed.mutation_ack ? { mutation_ack: committed.mutation_ack } : {}),
+        audit: {
+          object_type: "slide_plan",
+          object_id: plan.id,
+          action: "propose",
+          metadata: { revision: plan.revision, insert_after_slide_id: plan.insert_after_slide_id },
+        },
+      };
+    });
+    this.commands.register("presentation.slide.prepare_ai_context", async (input) => {
+      if (!input || typeof input !== "object" || Array.isArray(input)) {
+        throw error("invalid_input", "AI 上下文请求无效。", "Presentation AI context input must be an object");
+      }
+      const candidate = input as PresentationSlidePrepareAiContextInput;
+      if (typeof candidate.generation_id !== "string" || !candidate.generation_id.trim() ||
+        candidate.generation_id.length > 128 || !Number.isSafeInteger(candidate.editor_generation) ||
+        candidate.editor_generation < 0 || !Number.isSafeInteger(candidate.session_generation) ||
+        candidate.session_generation < 0 || typeof candidate.instruction !== "string" ||
+        typeof candidate.provider_id !== "string" || typeof candidate.model !== "string") {
+        throw error("invalid_input", "AI 生成绑定或模型信息无效。", "Presentation AI context input has invalid generation or provider fields");
+      }
+      const now = Date.now();
+      for (const [id, slot] of this.preparedSlideGenerations) {
+        if (now - slot.created_at > 10 * 60_000) this.preparedSlideGenerations.delete(id);
+      }
+      if (this.preparedSlideGenerations.has(candidate.generation_id)) {
+        throw error("generation_id_conflict", "此 AI 请求编号已使用，请重新开始生成。", "Prepared slide generation IDs cannot be overwritten");
+      }
+      if (this.preparedSlideGenerations.size >= 128) {
+        throw error("generation_capacity_reached", "待处理的 AI 请求过多，请先完成或重试。", "Too many prepared slide generations are pending");
+      }
+      const snapshot = await this.store.readProjectSnapshot();
+      const project = snapshot.project;
+      const leaseGeneration = this.store.leaseGeneration;
+      if (!project || project.project.id !== this.context.project?.project.id) {
+        throw error("project_not_open", "请先打开课程项目。", "Presentation AI context requires the active canonical project");
+      }
+      if (!snapshot.fingerprint.exists || !snapshot.fingerprint.hash || !leaseGeneration) {
+        throw error("project_lock_lost", "项目编辑租约或快照已变化，请重新打开项目。", "Presentation AI context requires an active project fingerprint and lease");
+      }
+      const capture = {
+        project_fingerprint: snapshot.fingerprint.hash,
+        lease_generation: leaseGeneration,
+        editor_generation: candidate.editor_generation,
+      };
+      const result = await prepareSlideGenerationContext(project, candidate, capture);
+      this.preparedSlideGenerations.set(candidate.generation_id, {
+        result,
+        input: structuredClone(candidate),
+        fingerprint: structuredClone(snapshot.fingerprint),
+        lease_generation: leaseGeneration,
+        created_at: now,
+      });
+      return { value: result };
+    });
+    this.commands.register("presentation.slide.preview", async (input) => {
+      const project = this.context.project;
+      if (!project) {
+        throw error("project_not_open", "请先打开课程项目。", "Presentation preview requires an open project");
+      }
+      return {
+        value: await previewSlide(
+          project,
+          input as PresentationSlidePreviewInput,
+          async () => new Uint8Array(),
+        ),
+      };
+    });
+    this.commands.register("presentation.slide.export", async (input) => {
+      const project = this.context.project;
+      if (!project) {
+        throw error("project_not_open", "请先打开课程项目。", "Presentation export requires an open project");
+      }
+      return {
+        value: await exportSlide(
+          project,
+          input as PresentationSlideExportInput,
+          async () => new Uint8Array(),
+          async () => {
+            throw new Error("PowerPoint output requires the native OOXML engine");
+          },
+        ),
+      };
+    });
   }
 
   /** Structured failure used by every AI command that mutates project state. */
@@ -3160,6 +3466,17 @@ export class DesktopService {
     });
     this.queries.register("diagnostics.export", async () => {
       return await this.diagnostics.exportBundle();
+    });
+    this.queries.register("resource.providers.list", async () => {
+      return await this.resourceProviders.listProviders();
+    });
+    this.queries.register("resource.discovery.plan", async (input) => {
+      const planId = input && typeof input === "object" ? String((input as { plan_id?: unknown }).plan_id ?? "") : "";
+      return await this.resourceDiscovery.getPlan(planId);
+    });
+    this.queries.register("resource.discovery.get", async (input) => {
+      const taskId = input && typeof input === "object" ? String((input as { task_id?: unknown }).task_id ?? "") : "";
+      return await this.resourceDiscovery.getTask(taskId);
     });
   }
 
@@ -3293,6 +3610,11 @@ export class DesktopService {
     if (!Number.isSafeInteger(fileIndex) || fileIndex < 0 || fileIndex >= slot.files.length) {
       throw unavailable();
     }
+    // Each staged file is a one-shot download capability. Refusing a completed
+    // download also keeps the "final download releases the artifact" boundary
+    // deterministic: the HTTP client sees the body as complete (content-length
+    // framing) slightly before the server-side cleanup has run.
+    if (slot.downloaded.has(fileIndex)) throw unavailable();
     const descriptor = slot.files[fileIndex];
     if (!descriptor) throw unavailable();
     let stat: Deno.FileInfo;
@@ -3644,6 +3966,8 @@ export class DesktopService {
     if (this.closing) return;
     this.closing = true;
     this.commands.close();
+    this.preparedSlideGenerations.clear();
+    await this.resourceDiscovery.close();
     const previews = [...this.importPreviews.entries()];
     for (const [, slot] of previews) {
       slot.release_requested = true;

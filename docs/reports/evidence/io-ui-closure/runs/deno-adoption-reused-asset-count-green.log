@@ -1,9 +1,0 @@
-Check tests/descendant_media_adoption_test.ts
-running 5 tests from ./tests/descendant_media_adoption_test.ts
-a selected directory imports descendant media as assets only ... ok (277ms)
-folder adoption reports new media separately from Markdown references reused in the same batch ... ok (128ms)
-an unselected directory contributes no descendants ... ok (10ms)
-descendant media never follows a symlink out of the folder ... ok (14ms)
-a descendant the plan already lists keeps its own row and imports once ... ok (67ms)
-
-ok | 5 passed | 0 failed (594ms)

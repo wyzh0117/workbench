@@ -687,6 +687,7 @@ function editorShell(type: BlockType, content: string): string {
     saveStatus: "已保存",
     assetPreview: new Map(),
     bridge: { isNative: () => false },
+    resolveReaderDestination(route: string) { return { route }; },
     currentItem() {
       return data.content_items.find((candidate) => candidate.id === this.ui.activeId) ?? null;
     },
@@ -732,8 +733,10 @@ Deno.test("chrome stays in the markup so the stylesheet can overlay it", () => {
   assert(card.includes("block-order"), "sequence number is available on hover");
   assert(card.includes('data-action="insert-block-below"'), "insert stays reachable");
   assert(card.includes('class="block-more"'), "the … menu stays reachable");
-  assert(html.includes(">H6</option>"), "heading levels 1-6 are selectable");
-  assert(html.includes(">H1</option>"), "H1 is selectable");
+  assert(
+    html.includes('class="markdown-rich-editor markdown-editor-heading markdown-heading-level-2"'),
+    "headings render in the selected semantic level without a legacy format toolbar",
+  );
 });
 
 Deno.test("the stylesheet hides block chrome by default and reveals it as an overlay", async () => {

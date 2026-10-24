@@ -1,6 +1,0 @@
-Captured at UTC: 2026-10-06T03:12:29Z
-Command: ps -axo pid=,ppid=,rss=,command= | rg -F '/tmp/io-ui-closure-native-qa-final2/'
-Raw matching process:
-18646     1  32736 /private/tmp/io-ui-closure-native-qa-final2/AI Course Workbench QA Preview.app/Contents/MacOS/ai-course-workbench
-
-The main process RSS was 32,736 KiB (31.96875 MiB) for this single sample. This does not measure app-wide RSS, WebKit child memory, or growth over time. The candidate bundle path identifies final2; no other process metrics are included.

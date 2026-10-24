@@ -28,6 +28,7 @@ import {
   writeRecoveryJournalBeforeFatal,
 } from "../src/domain/index.ts";
 import type { ProjectData } from "../src/domain/types.ts";
+import { CURRENT_SCHEMA_VERSION } from "../src/domain/types.ts";
 
 function assert(condition: unknown, message: string): asserts condition {
   if (!condition) throw new Error(message);
@@ -594,7 +595,7 @@ Deno.test("E2E-12 indexed search handles a large project without per-query file 
     data.documents.push({
       id: documentId,
       content_item_id: itemId,
-      schema_version: data.schema_version,
+      schema_version: CURRENT_SCHEMA_VERSION,
       created_at: new Date().toISOString(),
       updated_at: new Date().toISOString(),
     });

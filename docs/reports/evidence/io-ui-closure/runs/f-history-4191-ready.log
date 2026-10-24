@@ -1,4 +1,0 @@
-LISTEN_URL=http://127.0.0.1:4191/
-LISTEN_PID=2196
-PROJECT_ROOT=/tmp/workbench-io-ui-F-history-denoio-20261006
-STATUS={"mode":"service","project_open":true,"project_root":"/tmp/workbench-io-ui-F-history-denoio-20261006"}

@@ -4,7 +4,7 @@ import {
   type ContentItemType,
   type CourseSeed,
   type CourseSeedSourceType,
-  CURRENT_SCHEMA_VERSION,
+  CURRENT_PROJECT_SCHEMA_VERSION,
   type ProjectData,
   type Stage,
 } from "./types.ts";
@@ -170,7 +170,7 @@ export function confirmBlueprint(data: ProjectData, draftId: string): string {
 
   const project = data.project;
   project.title = draft.title;
-  project.schema_version = CURRENT_SCHEMA_VERSION;
+  project.schema_version = CURRENT_PROJECT_SCHEMA_VERSION;
   seed.project_id = project.id;
   const nodes = data.blueprint_nodes.filter((node) =>
     node.blueprint_id === draft.id

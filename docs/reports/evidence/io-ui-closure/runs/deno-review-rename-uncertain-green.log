@@ -1,5 +1,0 @@
-running 1 test from ./tests/io_failure_recovery_test.ts
-asset rename preserves target bytes when canonical commit outcome is uncertain ... ok (72ms)
-
-ok | 1 passed | 0 failed | 9 filtered out (75ms)
-

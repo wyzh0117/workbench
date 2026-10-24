@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { join, normalize } from "node:path";
+import { createEscapeLink } from "./helpers/fs_links.ts";
 import type { ProjectData } from "../src/domain/types.ts";
 import {
   DesktopService,
@@ -40,6 +41,7 @@ function asset(project: ProjectData, id: string, path: string, bytes: Uint8Array
 
 Deno.test("asset.preview_batch binds Canonical once, enforces raw budget and isolates rows", async () => {
   const directory = await Deno.makeTempDir({ prefix: "asset-preview-batch-" });
+  const outsideDirectory = await Deno.makeTempDir({ prefix: "asset-preview-batch-outside-" });
   const desktop = new DesktopService(directory, {
     app_instance_id: `asset-preview-${crypto.randomUUID()}`,
   });
@@ -67,7 +69,11 @@ Deno.test("asset.preview_batch binds Canonical once, enforces raw budget and iso
     await Deno.writeFile(join(assetsDirectory, "empty.bin"), empty);
     await Deno.writeFile(join(assetsDirectory, "corrupt.bin"), corrupt);
     await Deno.writeFile(join(assetsDirectory, "oversize.bin"), oversize);
-    await Deno.symlink("/etc/hosts", join(assetsDirectory, "unsafe-link.bin"));
+    const linked = await createEscapeLink(outsideDirectory, join(assetsDirectory, "unsafe-link.bin"), "dir");
+    if (!linked) {
+      console.warn("[skip] Windows lacks symlink privilege; unsafe-link isolation not exercised");
+      return;
+    }
 
     asset(project, "asset-first", "assets/first.bin", first);
     asset(project, "asset-second", "assets/second.bin", second);
@@ -185,5 +191,6 @@ Deno.test("asset.preview_batch binds Canonical once, enforces raw budget and iso
     setAssetPreviewBatchDiagnosticsEnabled(false);
     await desktop.close();
     await Deno.remove(directory, { recursive: true });
+    await Deno.remove(outsideDirectory, { recursive: true }).catch(() => {});
   }
 });

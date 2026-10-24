@@ -16,6 +16,7 @@ import {
   documentImportTallyText,
   groupDocumentImportCandidates,
 } from "./constants.js";
+import { desktopShellLabel, fileManagerLabel } from "./host.js";
 import { parseMarkdown, renderMarkdown } from "./markdown.js";
 import {
   MEDIA_REQUIREMENT_TYPES,
@@ -75,12 +76,7 @@ const EDITOR_MODES = [
   ["preview", "预览"],
 ];
 const RIGHT_PANELS = [
-  ["media", "媒体"],
-  ["requirements", "待补"],
-  ["status", "状态"],
   ["assistant", "AI 助手"],
-  ["properties", "属性"],
-  ["versions", "版本"],
 ];
 const BLOCK_PALETTE = [
   ["paragraph", "正文"],
@@ -653,17 +649,24 @@ export function createViews(store) {
 
   function topbarView(item) {
     const map = courseMap(store.data, item ? item.id : null);
+    const activeRoute = store.resolveReaderDestination(store.ui.route).route;
+    const registryProjects = Array.isArray(store.ui.registryProjects) ? store.ui.registryProjects : [];
+    const native = store.bridge.isNative();
+    const primaryNav = [
+      ["overview", "概览"],
+      ["editor", "工作台"],
+      ["explorer", "文件"],
+      ["inbox", "收件箱"],
+      ["publish", "发布"],
+      ["settings", "设置"],
+    ];
     const editLessonInWorkbench = item &&
       store.ui.editingLessonTitleId === item.id &&
       store.ui.editingLessonTitleSurface === "workbench";
-    return `<header class="topbar"><div class="brand"><button class="secondary launcher-return" data-action="return-launcher" aria-label="返回项目选择；当前项目不会关闭" title="返回项目选择；当前项目不会关闭">⌂ <span>项目选择</span></button><span class="brand-mark" aria-hidden="true">✦</span><span class="brand-title">AI Course Workbench</span></div>${
-      store.ui.editingProjectTitle && store.ui.editingProjectTitleSurface === "topbar"
-        ? `<div class="project-name editing"><span class="dot"></span><input class="project-title-input" data-project-title data-focus-key="project-title" value="${
-          esc(store.data.project.title)
-        }" aria-label="课程标题" /><span class="project-title-hint">Enter 保存 · Esc 取消</span></div>`
-        : `<div class="project-name" data-action="edit-project-title" role="button" tabindex="0" title="点击修改课程标题"><span class="dot"></span><span class="project-title-text">${
-          esc(store.data.project.title)
-        }</span><span class="chevron">⌄</span></div>`
+    return `<header class="topbar"><div class="brand"><details class="project-picker"><summary class="secondary launcher-return" aria-label="选择项目" title="选择项目">⌂ <span>项目选择</span></summary><div class="project-picker-menu"><b>当前项目</b><span class="project-picker-current">${esc(store.data.project.title)}</span><button class="text-button" data-action="return-launcher" title="返回启动页；当前项目保持打开">返回启动页</button><div class="project-picker-actions"><button class="secondary" data-action="${native ? "open-project-dir" : "open-file"}">打开项目</button><button class="secondary" data-action="new-project">新建项目</button></div>${registryProjects.length ? `<hr /><b>最近打开</b><ul>${registryProjects.map((row) => `<li>${row.available ? `<button class="text-button" data-action="open-registry-project" data-project-path="${esc(row.project_path || "")}">${esc(row.project_title || shortRegistryPath(row.project_path || ""))}</button>` : `<button class="text-button" data-action="relocate-registry-project" data-project-id="${esc(row.project_id || "")}">重新定位 · ${esc(row.project_title || shortRegistryPath(row.project_path || ""))}</button>`}</li>`).join("")}</ul>` : `<small class="muted">最近打开的项目会显示在这里。</small>`}</div></details><span class="brand-mark" aria-hidden="true">✦</span><span class="brand-title">AI Course Workbench</span></div>${
+      `<button class="project-name" data-action="select-project-properties" title="打开项目设置"><span class="dot"></span><span class="project-title-text">${
+        esc(store.data.project.title)
+      }</span></button>`
     }<div class="lesson-switch">${
       item
         ? `<button class="icon-button" data-action="prev-lesson" aria-label="打开上一课" title="打开上一课" ${
@@ -675,10 +678,12 @@ export function createViews(store) {
           map.next_id ? "" : "disabled"
         }>›</button>`
         : ""
-    }</div><div class="top-actions">${saveStateView()}<button class="icon-button" data-action="undo" aria-label="撤销上一次编辑" title="撤销上一次编辑">↶</button><button class="icon-button" data-action="redo" aria-label="恢复上一次编辑" title="恢复上一次编辑">↷</button><button class="secondary" data-action="ai-toggle-settings" aria-haspopup="dialog">设置</button><button class="secondary" data-action="save-project">保存</button><button class="secondary" data-action="save-version">保存版本</button><button class="secondary" data-action="preview">预览</button><button class="primary" data-action="preflight">导出</button></div></header>
-    <div class="tabs"><button class="tab home-tab ${
-      store.ui.route === "overview" ? "active" : ""
-    }" data-action="route" data-route="overview">项目概览</button>${
+    }</div><div class="top-actions">${saveStateView()}<button class="icon-button" data-action="undo" aria-label="撤销上一次编辑" title="撤销上一次编辑">↶</button><button class="icon-button" data-action="redo" aria-label="恢复上一次编辑" title="恢复上一次编辑">↷</button></div></header>
+    <div class="tabs"><nav class="topbar-nav" aria-label="项目导航">${primaryNav.map(([navRoute, label]) => {
+      const active = navRoute === "editor" ? activeRoute === "editor" : navRoute === "explorer" ? ["explorer", "mapping"].includes(activeRoute) : navRoute === activeRoute;
+      const action = navRoute === "editor" ? 'data-action="open-workbench"' : `data-action="route" data-route="${navRoute}"`;
+      return `<button class="topbar-nav-item ${active ? "active" : ""}" ${action} ${active ? 'aria-current="page"' : ""}>${label}</button>`;
+    }).join("")}</nav>${
       store.tabs.map((tab) => {
         const target = store.data.content_items.find((candidate) =>
           candidate.id === tab.content_item_id
@@ -693,89 +698,23 @@ export function createViews(store) {
   }
 
   function leftPanelView() {
-    const map = courseMap(store.data, store.ui.activeId);
-    const openInbox = store.data.inbox_items.filter((item) =>
-      item.status === "open"
-    ).length;
-    const nav = [
-      ["overview", "项目概览", "⌂"],
-      ["map", "课程地图", "▦"],
-      ["workbench", "工作台", "✎"],
-      ["free-layout", "自由排版", "▧"],
-      ["explorer", "文件", "📂"],
-      ["inbox", "收件箱", "↓"],
-      ["board", "制作看板", "▤"],
-      ["media", "媒体库", "◈"],
-      ["backlog", "待补总览", "!="],
-      ["updates", "更新中心", "✦"],
-      ["publish", "发布中心", "↗"],
-      ["versions", "版本历史", "◷"],
-      ["settings", "项目设置", "⚙"],
-    ];
-    return `<aside class="left-panel panel"><div class="panel-heading"><span>项目导航</span><button class="icon-button" data-action="toggle-left" title="${store.ui.leftCollapsed ? "展开左栏" : "收起左栏"}" aria-label="${store.ui.leftCollapsed ? "展开左栏" : "收起左栏"}">${store.ui.leftCollapsed ? "☰" : "‹"}</button></div><nav aria-label="项目页面">${
-      nav.map(([route, label, icon]) => {
-        const isWorkbench = route === "workbench";
-        const active = isWorkbench
-          ? store.ui.route === "editor"
-          : store.ui.route === route;
-        const action = isWorkbench
-          ? 'data-action="open-workbench"'
-          : `data-action="route" data-route="${route}"`;
-        return `<button class="nav-item ${
-          active ? "active" : ""
-        }" ${action}><span class="nav-icon">${icon}</span><span>${label}</span>${
-          route === "inbox" && openInbox ? `<b class="count">${openInbox}</b>` : ""
-        }${
-          route === "backlog" && map.open_requirements
-            ? `<b class="count">${map.open_requirements}</b>`
-            : ""
-        }</button>`;
-      }).join("")
-    }</nav><div class="panel-footer">${
-      map.lessons.length
-        ? `<div class="side-head compact"><span class="eyebrow">本课程</span><span class="muted small">${
-          map.complete_count
-        }/${map.lesson_count} 课完成</span></div><div class="left-lessons">${
-          map.stages.map((stage) =>
-            `<div class="left-stage"><span class="left-stage-code">${
-              esc(stage.code)
-            }</span><span class="left-stage-title">${
-              esc(stage.title)
-            }</span></div>${
-              stage.lessons.map((lesson) =>
-                `<button class="left-lesson ${
-                  lesson.current ? "active" : ""
-                }" data-action="open-item" data-id="${lesson.id}" title="${
-                  esc(lesson.title)
-                }"><span class="left-lesson-code">${
-                  esc(lesson.code)
-                }</span><span class="left-lesson-title">${
-                  esc(lesson.title)
-                }</span><span class="lesson-dot ${
-                  lesson.progress.complete ? "done" : "open"
-                }"></span></button>`
-              ).join("")
-            }`
-          ).join("")
-        }</div>`
-        : ""
-    }<button class="nav-item" data-action="capture"><span class="nav-icon">＋</span><span>快速收集</span><kbd>⌘⇧空格</kbd></button><button class="nav-item" data-action="palette"><span class="nav-icon">⌕</span><span>搜索与命令</span><kbd>⌘K</kbd></button></div></aside>`;
+    const allAssets = store.data.assets.filter((asset) => !asset.archived);
+    const filter = store.ui.mediaFilter || "all";
+    const types = { cases: ["case"], videos: ["video"], images: ["image", "gif"], documents: ["document", "other"], slides: ["slides", "presentation"] };
+    const assets = allAssets.filter((asset) => filter === "all" || (types[filter] || []).includes(asset.type));
+    const filters = [["all", "全部"], ["cases", "案例"], ["videos", "视频"], ["images", "图片"], ["documents", "文档"], ["slides", "幻灯片"]];
+    return `<aside class="left-panel panel"><div class="panel-heading"><span>资料库 <small>${allAssets.length}</small></span><div><button class="icon-button" data-action="open-file" aria-label="添加素材" title="添加素材">＋</button><button class="icon-button collapse-left" data-action="toggle-left" title="${store.ui.leftCollapsed ? "展开左栏" : "收起左栏"}" aria-label="${store.ui.leftCollapsed ? "展开左栏" : "收起左栏"}">${store.ui.leftCollapsed ? "☰" : "‹"}</button></div></div><div class="media-filter-list" role="group" aria-label="资料类型">${filters.map(([key,label]) => `<button class="media-filter ${filter === key ? "active" : ""}" data-action="media-filter" data-filter="${key}" aria-pressed="${filter === key}">${label}</button>`).join("")}</div><div class="left-media-list" aria-label="项目资料">${assets.length ? assets.map((asset) => `<article class="left-media-item"><div class="left-media-preview">${mediaLibraryPreview(asset)}</div><div class="left-media-info"><b title="${esc(asset.title || asset.filename)}">${esc(asset.title || asset.filename)}</b><small>${esc(assetLabel(asset.type))}</small></div>${store.currentItem() ? `<button class="text-button left-media-insert" data-action="insert-asset" data-id="${esc(asset.id)}">插入</button>` : ""}</article>`).join("") : `<p class="side-empty">${filter === "all" ? "还没有项目资料。" : "此类型还没有资料。"}</p>`}</div><div class="panel-footer"><button class="nav-item" data-action="capture"><span class="nav-icon">＋</span><span>快速收集</span><kbd>⌘⇧空格</kbd></button><button class="nav-item" data-action="palette"><span class="nav-icon">⌕</span><span>搜索与命令</span><kbd>⌘K</kbd></button></div></aside>`;
   }
 
   function centerView() {
-    if (store.ui.route === "editor") return editorView();
-    if (store.ui.route === "free-layout") return freeLayoutView();
-    if (store.ui.route === "map") return mapView();
-    if (store.ui.route === "explorer") return explorerView();
-    if (store.ui.route === "mapping") return mappingView();
-    if (store.ui.route === "inbox") return inboxView();
-    if (store.ui.route === "board") return boardView();
-    if (store.ui.route === "media") return mediaView();
-    if (store.ui.route === "backlog") return backlogView();
-    if (store.ui.route === "versions") return versionsView();
-    if (store.ui.route === "updates") return updatesView();
-    if (store.ui.route === "publish") return publishView();
-    if (store.ui.route === "settings") return settingsView();
+    const route = store.resolveReaderDestination(store.ui.route).route;
+    if (route === "editor") return editorView();
+    if (route === "overview") return mapView();
+    if (route === "explorer") return explorerView() + resourceLibraryView();
+    if (route === "mapping") return mappingView();
+    if (route === "inbox") return inboxView() + (store.ui.resourceTask ? resourceCandidateCards(store.ui.resourceTask) : "");
+    if (route === "publish") return publishView() + presentationWorkflowView();
+    if (route === "settings") return settingsView() + resourceProvidersView();
     return overviewView();
   }
 
@@ -838,70 +777,34 @@ export function createViews(store) {
       }">确认课程地图并创建内容</button></div></div>`
       : "";
     const map = courseMap(store.data, store.ui.activeId);
+    const requirementsByLesson = requirementBacklog(store.data).by_lesson;
     const realStages = map.stages.filter((stage) => stage.id);
     const mapProjectTitle = store.ui.editingProjectTitle &&
         store.ui.editingProjectTitleSurface === "map"
       ? `<input class="project-title-input map-project-title-input" data-project-title data-focus-key="project-title" value="${esc(store.data.project.title)}" aria-label="课程标题" />`
       : `<button class="inline-title-button map-project-title" data-action="edit-project-title" data-title-surface="map" title="点击修改课程标题">${esc(map.project_title)}</button>`;
     if (map.lesson_count === 0 && realStages.length === 0 && !draft) {
-      return `<section class="page course-map-page is-empty map-empty-page"><div class="page-head"><div><span class="eyebrow">课程地图 · 结构与进度</span><h1>${mapProjectTitle}</h1><p class="muted">课程还没有内容。先用草稿生成结构，或直接新建第一课。</p></div><div class="map-actions"><button class="secondary" data-action="select-project-properties">项目属性</button><button class="secondary" data-action="add-stage">＋ 新阶段</button><button class="primary" data-action="add-map-item">＋ 新建第一课</button></div></div>${
-        seedCard()
-      }<div class="empty-state"><div class="empty-icon">▦</div><h2>还没有课程内容</h2><p class="muted">现在可以新建第一课，或先加一个阶段；课程地图会保留你的后续编辑。</p><div class="modal-actions"><button class="secondary" data-action="add-stage">＋ 新阶段</button><button class="primary" data-action="add-map-item">新建第一课</button></div></div></section>`;
+      return `<section class="page course-map-page is-empty map-empty-page"><div class="page-head"><div><span class="eyebrow">项目概览</span><h1>${mapProjectTitle}</h1><p class="muted">从当前课程结构查看进度、待补和素材需求。</p></div><div class="map-actions"><button class="secondary" data-action="select-project-properties">项目设置</button><button class="secondary" data-action="add-stage">＋ 新阶段</button><button class="primary" data-action="add-map-item">＋ 新建第一课</button></div></div>${seedCard()}</section>`;
     }
-    return `<section class="page course-map-page"><div class="page-head map-page-head"><div class="map-page-title"><span class="eyebrow">课程地图 · 阶段与课时</span><h1>${
-      mapProjectTitle
-    }</h1><p class="muted">${
-      map.lesson_count ? "按阶段组织课时；拖动课时即可调整顺序或归属。" : "还没有内容，可以先新建第一课或新阶段"
-    }</p></div><div class="map-actions"><button class="secondary" data-action="select-project-properties">项目属性</button>${store.currentItem() ? `<button class="secondary" data-action="locate-current-lesson">定位当前课</button>` : ""}<button class="secondary" data-action="add-stage">＋ 新阶段</button><button class="secondary" data-action="add-map-item">＋ 新建课程内容</button>${
-      map.next_lesson_id
-        ? `<button class="primary" data-action="open-item" data-id="${map.next_lesson_id}">继续下一处未完成 <span aria-hidden="true">→</span></button>`
-        : ""
-    }</div></div><div class="map-progress-summary" aria-label="课程完成情况"><div><strong>${map.lesson_count}</strong><span>课时</span></div><div><strong>${map.complete_count}</strong><span>已完成</span></div><div><strong>${map.open_requirements}</strong><span>待补</span></div><div><strong>${map.missing_media}</strong><span>缺素材</span></div><div class="map-progress-track"><span style="width:${map.progress}%"></span></div></div>${draftCard}<div class="course-map">${
-      map.stages.map((stage, stageIndex) =>
-        stageCard(stage, stageIndex, realStages.length)
-      ).join("")
-    }</div></section>`;
+    const filter = store.ui.courseTreeFilter || "all";
+    const filters = [["all", "全部"], ["open", "进行中"], ["requirements", "待补"], ["missing_media", "缺素材"], ["complete", "已完成"]];
+    return `<section class="page course-map-page"><div class="page-head map-page-head"><div class="map-page-title"><span class="eyebrow">项目概览 · 课程结构</span><h1>${mapProjectTitle}</h1><p class="muted">课时、状态、待补和素材需求使用同一课程记录；拖动课时可调整顺序或归属。</p></div><div class="map-actions"><button class="secondary" data-action="select-project-properties">项目设置</button>${store.currentItem() ? `<button class="secondary" data-action="locate-current-lesson">定位当前课</button>` : ""}<button class="secondary" data-action="add-stage">＋ 新阶段</button><button class="primary" data-action="add-map-item">＋ 新建课程内容</button></div></div>${draftCard}<div class="course-tree-toolbar"><span>${map.lesson_count} 课 · ${map.open_requirements} 项待补 · ${map.missing_media} 处缺素材</span><div class="course-tree-tools"><label class="course-tree-search"><span class="sr-only">搜索课程</span><input type="search" data-action="course-tree-search" value="${esc(store.ui.courseTreeQuery || "")}" placeholder="搜索课程" /></label><div role="group" aria-label="课程筛选">${filters.map(([key,label]) => `<button class="filter ${filter === key ? "active" : ""}" data-action="course-tree-filter" data-filter="${key}" aria-pressed="${filter === key}">${label}</button>`).join("")}</div></div></div><div class="course-tree-scroll" tabindex="0" role="region" aria-label="课程表，可横向滚动查看完整列"><table class="course-tree-table"><thead><tr><th scope="col">课程</th><th scope="col">状态</th><th scope="col">待补</th><th scope="col">素材</th><th scope="col">操作</th></tr></thead>${map.stages.map((stage, stageIndex) => stageCard(stage, stageIndex, realStages.length, requirementsByLesson)).join("")}</table></div><p class="course-tree-scroll-hint">窗口较窄时，可用 Tab 聚焦课程表，再用左右方向键查看全部列。</p></section>`;
   }
 
-  function stageCard(stage, stageIndex, stageCount) {
+  function stageCard(stage, stageIndex, stageCount, requirementsByLesson) {
     const manageable = Boolean(stage.id);
     const collapsed = manageable && store.ui.collapsedStageIds.includes(stage.id);
-    const editing = manageable && store.ui.editingStageTitleId === stage.id;
-    const tools = manageable
-      ? `<div class="stage-tools"><button class="icon-button stage-collapse-toggle" data-action="toggle-stage-collapse" data-id="${
-        stage.id
-      }" aria-label="${collapsed ? "展开阶段" : "折叠阶段"}：${esc(stage.title)}" aria-expanded="${!collapsed}" title="${collapsed ? "展开阶段" : "折叠阶段"}">${collapsed ? "▸" : "⌄"}</button><button class="icon-button" data-action="rename-stage" data-id="${
-        stage.id
-      }" aria-label="重命名阶段：${esc(stage.title)}" title="重命名阶段">✎</button><button class="icon-button" data-action="move-stage" data-id="${
-        stage.id
-      }" data-direction="up" aria-label="上移阶段：${esc(stage.title)}" title="上移阶段" ${
-        stageIndex === 0 ? "disabled" : ""
-      }>↑</button><button class="icon-button" data-action="move-stage" data-id="${
-        stage.id
-      }" data-direction="down" aria-label="下移阶段：${esc(stage.title)}" title="下移阶段" ${
-        stageIndex >= stageCount - 1 ? "disabled" : ""
-      }>↓</button><details class="stage-more"><summary class="icon-button" aria-label="更多阶段操作：${esc(stage.title)}" title="更多阶段操作">⋯</summary><div class="stage-more-menu"><button type="button" class="stage-more-item" data-action="add-stage" title="在课程地图新增阶段">＋ 新阶段</button><button type="button" class="stage-more-item" data-action="rename-stage" data-id="${
-        stage.id
-      }" title="重命名阶段">重命名</button><button type="button" class="stage-more-item danger" data-action="delete-stage" data-id="${
-        stage.id
-      }" title="删除阶段（空阶段需确认；有课时会先提示移动）">${TRASH_ICON} 删除阶段</button></div></details></div>`
-      : "";
-    const selectedPropertyStage = store.ui.propertyTarget?.kind === "stage" &&
-      store.ui.propertyTarget.id === stage.id;
-    return `<div class="stage-card ${stage.current ? "current" : ""}${collapsed ? " collapsed" : ""}" data-stage-id="${esc(stage.id)}" data-collapsed="${collapsed}"><div class="stage-head"><button type="button" class="stage-code stage-property-target ${selectedPropertyStage ? "selected" : ""}" data-action="select-stage-properties" data-id="${esc(stage.id)}" aria-pressed="${selectedPropertyStage}" title="查看阶段属性">${
-      esc(stage.code)
-    }</span><h2>${editing
-      ? `<input class="stage-title-inline" data-stage-title-inline data-id="${stage.id}" data-focus-key="stage-title" aria-label="阶段名称" value="${esc(stage.title)}" />`
-      : `<button class="inline-title-button stage-title-button" data-action="rename-stage" data-id="${stage.id}" title="点击修改阶段名称">${esc(stage.title)}</button>`
-    }</h2><span class="stage-count">${
-      stage.lessons.length
-    } 课 · 完成 ${stage.complete_count}${
-      stage.open_requirements ? ` · 待补 ${stage.open_requirements}` : ""
-    }</span>${tools}</div><div class="map-items">${
-      stage.lessons.length
-        ? stage.lessons.map(mapItem).join("")
-        : `<div class="side-empty map-empty-drop">这个阶段还没有内容；可以新建一课，或把课时拖到这里。</div>`
-    }<div class="lesson-drop-end" aria-hidden="true">放入${esc(stage.title)}末尾</div></div></div>`;
+    const query = String(store.ui.courseTreeQuery || "").trim().toLocaleLowerCase();
+    const lessons = stage.lessons.filter((lesson) => {
+      const filter = store.ui.courseTreeFilter || "all";
+      const matchesFilter = filter === "all" || filter === "open" && !lesson.progress.complete ||
+        filter === "requirements" && lesson.open_requirements > 0 ||
+        filter === "missing_media" && lesson.missing_media > 0 ||
+        filter === "complete" && lesson.progress.complete;
+      const matchesQuery = !query || `${lesson.code} ${lesson.title} ${lesson.summary}`.toLocaleLowerCase().includes(query);
+      return matchesFilter && matchesQuery;
+    });
+    return `<tbody class="stage-card${stage.current ? " current" : ""}${collapsed ? " collapsed" : ""}" data-stage-id="${esc(stage.id)}" data-collapsed="${collapsed}"><tr class="course-tree-stage"><th colspan="5"><button type="button" class="stage-collapse-toggle" data-action="toggle-stage-collapse" data-id="${esc(stage.id)}" aria-label="${collapsed ? "展开阶段" : "折叠阶段"}：${esc(stage.title)}" aria-expanded="${!collapsed}">${collapsed ? "▸" : "⌄"}</button><span class="stage-code">${esc(stage.code)}</span><b>${esc(stage.title)}</b><small>${stage.lesson_count} 课 · ${stage.complete_count} 已完成 · ${stage.open_requirements} 待补</small>${manageable ? `<button class="icon-button" data-action="add-stage" aria-label="在此处新增阶段">＋</button><button class="icon-button" data-action="rename-stage" data-id="${esc(stage.id)}" aria-label="重命名阶段：${esc(stage.title)}">✎</button><button class="icon-button" data-action="move-stage" data-id="${esc(stage.id)}" data-direction="up" aria-label="上移阶段" ${stageIndex === 0 ? "disabled" : ""}>↑</button><button class="icon-button" data-action="move-stage" data-id="${esc(stage.id)}" data-direction="down" aria-label="下移阶段" ${stageIndex >= stageCount - 1 ? "disabled" : ""}>↓</button><button class="icon-button danger" data-action="delete-stage" data-id="${esc(stage.id)}" aria-label="删除阶段">${TRASH_ICON}</button>` : ""}</th></tr>${collapsed ? "" : lessons.length ? lessons.map((lesson) => mapItem(lesson, requirementsByLesson.get(lesson.id) || [])).join("") : `<tr class="course-tree-empty"><td colspan="5">${stage.lessons.length ? "此筛选下没有课时" : "这个阶段还没有课时"}</td></tr>`}<tr class="lesson-drop-end"><td colspan="5">放入${esc(stage.title)}末尾</td></tr></tbody>`;
   }
 
   /**
@@ -920,15 +823,23 @@ export function createViews(store) {
     return parts.join(" · ");
   }
 
-  function mapItem(lesson) {
+  function mapItem(lesson, requirements = []) {
     const progress = lesson.progress;
-    const nextStep = nextStepLabel(lesson);
-    const editing = store.ui.editingLessonTitleId === lesson.id &&
-      store.ui.editingLessonTitleSurface === "map";
-    const content = editing
-      ? `<div class="map-open map-open-editing"><span class="map-item-code">${esc(lesson.code)}</span><span class="map-item-body"><input class="lesson-title-inline" data-lesson-title-inline data-id="${lesson.id}" data-focus-key="lesson-title-inline" aria-label="课程标题" value="${esc(lesson.title)}" /><small>${esc(lesson.summary)}</small></span><span class="map-item-meta"><span class="badge ${progress.complete ? "done" : "open"}">${lessonGapLabel(lesson)}</span><span class="map-item-state">${lesson.current ? "正在编辑" : progress.complete ? "已完成" : esc(progress.reasons[0] || nextStep)}</span></span><span class="map-arrow">›</span></div>`
-      : `<button class="map-open" data-action="open-item" data-id="${lesson.id}"><span class="map-item-code">${esc(lesson.code)}</span><span class="map-item-body"><b>${esc(lesson.title)}</b><small>${esc(lesson.summary)}</small></span><span class="map-item-meta"><span class="badge ${progress.complete ? "done" : "open"}">${lessonGapLabel(lesson)}</span><span class="map-item-state">${lesson.current ? "正在编辑" : progress.complete ? "已完成" : esc(progress.reasons[0] || nextStep)}</span></span><span class="map-arrow">›</span></button>`;
-    return `<div class="map-item ${lesson.current ? "current" : ""}" data-map-lesson="${lesson.id}"><button type="button" class="lesson-drag-handle" data-lesson-drag-handle="${lesson.id}" aria-label="拖动${esc(lesson.title)}">⠿</button>${content}<div class="map-item-tools"><button class="icon-button" data-action="rename-lesson" data-title-surface="map" data-id="${lesson.id}" aria-label="重命名课程：${esc(lesson.title)}" title="重命名这一课">✎</button><button class="icon-button" data-action="move-lesson" data-id="${lesson.id}" data-direction="up" aria-label="上移课程：${esc(lesson.title)}" title="上移这一课" ${lesson.order_index === 0 ? "disabled" : ""}>↑</button><button class="icon-button" data-action="move-lesson" data-id="${lesson.id}" data-direction="down" aria-label="下移课程：${esc(lesson.title)}" title="下移这一课">↓</button><button class="icon-button danger" data-action="delete-lesson" data-id="${lesson.id}" aria-label="删除课程：${esc(lesson.title)}" title="删除这一课（会先确认；可以用撤销恢复）">${TRASH_ICON}</button></div></div>`;
+    const dimensions = store.data.status_dimensions || [];
+    const statusControls = dimensions.map((dimension) => {
+      const assignment = (store.data.status_assignments || []).find((row) => row.content_item_id === lesson.id && row.dimension_id === dimension.id);
+      const selected = (store.data.status_options || []).find((option) => option.id === assignment?.option_id)?.name || assignment?.option || "";
+      const options = (store.data.status_options || []).filter((option) => option.dimension_id === dimension.id);
+      return `<label class="course-tree-status-field"><span>${esc(dimension.name)}</span><select data-status-dim="${esc(dimension.key)}" data-status-item-id="${esc(lesson.id)}" aria-label="${esc(lesson.code)} ${esc(dimension.name)}状态"><option value="" ${selected ? "" : "selected"}>未设置</option>${options.map((option) => `<option value="${esc(option.name)}" ${selected === option.name ? "selected" : ""}>${esc(option.name)}</option>`).join("")}</select></label>`;
+    }).join("");
+    const editing = store.ui.editingLessonTitleId === lesson.id && store.ui.editingLessonTitleSurface === "map";
+    const requirementList = requirements.length
+      ? `<details class="course-tree-requirements"><summary>${lesson.open_requirements} 项待补</summary><ul>${requirements.map((entry) => `<li><span><b>${esc(requirementTypeLabel(entry.type))}</b> · ${esc(entry.note || "尚未添加备注")}</span><button class="text-button" data-action="focus-requirement" data-id="${esc(entry.id)}">定位</button></li>`).join("")}</ul></details>`
+      : `<span class="muted">无待补</span>`;
+    const mediaSummary = lesson.missing_media
+      ? `<details class="course-tree-requirements"><summary><span class="badge warning">缺 ${lesson.missing_media}</span></summary><p>此课有 ${lesson.missing_media} 处素材引用未解析。进入工作台后可在对应正文区块查看。</p><button class="text-button" data-action="open-item" data-id="${esc(lesson.id)}">打开工作台</button></details>`
+      : `<span class="muted">齐全</span>`;
+    return `<tr class="map-item ${lesson.current ? "current" : ""}" data-map-lesson="${esc(lesson.id)}"><td class="course-tree-lesson"><button type="button" class="lesson-drag-handle" data-lesson-drag-handle="${esc(lesson.id)}" aria-label="拖动${esc(lesson.title)}">⠿</button><span class="course-tree-code">${esc(lesson.code)}</span>${editing ? `<input class="lesson-title-inline" data-lesson-title-inline data-id="${esc(lesson.id)}" data-focus-key="lesson-title-inline" aria-label="课程标题" value="${esc(lesson.title)}" />` : `<button class="course-tree-open" data-action="open-item" data-id="${esc(lesson.id)}"><b>${esc(lesson.title)}</b><small>${esc(lesson.summary)}</small></button>`}</td><td><span class="badge ${progress.complete ? "done" : "open"}">${esc(lesson.content_status || (progress.complete ? "已完成" : "进行中"))}</span><details class="course-tree-status"><summary>状态</summary>${statusControls}</details></td><td>${requirementList}</td><td>${mediaSummary}</td><td class="course-tree-tools"><button class="icon-button" data-action="rename-lesson" data-title-surface="map" data-id="${esc(lesson.id)}" aria-label="重命名课程：${esc(lesson.title)}">✎</button><button class="icon-button" data-action="move-lesson" data-id="${esc(lesson.id)}" data-direction="up" aria-label="上移课程" ${lesson.order_index === 0 ? "disabled" : ""}>↑</button><button class="icon-button" data-action="move-lesson" data-id="${esc(lesson.id)}" data-direction="down" aria-label="下移课程">↓</button><button class="icon-button danger" data-action="delete-lesson" data-id="${esc(lesson.id)}" aria-label="删除课程：${esc(lesson.title)}">${TRASH_ICON}</button></td></tr>`;
   }
 
   /* ------------------------------------------------------ lesson editor */
@@ -944,39 +855,14 @@ export function createViews(store) {
       );
     }
     const view = store.lesson(item);
-    const lesson = view ? view.lesson : null;
     const map = courseMap(store.data, item.id);
     const stage = store.data.stages.find((candidate) =>
       candidate.id === item.stage_id
     );
-    const mode = store.ui.mode === "structure" ? "structure"
-      : store.ui.mode === "preview" ? "preview"
-      : "writing";
-    const workbenchTabs = [
-      ["writing", "正文", "01"],
-      ["structure", "Flow", "02"],
-      ["preview", "Preview", "03"],
-    ];
-    return `<section class="editor-page workbench-page mode-${mode}"><div class="breadcrumbs"><button class="text-button" data-action="route" data-route="map">课程地图</button><b>/</b><span>${
+    return `<section class="editor-page workbench-page mode-writing"><div class="breadcrumbs"><button class="text-button" data-action="route" data-route="overview">课程概览</button><b>/</b><span>${
       esc(stage ? stage.title : "未分组")
-    }</span><b>/</b><strong>${esc(item.code)} ${esc(item.title)}</strong></div><div class="workbench-head"><div class="workbench-heading"><span class="eyebrow">工作台 · ${esc(item.code)}</span><h1>${esc(item.title)}</h1><p class="muted">沿正文写作、检查内容流程，或阅读最终预览。</p></div><div class="workbench-status"><span class="status-mark"></span><span>${esc(view?.progress?.complete ? "本课已完成" : "持续编辑中")}</span></div></div><nav class="workbench-tabs" role="tablist" aria-label="工作台视图">${
-      workbenchTabs.map(([value, label, number]) =>
-        `<button role="tab" aria-selected="${mode === value}" class="workbench-tab ${
-          mode === value ? "active" : ""
-        }" data-action="mode" data-mode="${value}"><span class="workbench-tab-index">${number}</span><span>${label}</span></button>`
-      ).join("")
-    }</nav><div class="workbench-lesson-meta"><span class="eyebrow">${
-      esc(item.code)
-    } · ${esc(item.type)} · 第 ${
-      map.current_index + 1
-    }/${map.lesson_count} 课</span><div class="lesson-strip">${
-      lessonStrip(item, lesson)
-    }</div></div><div class="editor-body">${
-      mode === "writing"
-        ? writingView(item, view)
-        : mode === "structure"
-        ? flowView(item, view)
-        : previewView(item, view)
+    }</span><b>/</b><strong>${esc(item.code)} ${esc(item.title)}</strong></div><div class="workbench-head"><div class="workbench-heading"><span class="eyebrow">工作台 · ${esc(item.code)}</span><h1>${esc(item.title)}</h1><p class="muted">在正文中编写课程内容；右侧 AI 助手提供可审核建议。</p></div></div><div class="editor-body">${
+      writingView(item, view) + resourceDiscoveryView(item)
     }</div><div class="lesson-nav"><button class="secondary" data-action="prev-lesson" ${
       map.previous_id ? "" : "disabled"
     }>← 上一课</button><span class="muted small">${
@@ -1071,7 +957,9 @@ export function createViews(store) {
       block.id
     }" aria-label="在${typeLabel}下方插入正文区块" title="在这块正文下方插入">＋</button><details class="block-more"><summary class="icon-button" aria-label="更多正文区块操作：${typeLabel}" title="更多操作">⋯</summary><div class="block-more-menu"><button type="button" class="block-more-item" data-action="select-block" data-id="${
       block.id
-    }" title="选中这块正文">◎ 选中</button><button type="button" class="block-more-item" data-action="move-block" data-id="${
+    }" title="选中这块正文">◎ 选中</button><button type="button" class="block-more-item" data-action="open-block-properties" data-id="${
+      block.id
+    }" title="查看和编辑这块正文的属性">⚙ 属性</button><button type="button" class="block-more-item" data-action="move-block" data-id="${
       block.id
     }" data-direction="up" title="上移这块正文" ${
       index === 0 ? "disabled" : ""
@@ -1872,6 +1760,234 @@ export function createViews(store) {
 
   /* --------------------------------------------------------------- inbox */
 
+  function resourceCandidateCards(task) {
+    const candidates = Array.isArray(task && task.candidates) ? task.candidates : [];
+    if (!candidates.length) return "";
+    const rows = candidates.map((candidate) => {
+      const evidence = Array.isArray(candidate.source_evidence) ? candidate.source_evidence : [];
+      const safeUrl = (value) => /^https?:\/\//i.test(String(value || "")) ? value : "";
+      const video = candidate.video || {};
+      const duration = candidate.video && candidate.video.total_duration_sec;
+      const durationKnown = Number.isFinite(duration) && duration > 0;
+      const durationLabel = !durationKnown ? "时长未知，需人工核验"
+        : duration >= 240 && duration <= 360 ? "目标时长"
+        : duration >= 180 && duration <= 480 ? "可备用时长" : "不在推荐时长范围";
+      const embedId = String(video.provider_video_id || "");
+      const canEmbed = candidate.medium === "video" && video.provider_id === "youtube_data_api" &&
+        video.embeddable === true && video.region_availability !== "restricted" &&
+        /^[A-Za-z0-9_-]{11}$/.test(embedId);
+      const embedStatus = video.embeddable === true ? "平台允许嵌入"
+        : video.embeddable === false ? "平台禁止嵌入" : "嵌入能力未知";
+      const player = candidate.medium !== "video" ? "" : canEmbed
+        ? '<div class="resource-video-preview" data-resource-video="' + esc(candidate.id) + '" aria-live="polite"><button type="button" class="secondary" data-action="resource-video-play" data-id="' + esc(candidate.id) + '">在课内预览 YouTube 视频</button></div>'
+        : '<p class="muted small resource-video-fallback">' + esc(embedStatus) +
+          (video.region_availability === "restricted" ? " · 当前地区受限" : "") +
+          "；请使用原平台链接打开。</p>";
+      const evidenceRows = evidence.map((source) =>
+        "<li><b>" + esc(source.title || source.provider_id || "来源") + "</b><small>" +
+        esc(source.provider_id || "未知服务商") + " · 查询：" + esc(source.query || "未记录") +
+        "</small><small>请求 " + esc(source.requested_at || "未知") + " · 获取 " +
+        esc(source.fetched_at || "未知") + " · " + esc(source.fact_check || "unchecked") +
+        "</small>" + (safeUrl(source.url) ? '<a href="' + esc(source.url) +
+          '" target="_blank" rel="noopener noreferrer">打开来源</a>' : "") +
+        (source.limitations && source.limitations.length
+          ? '<small class="muted">' + esc(source.limitations.join("；")) + "</small>" : "") + "</li>"
+      ).join("");
+      const claims = (candidate.claims || []).map((claim) =>
+        "<li>" + esc(claim.text) + " · " +
+        (claim.evidence_ids && claim.evidence_ids.length ? "证据 " + claim.evidence_ids.length + " 项" : "没有关联证据") +
+        "</li>"
+      ).join("");
+      const timingEvidence = evidence.filter((source) =>
+        Number.isFinite(source.locator && source.locator.start_sec) &&
+        Number.isFinite(source.locator && source.locator.end_sec) &&
+        source.locator.end_sec > source.locator.start_sec
+      );
+      const acceptedResource = (store.data.resource_items || []).find((resource) =>
+        resource.id === candidate.accepted_resource_id
+      );
+      const acceptedUsages = acceptedResource
+        ? (store.data.resource_usages || []).filter((usage) => usage.resource_id === acceptedResource.id)
+        : [];
+      const usageLessonNames = [...new Set(acceptedUsages.map((usage) => {
+        const lesson = (store.data.content_items || []).find((entry) => entry.id === usage.lesson_id);
+        return lesson ? lesson.code + " " + lesson.title : "已归档课程";
+      }))];
+      const selectedLesson = store.currentItem();
+      const plannedLessonIds = store.ui.resourcePlan?.content_item_ids || [];
+      const targetLessonId = acceptedResource ? selectedLesson?.id || candidate.lesson_id : candidate.lesson_id;
+      const targetLesson = (store.data.content_items || []).find((lesson) => lesson.id === targetLessonId);
+      const targetLessonAlreadyHasUsage = acceptedUsages.some((usage) => usage.lesson_id === targetLessonId);
+      const reuseAllowed = !acceptedResource || Boolean(targetLessonId && targetLesson &&
+        (targetLessonId === candidate.lesson_id || plannedLessonIds.includes(targetLessonId)));
+      const reusableResources = (store.data.resource_items || []).filter((resource) =>
+        !acceptedResource && resource.medium === candidate.medium
+      );
+      const reuseOptions = reusableResources.map((resource) => {
+        const sources = (store.data.source_evidence || []).filter((source) =>
+          (resource.source_ids || []).includes(source.id)
+        );
+        const dates = [...new Set(sources.map((source) => source.event_date).filter(Boolean))];
+        const sourceNames = [...new Set(sources.map((source) =>
+          source.title || source.publisher || source.provider_id
+        ).filter(Boolean))].slice(0, 2);
+        const summary = [dates.join("、"), sourceNames.join("、")].filter(Boolean).join(" · ");
+        return '<option value="' + esc(resource.id) + '">' + esc(resource.medium === "video" ? "视频" : "案例 / 网页") +
+          " · " + esc(resource.title || "未命名资源") + (summary ? " · " + esc(summary) : "") + "</option>";
+      }).join("");
+      const mergePicker = acceptedResource ? "" : reusableResources.length
+        ? '<fieldset class="resource-merge"><legend>已有资源</legend><label>追加来源到（可选）<select data-resource-existing="' +
+          esc(candidate.id) + '"><option value="">新建资源</option>' + reuseOptions +
+          '</select></label><label><input type="checkbox" data-resource-merge-confirm="' + esc(candidate.id) +
+          '" />我已核对候选与所选资源属于同一事件，并确认合并来源</label></fieldset>'
+        : '<p class="muted small">当前项目没有同类已接受资源；本候选将作为新资源保存。</p>';
+      const clip = candidate.medium === "video" && !acceptedResource && timingEvidence.length
+        ? '<label>视频范围<select data-resource-video-mode="' + esc(candidate.id) +
+          '"><option value="full">整段视频</option><option value="clip">按时间证据引用片段</option></select></label>' +
+          '<label>时间证据<select data-resource-timing="' + esc(candidate.id) +
+          '"><option value="">选择时间证据</option>' + timingEvidence.map((source) =>
+            '<option value="' + esc(source.id) + '">' + mediaDuration(source.locator.start_sec) +
+            "–" + mediaDuration(source.locator.end_sec) + " · " + esc(source.title || source.provider_id) +
+            "</option>"
+          ).join("") + "</select></label>"
+        : candidate.medium === "video" && !acceptedResource ? '<p class="muted">没有带起止时间的来源证据；可保留整段视频，或人工核对后记录片段。</p>' : "";
+      const manualTiming = candidate.medium === "video" && !acceptedResource
+        ? !durationKnown
+          ? '<fieldset class="resource-manual-timing" disabled><legend>人工确认片段</legend><p class="muted">总时长未知，不能记录片段；可保留整段视频。</p></fieldset>'
+          : '<fieldset class="resource-manual-timing"><legend>人工确认片段（可选）</legend><p class="muted">总时长 ' +
+            mediaDuration(duration) + '。人工查看记录，不代表字幕或口播已校验。</p><div class="resource-timing-fields">' +
+            '<label>开始（秒）<input type="number" min="0" max="' + Number(duration) +
+            '" step="1" data-resource-timing-start="' + esc(candidate.id) + '" /></label>' +
+            '<label>结束（秒）<input type="number" min="0" max="' + Number(duration) +
+            '" step="1" data-resource-timing-end="' + esc(candidate.id) + '" /></label></div>' +
+            '<label><input type="checkbox" data-resource-timing-confirm="' + esc(candidate.id) +
+            '" />我已人工查看并确认这个片段</label></fieldset>'
+        : "";
+      const status = candidate.status === "accepted" ? "已保存"
+        : candidate.status === "skipped" ? "已跳过"
+        : candidate.status === "failed" ? "失败" : "待审阅";
+      const savedBinding = acceptedResource
+        ? '<p class="resource-saved-binding">已保存为 <b>' + esc(acceptedResource.title || "未命名资源") +
+          '</b> · 已用于：' + esc(usageLessonNames.join("、") || "媒体库") + "</p>"
+        : "";
+      const acceptedWarning = candidate.status === "accepted" && !acceptedResource
+        ? '<p class="error-text">候选已标记保存，但没有对应的资源绑定；请刷新任务结果后再操作。</p>'
+        : "";
+      const currentLessonNotice = acceptedResource && !reuseAllowed
+        ? '<p class="muted">当前选中的课不在这次搜索计划中，无法添加。</p>'
+        : acceptedResource && targetLessonAlreadyHasUsage
+        ? '<p class="muted">' + esc(targetLesson ? `${targetLesson.code} ${targetLesson.title}` : "当前课") + "已使用这项资源。</p>"
+        : "";
+      return '<article class="resource-candidate card" data-resource-candidate="' + esc(candidate.id) +
+        '"><div class="resource-candidate-head"><div><span class="eyebrow">' +
+        (candidate.medium === "video" ? "教学视频" : "案例 / 网页") +
+        (candidate.narrative_case_type ? " · " + esc(candidate.narrative_case_type) : "") +
+        '</span><h3>' + esc(candidate.title || "未命名候选") + '</h3></div><span class="status-pill">' +
+        status + "</span></div><p>" + esc(candidate.factual_summary || "候选未提供事实摘要") + "</p>" +
+        (candidate.event_subject || candidate.event_date || candidate.publisher
+          ? '<p class="muted small">' + [candidate.event_subject, candidate.event_date, candidate.publisher].filter(Boolean).map(esc).join(" · ") + "</p>" : "") +
+        (safeUrl(candidate.url) ? '<p><a href="' + esc(candidate.url) + '" target="_blank" rel="noopener noreferrer">打开候选来源</a></p>' : "") +
+        (candidate.medium === "video"
+          ? '<p class="resource-duration">' + durationLabel +
+            (!durationKnown ? "" : " · " + mediaDuration(duration)) +
+            (candidate.video && candidate.video.duration_evidence_id ? " · 有时长证据" : " · 无时长证据") +
+            '</p><p class="muted small">口播语言：' + esc(candidate.video && candidate.video.spoken_language || "未知") +
+            " · 字幕：" + esc(candidate.video && candidate.video.caption_state || "未知") +
+            " · 地区：" + esc(candidate.video && candidate.video.region_availability || "未知") +
+            " · 嵌入：" + esc(embedStatus) + "</p>" + player : "") +
+        (candidate.video && candidate.video.metadata_limitations && candidate.video.metadata_limitations.length
+          ? '<ul class="resource-limitations">' + candidate.video.metadata_limitations.map((line) => "<li>" + esc(line) + "</li>").join("") + "</ul>" : "") +
+        (claims ? "<details><summary>主张与证据</summary><ul>" + claims + "</ul></details>" : "") +
+        (evidenceRows ? '<details><summary>来源与采集记录（' + evidence.length + "）</summary><ul>" + evidenceRows + "</ul></details>"
+          : '<p class="muted">没有来源证据，不能作为已核验事实引用。</p>') +
+        (candidate.limitations && candidate.limitations.length
+          ? '<p class="muted">限制：' + esc(candidate.limitations.join("；")) + "</p>" : "") +
+        '<div class="resource-candidate-form">' +
+        savedBinding + acceptedWarning + currentLessonNotice +
+        mergePicker +
+        '<label>教学用途<textarea rows="2" data-resource-use="' + esc(candidate.id) +
+        '" placeholder="说明这项资源如何用于本课"></textarea></label><label>讨论问题（每行一个）<textarea rows="2" data-resource-questions="' +
+        esc(candidate.id) + '" placeholder="每行输入一个问题"></textarea></label>' + clip + manualTiming +
+        '<div class="action-row"><button class="secondary" data-action="resource-accept" data-task="' +
+        esc(task.task_id) + '" data-id="' + esc(candidate.id) + '" data-lesson="' + esc(targetLessonId) +
+        '" data-accept-action="keep" ' + (store.ui.resourceBusy === candidate.id || acceptedResource && (!reuseAllowed || targetLessonAlreadyHasUsage) || candidate.status === "accepted" && !acceptedResource ? "disabled" : "") +
+        ">" + (acceptedResource ? "添加到当前课" : "保留到媒体库") + "</button><button class=\"primary\" data-action=\"resource-accept\" data-task=\"" +
+        esc(task.task_id) + "\" data-id=\"" + esc(candidate.id) + "\" data-lesson=\"" + esc(targetLessonId) +
+        "\" data-accept-action=\"insert_citation\" " +
+        (store.ui.resourceBusy === candidate.id || acceptedResource && (!reuseAllowed || targetLessonAlreadyHasUsage) || candidate.status === "accepted" && !acceptedResource ? "disabled" : "") +
+        ">插入本课引用</button></div></div></article>";
+    }).join("");
+    return '<section class="page-section card resource-candidates" aria-labelledby="resource-candidates-heading">' +
+      '<div class="publish-section-heading"><div><h2 id="resource-candidates-heading">搜索候选</h2>' +
+      '<p class="muted">来源仍需审阅。只有选择保留或插入引用后，候选才会写入课程。</p></div><span class="status-pill">' +
+      candidates.length + "</span></div><div class=\"resource-candidate-list\">" + rows + "</div></section>";
+  }
+
+  function lessonCode(id) {
+    const item = store.data.content_items.find((candidate) => candidate.id === id);
+    return item ? item.code : "课程内容";
+  }
+
+  function resourceDiscoveryView(item) {
+    const plan = store.ui.resourcePlan;
+    const task = store.ui.resourceTask;
+    const context = plan && plan.context_preview && plan.context_preview.items || [];
+    const queries = (plan && plan.queries || []).flatMap((entry) =>
+      (entry.queries || []).map((query) => ({ ...query, lesson_id: entry.lesson_id, need: entry.need }))
+    );
+    const contextRows = context.map((entry) =>
+      "<li><b>" + esc(entry.title) + "</b><p>" + esc(entry.excerpt || "（没有正文摘录）") + "</p></li>"
+    ).join("");
+    const queryRows = queries.map((query) =>
+      "<li><b>" + (query.kind === "video" ? "视频" : "网页") + " · " + esc(lessonCode(query.lesson_id)) +
+      "</b><p>" + esc(query.query) + "</p><small>" + esc(query.need || "") +
+      " · 请求上限 " + query.request_budget_upper_bound + "</small></li>"
+    ).join("");
+    const recoveryWarnings = [...new Set([
+      store.ui.resourceRecoveryWarning,
+      task && task.resource_recovery_warning,
+    ].filter((warning) => typeof warning === "string" && warning.trim()))];
+    const active = task && ["queued", "running", "cancel_requested"].includes(task.state);
+    return '<section class="page-section card resource-discovery" aria-labelledby="resource-discovery-heading">' +
+      '<div class="publish-section-heading"><div><span class="eyebrow">素材发现</span><h2 id="resource-discovery-heading">为本课查找真实案例与教学视频</h2>' +
+      '<p class="muted">先预览课程摘录、实际查询词与请求预算；确认开始后才会访问已配置的搜索服务。</p></div></div>' +
+      '<div class="resource-discovery-controls"><fieldset><legend>搜索类型</legend>' +
+      '<label><input type="checkbox" data-resource-search="web" checked />网页案例</label>' +
+      '<label><input type="checkbox" data-resource-search="video" checked />教学视频</label></fieldset>' +
+      '<label>最多请求数<input class="select" type="number" min="1" max="50" value="8" data-resource-budget /></label>' +
+      '<button class="primary" data-action="resource-prepare" data-id="' + esc(item.id) + '" ' +
+      (store.ui.resourceBusy ? "disabled" : "") + ">" +
+      (store.ui.resourceBusy === "prepare" ? "正在预览计划…" : "预览本地搜索计划") + "</button></div>" +
+      (store.ui.resourceError ? '<p class="error-text" role="alert">' + esc(store.ui.resourceError) +
+        (store.ui.resourceError.includes("auth_required")
+          ? ' <button class="text-button" data-action="route" data-route="settings">配置资源搜索服务</button>' : "") + "</p>" : "") +
+      recoveryWarnings.map((warning) => '<p class="error-text" role="alert">资源任务恢复提示：' + esc(warning) + "</p>").join("") +
+      (plan ? '<div class="resource-plan"><div class="resource-plan-summary"><b>请求预算</b><span>最多 ' +
+        (plan.budget && plan.budget.max_requests || "?") + " 次 · 预计上限 " +
+        (plan.budget && plan.budget.required_upper_bound || "?") + " 次 · 上下文 " +
+        (plan.context_preview && plan.context_preview.character_count || 0) + " 字</span></div>" +
+        "<h3>发送的课程摘录</h3>" +
+        (contextRows ? "<ul>" + contextRows + "</ul>" : '<p class="muted">计划没有课程正文摘录。</p>') +
+        "<h3>实际查询词</h3>" +
+        (queryRows ? "<ul>" + queryRows + "</ul>" : '<p class="muted">计划没有可执行查询。</p>') +
+        '<p class="muted small">输入哈希 ' + esc(plan.input_hash || "") + " · 到期 " + esc(plan.expires_at || "未知") +
+        '</p><div class="action-row"><button class="primary" data-action="resource-start" ' +
+        (store.ui.resourceBusy || !queries.length ? "disabled" : "") + ">确认并开始真实搜索</button></div></div>" : "") +
+      (task ? '<div class="resource-task-status" role="status"><b>搜索状态：' + esc(task.state) +
+        "</b><span>已完成 " + (task.progress && task.progress.completed_queries || 0) + "/" +
+        (task.progress && task.progress.total_queries || 0) + " 个查询 · 使用 " +
+        (task.budget && task.budget.completed_requests || 0) + "/" +
+        (task.budget && task.budget.max_requests || 0) + ' 次请求</span><div class="action-row">' +
+        '<button class="secondary" data-action="resource-refresh">刷新结果</button>' +
+        (active ? '<button class="secondary" data-action="resource-cancel">取消搜索</button>' :
+          task.state === "failed" || task.state === "partial" ? '<button class="secondary" data-action="resource-retry">重试失败项</button>' : "") +
+        '<button class="text-button" data-action="route" data-route="inbox">在收件箱审阅候选</button></div>' +
+        (task.errors && task.errors.length ? '<ul class="resource-errors" role="alert">' +
+          task.errors.map((error) => "<li><b>" + esc(error.code) + "</b> · " + esc(error.message) +
+            (error.query ? " · " + esc(error.query) : "") + "</li>").join("") + "</ul>" : "") + "</div>" : "") +
+      (task ? resourceCandidateCards(task) : "") + "</section>";
+  }
+
   function inboxView() {
     const items = store.data.inbox_items.filter((item) =>
       item.status !== "archived"
@@ -2452,7 +2568,7 @@ export function createViews(store) {
       ${showLayoutControls ? `<section class="page-section card publish-card publish-section" aria-labelledby="publish-layout-heading"><div class="publish-section-heading"><span class="publish-step">02</span><div><h2 id="publish-layout-heading">2. 输出布局与页面</h2><p class="muted">页码范围与目标尺寸只影响本次输出。</p></div></div><div class="publish-layout-controls">${pageRange}${layout?.pagination_mode === "paged" && !supportsLayout ? `<p class="muted publish-format-note">当前格式不会保留页面布局，因此无法按页筛选。</p>` : ""}<div class="page-action-row">${targetSizeControl}</div>${targetSizeNotice}${fitPreview}</div><p class="publish-layout-note">页面筛选与目标尺寸仅影响本次导出；尺寸不同的课时会按同一比例居中适配，不裁掉页面内容。</p></section>` : ""}
       <section class="page-section card publish-card publish-section" aria-labelledby="publish-format-heading"><div class="publish-section-heading"><span class="publish-step">03</span><div><h2 id="publish-format-heading">3. 选择格式</h2><p class="muted">每种格式都会说明可用性和布局处理方式。</p></div></div><div class="format-grid">${formats.map(([key, label, detail]) => { let capability = { status: "unavailable" }; try { capability = store.publicationCapability(key); } catch { /* selection validation is shown in preflight */ } const unavailable = ["unavailable", "unsupported"].includes(capability.status); const capabilityLabel = capability.code === "explicit_target_page_size_required" ? "请先选择统一尺寸" : capability.status === "available" ? (adapters[key]?.layout ? "页面布局保留" : "可用") : capability.status === "lossy" ? "页面布局会线性化" : capability.status === "unsupported" ? "当前排版不支持" : "此环境不可用"; return `<button class="format-card ${store.ui.publishFormat === key ? "active" : ""}" data-action="publish-format" data-format="${key}" aria-pressed="${store.ui.publishFormat === key}" ${unavailable ? "disabled" : ""}><b>${label}</b><small>${detail}</small><small class="format-capability">${capabilityLabel}</small></button>`; }).join("")}</div><div class="action-row publish-preflight-action"><button class="secondary" data-action="preflight">运行导出前检查</button></div></section>
       ${store.ui.preflight ? publishPreflightView() : ""}
-      ${last ? `<section class="page-section card publish-card publish-last-export"><div class="publish-section-heading"><span class="publish-step" aria-hidden="true">✓</span><div><h2>最近一次导出</h2><p class="muted">${store.bridge.isNative() ? "导出已经完成，以下是实际保存位置。" : "文件已交给浏览器下载；完成情况请查看浏览器下载列表。"}</p></div><span class="status-pill is-done">${store.bridge.isNative() ? "已完成" : "已交给浏览器"}</span></div><p><b>${esc(last.format)}</b> · ${last.scope === "course" ? "整门课程" : "当前课"} · ${last.files} 个文件</p><p class="muted">${store.bridge.isNative() ? "实际位置" : "交付方式"}：<code>${esc(last.path)}</code></p>${store.bridge.isNative() ? `<p class="muted">输出不依赖 Workbench 运行。</p><div class="action-row"><button class="secondary" data-action="reveal-export">在 Finder 中显示</button></div>` : ""}</section>` : ""}
+      ${last ? `<section class="page-section card publish-card publish-last-export"><div class="publish-section-heading"><span class="publish-step" aria-hidden="true">✓</span><div><h2>最近一次导出</h2><p class="muted">${store.bridge.isNative() ? "导出已经完成，以下是实际保存位置。" : "文件已交给浏览器下载；完成情况请查看浏览器下载列表。"}</p></div><span class="status-pill is-done">${store.bridge.isNative() ? "已完成" : "已交给浏览器"}</span></div><p><b>${esc(last.format)}</b> · ${last.scope === "course" ? "整门课程" : "当前课"} · ${last.files} 个文件</p><p class="muted">${store.bridge.isNative() ? "实际位置" : "交付方式"}：<code>${esc(last.path)}</code></p>${store.bridge.isNative() ? `<p class="muted">输出不依赖 Workbench 运行。</p><div class="action-row"><button class="secondary" data-action="reveal-export">在${fileManagerLabel()}中显示</button></div>` : ""}</section>` : ""}
       <section class="page-section card publish-card publish-history" aria-labelledby="publish-history-heading"><div class="publish-section-heading"><div><h2 id="publish-history-heading">发布记录</h2><p class="muted">只记录你确认过的发布节点，不会改变课程内容。</p></div><button class="secondary" data-action="record-publication">记录已发布</button></div>${publications.length ? `<div class="version-list" role="list">${publications.map((publication) => `<article class="version-card list-row" role="listitem"><span class="version-icon" aria-hidden="true">↗</span><div><b>${esc(publication.version_label)}</b><p>${esc(publication.platform)} · ${esc(publication.status)}</p><small>${esc(publication.published_at || "")}</small></div></article>`).join("")}</div>` : `<div class="empty-state publish-history-empty"><h3>还没有发布记录</h3><p class="muted">导出并实际迁移后，可以记录这个发布节点；课程内容不会因此改变。</p></div>`}</section></section>`;
   }
 
@@ -2507,6 +2623,220 @@ export function createViews(store) {
     return `<section class="page updates-page"><div class="page-head"><div><span class="eyebrow">建议与修订</span><h1>更新中心</h1><p class="muted">AI 建议先保存为可审核内容。只有你确认应用后，正文才会发生变化。</p></div><button class="primary" data-action="right-panel" data-panel="assistant">打开 AI 助手</button></div><div class="update-summary-grid"><article class="update-summary"><span class="eyebrow">待审核修改</span><strong>${drafts.length}</strong><p>修改前后对照会显示在 AI 助手中。</p></article><article class="update-summary"><span class="eyebrow">待处理建议</span><strong>${suggestions.length}</strong><p>建议可以继续保留，正文不会自动变化。</p></article></div><section class="update-guidance"><span class="update-step">01</span><div><h2>先检查，再决定</h2><p class="muted">打开工作台的 AI 助手查看生成记录、修改对照和校验结果。应用前可逐项审核；应用后仍可撤销。</p></div><button class="secondary" data-action="open-workbench">进入工作台</button></section></section>`;
   }
 
+  function resourceLibraryView() {
+    const resources = Array.isArray(store.data.resource_items) ? store.data.resource_items : [];
+    if (!resources.length) return "";
+    const rows = resources.map((resource) => {
+      const evidence = (store.data.source_evidence || []).filter((entry) =>
+        (resource.source_ids || []).includes(entry.id)
+      );
+      const usage = (store.data.resource_usages || []).filter((entry) => entry.resource_id === resource.id);
+      const sourceRows = evidence.map((source) =>
+        "<li><b>" + esc(source.title || source.provider_id) + "</b><small>" +
+        esc(source.provider_id) + " · " + esc(source.query || "查询未记录") + " · " +
+        esc(source.fetched_at || "采集时间未知") + " · " + esc(source.fact_check || "unchecked") +
+        "</small></li>"
+      ).join("");
+      return '<article class="resource-library-card"><div><span class="eyebrow">' +
+        esc(resource.medium) + " · " + usage.length + " 处教学用途</span><h3>" +
+        esc(resource.title) + '</h3><p>' + esc(resource.factual_summary || "没有摘要") +
+        '</p><small>Resource ID · <code>' + esc(resource.id) + "</code></small></div>" +
+        (sourceRows ? "<details><summary>来源证据（" + evidence.length + "）</summary><ul>" + sourceRows + "</ul></details>" : "") +
+        "</article>";
+    }).join("");
+    return '<section class="page-section card resource-library" aria-labelledby="resource-library-heading">' +
+      '<div class="publish-section-heading"><div><h2 id="resource-library-heading">已接受的资源</h2>' +
+      '<p class="muted">媒体库与收件箱使用同一资源 ID；接受后保留来源证据和课程用途。</p></div>' +
+      '<span class="status-pill">' + resources.length + "</span></div>" + rows + "</section>";
+  }
+
+  function resourceProvidersView() {
+    const providers = [
+      { id: "brave_search", title: "Brave Web Search", capability: "网页案例搜索" },
+      { id: "youtube_data_api", title: "YouTube Data API", capability: "视频搜索与时长元数据" },
+    ];
+    const status = new Map((store.ui.resourceProviders || []).map((provider) => [provider.id, provider]));
+    const rows = providers.map((provider) => {
+      const configured = status.get(provider.id);
+      return '<article class="settings-card resource-provider-card"><div><span class="eyebrow">' +
+        esc(provider.capability) + '</span><h3>' + provider.title + "</h3><p class=\"muted\">" +
+        (configured ? configured.credential_present ? "专用密钥已保存在系统钥匙串。" : "auth_required · 尚未配置专用密钥。"
+          : store.ui.resourceProvidersLoading ? "正在读取配置状态…" : "尚未读取配置状态。") +
+        '</p></div><label>资源服务专用密钥<input type="password" autocomplete="new-password" data-resource-secret="' +
+        provider.id + '" placeholder="输入密钥；不会显示或记入 AI 连接" /></label><div class="settings-card-actions">' +
+        '<button class="primary" data-action="resource-provider-save" data-provider="' + provider.id + '" ' +
+        (store.ui.resourceSecretSaving === provider.id ? "disabled" : "") + ">保存密钥</button>" +
+        '<button class="secondary" data-action="resource-provider-delete" data-provider="' + provider.id + '" ' +
+        (!configured || !configured.credential_present || store.ui.resourceSecretSaving === provider.id ? "disabled" : "") +
+        ">删除密钥</button></div></article>";
+    }).join("");
+    return '<section class="settings-section resource-provider-settings" id="settings-resource-providers">' +
+      '<div class="settings-section-head"><span class="settings-index">08</span><div><h2>资源搜索服务</h2>' +
+      '<p class="muted">Brave 与 YouTube 使用独立密钥槽；不会读取或发送 AI 服务商密钥。</p></div>' +
+      '<button class="secondary" data-action="resource-provider-refresh" ' +
+      (store.ui.resourceProvidersLoading ? "disabled" : "") + ">刷新状态</button></div>" +
+      (store.ui.resourceProvidersError ? '<p class="error-text" role="alert">' + esc(store.ui.resourceProvidersError) + "</p>" : "") +
+      '<div class="settings-cards">' + rows + '</div><p class="settings-security-note">密钥只在提交时发送到对应资源 provider 的系统钥匙串接口，界面不回显，也不保存到课程或 AI 设置。</p></section>';
+  }
+
+  function presentationWorkflowView() {
+    const pptAssets = (store.data.assets || []).filter((asset) =>
+      !asset.archived && /\.pptx$/i.test(String(asset.filename || asset.storage_path || ""))
+    );
+    const draft = store.ui.presentationStyleDraft;
+    const report = draft && draft.report || {};
+    const profiles = Array.isArray(store.data.style_profiles) ? store.data.style_profiles : [];
+    const documents = Array.isArray(store.data.presentation_documents) ? store.data.presentation_documents : [];
+    const styleRows = profiles.map((profile) => {
+      const sourceAsset = (store.data.assets || []).find((asset) => asset.id === profile.source_asset_id);
+      const facts = (profile.extraction_facts || []).map((line) => "<li>" + esc(line) + "</li>").join("");
+      const inferences = (profile.visual_inferences || []).map((line) => "<li>" + esc(line) + "</li>").join("");
+      const limits = (profile.limitations || []).map((line) => "<li>" + esc(line) + "</li>").join("");
+      return '<article class="presentation-style-card"><div><b>' + esc(sourceAsset && (sourceAsset.title || sourceAsset.filename) || "版式档案") +
+        " · v" + profile.revision + '</b><small>代表变体：' + esc(profile.variant_id) + " · SHA-256 " + esc(profile.source_sha256) +
+        '</small></div><details><summary>结构事实（' + (profile.extraction_facts || []).length + "）</summary><ul>" + facts +
+        "</ul></details>" + (inferences ? '<details><summary>视觉推断（需人工复核）</summary><ul>' + inferences + "</ul></details>" : "") +
+        (limits ? '<details><summary>限制</summary><ul>' + limits + "</ul></details>" : "") +
+        '<p class="muted small"><code>workbench-style</code> fenced JSON 是可执行机器规则；其余说明与视觉推断需要人工复核。</p>' +
+        '<label>可编辑 style.md<textarea rows="8" data-presentation-profile="' + esc(profile.id) + '">' +
+        esc(profile.markdown || "") + '</textarea></label><button class="secondary" data-action="presentation-style-update" data-id="' +
+        esc(profile.id) + '" data-revision="' + profile.revision + '" ' +
+        (store.ui.presentationBusy ? "disabled" : "") + ">保存新修订</button></article>";
+    }).join("");
+    const previews = (report.representative_previews || []).map((preview) => {
+      const svgUrl = preview.format === "svg" && typeof preview.svg === "string"
+        ? "data:image/svg+xml;charset=utf-8," + encodeURIComponent(preview.svg) : "";
+      return '<figure><figcaption>代表页结构预览 · ' + esc(preview.variant_id) + " · " + esc(preview.slide_part) +
+        " · " + esc(preview.width_emu) + " × " + esc(preview.height_emu) + " EMU · SHA-256 " +
+        esc(preview.source_sha256) + " · 需人工视觉复核</figcaption>" +
+        (svgUrl ? '<img loading="lazy" src="' + esc(svgUrl) + '" alt="结构 SVG 代表页预览">' : "") +
+        (preview.limitations && preview.limitations.length
+          ? "<ul>" + preview.limitations.map((line) => "<li>" + esc(line) + "</li>").join("") + "</ul>" : "") +
+        "</figure>";
+    }).join("");
+    const reportFacts = (report.extraction_facts || []).map((line) => "<li>" + esc(line) + "</li>").join("");
+    const reportInferences = (report.visual_inferences || []).map((line) => "<li>" + esc(line) + "</li>").join("");
+    const reportLimits = (report.limitations || []).map((line) => "<li>" + esc(line) + "</li>").join("");
+    const selectedProfile = profiles.find((profile) => profile.id === store.ui.presentationStyleProfileId) || profiles[0];
+    const selectedDocument = documents.find((document) => document.id === store.ui.presentationDocumentId) || documents[0];
+    const targetAsset = (store.data.assets || []).find((asset) => asset.id === selectedDocument?.current_asset_id);
+    const targetReport = store.ui.presentationTargetReport;
+    const targetReportMatches = Boolean(
+      targetReport && selectedDocument && store.ui.presentationTargetReportAssetId === selectedDocument.current_asset_id &&
+        String(targetReport.source_sha256 || "").toLowerCase() === String(targetAsset?.checksum || "").toLowerCase()
+    );
+    const orderedSlides = targetReportMatches && Array.isArray(targetReport.ordered_slides)
+      ? targetReport.ordered_slides : [];
+    const insertAfterId = orderedSlides.some((slide) => slide.slide_id === store.ui.presentationInsertAfterSlideId)
+      ? store.ui.presentationInsertAfterSlideId : "";
+    const insertChoices = '<option value=""' + (!insertAfterId ? " selected" : "") + '>追加到末尾（第 ' +
+      (orderedSlides.length + 1) + ' 页）</option>' + orderedSlides.map((slide) =>
+        '<option value="' + esc(slide.slide_id) + '"' +
+        (slide.slide_id === insertAfterId ? " selected" : "") + '>第 ' + esc(slide.order) + ' 页之后</option>'
+      ).join("");
+    const aiConnection = store.aiDescriptor();
+    const aiModel = store.aiModel();
+    const aiPrepared = store.ui.presentationAiPrepared?.result;
+    const aiBusy = store.ui.presentationBusy === "prepare-ai" || store.ui.presentationBusy === "ai-generate";
+    const presentationMode = store.ui.presentationMode === "ai" ? "ai" : "manual";
+    const plan = store.ui.presentationSlidePlan;
+    const preview = store.ui.presentationPreview;
+    const slidePreviewMatchesPlan = Boolean(
+      preview && plan && preview.slide_plan_id === plan.id && preview.revision === plan.revision
+    );
+    const exported = store.ui.presentationExport;
+    return '<section class="page-section card presentation-workflow" aria-labelledby="presentation-workflow-heading">' +
+      '<div class="publish-section-heading"><div><span class="eyebrow">PowerPoint 工作流</span>' +
+      '<h2 id="presentation-workflow-heading">提取可编辑版式，并补充单页</h2>' +
+      '<p class="muted">保留原始 PPTX；输出为新文件，并记录源文件和工作副本的关系。</p></div></div>' +
+      '<div class="presentation-extract-controls"><label>源 PowerPoint<select class="select" data-presentation-source>' +
+      (pptAssets.length ? pptAssets.map((asset) => '<option value="' + esc(asset.id) + '">' +
+        esc(asset.title || asset.filename) + "</option>").join("") : '<option value="">先将 .pptx 添加到媒体库</option>') +
+      '</select></label><button class="primary" data-action="presentation-style-extract" ' +
+      (!pptAssets.length || store.ui.presentationBusy ? "disabled" : "") + ">" +
+      (store.ui.presentationBusy === "extract" ? "正在提取…" : "提取版式结构") + "</button></div>" +
+      (store.ui.presentationError ? '<p class="error-text" role="alert">' + esc(store.ui.presentationError) + "</p>" : "") +
+      (draft ? '<section class="presentation-extraction-report"><h3>结构提取报告 · ' + report.slide_count +
+        " 页</h3><p>源 SHA-256 · <code>" + esc(report.source_sha256 || "") + "</code></p>" +
+        (reportFacts ? "<h4>结构事实</h4><ul>" + reportFacts + "</ul>" : "") +
+        (reportInferences ? '<h4>视觉推断 · 需要人工复核</h4><ul>' + reportInferences + "</ul>" : "") +
+        (reportLimits ? "<h4>提取限制</h4><ul>" + reportLimits + "</ul>" : "") +
+        (previews ? '<div class="presentation-representatives">' + previews + "</div>" : "") +
+        '<p class="muted small"><code>workbench-style</code> fenced JSON 是可执行机器规则；其他说明是编辑参考，视觉推断需人工复核。</p>' +
+        '<label>编辑版式说明 <textarea rows="12" data-presentation-style-draft>' + esc(draft.markdown_draft || "") +
+        '</textarea></label><button class="primary" data-action="presentation-style-save" ' +
+        (store.ui.presentationBusy ? "disabled" : "") + ">保存版式并创建工作副本</button></section>" : "") +
+      (styleRows ? '<section class="presentation-saved-styles"><h3>已保存版式</h3>' + styleRows + "</section>" : "") +
+      (profiles.length && documents.length && store.currentItem()
+        ? '<section class="presentation-slide-form"><h3>生成补充页</h3><div class="presentation-form-grid">' +
+          '<label>版式档案<select class="select" data-presentation-style-select>' +
+          profiles.map((profile) => '<option value="' + esc(profile.id) + '"' +
+            (profile.id === selectedProfile?.id ? " selected" : "") + '>' +
+            esc((store.data.assets || []).find((asset) => asset.id === profile.source_asset_id)?.title || "版式") +
+            " · " + esc(profile.variant_id) + " · v" + profile.revision + "</option>").join("") + "</select></label>" +
+          '<label>目标工作副本<select class="select" data-presentation-document-select>' +
+          documents.map((document) => '<option value="' + esc(document.id) + '"' +
+            (document.id === selectedDocument?.id ? " selected" : "") + '>' +
+            esc((store.data.assets || []).find((asset) => asset.id === document.current_asset_id)?.title || "PowerPoint 工作副本") +
+            " · 工作副本 r" + document.revision + "</option>").join("") + "</select></label>" +
+          '<label>生成方式<select class="select" data-presentation-mode><option value="manual"' +
+          (presentationMode === "manual" ? " selected" : "") + '>本地手动草稿（不调用 AI）</option><option value="ai"' +
+          (presentationMode === "ai" ? " selected" : "") + '>AI 生成（先预览上下文并授权）</option></select></label>' +
+          '<div class="presentation-insertion-control"><label>插入位置<select class="select" data-presentation-insert-after>' +
+          insertChoices + '</select></label><button class="secondary" data-action="presentation-target-inspect" ' +
+          (store.ui.presentationTargetInspectingAssetId || !selectedDocument ? "disabled" : "") + '>重新读取当前工作副本页序</button>' +
+          (targetReportMatches
+            ? '<p class="muted small">页序来自当前工作副本真实结构；可选择末尾或指定页之后。</p>'
+            : '<p class="muted small">尚未取得当前工作副本真实页序，只能追加到末尾。' +
+              esc(store.ui.presentationTargetInspectError || "正在读取页序，或需在桌面版检查 PPTX。") + "</p>") + "</div>" +
+          (presentationMode === "manual"
+            ? '<label>标题<input class="select" data-presentation-slide-title value="' + esc(store.ui.presentationSlideTitle) + '" placeholder="补充页标题"></label>' +
+              '<label>正文（每行一个要点）<textarea rows="6" data-presentation-slide-body placeholder="每行一个段落或要点">' +
+              esc(store.ui.presentationSlideBody) + '</textarea></label>' +
+              '<label>演讲者备注<textarea rows="3" data-presentation-slide-notes>' + esc(store.ui.presentationSlideNotes) + '</textarea></label>' +
+              '<button class="primary" data-action="presentation-slide-propose" ' +
+              (store.ui.presentationBusy ? "disabled" : "") + ">生成手动补充页方案</button>"
+            : '<label>补充页目标<textarea rows="3" data-presentation-slide-instruction placeholder="描述这页要解决的教学目标">' +
+              esc(store.ui.presentationSlideInstruction) + '</textarea></label>' +
+              '<p class="muted">AI 连接：' + esc(aiConnection?.label || aiConnection?.id || "未配置") + " · 模型：" +
+              esc(aiModel || "未选择") + "。请求使用现有 AI 连接发送，密钥不会放入页面。" +
+              '</p><div class="action-row"><button class="primary" data-action="presentation-slide-ai-prepare" ' +
+              (store.ui.presentationBusy ? "disabled" : "") + ">准备并预览 AI 上下文</button>" +
+              (aiBusy ? '<button class="secondary" data-action="presentation-slide-ai-cancel">取消</button>' : "") + "</div>" +
+              (aiPrepared ? '<section class="presentation-ai-review" data-presentation-ai-review aria-labelledby="presentation-ai-review-title">' +
+                '<h4 id="presentation-ai-review-title">一次性发送前检查</h4><p>课程 ' + esc(aiPrepared.lesson_id) + " · 版式 v" +
+                esc(aiPrepared.style_revision) + " · 工作副本 SHA-256 " + esc(aiPrepared.target_asset_sha256) +
+                " · 插入第 " + esc(aiPrepared.insertion_order) + " 页</p><h5>系统提示</h5><pre>" + esc(aiPrepared.context.system) +
+                '</pre><h5>发送内容和课程上下文</h5><pre>' + esc(aiPrepared.context.user) + '</pre>' +
+                '<label class="checkbox-row"><input type="checkbox" data-presentation-ai-consent' +
+                (store.ui.presentationAiConsent === true ? " checked" : "") +
+                '>我已查看以上内容，并授权本次发送给所选 AI 连接。</label><button class="primary" data-action="presentation-slide-ai-generate" ' +
+                (!store.ui.presentationAiConsent || store.ui.presentationBusy ? "disabled" : "") + '>授权并生成方案</button></section>' : "")) +
+          '</div></section>' : "") +
+      (plan ? '<section class="presentation-slide-plan"><h3>补充页方案 v' + plan.revision + '</h3><p>' +
+        esc(plan.spec && plan.spec.title || "") + " · 目标 SHA-256 " + esc(plan.target_asset_hash || "") +
+        '</p><ul>' + (plan.spec && plan.spec.body || []).map((entry) => "<li>" + esc(entry.text) + "</li>").join("") +
+        '</ul><button class="secondary" data-action="presentation-slide-preview" ' +
+        (store.ui.presentationBusy ? "disabled" : "") + ">生成并查看预览</button></section>" : "") +
+      (slidePreviewMatchesPlan ? '<section class="presentation-preview" role="status"><h3>补充页结构预览</h3><p>SVG · 方案 ' +
+        esc(preview.slide_plan_id) + " · 版本 " + preview.revision + "</p>" +
+        (preview.format === "svg" && typeof preview.svg === "string"
+          ? '<img loading="lazy" src="data:image/svg+xml;charset=utf-8,' + esc(encodeURIComponent(preview.svg)) + '" alt="补充页结构 SVG 预览，需人工在 PowerPoint 复核">'
+          : '<p class="muted">预览没有可显示的 SVG。</p>') +
+        (preview.limitations && preview.limitations.length ? "<ul>" + preview.limitations.map((line) => "<li>" + esc(line) + "</li>").join("") + "</ul>" : "") +
+        '<div class="action-row"><button class="primary" data-action="presentation-slide-export" data-output-mode="single" ' +
+        (store.ui.presentationBusy ? "disabled" : "") + '">确认导出为单页 PPTX</button><button class="secondary" data-action="presentation-slide-export" data-output-mode="append" ' +
+        (store.ui.presentationBusy ? "disabled" : "") + ">确认追加到工作副本</button></div></section>" : "") +
+      (exported ? '<section class="presentation-export-result" role="status"><h3>PowerPoint 输出已验证</h3><p>新文件 ' +
+        esc(exported.output_asset_id) + " · " + exported.page_count + " 页</p><p>源 " +
+        esc(exported.source_sha256) + " → 输出 " + esc(exported.output_sha256) + "</p>" +
+        (typeof exported.durability_warning === "string" && exported.durability_warning.trim()
+          ? '<p class="error-text" role="alert">导出文件的持久化确认不完整：' + esc(exported.durability_warning) + "</p>"
+          : "") + "<ul>" +
+        (exported.validation && exported.validation.checks || []).map((check) => "<li>" + esc(check) + "</li>").join("") +
+        "</ul></section>" : "") + "</section>";
+  }
+
   function settingsView() {
     const project = store.data.project;
     const providers = Array.isArray(store.ui.aiProviders) ? store.ui.aiProviders : [];
@@ -2524,7 +2854,10 @@ export function createViews(store) {
     const modelList = modelRows.length
       ? `<ul class="settings-model-list">${modelRows.slice(0, 8).map((model) => `<li><span>${esc(model.id)}</span><small>${esc(model.provider)} · ${model.connected ? "已连接" : "未连接"}</small></li>`).join("")}</ul>`
       : `<p class="muted">尚未读取模型列表。连接服务商后可以在 AI 设置中发现并选择模型。</p>`;
-    return `<section class="page settings-page"><div class="page-head"><div><span class="eyebrow">项目偏好与账户</span><h1>项目设置</h1><p class="muted">在一个页面查看常用配置；密钥仍由现有连接管理器安全保存。</p></div><button class="secondary" data-action="select-project-properties">项目属性</button></div><nav class="settings-nav" aria-label="设置分类"><a href="#settings-general">常规</a><a href="#settings-ai">AI 连接</a><a href="#settings-models">模型</a><a href="#settings-accounts">账户</a><a href="#settings-project">项目</a></nav><section class="settings-section" id="settings-general"><div class="settings-section-head"><span class="settings-index">01</span><div><h2>常规</h2><p class="muted">保存行为与当前工作环境</p></div></div><div class="settings-cards"><article class="settings-card"><span class="eyebrow">保存方式</span><b>本地优先 · 自动保存</b><p class="muted">课程数据保存在当前项目中。顶部保存状态会显示写入结果。</p></article><article class="settings-card"><span class="eyebrow">当前界面</span><b>${store.bridge.isNative() ? "桌面应用" : "浏览器服务壳"}</b><p class="muted">应用布局会适配窗口宽度和系统缩放。</p></article></div></section><section class="settings-section" id="settings-ai"><div class="settings-section-head"><span class="settings-index">02</span><div><h2>AI 连接</h2><p class="muted">管理服务商、连接状态和凭据</p></div></div><article class="settings-card settings-ai-card"><div><span class="eyebrow">当前选择</span><b>${esc(selected?.label || selected?.id || "尚未选择服务商")}</b><p class="muted">模型：${esc(selectedModel)} · ${selected && configured[selected.id] ? "凭据已保存在本机" : "连接尚未配置"}</p></div><div class="settings-card-actions"><button class="secondary" data-focus-key="settings-ai-connections" data-action="ai-toggle-settings" aria-haspopup="dialog">管理连接</button><button class="text-button" data-action="right-panel" data-panel="assistant">打开 AI 助手</button></div></article></section><section class="settings-section" id="settings-models"><div class="settings-section-head"><span class="settings-index">03</span><div><h2>模型</h2><p class="muted">当前连接提供的可用模型</p></div><button class="secondary" data-focus-key="settings-ai-models" data-action="ai-toggle-settings" aria-haspopup="dialog">发现或选择模型</button></div><article class="settings-card">${modelList}</article></section><section class="settings-section" id="settings-accounts"><div class="settings-section-head"><span class="settings-index">04</span><div><h2>账户</h2><p class="muted">订阅授权与 API Key 彼此独立</p></div></div><article class="settings-card settings-account-card">${aiSubscriptionSettingsView(store, configured)}</article><p class="settings-security-note">Access Token 与 Refresh Token 只保存在本机系统钥匙串；API Key 仅通过已配置的连接管理器保存，页面不会显示密钥。</p></section><section class="settings-section" id="settings-project"><div class="settings-section-head"><span class="settings-index">05</span><div><h2>项目</h2><p class="muted">当前课程项目的本地身份</p></div></div><article class="settings-card settings-project-card"><dl><dt>项目名称</dt><dd>${esc(project.title)}</dd><dt>项目编号</dt><dd><code>${esc(project.id)}</code></dd><dt>数据格式</dt><dd>${esc(String(project.schema_version))}</dd><dt>课程语言</dt><dd>${esc(project.language || "未设置")}</dd></dl><button class="secondary" data-action="route" data-route="map">在课程地图编辑项目名称</button></article></section></section>`;
+    const projectTitle = store.ui.editingProjectTitle && store.ui.editingProjectTitleSurface === "settings"
+      ? `<input class="project-title-input" data-project-title data-focus-key="project-title" value="${esc(project.title)}" aria-label="课程标题" />`
+      : `<button class="text-button" data-action="edit-project-title" data-title-surface="settings">${esc(project.title)} · 编辑名称</button>`;
+    return `<section class="page settings-page"><div class="page-head"><div><span class="eyebrow">项目偏好与账户</span><h1>项目设置</h1><p class="muted">在一个页面查看常用配置；密钥仍由现有连接管理器安全保存。</p></div></div><nav class="settings-nav" aria-label="设置分类"><a href="#settings-general">常规</a><a href="#settings-history">保存与版本</a><a href="#settings-ai">AI 连接</a><a href="#settings-models">模型</a><a href="#settings-accounts">账户</a><a href="#settings-project">项目</a></nav><section class="settings-section" id="settings-general"><div class="settings-section-head"><span class="settings-index">01</span><div><h2>常规</h2><p class="muted">保存行为与当前工作环境</p></div></div><div class="settings-cards"><article class="settings-card"><span class="eyebrow">保存方式</span><b>本地优先 · 自动保存</b><p class="muted">课程数据保存在当前项目中。保存状态显示在顶部。</p></article><article class="settings-card"><span class="eyebrow">当前界面</span><b>${store.bridge.isNative() ? "桌面应用" : "浏览器服务壳"}</b><p class="muted">应用布局会适配窗口宽度和系统缩放。</p></article></div></section><section class="settings-section" id="settings-save"><div class="settings-section-head"><span class="settings-index">02</span><div><h2>保存</h2><p class="muted">普通保存写入当前项目；保存版本创建可恢复的历史点。</p></div></div><article class="settings-card settings-save-card"><div>${saveStateView()}</div><div class="settings-card-actions"><button class="primary" data-action="save-project">保存项目</button><button class="secondary" data-action="save-version">保存当前版本</button></div></article></section><section class="settings-section" id="settings-history"><div class="settings-section-head"><span class="settings-index">03</span><div><h2>版本历史</h2><p class="muted">查看已保存版本，并在需要时恢复。</p></div></div>${versionsView()}</section><section class="settings-section" id="settings-ai"><div class="settings-section-head"><span class="settings-index">04</span><div><h2>AI 连接</h2><p class="muted">管理服务商、连接状态和凭据</p></div></div><article class="settings-card settings-ai-card"><div><span class="eyebrow">当前选择</span><b>${esc(selected?.label || selected?.id || "尚未选择服务商")}</b><p class="muted">模型：${esc(selectedModel)} · ${selected && configured[selected.id] ? "凭据已保存在本机" : "连接尚未配置"}</p></div><div class="settings-card-actions"><button class="secondary" data-focus-key="settings-ai-connections" data-action="ai-toggle-settings" aria-haspopup="dialog">管理连接</button><button class="text-button" data-action="right-panel" data-panel="assistant">打开 AI 助手</button></div></article></section><section class="settings-section" id="settings-models"><div class="settings-section-head"><span class="settings-index">05</span><div><h2>模型</h2><p class="muted">当前连接提供的可用模型</p></div><button class="secondary" data-focus-key="settings-ai-models" data-action="ai-toggle-settings" aria-haspopup="dialog">发现或选择模型</button></div><article class="settings-card">${modelList}</article></section><section class="settings-section" id="settings-accounts"><div class="settings-section-head"><span class="settings-index">06</span><div><h2>账户</h2><p class="muted">订阅授权与 API Key 彼此独立</p></div></div><article class="settings-card settings-account-card">${aiSubscriptionSettingsView(store, configured)}</article><p class="settings-security-note">Access Token 与 Refresh Token 只保存在本机系统钥匙串；API Key 仅通过已配置的连接管理器保存，页面不会显示密钥。</p></section><section class="settings-section" id="settings-project"><div class="settings-section-head"><span class="settings-index">07</span><div><h2>项目</h2><p class="muted">当前课程项目的本地身份</p></div></div><article class="settings-card settings-project-card"><dl><dt>项目名称</dt><dd>${projectTitle}</dd><dt>项目编号</dt><dd><code>${esc(project.id)}</code></dd><dt>数据格式</dt><dd>${esc(String(project.schema_version))}</dd><dt>课程语言</dt><dd>${esc(project.language || "未设置")}</dd></dl></article></section></section>`;
   }
 
   function emptyState(title, description, action, label) {
@@ -2563,47 +2896,7 @@ export function createViews(store) {
 
   function rightPanelView() {
     const item = store.currentItem();
-    const view = item ? lessonView(store.data, item.id) : null;
-    const target = propertyTargetInfo();
-    const selectedBlock = view && store.ui.selectedBlockId
-      ? view.blocks.find((block) => block.id === store.ui.selectedBlockId)
-      : null;
-    const scope = store.ui.rightPanel === "properties"
-      ? selectedBlock
-        ? `区块 · ${selectedBlock.label}`
-        : target.kind === "stage"
-        ? `阶段 · ${target.stage.code} ${target.stage.title}`
-        : target.kind === "project"
-        ? `项目 · ${target.project.title}`
-        : `课时 · ${target.item.code} ${target.item.title}`
-      : item
-      ? `${item.code}｜${item.title}`
-      : "未选择课程";
-    return `<aside class="right-panel panel"><div class="right-tabs">${
-      RIGHT_PANELS.map(([key, label]) =>
-        `<button class="right-tab ${
-          store.ui.rightPanel === key ? "active" : ""
-        }" data-action="right-panel" data-panel="${key}">${label}${
-          key === "requirements" && view && view.progress.open_requirements
-            ? `<sup>${view.progress.open_requirements}</sup>`
-            : ""
-        }</button>`
-      ).join("")
-    }<button class="icon-button collapse-right" data-action="toggle-right" aria-label="${store.ui.rightCollapsed ? "展开右栏" : "收起右栏"}" title="${store.ui.rightCollapsed ? "展开右栏" : "收起右栏"}">${store.ui.rightCollapsed ? "☰" : "›"}</button></div><div class="right-content" data-panel-scope="${
-      esc(scope)
-    }"><div class="scope-banner">作用对象：<b>${esc(scope)}</b></div>${
-      store.ui.rightPanel === "media"
-        ? mediaPanel(view)
-        : store.ui.rightPanel === "requirements"
-        ? requirementsPanel(view)
-        : store.ui.rightPanel === "status"
-        ? statusPanel(view)
-        : store.ui.rightPanel === "assistant"
-        ? assistantPanel()
-        : store.ui.rightPanel === "properties"
-        ? propertiesPanel(view)
-        : versionsPanel()
-    }</div></aside>`;
+    return `<aside class="right-panel panel"><div class="right-tabs"><span class="right-tab active">AI 助手</span><button class="icon-button collapse-right" data-action="toggle-right" aria-label="${store.ui.rightCollapsed ? "展开右栏" : "收起右栏"}" title="${store.ui.rightCollapsed ? "展开右栏" : "收起右栏"}">${store.ui.rightCollapsed ? "☰" : "›"}</button></div><div class="right-content" data-panel-scope="${esc(item ? `${item.code}｜${item.title}` : "项目范围")}">${assistantPanel()}</div></aside>`;
   }
 
   function mediaPanel(view) {
@@ -3010,12 +3303,12 @@ export function createViews(store) {
     const pending = attempt?.status === "pending";
     const statusLine = attempt?.message
       ? `<p class="ai-subscription-status ${esc(attempt.status || "")}" aria-live="polite">${esc(attempt.message)}</p>`
-      : `<p class="ai-hint">授权由你在系统浏览器中完成；Access/Refresh Token 只保存在本机系统钥匙串。</p>`;
+      : `<p class="ai-hint">授权由你在系统浏览器中完成；Access/Refresh Token 只保存在本机系统凭据存储。</p>`;
     return `<section class="ai-subscription-settings">
       <div class="ai-block-head"><div><b>ChatGPT 订阅登录</b><small>OpenAI SIWC · 独立于 API Key</small></div></div>
       ${native
         ? `<p class="ai-hint">首次登录会为 Workbench 动态注册独立客户端身份。Workbench 不读取其他应用的会话，也不会用环境 API Key 代替订阅授权。</p><div class="ai-run-row"><button class="secondary" data-action="ai-subscription-start" ${pending ? "disabled" : ""}>Continue with ChatGPT</button>${pending ? `<button class="text-button" data-action="ai-subscription-cancel">取消登录</button>` : ""}</div>${statusLine}`
-        : `<p class="ai-hint">当前浏览器服务壳不支持订阅登录；请在 macOS 桌面版使用系统浏览器回调与系统钥匙串。这里不会模拟成功状态。</p>`}
+        : `<p class="ai-hint">当前浏览器服务壳不支持订阅登录；请在${desktopShellLabel()}使用系统浏览器回调与系统凭据存储。这里不会模拟成功状态。</p>`}
       <div class="ai-subscription-list">${accounts.length
         ? accounts.map((provider) => {
           const id = String(provider.id || "");
@@ -3565,7 +3858,7 @@ export function createViews(store) {
         : `<option value="">${esc(model || "还没有可用模型，请先在设置中添加")}</option>`
     }</select></label>
       <div class="ai-provider-state"><span class="ai-key-state ${configured[providerId] ? "set" : "unset"}">${descriptor?.kind === "openai_chatgpt_subscription" ? (configured[providerId] ? "ChatGPT 订阅已授权" : "ChatGPT 订阅未登录") : (configured[providerId] ? "已保存 API Key" : "未保存 API Key")}</span><span class="ai-current-model">${esc(descriptor?.label || providerId)} · ${esc(model || "未设置模型")}</span></div>
-      <p class="side-note">连接与模型在右上角“设置”中管理。API Key 与订阅令牌保存在本机系统钥匙串，不写入课程文件。</p>
+      <p class="side-note">连接与模型在右上角“设置”中管理。API Key 与订阅令牌保存在本机系统凭据存储，不写入课程文件。</p>
     </div>
 
     <div class="ai-block">
@@ -3744,31 +4037,7 @@ export function createViews(store) {
   }
 
   function statusbarView(item) {
-    // The status bar renders before a lesson is selected (empty course, course
-    // map, launcher), so it must never assume a current item.
-    const view = item ? lessonView(store.data, item.id) : null;
-    if (!item || !view) {
-      return `<footer class="statusbar" data-chrome-statusbar><span class="status-code">未选择课程</span><span>课程地图可进入任意一课</span><span class="status-spacer"></span><span>本地优先 · 自动保存</span></footer>`;
-    }
-    const completion = view.progress;
-    const gaps = view.lesson.gaps;
-    const parts = [];
-    if (gaps.by_type.text) parts.push(`文字：缺 ${gaps.by_type.text} 段`);
-    if (gaps.by_type.image) parts.push(`图片：缺 ${gaps.by_type.image} 张`);
-    if (gaps.by_type.gif) parts.push(`GIF：缺 ${gaps.by_type.gif} 个`);
-    if (gaps.by_type.video) parts.push(`视频：缺 ${gaps.by_type.video} 个`);
-    if (completion.missing_media) {
-      parts.push(`素材缺失：${completion.missing_media}`);
-    }
-    return `<footer class="statusbar" data-chrome-statusbar><span class="status-code">${
-      esc(item.code)
-    }｜${esc(item.title)}</span><span>正文：${
-      esc(view.lesson.content_status || "待研究")
-    }</span><span>${parts.length ? esc(parts.join(" · ")) : "待补：已齐"}</span><span>排版：${
-      esc(view.lesson.layout ? (view.lesson.layout.mode === "flow" ? "Flow" : "Grid") : "未开始")
-    }</span><span>完成度：${
-      completion.complete ? "已完成" : `${completion.percentage}%`
-    }</span><span class="status-spacer"></span><span>本地优先 · 自动保存</span></footer>`;
+    return `<footer class="statusbar" data-chrome-statusbar><span class="status-code">${item ? `${esc(item.code)}｜${esc(item.title)}` : "项目已打开"}</span><span class="status-spacer"></span><span>本地保存 · 自动保存</span></footer>`;
   }
 
   /* ------------------------------------------------------------ overlays */
@@ -3966,6 +4235,13 @@ export function createViews(store) {
       // unchanged; nothing here renders a credential value.
       const configured = aiConfiguredMap();
       return `<div class="overlay ai-settings-overlay" data-action="ai-settings-backdrop"><section class="modal ai-settings-modal" role="dialog" aria-modal="true" aria-labelledby="ai-settings-title" data-stop-click="true"><header class="modal-head"><div><span class="eyebrow">应用设置 · 模型</span><h2 id="ai-settings-title">模型</h2></div><button class="icon-button" data-action="ai-close-settings" aria-label="关闭设置" title="关闭设置">×</button></header><p class="muted">填入各提供商的 API 密钥即可使用其模型。</p>${store.ui.aiSaveStatus ? `<p class="ai-save-status" role="status" aria-live="polite">${esc(store.ui.aiSaveStatus)}</p>` : ""}${aiProviderRowsView(configured)}${aiAddCardView(configured)}<div class="ai-settings-foot"><span>AI 配置仅保存连接元数据；密钥和订阅令牌写入${esc(store.aiStorageLabel ? store.aiStorageLabel() : "本机系统钥匙串")}，课程文件不含凭据。</span><button class="secondary" data-action="ai-close-settings">完成</button></div></section>${aiModelPickerView()}</div>`;
+    }
+    if (store.ui.blockPropertiesOpen && store.ui.route === "editor") {
+      const item = store.currentItem();
+      const view = item ? store.lesson(item) : null;
+      if (view && store.ui.selectedBlockId) {
+        return `<div class="overlay" data-action="close-overlay"><section class="modal block-properties-modal" role="dialog" aria-modal="true" aria-labelledby="block-properties-title" data-stop-click="true"><div class="modal-head"><div><span class="eyebrow">正文编辑</span><h2 id="block-properties-title">区块属性</h2></div><button class="icon-button" data-action="close-overlay" aria-label="关闭区块属性" title="关闭区块属性">×</button></div>${propertiesPanel(view)}</section></div>`;
+      }
     }
     return "";
   }

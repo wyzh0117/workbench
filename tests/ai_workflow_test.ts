@@ -34,6 +34,7 @@ import {
   rejectAiChangeDraft,
   validateAiChangeDraft,
 } from "../app/ai.js";
+import { appCredentialStoreName } from "../app/host.js";
 import {
   addAsset,
   addAssetUsage,
@@ -41,6 +42,7 @@ import {
   createEmptyProjectData,
   insertPlaceholder,
 } from "../src/domain/index.ts";
+import { CURRENT_SCHEMA_VERSION } from "../src/domain/types.ts";
 import { serializeProject, validateProjectData } from "../src/domain/store.ts";
 import type { Block, ChangeDraft, ProjectData } from "../src/domain/types.ts";
 
@@ -224,7 +226,7 @@ function aiFixture() {
     data.documents.push({
       id: documentId,
       content_item_id: id,
-      schema_version: data.schema_version,
+      schema_version: CURRENT_SCHEMA_VERSION,
       created_at: stamp,
       updated_at: stamp,
     });
@@ -420,7 +422,7 @@ Deno.test("context limits are reported honestly instead of dropping silently", (
     data.documents.push({
       id: documentId,
       content_item_id: id,
-      schema_version: data.schema_version,
+      schema_version: CURRENT_SCHEMA_VERSION,
       created_at: "2026-01-01T00:00:00.000Z",
       updated_at: "2026-01-01T00:00:00.000Z",
     });
@@ -735,8 +737,8 @@ Deno.test("credential requirement is a property of the connection, not a templat
 Deno.test("missing credential guidance names the system-secure storage boundary", () => {
   const failure = new AiFailure("missing_credential", "这个 Provider 还没有配置 API Key。");
   assert(
-    failure.recommended_action.includes("macOS 系统钥匙串"),
-    "缺少密钥的下一步必须指向系统钥匙串",
+    failure.recommended_action.includes(appCredentialStoreName()),
+    "缺少密钥的下一步必须指向系统凭据存储",
   );
   assert(
     !failure.recommended_action.includes(".workspace"),

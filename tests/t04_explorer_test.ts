@@ -248,29 +248,27 @@ async function bootStore() {
   };
 }
 
-Deno.test("left nav adds 文件 without replacing 课程地图 / 工作台 / 媒体库", async () => {
+Deno.test("canonical top navigation keeps 工作台 and adds 文件 beside project routes", async () => {
   const views = await Deno.readTextFile(new URL("../app/views.js", import.meta.url));
   const main = await Deno.readTextFile(new URL("../app/main.js", import.meta.url));
   const left = views.slice(
     views.indexOf("function leftPanelView"),
     views.indexOf("function centerView"),
   );
-  assert(left.includes("课程地图"), "must keep 课程地图");
-  assert(left.includes("工作台"), "must keep 工作台");
-  assert(left.includes("媒体库"), "must keep 媒体库");
-  assert(
-    left.includes("文件") || left.includes("资源浏览器"),
-    "must add 文件 or 资源浏览器",
+  const topbar = views.slice(
+    views.indexOf("function topbarView"),
+    views.indexOf("function leftPanelView"),
   );
+  assert(left.includes("资料库"), "the media library remains in the left panel");
+  assert(topbar.includes('["overview", "概览"]'), "top navigation keeps project overview");
+  assert(topbar.includes('["editor", "工作台"]'), "top navigation keeps the workbench");
+  assert(topbar.includes('["explorer", "文件"]'), "top navigation adds the file explorer");
+  assert(topbar.includes('["inbox", "收件箱"]'), "top navigation keeps the inbox");
   assert(
-    left.includes('data-route="explorer"') || left.includes('"explorer"'),
-    "explorer must be a distinct left-nav route",
+    topbar.includes('data-route="${navRoute}"') && topbar.includes('"explorer"'),
+    "the explorer must be a distinct canonical top-nav route",
   );
   assert(main.includes('"explorer"'), "ROUTES must include explorer");
-  assert(
-    !/课程地图[\s\S]{0,40}资源浏览器/.test(left.replace("文件", "REMOVED")),
-    "explorer must not replace existing primary nav labels",
-  );
 });
 
 Deno.test("buildExplorerTree nests ScanResult folders and files", () => {

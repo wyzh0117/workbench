@@ -1,9 +1,0 @@
-{
-  "source_commit": "7555f02fdbdad1c3aa558b2b85e3cfe6fb8fa3be",
-  "candidate_app": "/tmp/io-ui-closure-native-qa-final3/AI Course Workbench QA Preview Final3.app",
-  "observed_at_utc": "2026-10-06T04:25:11.710Z",
-  "ax_after_close": "Error: Computer Use server error -10005: App quit",
-  "scope": "UI cold-close and absent lease verified; source7555f02; unrelated installed app PID9832 retained",
-  "confirmed_ui": "Cold launcher AX Close caused App quit; immediate inventory had no QA app",
-  "physical_confirmation": "Deno owner confirms no small project lease/guard holder; subsequent Final3 PID29533 was explicit relaunch without project acquired"
-}

@@ -89,8 +89,10 @@ interface NativeStore {
       lease_generation: string | number;
     } | null;
     isNative: () => boolean;
+    nativeCommand: (command: string) => string;
     nativeInput: (command: string, args?: Record<string, unknown>) => unknown;
     command: (name: string, input?: Record<string, unknown>) => Promise<unknown>;
+    query: (name: string, input?: Record<string, unknown>) => Promise<unknown>;
     previewFolderVideoSource: (root: string, relativePath: string) => Promise<unknown>;
     previewAssetVideoSource: (assetId: string) => Promise<unknown>;
   };
@@ -1278,7 +1280,7 @@ serialNativeBootTest("native close waits for a first project switch before relea
   }
 });
 
-serialNativeBootTest("native session keeps the reader position for restart", async () => {
+serialNativeBootTest("native restart keeps the lesson and normalizes removed reader routes", async () => {
   const project = seededProject();
   const first = await bootNative({
     project,
@@ -1325,9 +1327,9 @@ serialNativeBootTest("native session keeps the reader position for restart", asy
         "重启后必须回到同一项目",
       );
       assertEquals(relaunch.store.ui.activeId, second.id, "重启后必须回到同一课");
-      assertEquals(relaunch.store.ui.mode, "structure", "重启后必须回到同一模式");
-      assertEquals(relaunch.store.ui.rightPanel, "media", "重启后必须回到同一右栏");
-      assertEquals(relaunch.store.ui.route, "media", "重启后必须回到同一视图");
+      assertEquals(relaunch.store.ui.mode, "writing", "已移除的结构模式必须恢复到正文");
+      assertEquals(relaunch.store.ui.rightPanel, "assistant", "旧右栏状态必须迁移到规范助手栏");
+      assertEquals(relaunch.store.ui.route, "editor", "旧媒体/结构入口必须恢复到规范正文视图");
       // Booting must not persist empty defaults over the restored position:
       // quitting an untouched window has to keep the reader where it was.
       assertEquals(
@@ -1335,10 +1337,10 @@ serialNativeBootTest("native session keeps the reader position for restart", asy
         second.id,
         "启动不得用空位置覆盖会话里的当前课",
       );
-      assertEquals(relaunch.state.session?.route, "media", "启动不得覆盖会话里的视图");
-      assertEquals(relaunch.state.session?.mode, "structure", "启动不得覆盖会话里的模式");
+      assertEquals(relaunch.state.session?.route, "editor", "启动应持久化迁移后的正文视图");
+      assertEquals(relaunch.state.session?.mode, "writing", "启动应持久化规范正文模式");
       // The launcher must name the lesson it will resume, and resume the
-      // restored view rather than resetting it to the editor.
+      // canonicalized view for a session written by an older UI.
       const launcher = relaunch.root.innerHTML;
       const card = launcher.slice(
         launcher.indexOf('class="recent-card"'),
@@ -1354,9 +1356,9 @@ serialNativeBootTest("native session keeps the reader position for restart", asy
         "启动页不得再直接打开某一课而丢掉已恢复的视图",
       );
       assert(card.includes(second.title), "启动页卡片必须显示将恢复的那一课");
-      // "继续工作" must not reset the restored view back to the editor.
+      // "继续工作" must not reset the restored canonical view.
       relaunch.store.enterProject();
-      assertEquals(relaunch.store.ui.route, "media", "进入项目必须保留会话恢复的视图");
+      assertEquals(relaunch.store.ui.route, "editor", "进入项目必须保留迁移后的正文视图");
       assertEquals(relaunch.store.ui.activeId, second.id, "进入项目必须保留会话恢复的课");
     } finally {
       relaunch.restore();
@@ -1614,6 +1616,40 @@ serialNativeBootTest("native import, media, and AI bridge calls match Tauri comm
       { input: { asset_id: "video-1", project_dir: "/tmp/native-bridge-project" } },
       "asset.preview_source takes its project-scoped payload under input",
     );
+
+    const nativeRoutes = [
+      { name: "resource.providers.list", native: "resource_providers_list", input: {}, scope: "global", kind: "query" },
+      { name: "resource.providers.secret.set", native: "resource_secret_set", input: { provider_id: "brave_search", value: "fixture-secret" }, scope: "global", kind: "command" },
+      { name: "resource.providers.secret.delete", native: "resource_secret_delete", input: { provider_id: "brave_search" }, scope: "global", kind: "command" },
+      { name: "resource.discovery.prepare", native: "resource_discovery_prepare", input: { content_item_ids: ["lesson-1"], search_types: ["web"], request_budget: 1 }, scope: "project", kind: "command" },
+      { name: "resource.discovery.plan", native: "resource_discovery_plan", input: { content_item_ids: ["lesson-1"] }, scope: "project", kind: "query" },
+      { name: "resource.discovery.start", native: "resource_discovery_start", input: { plan_id: "plan-1", input_hash: "hash-1", authorized: true }, scope: "project", kind: "command" },
+      { name: "resource.discovery.get", native: "resource_discovery_get", input: { task_id: "task-1" }, scope: "project", kind: "query" },
+      { name: "resource.discovery.cancel", native: "resource_discovery_cancel", input: { task_id: "task-1" }, scope: "project", kind: "command" },
+      { name: "resource.discovery.retry", native: "resource_discovery_retry", input: { task_id: "task-1" }, scope: "project", kind: "command" },
+      { name: "resource.candidate.accept", native: "resource_candidate_accept", input: { task_id: "task-1", candidate_id: "candidate-1", action: "keep" }, scope: "project", kind: "command" },
+      { name: "presentation.style.extract", native: "presentation_style_extract", input: { source_asset_id: "asset-1" }, scope: "project", kind: "command" },
+      { name: "presentation.style.save", native: "presentation_style_save", input: { style_draft_id: "draft-1", markdown: "# Style" }, scope: "project", kind: "command" },
+      { name: "presentation.slide.propose", native: "presentation_slide_propose", input: { document_id: "document-1", lesson_id: "lesson-1" }, scope: "project", kind: "command" },
+      { name: "presentation.slide.prepare_ai_context", native: "presentation_slide_prepare_ai_context", input: { document_id: "document-1", lesson_id: "lesson-1", generation_id: "generation-1" }, scope: "project", kind: "command" },
+      { name: "presentation.slide.preview", native: "presentation_slide_preview", input: { slide_plan_id: "plan-1", revision: 1 }, scope: "project", kind: "command" },
+      { name: "presentation.slide.export", native: "presentation_slide_export", input: { slide_plan_id: "plan-1", revision: 1, output_mode: "single", approved: true }, scope: "project", kind: "command" },
+    ] as const;
+    for (const route of nativeRoutes) {
+      assertEquals(store.bridge.nativeCommand(route.name), route.native, `${route.name} maps to its registered Rust handler`);
+      const expectedInput = route.scope === "project"
+        ? { input: { ...route.input, project_dir: "/tmp/native-bridge-project" } }
+        : { input: route.input };
+      assertEquals(store.bridge.nativeInput(route.name, route.input), expectedInput, `${route.name} keeps snake_case payload inside the Rust input wrapper`);
+      if (route.kind === "query") {
+        await store.bridge.query(route.name, route.input);
+      } else {
+        await store.bridge.command(route.name, route.input);
+      }
+      const call = state.calls.at(-1);
+      assertEquals(call?.command, route.native, `${route.name} uses the native command path`);
+      assertEquals(call?.args, expectedInput, `${route.name} invokes Rust with the expected scope`);
+    }
 
     const imageHost = globalThis as typeof globalThis & { Image?: unknown };
     const previousImage = imageHost.Image;

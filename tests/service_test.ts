@@ -1,3 +1,4 @@
+import { createEscapeLink } from "./helpers/fs_links.ts";
 import {
   assertProjectPath,
   AuditLog,
@@ -392,7 +393,11 @@ Deno.test("project file paths reject traversal before filesystem access", async 
 Deno.test("project file paths reject symlink escapes", async () => {
   const directory = await Deno.makeTempDir({ prefix: "acw-symlink-" });
   const outside = await Deno.makeTempDir({ prefix: "acw-outside-" });
-  await Deno.symlink(outside, `${directory}/assets`);
+  const linked = await createEscapeLink(outside, `${directory}/assets`, "dir");
+  if (!linked) {
+    console.warn("[skip] Windows lacks symlink privilege; symlinked project path escape not exercised");
+    return;
+  }
   const store = new ProjectDirectoryStore(directory, {
     app_instance_id: "symlink-check",
   });
@@ -413,7 +418,11 @@ Deno.test("project root symlinks are rejected", async () => {
   const link = `${await Deno.makeTempDir({
     prefix: "acw-root-link-",
   })}/project`;
-  await Deno.symlink(outside, link);
+  const linkedRoot = await createEscapeLink(outside, link, "dir");
+  if (!linkedRoot) {
+    console.warn("[skip] Windows lacks symlink privilege; symlinked project root rejection not exercised");
+    return;
+  }
   const store = new ProjectDirectoryStore(link, {
     app_instance_id: "symlink-root-check",
   });
@@ -430,7 +439,11 @@ Deno.test("project root symlinks are rejected", async () => {
 Deno.test("permission path checks reject symlink escapes", async () => {
   const root = await Deno.makeTempDir({ prefix: "acw-policy-root-" });
   const outside = await Deno.makeTempDir({ prefix: "acw-policy-outside-" });
-  await Deno.symlink(outside, `${root}/link`);
+  const linked = await createEscapeLink(outside, `${root}/link`, "dir");
+  if (!linked) {
+    console.warn("[skip] Windows lacks symlink privilege; policy symlink escape not exercised");
+    return;
+  }
   let denied = false;
   try {
     assertProjectPath(
@@ -451,7 +464,11 @@ Deno.test("permission path checks reject a symlink project root", async () => {
   const link = `${await Deno.makeTempDir({
     prefix: "acw-policy-root-link-",
   })}/project`;
-  await Deno.symlink(outside, link);
+  const linkedRoot = await createEscapeLink(outside, link, "dir");
+  if (!linkedRoot) {
+    console.warn("[skip] Windows lacks symlink privilege; policy symlink root rejection not exercised");
+    return;
+  }
   let denied = false;
   try {
     assertProjectPath(

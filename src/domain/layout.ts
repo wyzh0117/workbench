@@ -1,4 +1,5 @@
 import {
+  CURRENT_SCHEMA_VERSION,
   type ExportPreset,
   type FitMode,
   type JsonObject,
@@ -47,7 +48,7 @@ export function createLayoutTemplate(
   const template: LayoutTemplate = {
     id: id(),
     project_id: input.built_in ? null : input.project_id ?? data.project.id,
-    schema_version: data.schema_version,
+    schema_version: CURRENT_SCHEMA_VERSION,
     name: input.name,
     mode: input.mode,
     width: input.width ?? null,
@@ -97,7 +98,7 @@ export function createLayoutInstance(
     id: id(),
     content_item_id: contentItemId,
     template_id: templateId,
-    schema_version: data.schema_version,
+    schema_version: CURRENT_SCHEMA_VERSION,
     name: input.name,
     mode: input.mode,
     grid_definition: input.grid_definition ?? { columns: [1], rows: [1] },

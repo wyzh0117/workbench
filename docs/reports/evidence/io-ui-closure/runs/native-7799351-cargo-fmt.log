@@ -1,3 +1,0 @@
-SOURCE_COMMIT=77993519e31cb3c780a77af319ce3033acecccf2
-COMMAND=cargo fmt --manifest-path src-tauri/Cargo.toml -- --check
-EXIT_CODE=0

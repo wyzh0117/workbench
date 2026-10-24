@@ -1,9 +1,0 @@
-created_at=2026-10-06T04:21:14.607Z
-uid=501
-source_pin=7555f02fdbdad1c3aa558b2b85e3cfe6fb8fa3be
-{"name":"restore","root":"/tmp/workbench-io-ui-native-final/history-restore","project_id":"dddddddd-dddd-4ddd-8ddd-dddddddddddd","canonical_bytes":69270,"canonical_sha256":"64b9b83fdbbea3eb2da223c2b368aef031ba644096719a09c9e10643898267be","canonical_revision":"2026-08-15T12:00:00.000Z","pending_candidate_title":"F-history recovery candidate restore final","pending_candidate_revision":"2026-10-06T04:21:14.477Z","candidate_domain_issues":0,"transaction_id":"155a152b-0f7e-4d43-a19b-78e1f3ba89ad","journal_bytes":63332,"journal_sha256":"610cd93b906bbb0556ac4f6f66fbabc71fe77ca9c8b1817e733d3c6c3219ed9c","pending_visible_on_read":true}
-{"name":"fault","root":"/tmp/workbench-io-ui-native-final/history-fault","project_id":"dddddddd-dddd-4ddd-8ddd-dddddddddddd","canonical_bytes":69270,"canonical_sha256":"64b9b83fdbbea3eb2da223c2b368aef031ba644096719a09c9e10643898267be","canonical_revision":"2026-08-15T12:00:00.000Z","pending_candidate_title":"F-history recovery candidate fault final","pending_candidate_revision":"2026-10-06T04:21:14.538Z","candidate_domain_issues":0,"transaction_id":"add3f113-f78e-437a-9a30-02dfa186e387","journal_bytes":63330,"journal_sha256":"9450c0a19537aa7005a0db89d140c141857ec3945f84c89bd46ace1f328575dc","pending_visible_on_read":true}
-fault_snapshot_dir=/tmp/workbench-io-ui-native-final/history-fault/.workspace/snapshots
-fault_snapshot_mode=40555
-fault_snapshot_write_probe=failed_as_expected
-manifest=/Users/youngi/.codex/worktrees/io-ui-closure/workbench/docs/reports/evidence/io-ui-closure/native-history-clones-manifest.json

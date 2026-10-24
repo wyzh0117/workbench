@@ -155,8 +155,9 @@ Deno.test("native shell exposes explicit project and high-level workflows", () =
   assert(
     lib.includes("AI_KEYCHAIN_SERVICE") &&
       lib.includes("MacKeychainStore") &&
+      lib.includes("WindowsCredentialStore") &&
       lib.includes("历史 API Key 未能安全迁移"),
-    "native AI credentials must use macOS Keychain with fail-closed migration",
+    "native AI credentials must use the platform credential store (macOS Keychain / Windows Credential Manager) with fail-closed migration",
   );
   assert(
     app.includes('"project.open": "project_open"') &&

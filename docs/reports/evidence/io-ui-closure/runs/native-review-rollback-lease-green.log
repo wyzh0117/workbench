@@ -1,5 +1,0 @@
-Check tests/recovery_ui_test.ts
-running 1 test from ./tests/recovery_ui_test.ts
-native project switching rolls back the target when the old lease cannot close ... ok (24ms)
-
-ok | 1 passed | 0 failed | 11 filtered out (32ms)

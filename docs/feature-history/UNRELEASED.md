@@ -4,25 +4,21 @@
 
 ---
 
-## 当前状态（2026-10-07）
+## 当前状态（2026-10-21）
 
 ```text
-Latest public release       = v0.2.7，已发布并冻结
-Release/tag/source          = [v0.2.7](https://github.com/wyzh0117/workbench/releases/tag/v0.2.7) / fb050b121c2014ac3226e90d3683b7c6c26391b0
-Rolling content             = 空；v0.2.7 已归档到 [feature history](./v0.2.7.md)
-Previous release            = v0.2.6，tag / DMG / sidecar 保持冻结
+Latest public release       = [v3.0.0](https://github.com/wyzh0117/workbench/releases/tag/v3.0.0)，已发布并冻结
+Release/tag/source          = v3.0.0 / f6bf4854ea0127d0d053e37ac1738cfcbd52ab31
+Rolling content             = 无；v3.0.0 用户可见变更已归档到 feature history
+Previous release            = [v0.2.7](https://github.com/wyzh0117/workbench/releases/tag/v0.2.7)，tag / DMG / sidecar 保持冻结
 V0 = CLOSED；V1 = ACTIVE；V1-T01–T06 保留原 VERIFIED；不创建 V1-T07，不关闭 V1
 ```
 
-本周期的用户可见变化、公开资产与验收限制已归档到 [v0.2.7 feature history](./v0.2.7.md)。尚未完成的验收与性能限制仍保持 PARTIAL，归档不表示它们已闭合。
-
-## 当前循环
-
-目前没有超出 v0.2.7 归档的新用户可见变更。File I/O / UI 收尾的剩余实测和性能尾部限制见 [v0.2.7](./v0.2.7.md)、总控 §48 与 [HTML completion report](../reports/io-ui-closure-completion-report.html)。后续修复使用新版本，不改写已发布 tag 或资产。
+v3.0.0 于 2026-10-21 公开发布；用户接受了验收记录中的 PARTIAL / UNVERIFIED 限制，矩阵状态未改变。发布 run、实际资产、哈希与验签结果见 [v3.0.0 feature history](./v3.0.0.md)。
 
 ## 下一个开发周期
 
-本节目前为空。新的用户可见行为完成后，从这里开始记载；不要改写已发布版本的说明或 assets。
+当前没有未归档的用户可见变更。下一项用户可见变更完成后，从这里开始记载；不要改写已发布版本的说明或 assets。
 
 ---
 

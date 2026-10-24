@@ -1,6 +1,0 @@
-running 2 tests from ../../../../../../tmp/native-import-replacement-independent_test.ts
-independent confirmed identity replacement, bound save and CAS protection ... ok (116ms)
-failed replacement CAS preserves current context and externally changed bytes ... ok (25ms)
-
-ok | 2 passed | 0 failed (145ms)
-

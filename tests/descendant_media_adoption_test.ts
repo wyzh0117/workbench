@@ -12,6 +12,7 @@ import { buildImportMappingPlan, confirmImportMappingPlan } from "../src/service
 import type { ImportMappingPlan } from "../src/service/folder_mapping.ts";
 import { scanFolder } from "../src/service/folder_scan.ts";
 import { confirmFolderAdoption } from "../src/service/folder_adoption.ts";
+import { createEscapeLink } from "./helpers/fs_links.ts";
 
 function assert(condition: unknown, message: string): asserts condition {
   if (!condition) throw new Error(message);
@@ -156,7 +157,11 @@ Deno.test("descendant media never follows a symlink out of the folder", async ()
       await Deno.mkdir(join(root, "course"), { recursive: true });
       await writeBytes(join(root, "course", "keep.png"), [7]);
       await writeBytes(join(outside, "leak.png"), [42]);
-      await Deno.symlink(join(outside, "leak.png"), join(root, "course", "escape.png"));
+      const linked = await createEscapeLink(join(outside, "leak.png"), join(root, "course", "escape.png"), "file");
+      if (!linked) {
+        console.warn("[skip] Windows lacks symlink privilege; descendant link escape not exercised");
+        return;
+      }
       const plan = await directoryPlan(root, true);
       const result = await confirmFolderAdoption(plan, { skip_project_write: true });
       const names = result.data.assets.map((asset) => asset.filename);

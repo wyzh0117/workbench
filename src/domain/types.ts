@@ -5,7 +5,10 @@
  * No UI state, credentials, caches, or derived reports belong in ProjectData.
  */
 
+/** Schema for document/layout entity payloads inside a project. */
 export const CURRENT_SCHEMA_VERSION = "1.0.0";
+/** Project envelope schema; bumped when project-level canonical data changes. */
+export const CURRENT_PROJECT_SCHEMA_VERSION = "1.1.0";
 
 export type JsonPrimitive = string | number | boolean | null;
 export type JsonValue = JsonPrimitive | JsonValue[] | {
@@ -245,6 +248,18 @@ export interface Asset {
   source_type: AssetSourceType;
   source_url: string | null;
   copyright_note: string | null;
+  presentation_lineage?: {
+    document_id: UUID;
+    parent_asset_id: UUID;
+    new_asset_id: UUID;
+    operation_id: string;
+    slide_plan_id: UUID;
+    plan_revision: number;
+    style_profile_id: UUID;
+    style_revision: number;
+    source_sha256: string;
+    output_sha256: string;
+  };
   created_at: ISODate;
   archived: boolean;
 }
@@ -258,6 +273,215 @@ export interface AssetUsage {
   role: string;
   created_at: ISODate;
 }
+
+export type EvidenceAccess = "metadata_only" | "content_read" | "timed_transcript" | "unavailable";
+export type FactCheck = "unchecked" | "supported" | "disputed";
+export type ResourceMedium = "text" | "video" | "image" | "audio" | "document" | "presentation";
+export type ResourceTaskState = "queued" | "running" | "partial" | "completed" | "cancel_requested" | "cancelled" | "failed" | "stale";
+
+export interface SourceEvidence {
+  id: UUID;
+  project_id: UUID;
+  provider_id: string;
+  request_id: string;
+  query?: string;
+  requested_at?: ISODate;
+  url: string | null;
+  title: string;
+  publisher: string | null;
+  event_date: string | null;
+  published_at: ISODate | null;
+  fetched_at: ISODate;
+  locator?: {
+    page?: number;
+    section?: string;
+    paragraph?: string;
+    start_sec?: number;
+    end_sec?: number;
+    field?: string;
+  };
+  evidence_method?: "manual_video_timing";
+  confirmed_by_user?: true;
+  excerpt: string | null;
+  evidence_access: EvidenceAccess;
+  fact_check: FactCheck;
+  content_hash: string | null;
+  limitations: string[];
+}
+
+export interface ResourceClaim {
+  text: string;
+  evidence_ids: UUID[];
+}
+
+export interface VideoResourceMetadata {
+  provider_id: string;
+  provider_video_id: string;
+  total_duration_sec: number | null;
+  duration_evidence_id: UUID | null;
+  spoken_language: string | null;
+  subtitle_languages: string[] | null;
+  language_evidence_ids: UUID[];
+  caption_state: "available" | "unavailable" | "unknown";
+  embeddable: boolean | null;
+  region_availability: "available" | "restricted" | "unknown";
+  metadata_limitations: string[];
+}
+
+export interface ResourceItem {
+  contract_version: 1;
+  id: UUID;
+  project_id: UUID;
+  medium: ResourceMedium;
+  narrative_case_type?: string;
+  title: string;
+  source_ids: UUID[];
+  event_cluster_id?: UUID;
+  factual_summary: string;
+  claims: ResourceClaim[];
+  video?: VideoResourceMetadata;
+  revision: number;
+  created_at: ISODate;
+  updated_at: ISODate;
+}
+
+export interface ResourceUsage {
+  contract_version: 1;
+  id: UUID;
+  project_id: UUID;
+  resource_id: UUID;
+  lesson_id: UUID;
+  block_id: UUID | null;
+  teaching_use: string;
+  discussion_questions: string[];
+  video_selection?: {
+    mode: "full" | "clip";
+    start_sec: number | null;
+    end_sec: number | null;
+    timing_evidence_id: UUID | null;
+  };
+  created_at: ISODate;
+}
+
+export interface StyleProfile {
+  contract_version: 1;
+  id: UUID;
+  style_id: UUID;
+  project_id: UUID;
+  source_asset_id: UUID;
+  source_sha256: string;
+  revision: number;
+  variant_id: string;
+  markdown: string;
+  markdown_hash: string;
+  parser_version: string;
+  parsed_from_hash: string;
+  tokens: {
+    slide_size_emu: { width: number | null; height: number | null };
+    theme_colors: Array<{ slot: string; value: string }>;
+    theme_fonts: Array<{ scheme: string; script: string; typeface: string }>;
+    placeholders: Array<{
+      placeholder_type: string;
+      index: string | null;
+      shape_name: string | null;
+      inheritance_source: string;
+      x: number | null;
+      y: number | null;
+      width: number | null;
+      height: number | null;
+    }>;
+    representative_objects: Array<{
+      kind: string;
+      name: string | null;
+      placeholder_type: string | null;
+      x: number | null;
+      y: number | null;
+      width: number | null;
+      height: number | null;
+      fill: string | null;
+      line: string | null;
+      font_sizes_hundredth_pt: number[];
+      text_run_count: number;
+    }>;
+    editable_rules: {
+      title: {
+        font_size_hundredth_pt: number | null;
+        color: string | null;
+        x: number | null;
+        y: number | null;
+        width: number | null;
+        height: number | null;
+      };
+      body: {
+        font_size_hundredth_pt: number | null;
+        color: string | null;
+        x: number | null;
+        y: number | null;
+        width: number | null;
+        height: number | null;
+      };
+    };
+  };
+  representative_slide_ids: string[];
+  extraction_facts: string[];
+  visual_inferences: string[];
+  limitations: string[];
+  created_at: ISODate;
+}
+
+export interface PresentationDocument {
+  id: UUID;
+  project_id: UUID;
+  source_asset_id: UUID;
+  current_asset_id: UUID;
+  revision: number;
+  created_at: ISODate;
+  updated_at: ISODate;
+}
+
+export interface SlideSpec {
+  layout_ref: string;
+  title: string;
+  body: Array<{ kind: "paragraph" | "bullet"; text: string }>;
+  image_asset_ids: UUID[];
+  source_ids: UUID[];
+  speaker_notes: string;
+}
+
+export interface SlidePlan {
+  contract_version: 1;
+  id: UUID;
+  project_id: UUID;
+  document_id: UUID;
+  lesson_id: UUID;
+  style_profile_id: UUID;
+  style_revision: number;
+  target_asset_id: UUID;
+  target_asset_hash: string;
+  insert_after_slide_id: string | null;
+  /** Older saved plans omit this and are treated as manually authored. */
+  generation_source?: SlidePlanGenerationSource;
+  spec: SlideSpec;
+  revision: number;
+  created_at: ISODate;
+  status: "draft" | "approved" | "exported" | "cancelled";
+}
+
+export type SlidePlanGenerationSource =
+  | { mode: "manual" }
+  | {
+    mode: "ai";
+    generation_id: string;
+    session_generation: number;
+    provider_id: string;
+    model: string;
+    context_sha256: string;
+    lesson_snapshot_sha256: string;
+    style_markdown_sha256: string;
+    snapshot_binding_sha256: string;
+    consented_at: ISODate;
+    authorized: true;
+  };
 
 export interface StatusDimension {
   id: UUID;
@@ -589,6 +813,12 @@ export interface ProjectData {
   requirements: Requirement[];
   assets: Asset[];
   asset_usages: AssetUsage[];
+  source_evidence: SourceEvidence[];
+  resource_items: ResourceItem[];
+  resource_usages: ResourceUsage[];
+  style_profiles: StyleProfile[];
+  presentation_documents: PresentationDocument[];
+  slide_plans: SlidePlan[];
   status_dimensions: StatusDimension[];
   status_options: StatusOption[];
   status_assignments: StatusAssignment[];

@@ -1,7 +1,0 @@
-source_commit=7555f02fdbdad1c3aa558b2b85e3cfe6fb8fa3be
-command=python3 /tmp/native-7555-verify-assets.py app <release OUT_DIR>/tauri-codegen-assets <signed-app>/Contents/MacOS/ai-course-workbench
-decoder=brotli CLI; every source frontend file decoded from generated Tauri asset and hashed
-source_files=18
-exact_source_byte_matches=17
-normalized_transformed_index_dom_matches=1
-all_asset_payloads_found_in_signed_executable=true

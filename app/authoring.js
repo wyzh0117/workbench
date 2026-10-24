@@ -47,7 +47,7 @@ export const TEXT_BLOCK_TYPES = [
  * update describe a lesson that is already authored, so they never block the
  * "this lesson is done" answer.
  */
-export const COMPLETION_DIMENSIONS = ["content", "media", "layout", "review"];
+export const COMPLETION_DIMENSIONS = ["content", "media", "review"];
 
 /**
  * The nine course-input sources the schema defines (`course_seeds.source_type`).
@@ -680,7 +680,7 @@ export function statusView(data, contentItemId, dimensionKey) {
  * @returns {Array<{ key: string, name: string, option: string, terminal: boolean }>}
  */
 export function statusViews(data, contentItemId) {
-  return COMPLETION_DIMENSIONS.concat(["publish", "update"]).map((key) =>
+  return COMPLETION_DIMENSIONS.concat(["layout", "publish", "update"]).map((key) =>
     statusView(data, contentItemId, key)
   );
 }
@@ -753,11 +753,10 @@ export function lessonProgress(data, contentItemId) {
   if (unwritten > 0) reasons.push(`${unwritten} 段正文是空的`);
   // A placeholder is the visible half of a requirement; naming it separately
   // keeps the reason list readable without double-counting the same gap.
-  if (gaps.total === 0 && placeholders > 0) {
+  if (gaps.content === 0 && placeholders > 0) {
     reasons.push(`${placeholders} 处占位符没有替换`);
   }
-  if (gaps.total > 0) reasons.push(`${gaps.total} 项待补未完成`);
-  if (!layout) reasons.push("还没有排版版本");
+  if (gaps.content > 0) reasons.push(`${gaps.content} 项待补未完成`);
   for (const key of unfinished) {
     const status = statuses.find((candidate) => candidate.key === key);
     reasons.push(`${status ? status.name : dimensionLabel(key)}仍是「${
@@ -770,13 +769,13 @@ export function lessonProgress(data, contentItemId) {
     MEDIA_BLOCK_TYPES.includes(block.type)
   );
   const percentage = (() => {
-    const total = blocks.length + unwritten + placeholders + gaps.total + 2;
+    const total = blocks.length + unwritten + placeholders + gaps.content + 2;
     if (total === 0) return 0;
     const written = Math.max(
       0,
       blocks.length - unwritten - placeholders,
     );
-    const done = written + (gaps.total === 0 ? 1 : 0) + (layout ? 1 : 0);
+    const done = written + (gaps.content === 0 ? 2 : 0);
     return Math.max(0, Math.min(100, Math.round((done / total) * 100)));
   })();
   return {

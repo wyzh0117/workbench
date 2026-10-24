@@ -7,6 +7,7 @@
  */
 import { basename, dirname, extname, isAbsolute, join, normalize, relative } from "node:path";
 import { sha256Bytes } from "../domain/util.ts";
+import { isPathWithin } from "./fs_paths.ts";
 
 export type ScanKind = "directory" | "file";
 
@@ -434,7 +435,7 @@ export async function scanFolderDirectChildren(
         continue;
       }
       const resolvedDir = await Deno.realPath(absoluteDir);
-      if (resolvedDir !== realRoot && !resolvedDir.startsWith(`${realRoot}/`)) {
+      if (!isPathWithin(realRoot, resolvedDir)) {
         warnings.push(`${directory}: 映射目录超出所选文件夹，未扫描`);
         groups.push({ directory, entries });
         continue;
@@ -963,7 +964,7 @@ export async function resolveFolderVideoSource(
   }
   const realRoot = await Deno.realPath(resolvedRoot);
   const realTarget = await Deno.realPath(absolute);
-  if (realTarget !== realRoot && !realTarget.startsWith(`${realRoot}/`)) {
+  if (!isPathWithin(realRoot, realTarget)) {
     throw new Error("视频来源超出所选文件夹");
   }
   const realStat = await Deno.stat(realTarget);
