@@ -8,7 +8,7 @@
 
 ```text
 Latest public release       = [v3.0.2](https://github.com/wyzh0117/workbench/releases/tag/v3.0.2)，已发布并冻结
-Release/tag/source          = （发布后补记）
+Release/tag/source          = v3.0.2 / a7fefd24f467ffa2022af35f7ea7cb9590ad5ffb / cb581044f635d7f4129ea1217cc36ad62d4223af
 Rolling content             = 无；v3.0.2 用户可见变更已冻结到 v3.0.2.md
 Previous release            = [v3.0.1](https://github.com/wyzh0117/workbench/releases/tag/v3.0.1)，tag / 资产保持冻结
 V0 = CLOSED；V1 = ACTIVE；V1-T01–T06 保留原 VERIFIED；不创建 V1-T07，不关闭 V1
@@ -16,12 +16,12 @@ V0 = CLOSED；V1 = ACTIVE；V1-T01–T06 保留原 VERIFIED；不创建 V1-T07�
 
 v3.0.2 于 2026-10-24（+0800）发布，内容已全部冻结进 [`v3.0.2.md`](./v3.0.2.md)（唯一用户可见变化：全站 UI 整改，视觉体系统一，**无功能变更**）。
 
-**发布后补记（清单，逐项回填后把上文三元组与各处「（发布后补记）」改为事实）：**
+**发布后补记（2026-10-24 已回填）：**
 
-1. ⬜ tag `v3.0.2` 的 tag 对象与源码提交 → 回填上方三元组、[`README.md`](./README.md) 索引表与 [`v3.0.2.md`](./v3.0.2.md) 头部及「发布记录」。
-2. ⬜ 公开 Release [v3.0.2](https://github.com/wyzh0117/workbench/releases/tag/v3.0.2)（非 draft、非 prerelease）与发布 workflow run 链接、结论 → 回填 [`v3.0.2.md`](./v3.0.2.md)「发布记录」。
-3. ⬜ 公开安装包匿名下载校验（DMG 与 Windows 安装包字节数、校验值与 sidecar 一致性、包内版本 3.0.2）→ 回填 [`v3.0.2.md`](./v3.0.2.md)「发布记录」。
-4. ⬜ [`.github/release-notes/v3.0.2.md`](../../.github/release-notes/v3.0.2.md) 的 `## Release verification` 段（发布后第二个提交）写入并同步到公开正文。
+1. ✅ tag `v3.0.2`（tag 对象 `a7fefd24f467ffa2022af35f7ea7cb9590ad5ffb`）与源码提交 `cb581044f635d7f4129ea1217cc36ad62d4223af` → 已回填三元组、[`README.md`](./README.md) 索引表与 [`v3.0.2.md`](./v3.0.2.md) 头部及「发布记录」。
+2. ✅ 公开 Release [v3.0.2](https://github.com/wyzh0117/workbench/releases/tag/v3.0.2)（2026-10-24 20:34 +0800，非 draft、非 prerelease），workflow run [#40093875084](https://github.com/wyzh0117/workbench/actions/runs/40093875084) 结论 `success`。
+3. ⚠️ 公开安装包校验**部分完成**：Windows 安装包已匿名下载并重算哈希，与 sidecar 及 GitHub 资产摘要三方一致；DMG 的哈希由 sidecar / 正文 / GitHub 摘要三方交叉一致，但**本次未完成匿名下载的逐字节复核**（校验期间到 github.com 的网络链路间歇性失败），**包内版本 / 架构核对本次无记录**。详见 [`v3.0.2.md`](./v3.0.2.md)「发布记录」。
+4. ✅ [`.github/release-notes/v3.0.2.md`](../../.github/release-notes/v3.0.2.md) 的 `## Release verification` 段已写入并同步到公开正文。
 
 ## 下一个开发周期
 
