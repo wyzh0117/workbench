@@ -112,6 +112,8 @@ interface AiStore {
   aiEditProvider: (id: string, options?: { preserveSelection?: boolean }) => void;
   aiCreateConnection: () => void;
   aiSetAddTab: (tab: string) => void;
+  aiSetProviderId: (value: string) => void;
+  aiSyncDraftField: (field: string, value: string) => void;
   aiSaveProvider: (input: Record<string, any>) => Promise<boolean>;
   aiSaveSecret: (value: string, providerId?: string | null) => Promise<boolean>;
   aiDeleteSecret: (providerId?: string | null) => Promise<boolean>;
@@ -3066,6 +3068,245 @@ Deno.test("已存的 false 在开关被操作前保持不变", async () => {
     assert(
       !entry || !("reasoning_efforts" in entry),
       "操作过后开关关闭=字段不存在",
+    );
+  } finally {
+    restore();
+  }
+});
+
+
+/* ------------------------------------------------------------------ *
+ * 行为锁定（2026-10-24 独立验收测试缺口）：分段切换不丢草稿、行卡收起/重开
+ * 保留草稿、两草稿槽互不丢弃，以及 design §2.2/§3 的渲染文案逐字。
+ * ------------------------------------------------------------------ */
+
+/**
+ * design §2/§4.1：分段控件只换 `ui.aiAddTab`，草稿一直在 `ui.aiAddDraft` 槽里
+ * ——在一段里填好的字段切到另一段、再切回来必须原样还在（含模型目录行）。
+ */
+Deno.test("「＋ 添加模型提供商」分段切换不丢草稿：切走再切回已填字段仍在", async () => {
+  const { store, root, restore } = await bootStore();
+  try {
+    store.aiCreateConnection();
+    store.aiSetProviderId("draft-tab-provider");
+    store.aiSyncDraftField("label", "分段草稿显示名");
+    store.aiSyncDraftField("base_url", "https://draft-tab.example.test/v1");
+    store.aiAddManualModel();
+    const rows = store.ui.aiAddDraft.modelRows as Array<Record<string, any>>;
+    store.aiSyncModelRowField(rows[rows.length - 1]!.key, "id", "draft-tab-model");
+    // 打字同步刻意不重渲染（保 IME/光标）；断言渲染值前先重渲染一次。
+    store.notify();
+    const typed = [
+      'value="draft-tab-provider"',
+      'value="分段草稿显示名"',
+      'value="https://draft-tab.example.test/v1"',
+      ">draft-tab-model<",
+    ];
+    let html = String(root.innerHTML);
+    for (const snippet of typed) {
+      assert(html.includes(snippet), `初始创建表单必须渲染已填字段：${snippet}`);
+    }
+    // 第三方模型提供商 → 自定义模型 API：同一张表单，值原样。
+    store.aiSetAddTab("custom");
+    html = String(root.innerHTML);
+    assert(
+      html.includes("连接中转站、自部署服务或其他兼容 OpenAI / Anthropic 协议的接口，需填写 API 地址、协议和模型。"),
+      "「自定义模型 API」段的用途说明必须逐字（design §2.2 D2）",
+    );
+    for (const snippet of typed) {
+      assert(html.includes(snippet), `切到「自定义模型 API」不得丢弃已填字段：${snippet}`);
+    }
+    // 自定义模型 API → 订阅登录：面板换成订阅区，草稿仍留在槽里。
+    store.aiSetAddTab("subscription");
+    const draft = store.ui.aiAddDraft;
+    assert(draft.providerId === "draft-tab-provider", "切到「订阅登录」不得丢弃 Provider ID 草稿");
+    assert(draft.label === "分段草稿显示名", "切到「订阅登录」不得丢弃显示名草稿");
+    assert(draft.base_url === "https://draft-tab.example.test/v1", "切到「订阅登录」不得丢弃 API 地址草稿");
+    assert(
+      (draft.modelRows as Array<Record<string, any>>).some((row) => row.id === "draft-tab-model"),
+      "切到「订阅登录」不得丢弃模型目录草稿",
+    );
+    // 订阅登录 → 第三方模型提供商：切回来逐字段还原。
+    store.aiSetAddTab("third-party");
+    html = String(root.innerHTML);
+    assert(
+      html.includes("填写服务商的地址、协议与 API 密钥，然后获取它自己的模型列表。"),
+      "「第三方模型提供商」段的用途说明必须逐字（design §2.2 E）",
+    );
+    for (const snippet of typed) {
+      assert(html.includes(snippet), `切回「第三方模型提供商」已填字段必须仍在：${snippet}`);
+    }
+  } finally {
+    restore();
+  }
+});
+
+/**
+ * design §4.1：行内编辑卡「收起」只收卡不丢草稿；重开同一 provider 走
+ * `aiEditProvider` 的 reuse 分支，已填字段（含「自定义设置」展开态）原样回来。
+ */
+Deno.test("行内编辑卡「收起」后重开同一 provider：已填字段仍在（reuse 分支）", async () => {
+  const { store, state, root, restore } = await bootStore();
+  try {
+    state.providers.push({
+      id: "row-keep",
+      label: "行内保留连接",
+      kind: "openai_compatible",
+      base_url: "https://row-keep.example.test/v1",
+      api_protocol: "openai-completions",
+      chat_path: "/chat/completions",
+      default_model: "keep-model",
+      models: ["keep-model"],
+    });
+    await store.aiLoadProviders();
+    store.aiEditProvider("row-keep", { preserveSelection: true });
+    // 「显示名称 / API 地址」在「自定义设置」折叠区内（design §2.1）。
+    store.aiToggleAdvanced();
+    store.aiSyncDraftField("label", "行内草稿显示名");
+    store.aiSyncDraftField("base_url", "https://row-draft.example.test/v1");
+    store.notify();
+    let html = String(root.innerHTML);
+    assert(html.includes('value="行内草稿显示名"'), "编辑卡必须先渲染已填显示名");
+    assert(html.includes('value="https://row-draft.example.test/v1"'), "编辑卡必须先渲染已填地址");
+    // 「收起」按钮走的就是 handleAction 的 ai-edit-connection 收起分支（与
+    // ai-cancel-provider 同三步）：清临时密钥输入 + 关编辑卡 + notify，草稿留槽。
+    store.aiClearTemporarySecretInputs();
+    store.ui.aiOpenEditor = null;
+    store.notify();
+    html = String(root.innerHTML);
+    assert(!html.includes('data-ai-editor="row"'), "收起后行内编辑卡必须不再渲染");
+    assert(
+      store.ui.aiRowDraft?.label === "行内草稿显示名" &&
+        store.ui.aiRowDraft?.base_url === "https://row-draft.example.test/v1",
+      "收起不得丢弃行卡草稿（design §4.1）",
+    );
+    store.aiEditProvider("row-keep", { preserveSelection: true });
+    html = String(root.innerHTML);
+    assert(html.includes('value="行内草稿显示名"'), "重开同一行必须复用草稿里的显示名");
+    assert(html.includes('value="https://row-draft.example.test/v1"'), "重开同一行必须复用草稿里的地址");
+    assert(html.includes("data-ai-base-url"), "重开同一行必须保留「自定义设置」展开态");
+  } finally {
+    restore();
+  }
+});
+
+/**
+ * design §2.1/§4.1：一次只展开一张编辑卡，但 `aiRowDraft` 与 `aiAddDraft`
+ * 两个槽互不清空——开一张卡不得丢另一张的半填内容。
+ */
+Deno.test("行卡与新增卡两个草稿槽互不丢弃：开一张编辑卡不清另一张的草稿", async () => {
+  const { store, state, root, restore } = await bootStore();
+  try {
+    state.providers.push({
+      id: "row-slot",
+      label: "槽位连接",
+      kind: "openai_compatible",
+      base_url: "https://row-slot.example.test/v1",
+      api_protocol: "openai-completions",
+      chat_path: "/chat/completions",
+      default_model: "slot-model",
+      models: ["slot-model"],
+    });
+    await store.aiLoadProviders();
+    // 新增卡草稿。
+    store.aiCreateConnection();
+    store.aiSetProviderId("add-slot");
+    store.aiSyncDraftField("label", "新增草稿显示名");
+    store.aiSyncDraftField("base_url", "https://add-draft.example.test/v1");
+    // 行卡草稿：打开行卡会收起新增卡（一次一张）。
+    store.aiEditProvider("row-slot", { preserveSelection: true });
+    store.aiToggleAdvanced();
+    store.aiSyncDraftField("label", "行卡草稿显示名");
+    store.aiSyncDraftField("base_url", "https://row-draft.example.test/v1");
+    store.notify();
+    let html = String(root.innerHTML);
+    assert(html.includes('value="行卡草稿显示名"'), "行卡展开时必须渲染行卡草稿");
+    assert(!html.includes('value="新增草稿显示名"'), "一次只展开一张编辑卡");
+    assert(
+      store.ui.aiAddDraft?.label === "新增草稿显示名" &&
+        store.ui.aiAddDraft?.base_url === "https://add-draft.example.test/v1",
+      "打开行卡不得清空新增卡草稿（design §4.1 两槽互不丢弃）",
+    );
+    // 切回新增卡：行卡收起，行卡草稿留槽。
+    store.aiCreateConnection();
+    html = String(root.innerHTML);
+    assert(html.includes('value="新增草稿显示名"'), "重开新增卡必须还原新增卡草稿里的显示名");
+    assert(html.includes('value="https://add-draft.example.test/v1"'), "重开新增卡必须还原新增卡草稿里的地址");
+    assert(!html.includes('value="行卡草稿显示名"'), "新增卡展开时行卡必须收起");
+    assert(
+      store.ui.aiRowDraft?.label === "行卡草稿显示名" &&
+        store.ui.aiRowDraft?.base_url === "https://row-draft.example.test/v1",
+      "打开新增卡不得清空行卡草稿",
+    );
+    // 再重开同一行：行卡草稿原样回来。
+    store.aiEditProvider("row-slot", { preserveSelection: true });
+    html = String(root.innerHTML);
+    assert(html.includes('value="行卡草稿显示名"'), "行卡草稿必须再次完整渲染");
+    assert(html.includes('value="https://row-draft.example.test/v1"'), "行卡地址草稿必须再次完整渲染");
+  } finally {
+    restore();
+  }
+});
+
+/** design §2.2 B12 / §3：创建表单的三条渲染文案逐字。 */
+Deno.test("渲染文案逐字：「创建提供商」「粘贴 API Key（不会回显）」「删除本机保存的密钥」", async () => {
+  const { store, root, restore } = await bootStore();
+  try {
+    store.aiCreateConnection();
+    const html = String(root.innerHTML);
+    assert(html.includes(">创建提供商</button>"), "创建态主按钮文案必须逐字是「创建提供商」（design §2.2 B12）");
+    assert(html.includes("粘贴 API Key（不会回显）"), "密钥输入说明必须逐字（design §3）");
+    assert(html.includes("删除本机保存的密钥"), "删除密钥按钮文案必须逐字（design §3）");
+  } finally {
+    restore();
+  }
+});
+
+/** design §3：读取模型失败前缀与离线连接器凭据状态逐字（原因动态部分不锁）。 */
+Deno.test("渲染文案逐字：「读取模型失败：」与「不需要密钥（离线连接器）。」", async () => {
+  const { store, state, root, restore } = await bootStore();
+  try {
+    state.providers.push({
+      id: "copy-provider",
+      label: "文案连接",
+      kind: "openai_compatible",
+      base_url: "https://copy.example.test/v1",
+      api_protocol: "openai-completions",
+      chat_path: "/chat/completions",
+      default_model: "copy-model",
+      models: ["copy-model"],
+    });
+    state.secrets.set("copy-provider", "local-key-for-copy-test");
+    await store.aiLoadProviders();
+    store.aiEditProvider("copy-provider", { preserveSelection: true });
+    // 让「获取可用模型」真实失败一次：错误走 bridgeError → aiFailureFrom → 渲染。
+    const bridge = store.bridge as unknown as {
+      command: (name: string, input?: Record<string, any>) => Promise<unknown>;
+    };
+    const realCommand = bridge.command;
+    bridge.command = async (name, input) => {
+      if (name === "ai.models.list") throw new Error("上游拒绝读取模型（测试）");
+      return await realCommand(name, input ?? {});
+    };
+    try {
+      const models = await store.aiDiscoverModels();
+      assert(models.length === 0, "读取失败必须回到手工填写，而不是编造模型");
+    } finally {
+      bridge.command = realCommand;
+    }
+    const failed = String(root.innerHTML);
+    assert(failed.includes("读取模型失败："), "读取失败提示前缀必须逐字（design §3）");
+    assert(
+      failed.includes("可以直接在下面手动填写 Model ID，不影响保存"),
+      "读取失败提示的兜底句必须逐字（design §3）",
+    );
+    // 离线连接器的凭据状态文案：新增卡 Provider ID 命中离线连接器时逐字渲染。
+    store.aiCreateConnection();
+    store.aiSetProviderId("fake");
+    store.notify();
+    assert(
+      String(root.innerHTML).includes("不需要密钥（离线连接器）。"),
+      "离线连接器的凭据状态必须逐字（design §2.1/§3）",
     );
   } finally {
     restore();

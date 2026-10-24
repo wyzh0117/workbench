@@ -20,7 +20,10 @@
 | **v0.2.5** | 2026-10-03 | `d16b622` | [v0.2.5](https://github.com/wyzh0117/workbench/releases/tag/v0.2.5) | **公开可用 / 历史版本 / 冻结** | 打开入口变成项目列表（最近优先、可重新定位）；打开文件夹不再认错项目（旧 schema 先修复、坏文件说具体原因、父目录不顶替子项目）；`.txt .text .md .markdown .tex .latex .docx .epub .pdf` 九类文本 / 文档按原结构导入正文（无 OCR、PDF 只取文本层、LaTeX 公式存代码、编码自动识别）；映射确认后可逐份挑选要导入的文档；媒体库大列表来回滚动不再闪屏 / UI 抽搐 / 卡片卡住。 |
 | **v0.2.6** | **2026-10-05** | `223a594` | [v0.2.6](https://github.com/wyzh0117/workbench/releases/tag/v0.2.6) | 公开可用 / 历史版本 / 冻结 | [中文 feature history](./v0.2.6.md)：Mapping 稳定化与映射后文档选择、带语义图片的跨格式导入、正文 Preview 媒体、Flow 顺序视图、顶层自由排版，以及全局页面重设计。公开 DMG 与 sidecar 已匿名下载和校验；验收限制见 [HTML 报告](../reports/v0.2.6-ui-redesign-completion-report.html) 与[公开资产验证](../reports/evidence/v0.2.6/public-release-verification.md)。 |
 | **v0.2.7** | **2026-10-07** | `fb050b1` | [v0.2.7](https://github.com/wyzh0117/workbench/releases/tag/v0.2.7) | **公开 / 历史 / 冻结** | [中文 feature history](./v0.2.7.md)：File I/O 与 UI 可靠性收尾。公开 Universal DMG 与 sidecar 已下载校验；总体验收仍为 PARTIAL，性能尾部与未观察项见版本记录和本地验收报告。 |
-| **v3.0.0** | **2026-10-21** | `f6bf485` | [v3.0.0](https://github.com/wyzh0117/workbench/releases/tag/v3.0.0) | **公开 / Latest / 冻结** | [中文 feature history](./v3.0.0.md)：统一课程工作区、资源发现与显式采纳、PowerPoint 风格提取和单页补充导出；验收报告如实列出已接受的 PARTIAL / UNVERIFIED 限制。 |
+| **v3.0.0** | **2026-10-21** | `f6bf485` | [v3.0.0](https://github.com/wyzh0117/workbench/releases/tag/v3.0.0) | **公开 / 历史 / 冻结** | [中文 feature history](./v3.0.0.md)：统一课程工作区、资源发现与显式采纳、PowerPoint 风格提取和单页补充导出；验收报告如实列出已接受的 PARTIAL / UNVERIFIED 限制。 |
+| **v3.0.1** | **2026-10-24** | （发布后补记） | [v3.0.1](https://github.com/wyzh0117/workbench/releases/tag/v3.0.1) | **公开 / Latest / 冻结** | [中文 feature history](./v3.0.1.md)：AI 模型配置界面与逻辑按 DeepSeek Harness「设置 → 模型」重做——提供商行卡 + 行内编辑卡、分段式添加提供商、逐模型的容量 / 输入类型 / 排序编辑、「获取可用模型」勾选弹窗、推理等级按协议下发。 |
+
+v3.0.1 于 2026-10-24 发布，是 v3.0.0 之上的增量（唯一用户可见变化：AI 模型配置界面与逻辑重做）。**源码提交号、发布 workflow run 与公开资产校验为发布后补记**，回填位置见 [`v3.0.1.md`](./v3.0.1.md) 的「发布记录」与 [`UNRELEASED.md`](./UNRELEASED.md)；v3.0.0 的用户可见能力仍归属 v3.0.0。
 
 v3.0.0 于 2026-10-21 发布。用户接受了验收记录中的 PARTIAL / UNVERIFIED 限制；该决定没有改变矩阵状态。详见 [`v3.0.0 feature history`](./v3.0.0.md) 和 [`32 项验收记录`](../v3.0.0-acceptance.md)。
 

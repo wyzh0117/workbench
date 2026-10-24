@@ -4,17 +4,24 @@
 
 ---
 
-## 当前状态（2026-10-21）
+## 当前状态（2026-10-24）
 
 ```text
-Latest public release       = [v3.0.0](https://github.com/wyzh0117/workbench/releases/tag/v3.0.0)，已发布并冻结
-Release/tag/source          = v3.0.0 / f6bf4854ea0127d0d053e37ac1738cfcbd52ab31
-Rolling content             = 无；v3.0.0 用户可见变更已归档到 feature history
-Previous release            = [v0.2.7](https://github.com/wyzh0117/workbench/releases/tag/v0.2.7)，tag / DMG / sidecar 保持冻结
+Latest public release       = [v3.0.1](https://github.com/wyzh0117/workbench/releases/tag/v3.0.1)，已发布并冻结
+Release/tag/source          = v3.0.1 / （发布后补记：tag 对象与源码提交号）
+Rolling content             = 无；v3.0.1 用户可见变更已冻结到 v3.0.1.md
+Previous release            = [v3.0.0](https://github.com/wyzh0117/workbench/releases/tag/v3.0.0)，tag / 资产保持冻结
 V0 = CLOSED；V1 = ACTIVE；V1-T01–T06 保留原 VERIFIED；不创建 V1-T07，不关闭 V1
 ```
 
-v3.0.0 于 2026-10-21 公开发布；用户接受了验收记录中的 PARTIAL / UNVERIFIED 限制，矩阵状态未改变。发布 run、实际资产、哈希与验签结果见 [v3.0.0 feature history](./v3.0.0.md)。
+v3.0.1 于 2026-10-24（+0800）发布，内容已全部冻结进 [`v3.0.1.md`](./v3.0.1.md)（唯一用户可见变化：AI 模型配置界面与逻辑按 DeepSeek Harness「设置 → 模型」重做）。
+
+**发布后补记（打 tag 公开发布后逐项回填）：**
+
+1. tag `v3.0.1` 的 tag 对象与源码提交号 → 回填上方三元组、[`README.md`](./README.md) 索引表「源码提交」列与 [`v3.0.1.md`](./v3.0.1.md) 头部。
+2. 公开 Release 页面与发布 workflow run 链接、是否 draft / prerelease。
+3. 公开安装包校验（字节数、SHA-256、sidecar 一致性、`hdiutil` / 版本号 / 架构核对、签名与公证状态以 workflow 判定为准）→ 回填 [`v3.0.1.md`](./v3.0.1.md) 的「发布记录」。
+4. [`.github/release-notes/v3.0.1.md`](../../.github/release-notes/v3.0.1.md) 的 Release verification 段。
 
 ## 下一个开发周期
 

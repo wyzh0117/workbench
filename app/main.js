@@ -5500,7 +5500,7 @@ class WorkbenchStore {
     const form = this.ui.aiProviderForm;
     if (!form) return;
     if (form.isNew !== true) {
-      this.ui.toast = "Provider ID 创建后不可修改；需要另一个 id 请点「+ 添加模型服务商」新建连接。";
+      this.ui.toast = "Provider ID 创建后不可修改；需要另一个 id 请点「＋ 添加模型提供商」新建连接。";
       this.notify();
       return;
     }
