@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Generate the Tauri icon set from the shared SVG using macOS system tools."""
+"""Generate the Tauri icon set from the supplied transparent PNG using macOS system tools."""
 
 from __future__ import annotations
 
@@ -13,7 +13,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 ICON_DIR = ROOT / "src-tauri" / "icons"
-SOURCE = ICON_DIR / "workbench-brand.svg"
+SOURCE = ROOT / "app" / "assets" / "workbench-mark.png"
 PNG_OUTPUTS = {
     32: "32x32.png",
     64: "64x64.png",
@@ -49,7 +49,7 @@ def png_size(path: Path) -> tuple[int, int]:
     return struct.unpack(">II", header[16:24])
 
 
-def render_svg(destination: Path, size: int) -> None:
+def render_source(destination: Path, size: int) -> None:
     run(
         "sips",
         "-s",
@@ -101,7 +101,7 @@ def main() -> int:
             print(f"Required macOS tool not found: {tool}", file=sys.stderr)
             return 2
     if not SOURCE.is_file():
-        print(f"Missing SVG source: {SOURCE}", file=sys.stderr)
+        print(f"Missing PNG source: {SOURCE}", file=sys.stderr)
         return 2
 
     with tempfile.TemporaryDirectory(prefix="workbench-icons-") as temp_name:
@@ -109,7 +109,7 @@ def main() -> int:
         renders = temp / "renders"
         renders.mkdir()
         for size in RENDER_SIZES:
-            render_svg(renders / f"{size}.png", size)
+            render_source(renders / f"{size}.png", size)
 
         iconset = temp / "workbench.iconset"
         iconset.mkdir()
@@ -126,7 +126,7 @@ def main() -> int:
         shutil.copyfile(icns, ICON_DIR / "icon.icns")
         shutil.copyfile(ico, ICON_DIR / "icon.ico")
 
-    print("Generated Tauri PNG, ICNS, and ICO assets from src-tauri/icons/workbench-brand.svg.")
+    print("Generated Tauri PNG, ICNS, and ICO assets from app/assets/workbench-mark.png.")
     print("Preview sizes rendered and checked: " + ", ".join(f"{size}px" for size in RENDER_SIZES))
     return 0
 

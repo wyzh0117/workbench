@@ -28,6 +28,7 @@ mod presentation_workflows;
 mod registry;
 mod resource_providers;
 mod resource_workflows;
+mod standard_workbench;
 
 static ID_COUNTER: AtomicU64 = AtomicU64::new(0);
 static LEASE_GENERATION_COUNTER: AtomicU64 = AtomicU64::new(0);
@@ -30409,6 +30410,17 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .manage(BridgeState::new())
         .invoke_handler(tauri::generate_handler![
+            standard_workbench::wb_document_open,
+            standard_workbench::wb_document_save,
+            standard_workbench::wb_document_export,
+            standard_workbench::wb_folder_list,
+            standard_workbench::wb_media_preview,
+            standard_workbench::wb_media_import,
+            standard_workbench::wb_document_analyze,
+            standard_workbench::wb_document_generate,
+            standard_workbench::wb_resource_search,
+            standard_workbench::wb_source_read,
+            standard_workbench::wb_open_external,
             project_open,
             project_open_state,
             project_read_state,

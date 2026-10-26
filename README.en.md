@@ -1,48 +1,41 @@
-<div align="center">
-  <h1>AI Course Workbench</h1>
-  <p>Plan courses, organize materials, and turn unfinished notes into exportable lessons on your own computer.</p>
-</div>
+# Workbench 4.0.0 · Goorul
 
-[简体中文](README.md) · [Latest release](https://github.com/wyzh0117/workbench/releases/latest)
+A focused revision of the existing Tauri desktop application: open a standard document, optionally analyze it with your configured AI, research real sources and media, edit chapters, then export reusable documents.
 
-## About
+[中文说明](README.md) · [Version-specific downloads](https://github.com/wyzh0117/workbench/releases/tag/v4.0.0-Goorul)
 
-AI Course Workbench is a local-first course authoring tool. Course content lives in a `project.json` file on your computer, so you can keep editing and back it up yourself.
+## Workflow
 
-## Quick start
+- Left: media previews and parent-folder navigation, in two tabs.
+- Center: editable chapter-based text, image, video and source blocks with ordering and management.
+- Right: real web/image/video discovery and embedded browsing or safe extracted-text reading.
+- Both sidebars collapse and resize with pointer and keyboard controls.
 
-Download the Windows or macOS installer from the [latest release page](https://github.com/wyzh0117/workbench/releases/latest), open the app, then create or open a course project.
-The v3.1.1 source snapshot configures the Windows NSIS installer and uninstaller to use the same four-square brand icon as the app. The [stable release page](https://github.com/wyzh0117/workbench/releases/tag/v3.1.1) records actual publication status and Windows runner package verification.
+Markdown is the editable interchange file; no new proprietary format or required `project.json`. Import Markdown, TXT, DOCX, PDF and PPTX without overwriting the binary source. Export Markdown, HTML, DOCX and editable PPTX. Each PPTX export includes a portable Markdown style guide for producing matching additional slides.
 
-To build from source, install Deno 2.x, Rust, and the build tools for your platform:
+Complex source layouts are not guaranteed to round-trip. Scanned PDFs require text/OCR from another tool. Video and unsupported media retain clear source links and warnings. Native PDF export is not exposed in the focused interface; print the exported HTML to PDF when needed.
 
-```bash
+## Configuration and privacy
+
+Use Settings to configure your own HTTPS AI endpoint, protocol, model and API key. Analysis/generation sends the document to that provider only when requested. Keys use existing platform secure storage, never document content or browser local storage. Missing credentials produce an honest error; offline editing remains available. There are no simulated API success results.
+
+Image discovery uses Wikimedia Commons with provenance/license metadata. Selected PNG/JPEG images are downloaded into the document’s ordinary media folder before insertion so Office exports embed real bytes; other formats produce an explicit message. Web and video discovery require Brave Search and YouTube Data API credentials. Verify media rights before reuse. Sites can refuse embedded browsing; the safe reader is a labeled fallback, not a bypass.
+
+## Install and verify
+
+The release provides the existing macOS Universal DMG and Windows x64 NSIS installer names, with SHA-256 sidecars. See its notes for actual signing/notarization state. Do not disable operating-system security protections.
+
+Source requirements: Deno **2.9.6**, stable Rust, Tauri 2 CLI and platform build prerequisites.
+
+```sh
 deno task check
 deno task test
-cargo test --manifest-path src-tauri/Cargo.toml
+cargo test --locked --manifest-path src-tauri/Cargo.toml
 cargo tauri build
 ```
 
-## How it works
+The browser development shell supports real Markdown editing/download, but native filesystem, AI/search and binary document import/export require the desktop application. CI checks do not imply that the app was manually tested on the user's Mac.
 
-Create course stages and lessons, then edit lesson content, arrange materials, and track what still needs work. Search indexes and previews can be rebuilt; the project file keeps the course content. The AI assistant suggests edits for you to review one at a time before applying them.
+The authorized release branch is `workbench-4.0.0-Goorul`, tag `v4.0.0-Goorul`, display title `workbench 4.0.0-Goorul`. Existing main and published refs/assets are not overwritten.
 
-## What you can do
-
-- Plan and reorder course stages and lessons.
-- Edit lesson notes and page layouts, then preview them.
-- Organize images, video, PDF, DOCX, EPUB, LaTeX, and Markdown files.
-- Import a course outline or lesson plan to parse its text and extract structured themes; after configuring an AI model and search providers, find cases and teaching videos, read their sources in the side panel, then save or cite them explicitly.
-- Extract an editable style from an existing PowerPoint and export a supplemental slide as a single-slide file or an appended copy.
-- Track missing content and course completion.
-- Review AI suggestions and export Markdown, HTML, PDF, PPTX, or a full project package.
-
-Document parsing and online search report separate states. If a model or search provider is not configured, parsed content is kept and the app points to setup. The desktop app parses TXT, Markdown, DOCX, PDF, and PPTX; the browser shell currently parses TXT and Markdown only. Online searches use configured provider APIs over HTTPS. Source reading fetches only public HTTPS URLs and rejects private addresses and redirects.
-
-## Example
-
-For a photography course, outline the stages and lessons, add notes and sample images, mark missing practice exercises, then preview and export the course materials.
-
-## License
-
-The repository does not currently include a LICENSE file, so usage, modification, and redistribution terms have not been declared.
+The repository currently has no LICENSE file; this revision does not invent licensing terms.

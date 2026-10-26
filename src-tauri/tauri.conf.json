@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "AI Course Workbench",
-  "version": "3.1.1",
+  "version": "4.0.0",
   "identifier": "io.github.wyzh0117.ai-course-workbench",
   "build": {
     "frontendDist": "../app",
@@ -10,11 +10,20 @@
   "app": {
     "withGlobalTauri": true,
     "windows": [
-      { "title": "AI Course Workbench", "width": 1440, "height": 900, "minWidth": 980, "minHeight": 640 }
+      {
+        "title": "Workbench 4.0.0 · Goorul",
+        "width": 1440,
+        "height": 900,
+        "minWidth": 980,
+        "minHeight": 640
+      }
     ],
     "security": {
-      "assetProtocol": { "enable": true, "scope": [] },
-      "csp": "default-src 'self' asset:; connect-src 'self' ipc: http://ipc.localhost; img-src 'self' asset: http://asset.localhost blob: data:; media-src 'self' asset: http://asset.localhost blob: data:; frame-src blob: https://www.youtube-nocookie.com; style-src 'self' 'unsafe-inline'; script-src 'self'"
+      "assetProtocol": {
+        "enable": true,
+        "scope": []
+      },
+      "csp": "default-src 'self' asset:; connect-src 'self' ipc: http://ipc.localhost; img-src 'self' asset: http://asset.localhost blob: data:; media-src 'self' asset: http://asset.localhost blob: data:; frame-src https:; style-src 'self' 'unsafe-inline'; script-src 'self'"
     }
   },
   "bundle": {
@@ -28,8 +37,8 @@
     ],
     "category": "Education",
     "copyright": "AI Course Workbench",
-    "shortDescription": "Local-first course authoring workbench with an auditable AI assistant.",
-    "longDescription": "AI Course Workbench is a local-first desktop workbench for building course projects: course map, lesson editor, requirements, assets, six-dimension status, an AI assistant that only proposes reviewable changes, and an output/publish center. Project data lives in an open project.json on your own disk.",
+    "shortDescription": "Standard-document editing, AI-assisted research and portable presentations.",
+    "longDescription": "Workbench is a local-first desktop document editor. Open standard documents, research real sources with configured services, edit chapters and media, then export Markdown, HTML, DOCX and PPTX with a portable style guide. No proprietary project format is required.",
     "windows": {
       "nsis": {
         "installerIcon": "icons/icon.ico",
@@ -39,9 +48,18 @@
     "macOS": {
       "minimumSystemVersion": "11.0",
       "dmg": {
-        "windowSize": { "width": 660, "height": 400 },
-        "appPosition": { "x": 180, "y": 170 },
-        "applicationFolderPosition": { "x": 480, "y": 170 }
+        "windowSize": {
+          "width": 660,
+          "height": 400
+        },
+        "appPosition": {
+          "x": 180,
+          "y": 170
+        },
+        "applicationFolderPosition": {
+          "x": 480,
+          "y": 170
+        }
       }
     }
   }

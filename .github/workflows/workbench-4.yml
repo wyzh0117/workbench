@@ -1,0 +1,466 @@
+name: Workbench 4 build and guarded release
+
+# Authorized one-version delivery branch. No main edits, existing ref moves,
+# automatic tag-trigger chaining or publication before all checks/builds pass.
+# Ordinary pushes are build-only. The final reviewed commit must explicitly
+# contain [release-v4] before the guarded publication job can run.
+
+on:
+  push:
+    branches: [workbench-4.0.0-Goorul]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: workbench-4-release
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    name: Typecheck, regression tests and rendered UI QA
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - name: Install pinned verification tools
+        run: |
+          npm install --prefix "$RUNNER_TEMP/wb-tools" deno@2.9.6 playwright@1.58.2
+          echo "$RUNNER_TEMP/wb-tools/node_modules/.bin" >> "$GITHUB_PATH"
+          echo "WB_PLAYWRIGHT_MODULE=$RUNNER_TEMP/wb-tools/node_modules/playwright/index.mjs" >> "$GITHUB_ENV"
+      - run: deno task check
+      - run: deno task test
+      - name: Install Chromium for rendered interface checks
+        run: playwright install --with-deps chromium
+      - name: Render and exercise Workbench
+        run: node scripts/workbench-ui-smoke.mjs
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: workbench-ui-evidence
+          path: .qa-output/
+          if-no-files-found: warn
+
+  native-ui:
+    name: Real Tauri WebKit editing and export smoke
+    needs: verify
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      GDK_BACKEND: x11
+      WEBKIT_DISABLE_DMABUF_RENDERER: '1'
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - name: Install native WebKit prerequisites
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev webkit2gtk-driver xvfb dbus-x11
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6
+        with:
+          workspaces: src-tauri
+      - name: Build native app with embedded production frontend
+        run: cargo build --locked --manifest-path src-tauri/Cargo.toml --features custom-protocol
+      - name: Install Tauri 2 WebDriver
+        run: cargo install tauri-driver --version 2.1.0 --locked
+      - name: Exercise real WebView and native file/export commands
+        run: xvfb-run -a dbus-run-session -- node scripts/workbench-native-smoke.mjs
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: native-ui-evidence
+          path: .qa-output/native/
+          if-no-files-found: warn
+
+  macos-dmg:
+    name: Build Universal DMG
+    needs: verify
+    runs-on: macos-latest
+    outputs:
+      is_signed: ${{ steps.signing.outputs.is_signed }}
+    env:
+      HAS_APPLE_SIGNING_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE != '' }}
+
+    steps:
+      # Actions are pinned to commit SHAs because this job handles an Apple
+      # signing certificate. Bump the SHA (and keep the trailing version
+      # comment) when you intentionally upgrade an action.
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Verify pushed tag matches app version
+        if: ${{ github.event_name == 'push' && github.ref_type == 'tag' }}
+        run: |
+          set -euo pipefail
+          APP_VERSION="$(python3 -c 'import json; print(json.load(open("src-tauri/tauri.conf.json"))["version"])')"
+          EXPECTED_TAG="v${APP_VERSION}"
+          if [ "$GITHUB_REF_NAME" != "$EXPECTED_TAG" ]; then
+            echo "Refusing release: tag $GITHUB_REF_NAME does not match app version $EXPECTED_TAG." >&2
+            exit 1
+          fi
+
+      - name: Native regression and standard-document export tests
+        run: cargo test --locked --manifest-path src-tauri/Cargo.toml
+
+      - name: Add macOS Rust targets
+        run: rustup target add aarch64-apple-darwin x86_64-apple-darwin
+
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+        with:
+          workspaces: src-tauri
+
+      # Optional App Store Connect API-key notarization route. `APPLE_API_KEY_PATH`
+      # cannot be a repository secret — it has to be a real .p8 file that exists on
+      # the runner — so when APPLE_API_KEY_P8 is provided we write it to a
+      # runner-temporary path and export it for the build step below.
+      # If you use the Apple ID route instead (APPLE_ID + APPLE_PASSWORD +
+      # APPLE_TEAM_ID), leave APPLE_API_KEY_P8 unset and this step does nothing.
+      - name: Materialize App Store Connect API key (optional)
+        if: ${{ env.HAS_APPLE_SIGNING_CERTIFICATE == 'true' }}
+        env:
+          APPLE_API_KEY_P8: ${{ secrets.APPLE_API_KEY_P8 }}
+        run: |
+          set -euo pipefail
+          if [ -z "${APPLE_API_KEY_P8:-}" ]; then
+            echo "APPLE_API_KEY_P8 is not set; assuming the Apple ID route (or ad-hoc)."
+            exit 0
+          fi
+          KEY_PATH="$RUNNER_TEMP/AuthKey.p8"
+          printf '%s' "$APPLE_API_KEY_P8" > "$KEY_PATH"
+          chmod 600 "$KEY_PATH"
+          echo "APPLE_API_KEY_PATH=$KEY_PATH" >> "$GITHUB_ENV"
+          echo "Wrote the App Store Connect API key to a runner-temporary path."
+
+      - name: Build Universal app + DMG (Developer ID)
+        if: ${{ env.HAS_APPLE_SIGNING_CERTIFICATE == 'true' }}
+        uses: tauri-apps/tauri-action@84b9d35b5fc46c1e45415bdb6144030364f7ebc5 # v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          # Apple ID 公证路线：
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          # API Key 公证路线（APPLE_API_KEY_PATH 由上一个步骤写入 runner 临时目录后经
+          # GITHUB_ENV 传进来；不要把它配成 repository secret）：
+          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+        with:
+          args: --target universal-apple-darwin --bundles app,dmg
+
+      - name: Build Universal app + DMG (ad-hoc)
+        if: ${{ env.HAS_APPLE_SIGNING_CERTIFICATE != 'true' }}
+        uses: tauri-apps/tauri-action@84b9d35b5fc46c1e45415bdb6144030364f7ebc5 # v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          APPLE_SIGNING_IDENTITY: '-'
+        with:
+          args: --target universal-apple-darwin --bundles app,dmg
+
+      - name: Stage release assets with the stable filename
+        run: |
+          set -euo pipefail
+          BUNDLE_DIR="src-tauri/target/universal-apple-darwin/release/bundle"
+          SRC_DMG="$(find "$BUNDLE_DIR/dmg" -maxdepth 1 -name '*.dmg' -print -quit)"
+          if [ -z "$SRC_DMG" ]; then
+            echo "No DMG produced under $BUNDLE_DIR/dmg" >&2
+            exit 1
+          fi
+          mkdir -p dist
+          cp "$SRC_DMG" dist/AI-Course-Workbench-macOS.dmg
+          cd dist
+          shasum -a 256 AI-Course-Workbench-macOS.dmg > AI-Course-Workbench-macOS.dmg.sha256
+          cat AI-Course-Workbench-macOS.dmg.sha256
+          ls -l
+
+      - name: Validate the exact DMG payload
+        run: bash scripts/workbench-package-smoke.sh dist/AI-Course-Workbench-macOS.dmg
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: macos-package-evidence
+          path: .qa-output/macos-package/
+          if-no-files-found: warn
+
+      - name: Verify signature state of the shipped app
+        run: |
+          set -euo pipefail
+          APP="src-tauri/target/universal-apple-darwin/release/bundle/macos/AI Course Workbench.app"
+          echo "--- lipo ---"
+          lipo -archs "$APP/Contents/MacOS/ai-course-workbench" || true
+          echo "--- codesign ---"
+          codesign -dv --verbose=4 "$APP" 2>&1 || true
+          codesign --verify --deep --strict "$APP"
+          echo "--- spctl ---"
+          spctl --assess --type execute --verbose "$APP" 2>&1 || true
+
+      - name: Record signing state for the release notes
+        id: signing
+        run: |
+          set -euo pipefail
+          APP="src-tauri/target/universal-apple-darwin/release/bundle/macos/AI Course Workbench.app"
+          if codesign -dv "$APP" 2>&1 | grep -q "Developer ID Application"; then
+            echo "is_signed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "is_signed=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: macos-release
+          path: dist/*
+          if-no-files-found: error
+
+  windows-nsis:
+    name: Build Windows NSIS installer
+    needs: verify
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Verify pushed tag matches app version
+        if: ${{ github.event_name == 'push' && github.ref_type == 'tag' }}
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $config = Get-Content src-tauri/tauri.conf.json -Raw | ConvertFrom-Json
+          $expected = "v$($config.version)"
+          if ($env:GITHUB_REF_NAME -ne $expected) {
+            throw "Refusing release: tag $env:GITHUB_REF_NAME does not match app version $expected."
+          }
+
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+        with:
+          workspaces: src-tauri
+
+      - name: Build Windows app + NSIS installer
+        uses: tauri-apps/tauri-action@84b9d35b5fc46c1e45415bdb6144030364f7ebc5 # v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          args: --bundles nsis
+
+      - name: Stage release assets with the stable filename
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $bundle = "src-tauri/target/release/bundle/nsis"
+          $src = Get-ChildItem $bundle -Filter '*-setup.exe' | Select-Object -First 1
+          if (-not $src) { throw "No NSIS installer produced under $bundle" }
+          New-Item -ItemType Directory -Path dist -Force | Out-Null
+          Copy-Item $src.FullName 'dist/AI-Course-Workbench-Windows-x64-setup.exe'
+          $hash = (Get-FileHash 'dist/AI-Course-Workbench-Windows-x64-setup.exe' -Algorithm SHA256).Hash.ToLower()
+          "$hash  AI-Course-Workbench-Windows-x64-setup.exe" | Set-Content 'dist/AI-Course-Workbench-Windows-x64-setup.exe.sha256' -NoNewline
+          Get-Content 'dist/AI-Course-Workbench-Windows-x64-setup.exe.sha256'
+          Get-ChildItem dist | Format-Table Name, Length
+
+      - name: Install and validate the staged Windows installer
+        shell: pwsh
+        run: ./scripts/workbench-package-smoke.ps1 -Installer dist/AI-Course-Workbench-Windows-x64-setup.exe
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: windows-package-evidence
+          path: .qa-output/windows-package/
+          if-no-files-found: warn
+
+      - name: Verify version resource of the shipped installer
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $setup = Get-Item 'dist/AI-Course-Workbench-Windows-x64-setup.exe'
+          $vi = $setup.VersionInfo
+          $config = Get-Content src-tauri/tauri.conf.json -Raw | ConvertFrom-Json
+          $expected = [string]$config.version
+          Write-Host "ProductVersion=$($vi.ProductVersion) FileVersion=$($vi.FileVersion) ProductName=$($vi.ProductName)"
+          if ($vi.ProductVersion -ne $expected) {
+            throw "Installer version $($vi.ProductVersion) does not match app version $expected."
+          }
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: windows-release
+          path: dist/*
+          if-no-files-found: error
+
+  publish:
+    name: Create or fill the GitHub Release
+    # Only the explicit release marker on the authorized branch may publish.
+    if: github.repository == 'wyzh0117/workbench' && github.ref == 'refs/heads/workbench-4.0.0-Goorul' && contains(github.event.head_commit.message, '[release-v4]')
+    needs: [verify, native-ui, macos-dmg, windows-nsis]
+    permissions:
+      contents: write
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          path: dist
+          pattern: '*-release'
+          merge-multiple: true
+
+      - name: Publish release assets (freeze-checked)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          TAG="v4.0.0-Goorul"
+          VERSION="4.0.0-Goorul"
+          test "$(python3 -c 'import json; print(json.load(open("src-tauri/tauri.conf.json"))["version"])')" = "4.0.0"
+          # Create only this new tag after all validation and both native builds.
+          # GITHUB_TOKEN-created tags do not trigger another workflow; publication
+          # happens here, using the exact artifacts from this tested commit.
+          if gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/${TAG}" > /tmp/wb-tag.json 2>/tmp/wb-tag-error; then
+            EXISTING="$(python3 -c 'import json; print(json.load(open("/tmp/wb-tag.json"))["object"]["sha"])')"
+            test "$EXISTING" = "$GITHUB_SHA" || { echo 'Refusing to move an existing tag'; exit 1; }
+          else
+            grep -q '404' /tmp/wb-tag-error || { cat /tmp/wb-tag-error; exit 1; }
+            gh api --method POST "repos/${GITHUB_REPOSITORY}/git/refs" -f "ref=refs/tags/${TAG}" -f "sha=${GITHUB_SHA}"
+          fi
+          MAC_SHA="$(cut -d' ' -f1 dist/AI-Course-Workbench-macOS.dmg.sha256)"
+          WIN_SHA="$(cut -d' ' -f1 dist/AI-Course-Workbench-Windows-x64-setup.exe.sha256)"
+
+          MAC_SIGNED="${{ needs.macos-dmg.outputs.is_signed }}"
+          if [ "$MAC_SIGNED" = "true" ]; then
+            SIGNING_LINE="- macOS: Signed with Apple Developer ID and notarized."
+            FIRST_LAUNCH="- macOS 已签名并公证，直接双击打开即可。"
+          else
+          SIGNING_LINE="- macOS: NOT signed with an Apple Developer ID and NOT notarized."
+          FIRST_LAUNCH="$(cat <<'NOTES'
+          - 首次打开需要手动放行一次，方式取决于 macOS 版本：
+            - **macOS 15 (Sequoia) / 26 及更新版本**：Control-click 已无法绕过 Gatekeeper。
+              双击后点「完成」→ 打开「系统设置 → 隐私与安全性」→ 在「安全性」区域点「仍要打开」→ 输入密码或 Touch ID 确认。
+            - **macOS 11 (Big Sur) – 14 (Sonoma)**：在「应用程序」中右键点击（或按住 Control 点击）
+              AI Course Workbench → 选择「打开」→ 在弹窗中再次点「打开」。
+            - 放行一次之后，双击即可正常打开。
+          - 不建议关闭 Gatekeeper，也不建议用 `xattr` 移除隔离属性。
+          NOTES
+          )"
+          fi
+
+          NOTES_FILE=".github/release-notes/${TAG}.md"
+          {
+            printf '# AI Course Workbench %s\n\n' "$VERSION"
+            if [ -f "$NOTES_FILE" ]; then
+              cat "$NOTES_FILE"
+              printf '\n'
+            else
+              printf 'macOS Universal DMG + Windows x64 installer.\n\n'
+            fi
+            cat <<EOF
+          ## Downloads
+
+          | Platform | Installer | SHA-256 sidecar |
+          |---|---|---|
+          | Windows (x64) | [AI-Course-Workbench-Windows-x64-setup.exe](https://github.com/${GITHUB_REPOSITORY}/releases/download/${TAG}/AI-Course-Workbench-Windows-x64-setup.exe) | [.sha256](https://github.com/${GITHUB_REPOSITORY}/releases/download/${TAG}/AI-Course-Workbench-Windows-x64-setup.exe.sha256) |
+          | macOS (Universal) | [AI-Course-Workbench-macOS.dmg](https://github.com/${GITHUB_REPOSITORY}/releases/download/${TAG}/AI-Course-Workbench-macOS.dmg) | [.sha256](https://github.com/${GITHUB_REPOSITORY}/releases/download/${TAG}/AI-Course-Workbench-macOS.dmg.sha256) |
+
+          ## System
+
+          - Windows: Windows 10 (1809+) with WebView2; x64 installer (per-user, no admin rights)
+          - macOS: macOS 11.0 (Big Sur) 或更高版本; Universal（Apple Silicon arm64 + Intel x86_64，同一个安装包）
+
+          ## Install
+
+          ### Windows
+
+          1. 下载 \`AI-Course-Workbench-Windows-x64-setup.exe\`
+          2. 运行安装向导（按用户安装）
+          3. 从开始菜单打开 **AI Course Workbench**
+          - SmartScreen 提示时选「更多信息 → 仍要运行」（安装包未做 Authenticode 签名）。
+
+          ### macOS
+
+          1. 下载 \`AI-Course-Workbench-macOS.dmg\`
+          2. 双击打开 DMG
+          3. 将 **AI Course Workbench** 拖到 Applications
+          4. 从 Applications 打开
+
+          ${FIRST_LAUNCH}
+
+          ## Distribution status
+
+          ${SIGNING_LINE}
+          - Windows: NOT signed with an Authenticode certificate; SmartScreen may warn once.
+
+          ## Verify
+
+          \`\`\`
+          ${WIN_SHA}  AI-Course-Workbench-Windows-x64-setup.exe
+          ${MAC_SHA}  AI-Course-Workbench-macOS.dmg
+          \`\`\`
+
+          \`\`\`powershell
+          Get-FileHash .\\AI-Course-Workbench-Windows-x64-setup.exe -Algorithm SHA256
+          \`\`\`
+
+          \`\`\`bash
+          shasum -a 256 ~/Downloads/AI-Course-Workbench-macOS.dmg
+          \`\`\`
+
+          ## Links
+
+          - Latest release page: https://github.com/${GITHUB_REPOSITORY}/releases/latest
+          - Direct download (Windows): https://github.com/${GITHUB_REPOSITORY}/releases/latest/download/AI-Course-Workbench-Windows-x64-setup.exe
+          - Direct download (macOS): https://github.com/${GITHUB_REPOSITORY}/releases/latest/download/AI-Course-Workbench-macOS.dmg
+          EOF
+          } > dist/release-notes.md
+
+          ASSETS=(
+            dist/AI-Course-Workbench-macOS.dmg
+            dist/AI-Course-Workbench-macOS.dmg.sha256
+            dist/AI-Course-Workbench-Windows-x64-setup.exe
+            dist/AI-Course-Workbench-Windows-x64-setup.exe.sha256
+          )
+
+          if ! gh release view "$TAG" >/dev/null 2>&1; then
+            # Normal path: a brand-new tag, so the Release does not exist yet.
+            gh release create "$TAG" \
+              "${ASSETS[@]}" \
+              --title "workbench 4.0.0-Goorul" \
+              --draft \
+              --notes-file dist/release-notes.md \
+              --verify-tag
+            gh release edit "$TAG" --draft=false
+          else
+            # The Release already exists. A PUBLISHED tag is frozen — its assets
+            # must never change, because anyone who already downloaded it must
+            # be able to match that file's SHA-256 against this version number
+            # forever. Only an unpublished (draft) Release — one whose creation
+            # never completed — may still be filled in.
+            IS_DRAFT="$(gh release view "$TAG" --json isDraft --jq '.isDraft')"
+            if [ "$IS_DRAFT" = "true" ]; then
+              echo "Release $TAG is still a draft; filling in its assets."
+              # Resume a partial upload only when the bytes already on the draft
+              # are identical. Never replace an existing asset, even on a draft.
+              gh release view "$TAG" --json assets > /tmp/wb-draft-assets.json
+              mkdir -p /tmp/wb-existing-assets
+              for ASSET in "${ASSETS[@]}"; do
+                NAME="$(basename "$ASSET")"
+                if python3 -c 'import json,sys; raise SystemExit(0 if any(a["name"]==sys.argv[1] for a in json.load(open("/tmp/wb-draft-assets.json"))["assets"]) else 1)' "$NAME"; then
+                  gh release download "$TAG" --pattern "$NAME" --dir /tmp/wb-existing-assets
+                  cmp "$ASSET" "/tmp/wb-existing-assets/$NAME" || { echo 'Existing draft asset bytes differ; refusing replacement'; exit 1; }
+                else
+                  gh release upload "$TAG" "$ASSET"
+                fi
+              done
+              gh release edit "$TAG" --title "workbench 4.0.0-Goorul" --notes-file dist/release-notes.md --draft=false
+            else
+              # Refuse, loudly. Overwriting here would hand anyone who already
+              # downloaded this tag a same-named file with a different SHA-256.
+              echo "::error::Release $TAG is already published, so its assets are frozen."
+              echo "::error::Refusing to overwrite it. Cut a new version instead: fix -> new commit -> new tag -> new Release."
+              {
+                echo "## Refusing to overwrite the published release $TAG"
+                echo ""
+                echo "Release $TAG is already published (isDraft=false), so its assets are **frozen**."
+                echo ""
+                echo "Overwriting it would give anyone who already downloaded $TAG a same-named file with a different SHA-256 — exactly what the rule prevents."
+                echo ""
+                echo "To ship this build, fix it in a new commit and cut a new tag; never reuse a published tag."
+              } >> "$GITHUB_STEP_SUMMARY"
+              exit 1
+            fi
+          fi

@@ -44,14 +44,11 @@
   // The interface modules, in load order.  Probing them turns "nothing
   // happened" into "this file is missing".
   var SHELL_FILES = [
-    "/styles.css",
-    "/constants.js",
-    "/recovery.js",
-    "/authoring.js",
-    "/ai.js",
-    "/canvas.js",
-    "/views.js",
-    "/main.js",
+    "/workbench.css",
+    "/workbench-model.js",
+    "/workbench-runtime.js",
+    "/workbench-view.js",
+    "/workbench.js",
   ];
   function probe() {
     return Promise.all(SHELL_FILES.map(function (file) {
@@ -84,7 +81,7 @@
     var reason = event.reason;
     report("界面启动过程中出错。", reason && reason.message ? reason.message : String(reason || ""));
   });
-  import("/main.js").catch(function (error) {
+  import("/workbench.js").catch(function (error) {
     report("界面脚本加载失败。", error && (error.stack || error.message) ? (error.stack || error.message) : String(error));
   });
 })();
