@@ -45,10 +45,36 @@ try {
   Add-Type -AssemblyName System.Drawing
   Add-Type @'
 using System.Runtime.InteropServices;
+using System.ComponentModel;
+using System.Collections.Generic;
 public static class WorkbenchIconResources {
+    private const uint LOAD_LIBRARY_AS_DATAFILE = 0x00000002;
+    private const int RT_GROUP_ICON = 14;
+    private delegate bool EnumResourceNameProc(System.IntPtr module, System.IntPtr type, System.IntPtr name, System.IntPtr parameter);
     [DllImport("shell32.dll", EntryPoint = "ExtractIconExW", CharSet = CharSet.Unicode)]
     private static extern uint ExtractIconEx(string file, int index, System.IntPtr[] large, System.IntPtr[] small, uint count);
+    [DllImport("kernel32.dll", EntryPoint = "LoadLibraryExW", CharSet = CharSet.Unicode, SetLastError = true)]
+    private static extern System.IntPtr LoadLibraryEx(string file, System.IntPtr fileHandle, uint flags);
+    [DllImport("kernel32.dll", EntryPoint = "EnumResourceNamesW", CharSet = CharSet.Unicode, SetLastError = true)]
+    private static extern bool EnumResourceNames(System.IntPtr module, System.IntPtr type, EnumResourceNameProc callback, System.IntPtr parameter);
+    [DllImport("kernel32.dll", EntryPoint = "FreeLibrary", SetLastError = true)]
+    private static extern bool FreeLibrary(System.IntPtr module);
     public static uint Count(string file) => ExtractIconEx(file, -1, null, null, 0);
+    public static string[] GroupIconResourceIds(string file) {
+        var module = LoadLibraryEx(file, System.IntPtr.Zero, LOAD_LIBRARY_AS_DATAFILE);
+        if (module == System.IntPtr.Zero) throw new Win32Exception(Marshal.GetLastWin32Error());
+        var ids = new List<string>();
+        EnumResourceNameProc callback = (handle, type, name, parameter) => {
+            var value = name.ToInt64();
+            ids.Add((value & ~0xffffL) == 0 ? "#" + (value & 0xffffL).ToString() : Marshal.PtrToStringUni(name));
+            return true;
+        };
+        try {
+            if (!EnumResourceNames(module, new System.IntPtr(RT_GROUP_ICON), callback, System.IntPtr.Zero))
+                throw new Win32Exception(Marshal.GetLastWin32Error());
+            return ids.ToArray();
+        } finally { FreeLibrary(module); }
+    }
 }
 '@
 
@@ -101,8 +127,11 @@ public static class WorkbenchIconResources {
 
   $installerIconCount = [WorkbenchIconResources]::Count($installerPath)
   if ($installerIconCount -lt 1) { throw 'The published NSIS installer contains no extractable icon resource.' }
+  $installerIconResourceIds = @([WorkbenchIconResources]::GroupIconResourceIds($installerPath))
+  if ($installerIconResourceIds.Count -lt 1) { throw 'The published NSIS installer has no RT_GROUP_ICON resources.' }
   Save-IconPreview $installerPath (Join-Path $evidenceDir 'installer-icon-preview.png')
-  Add-Check 'installer icon resource' 'PASS' "$installerIconCount icon group(s); PNG preview saved."
+  $details.installer_icon_resource_ids = $installerIconResourceIds
+  Add-Check 'installer icon resource' 'PASS' "$installerIconCount group(s), RT_GROUP_ICON resource ID(s) $($installerIconResourceIds -join ', '); default Shell-associated preview saved."
 
   if (Test-Path -LiteralPath $installDir) { Remove-Item -LiteralPath $installDir -Recurse -Force }
   $installArgs = @('/S', "/D=$installDir")
@@ -131,6 +160,8 @@ public static class WorkbenchIconResources {
   }
   $appIconCount = [WorkbenchIconResources]::Count($appPath)
   if ($appIconCount -lt 1) { throw 'The installed application contains no extractable icon resource.' }
+  $appIconResourceIds = @([WorkbenchIconResources]::GroupIconResourceIds($appPath))
+  if ($appIconResourceIds.Count -lt 1) { throw 'The installed application has no RT_GROUP_ICON resources.' }
   Save-IconPreview $appPath (Join-Path $evidenceDir 'application-icon-preview.png')
   $details.application = [ordered]@{
     path = $appPath
@@ -138,6 +169,7 @@ public static class WorkbenchIconResources {
     product_version = $appInfo.ProductVersion
     file_version = $appInfo.FileVersion
     icon_groups = $appIconCount
+    icon_resource_ids = $appIconResourceIds
   }
   Add-Check 'installed application version and icon' 'PASS' "ProductVersion=$($appInfo.ProductVersion); FileVersion=$($appInfo.FileVersion); $appIconCount icon group(s)."
 
@@ -161,24 +193,43 @@ public static class WorkbenchIconResources {
   }
   $shortcutPath = $shortcutMatches[0].FullName
   $startLink = $shell.CreateShortcut($shortcutPath)
-  $iconSpec = [Environment]::ExpandEnvironmentVariables([string]$startLink.IconLocation).Trim().Trim('"')
-  if ([string]::IsNullOrWhiteSpace($iconSpec)) { $iconSpec = $startLink.TargetPath }
-  $iconPath = $iconSpec -replace ',\s*-?\d+$', ''
+  $rawIconLocation = [string]$startLink.IconLocation
+  $iconSpec = [Environment]::ExpandEnvironmentVariables($rawIconLocation).Trim().Trim('"')
+  $iconIndex = 0
+  $iconPath = $iconSpec
+  if ($iconSpec -match '^(.*?),\s*(-?\d+)$') {
+    $iconPath = $Matches[1].Trim().Trim('"')
+    $iconIndex = [int]$Matches[2]
+  }
+  $iconFallback = 'explicit path'
+  if ([string]::IsNullOrWhiteSpace($iconPath)) {
+    # Windows Shell uses the shortcut target's associated icon when IconLocation has no path.
+    $iconPath = [Environment]::ExpandEnvironmentVariables([string]$startLink.TargetPath).Trim().Trim('"')
+    $iconIndex = 0
+    $iconFallback = 'target default icon (empty IconLocation path)'
+  }
   if (-not [System.IO.Path]::IsPathRooted($iconPath)) { $iconPath = Join-Path $installDir $iconPath }
+  $shortcutDetails = [ordered]@{
+    shortcut = $shortcutPath
+    target = $startLink.TargetPath
+    icon_location_raw = $rawIconLocation
+    icon_spec_expanded = $iconSpec
+    icon_index = $iconIndex
+    icon_resolution = $iconFallback
+    resolved_icon_path = $iconPath
+  }
+  $details.start_menu_shortcut = $shortcutDetails
   if (-not (Test-Path -LiteralPath $iconPath -PathType Leaf)) {
     throw "The Start Menu shortcut icon target is missing: $iconPath"
   }
   $shortcutIconCount = [WorkbenchIconResources]::Count($iconPath)
   if ($shortcutIconCount -lt 1) { throw "The Start Menu shortcut's icon target has no icon resource: $iconPath" }
+  $shortcutIconResourceIds = @([WorkbenchIconResources]::GroupIconResourceIds($iconPath))
+  if ($shortcutIconResourceIds.Count -lt 1) { throw "The Start Menu shortcut icon target has no RT_GROUP_ICON resources: $iconPath" }
   Save-IconPreview $iconPath (Join-Path $evidenceDir 'start-menu-icon-preview.png')
-  $details.start_menu_shortcut = [ordered]@{
-    shortcut = $shortcutPath
-    target = $startLink.TargetPath
-    icon_location = $startLink.IconLocation
-    resolved_icon_path = $iconPath
-    icon_groups = $shortcutIconCount
-  }
-  Add-Check 'Start Menu shortcut target and icon resource' 'PASS' "Target=$($startLink.TargetPath); icon=$iconPath; $shortcutIconCount icon group(s)."
+  $shortcutDetails.icon_groups = $shortcutIconCount
+  $shortcutDetails.icon_resource_ids = $shortcutIconResourceIds
+  Add-Check 'Start Menu shortcut target and icon resource' 'PASS' "Target=$($startLink.TargetPath); IconLocation='$rawIconLocation' (index $iconIndex; $iconFallback); resolved icon=$iconPath; resource ID(s) $($shortcutIconResourceIds -join ', ')."
 
   Add-Check 'interactive Windows shell appearance' 'NOT_TESTED' 'Hosted Actions runner is not treated as a user desktop; no Explorer, Start Menu, or taskbar screenshot is claimed.'
 }
