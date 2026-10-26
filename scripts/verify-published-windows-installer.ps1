@@ -2,10 +2,15 @@
 param(
   [string]$Tag = 'v3.1.0',
   [string]$Version = '3.1.0',
-  [string]$ExpectedSha256 = 'c165416a082a2686922f90ecd7bf4c924319e7eff89f0bc8aceadb5e5fc72514',
-  [long]$ExpectedSize = 5552572L,
-  [string]$ExpectedSidecarSha256 = 'b2e727aef2c1f68c0975d53d6697ff0d17f68340b4332055f068466d98f11798',
-  [long]$ExpectedSidecarSize = 107L,
+  [string]$ExpectedSha256 = '',
+  [long]$ExpectedSize = 0L,
+  [string]$ExpectedSidecarSha256 = '',
+  [long]$ExpectedSidecarSize = 0L,
+  [string]$CandidateDirectory = '',
+  [long]$SourceRunId = 0L,
+  [string]$SourceBranch = '',
+  [string]$SourceSha = '',
+  [string]$SourceArtifactName = '',
   [switch]$RequireIconParity
 )
 $ErrorActionPreference = 'Stop'
@@ -100,38 +105,95 @@ public static class WorkbenchIconResources {
 }
 '@
 
-  $setupUrl = "$releaseBase/$assetName"
-  $sidecarUrl = "$releaseBase/$assetName.sha256"
-  Invoke-WebRequest -Uri $setupUrl -OutFile $installerPath -MaximumRedirection 10
-  Invoke-WebRequest -Uri $sidecarUrl -OutFile $sidecarPath -MaximumRedirection 10
+  $candidateMode = -not [string]::IsNullOrWhiteSpace($CandidateDirectory)
+  if ($candidateMode) {
+    if ($SourceRunId -le 0 -or $SourceBranch -ne 'codex/v3.1.1' -or $SourceSha -notmatch '^[0-9a-f]{40}$' -or [string]::IsNullOrWhiteSpace($SourceArtifactName)) {
+      throw 'Candidate mode requires a successful v3.1.1 run ID, exact source branch/SHA, and artifact name.'
+    }
+    if ([string]::IsNullOrWhiteSpace($env:GITHUB_TOKEN)) { throw 'Candidate provenance requires GITHUB_TOKEN with actions:read.' }
+    $headers = @{
+      Accept = 'application/vnd.github+json'
+      Authorization = "Bearer $env:GITHUB_TOKEN"
+      'X-GitHub-Api-Version' = '2022-11-28'
+    }
+    $runUri = "https://api.github.com/repos/wyzh0117/workbench/actions/runs/$SourceRunId"
+    $sourceRun = Invoke-RestMethod -Method Get -Uri $runUri -Headers $headers
+    if ($sourceRun.id -ne $SourceRunId -or $sourceRun.status -ne 'completed' -or $sourceRun.conclusion -ne 'success' -or
+        $sourceRun.event -ne 'workflow_dispatch' -or $sourceRun.name -ne 'Release (macOS DMG + Windows NSIS)' -or
+        $sourceRun.path -ne '.github/workflows/release.yml' -or $sourceRun.head_branch -ne $SourceBranch -or $sourceRun.head_sha -ne $SourceSha) {
+      throw "Candidate run provenance mismatch: id=$($sourceRun.id), status=$($sourceRun.status), conclusion=$($sourceRun.conclusion), event=$($sourceRun.event), workflow=$($sourceRun.name) [$($sourceRun.path)], branch=$($sourceRun.head_branch), sha=$($sourceRun.head_sha)."
+    }
+    $runArtifacts = Invoke-RestMethod -Method Get -Uri "$runUri/artifacts?per_page=100" -Headers $headers
+    $sourceArtifacts = @($runArtifacts.artifacts | Where-Object { $_.name -eq $SourceArtifactName -and -not $_.expired -and $_.size_in_bytes -gt 0 })
+    if ($sourceArtifacts.Count -ne 1) { throw "Expected one unexpired '$SourceArtifactName' artifact for run $SourceRunId; found $($sourceArtifacts.Count)." }
+    $sourceArtifact = $sourceArtifacts[0]
+    if ($sourceArtifact.workflow_run.id -ne $SourceRunId) { throw 'Candidate artifact is not attached to the specified build run.' }
+    $candidateInstaller = Join-Path $CandidateDirectory $assetName
+    $candidateSidecar = "$candidateInstaller.sha256"
+    if (-not (Test-Path -LiteralPath $candidateInstaller -PathType Leaf) -or -not (Test-Path -LiteralPath $candidateSidecar -PathType Leaf)) {
+      throw "Candidate artifact must contain $assetName and $assetName.sha256 at its root."
+    }
+    Copy-Item -LiteralPath $candidateInstaller -Destination $installerPath -Force
+    Copy-Item -LiteralPath $candidateSidecar -Destination $sidecarPath -Force
+    $setupUrl = "actions://run/$SourceRunId/artifact/$SourceArtifactName"
+    $details.source = [ordered]@{
+      kind = 'workflow_artifact'
+      run_id = $SourceRunId
+      run_url = $sourceRun.html_url
+      run_event = $sourceRun.event
+      source_branch = $sourceRun.head_branch
+      source_sha = $sourceRun.head_sha
+      artifact_name = $sourceArtifact.name
+      artifact_id = $sourceArtifact.id
+      artifact_bytes = $sourceArtifact.size_in_bytes
+    }
+  } else {
+    if ($SourceRunId -ne 0 -or -not [string]::IsNullOrWhiteSpace($SourceBranch) -or -not [string]::IsNullOrWhiteSpace($SourceSha) -or -not [string]::IsNullOrWhiteSpace($SourceArtifactName)) {
+      throw 'Source run/branch/SHA/artifact fields require CandidateDirectory.'
+    }
+    if ($ExpectedSha256 -notmatch '^[0-9a-f]{64}$' -or $ExpectedSidecarSha256 -notmatch '^[0-9a-f]{64}$' -or $ExpectedSize -le 0 -or $ExpectedSidecarSize -le 0) {
+      throw 'Release mode requires frozen installer and sidecar SHA-256 values and byte sizes.'
+    }
+    $sidecarUrl = "$releaseBase/$assetName.sha256"
+    Invoke-WebRequest -Uri "$releaseBase/$assetName" -OutFile $installerPath -MaximumRedirection 10
+    Invoke-WebRequest -Uri $sidecarUrl -OutFile $sidecarPath -MaximumRedirection 10
+    $setupUrl = "$releaseBase/$assetName"
+    $details.source = [ordered]@{ kind = 'release_asset'; tag = $Tag; url = $setupUrl }
+  }
 
   $actualSize = (Get-Item -LiteralPath $installerPath).Length
-  if ($actualSize -ne $ExpectedSize) {
+  if ($ExpectedSize -gt 0 -and $actualSize -ne $ExpectedSize) {
     throw "Published installer byte count mismatch: expected $ExpectedSize, got $actualSize."
   }
   $sidecar = [System.IO.File]::ReadAllText($sidecarPath).Trim()
-  if ($sidecar -notmatch "^$ExpectedSha256\s+$([regex]::Escape($assetName))$") {
-    throw 'Published SHA-256 sidecar does not match the supplied frozen release asset metadata.'
-  }
+  $sidecarMatch = [regex]::Match($sidecar, '^([0-9a-fA-F]{64})\s+' + [regex]::Escape($assetName) + '$')
+  if (-not $sidecarMatch.Success) { throw 'SHA-256 sidecar has an unexpected name or digest format.' }
+  $sidecarAssetSha256 = $sidecarMatch.Groups[1].Value.ToLowerInvariant()
+  if ($ExpectedSha256 -and $sidecarAssetSha256 -ne $ExpectedSha256) { throw 'SHA-256 sidecar does not match the supplied expected installer digest.' }
   $actualSidecarSize = (Get-Item -LiteralPath $sidecarPath).Length
   $actualSidecarSha256 = (Get-FileHash -LiteralPath $sidecarPath -Algorithm SHA256).Hash.ToLowerInvariant()
-  if ($actualSidecarSize -ne $ExpectedSidecarSize -or $actualSidecarSha256 -ne $ExpectedSidecarSha256) {
+  if (($ExpectedSidecarSize -gt 0 -and $actualSidecarSize -ne $ExpectedSidecarSize) -or
+      ($ExpectedSidecarSha256 -and $actualSidecarSha256 -ne $ExpectedSidecarSha256)) {
     throw "Published sidecar metadata mismatch: bytes=$actualSidecarSize sha256=$actualSidecarSha256."
   }
   $actualSha256 = (Get-FileHash -LiteralPath $installerPath -Algorithm SHA256).Hash.ToLowerInvariant()
-  if ($actualSha256 -ne $ExpectedSha256) {
-    throw "Published installer SHA-256 mismatch: expected $ExpectedSha256, got $actualSha256."
+  if ($actualSha256 -ne $sidecarAssetSha256 -or ($ExpectedSha256 -and $actualSha256 -ne $ExpectedSha256)) {
+    throw "Installer SHA-256 does not match sidecar/expected digest: sidecar=$sidecarAssetSha256 expected=$ExpectedSha256 actual=$actualSha256."
   }
   $details.asset = [ordered]@{
-    tag = $Tag
+    target_tag = $Tag
     url = $setupUrl
     bytes = $actualSize
     sha256 = $actualSha256
+    expected_bytes = $ExpectedSize
+    expected_sha256 = $ExpectedSha256
     sidecar_bytes = $actualSidecarSize
     sidecar_sha256 = $actualSidecarSha256
+    expected_sidecar_bytes = $ExpectedSidecarSize
+    expected_sidecar_sha256 = $ExpectedSidecarSha256
     sidecar = $sidecar
   }
-  Add-Check 'published asset bytes and SHA-256' 'PASS' "$actualSize-byte installer and $actualSidecarSize-byte sidecar match their frozen digests."
+  Add-Check 'source asset bytes and SHA-256' 'PASS' "$actualSize-byte installer and $actualSidecarSize-byte sidecar match; installer digest is $actualSha256."
 
   $installerInfo = (Get-Item -LiteralPath $installerPath).VersionInfo
   if ($installerInfo.ProductName -ne 'AI Course Workbench' -or $installerInfo.ProductVersion -ne $Version) {
@@ -304,6 +366,10 @@ finally {
     release_tag = $Tag
     expected_asset_sha256 = $ExpectedSha256
     expected_sidecar_sha256 = $ExpectedSidecarSha256
+    source_run_id = $SourceRunId
+    source_branch = $SourceBranch
+    source_sha = $SourceSha
+    source_artifact_name = $SourceArtifactName
     status = if ($failure) { 'failed' } else { 'passed' }
     checks = @($checks)
     details = $details

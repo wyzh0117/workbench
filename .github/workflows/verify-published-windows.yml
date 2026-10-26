@@ -1,4 +1,4 @@
-name: Verify published v3.1.0 Windows installer
+name: Verify Workbench v3.1.1 Windows package
 
 on:
   push:
@@ -7,23 +7,96 @@ on:
 
 permissions:
   contents: read
+  actions: read
 
 jobs:
-  verify-published-installer:
+  verify-windows-package:
     runs-on: windows-latest
     timeout-minutes: 12
+    env:
+      # Fill these only on the isolated verifier branch for the exact candidate run or published asset.
+      SOURCE_MODE: candidate
+      CANDIDATE_RUN_ID: ''
+      CANDIDATE_SHA: ''
+      CANDIDATE_BRANCH: codex/v3.1.1
+      CANDIDATE_ARTIFACT: windows-release
+      RELEASE_TAG: v3.1.1
+      EXPECTED_SHA256: ''
+      EXPECTED_SIZE: '0'
+      EXPECTED_SIDECAR_SHA256: ''
+      EXPECTED_SIDECAR_SIZE: '0'
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
-      - name: Verify published installer, install in runner temp, and inspect icons
+      - name: Validate verification source parameters
         shell: pwsh
-        run: ./scripts/verify-published-windows-installer.ps1
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if ($env:RELEASE_TAG -ne 'v3.1.1') { throw 'This verifier is scoped to the v3.1.1 target release.' }
+          if ($env:SOURCE_MODE -eq 'candidate') {
+            if ($env:CANDIDATE_RUN_ID -notmatch '^[0-9]+$' -or $env:CANDIDATE_SHA -notmatch '^[0-9a-f]{40}$' -or
+                $env:CANDIDATE_BRANCH -ne 'codex/v3.1.1' -or $env:CANDIDATE_ARTIFACT -ne 'windows-release') {
+              throw 'Candidate mode needs the exact workflow run ID, 40-character SHA, codex/v3.1.1 source branch, and windows-release artifact.'
+            }
+          } elseif ($env:SOURCE_MODE -eq 'release') {
+            if ($env:EXPECTED_SHA256 -notmatch '^[0-9a-f]{64}$' -or $env:EXPECTED_SIZE -notmatch '^[1-9][0-9]*$' -or
+                $env:EXPECTED_SIDECAR_SHA256 -notmatch '^[0-9a-f]{64}$' -or $env:EXPECTED_SIDECAR_SIZE -notmatch '^[1-9][0-9]*$') {
+              throw 'Release mode needs the exact installer/sidecar SHA-256 values and byte sizes.'
+            }
+          } else {
+            throw "Unsupported SOURCE_MODE '$env:SOURCE_MODE'."
+          }
 
-      - name: Upload byte, version, shortcut, and icon-resource evidence
+      - name: Download v3.1.1 candidate from the specified successful build
+        if: env.SOURCE_MODE == 'candidate'
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: ${{ env.CANDIDATE_ARTIFACT }}
+          repository: wyzh0117/workbench
+          run-id: ${{ env.CANDIDATE_RUN_ID }}
+          github-token: ${{ github.token }}
+          path: ${{ runner.temp }}\candidate-assets
+
+      - name: Verify candidate package
+        if: env.SOURCE_MODE == 'candidate'
+        shell: pwsh
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $params = @{
+            Tag = $env:RELEASE_TAG
+            Version = '3.1.1'
+            CandidateDirectory = "$env:RUNNER_TEMP\candidate-assets"
+            SourceRunId = [long]$env:CANDIDATE_RUN_ID
+            SourceBranch = $env:CANDIDATE_BRANCH
+            SourceSha = $env:CANDIDATE_SHA
+            SourceArtifactName = $env:CANDIDATE_ARTIFACT
+            RequireIconParity = $true
+          }
+          & ./scripts/verify-published-windows-installer.ps1 @params
+
+      - name: Verify published v3.1.1 package
+        if: env.SOURCE_MODE == 'release'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $params = @{
+            Tag = $env:RELEASE_TAG
+            Version = '3.1.1'
+            ExpectedSha256 = $env:EXPECTED_SHA256
+            ExpectedSize = [long]$env:EXPECTED_SIZE
+            ExpectedSidecarSha256 = $env:EXPECTED_SIDECAR_SHA256
+            ExpectedSidecarSize = [long]$env:EXPECTED_SIDECAR_SIZE
+            RequireIconParity = $true
+          }
+          & ./scripts/verify-published-windows-installer.ps1 @params
+
+      - name: Upload bytes, provenance, version, shortcut, and icon-resource evidence
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: workbench-v3.1.0-windows-installer-evidence
+          name: workbench-v3.1.1-windows-package-evidence
           path: ${{ runner.temp }}\workbench-*-windows-evidence
           if-no-files-found: warn
           retention-days: 14
