@@ -1,0 +1,29 @@
+name: Verify published v3.1.0 Windows installer
+
+on:
+  push:
+    branches:
+      - codex/verify-v3.1.0-windows
+
+permissions:
+  contents: read
+
+jobs:
+  verify-published-installer:
+    runs-on: windows-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Verify published installer, install in runner temp, and inspect icons
+        shell: pwsh
+        run: ./scripts/verify-published-windows-installer.ps1
+
+      - name: Upload byte, version, shortcut, and icon-resource evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: workbench-v3.1.0-windows-installer-evidence
+          path: ${{ runner.temp }}\workbench-v3.1.0-windows-evidence
+          if-no-files-found: warn
+          retention-days: 14
