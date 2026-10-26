@@ -15,16 +15,16 @@ jobs:
     timeout-minutes: 12
     env:
       # Fill these only on the isolated verifier branch for the exact candidate run or published asset.
-      SOURCE_MODE: candidate
-      CANDIDATE_RUN_ID: '40340151537'
-      CANDIDATE_SHA: 5f305f9ec4e0df5066fa163f59e457b7f576a30e
+      SOURCE_MODE: release
+      CANDIDATE_RUN_ID: ''
+      CANDIDATE_SHA: ''
       CANDIDATE_BRANCH: codex/v3.1.1
       CANDIDATE_ARTIFACT: windows-release
       RELEASE_TAG: v3.1.1
-      EXPECTED_SHA256: ''
-      EXPECTED_SIZE: '0'
-      EXPECTED_SIDECAR_SHA256: ''
-      EXPECTED_SIDECAR_SIZE: '0'
+      EXPECTED_SHA256: fbf3f6940333b33834e7b8ef79b3d9897d20f52a2d2cbd7bc087419e38cdbe8f
+      EXPECTED_SIZE: '5540059'
+      EXPECTED_SIDECAR_SHA256: 1122029045719745641b0cfb36e4eb0bca1a9b4b2e8da08c404acb8d2ce419a8
+      EXPECTED_SIDECAR_SIZE: '107'
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
