@@ -2749,7 +2749,12 @@ mod tests {
             &json!({"path":output,"sourcePath":source,"markdown":opened["markdown"]}),
         )
         .unwrap();
-        assert_eq!(first["sourcePath"], json!(output));
+        // Native acknowledgements use canonical paths; macOS temp paths may
+        // reach /private/var through the /var symlink.
+        assert_eq!(
+            first["sourcePath"],
+            json!(std::fs::canonicalize(&output).unwrap())
+        );
         assert_eq!(first["markdown"], opened["markdown"]);
         let image = source_dir.join("new.png");
         std::fs::write(&image,BASE64.decode("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jvtcAAAAASUVORK5CYII=").unwrap()).unwrap();

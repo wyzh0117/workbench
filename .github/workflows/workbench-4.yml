@@ -38,7 +38,8 @@ jobs:
         with:
           name: workbench-ui-evidence
           path: .qa-output/
-          if-no-files-found: warn
+          include-hidden-files: true
+          if-no-files-found: error
 
   native-ui:
     name: Real Tauri WebKit editing and export smoke
@@ -68,6 +69,7 @@ jobs:
         with:
           name: native-ui-evidence
           path: .qa-output/native/
+          include-hidden-files: true
           if-no-files-found: warn
 
   macos-dmg:
@@ -179,6 +181,7 @@ jobs:
         with:
           name: macos-package-evidence
           path: .qa-output/macos-package/
+          include-hidden-files: true
           if-no-files-found: warn
 
       - name: Verify signature state of the shipped app
@@ -263,6 +266,7 @@ jobs:
         with:
           name: windows-package-evidence
           path: .qa-output/windows-package/
+          include-hidden-files: true
           if-no-files-found: warn
 
       - name: Verify version resource of the shipped installer
