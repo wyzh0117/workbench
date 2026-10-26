@@ -16,8 +16,8 @@ jobs:
     env:
       # Fill these only on the isolated verifier branch for the exact candidate run or published asset.
       SOURCE_MODE: candidate
-      CANDIDATE_RUN_ID: ''
-      CANDIDATE_SHA: ''
+      CANDIDATE_RUN_ID: '40340151537'
+      CANDIDATE_SHA: 5f305f9ec4e0df5066fa163f59e457b7f576a30e
       CANDIDATE_BRANCH: codex/v3.1.1
       CANDIDATE_ARTIFACT: windows-release
       RELEASE_TAG: v3.1.1

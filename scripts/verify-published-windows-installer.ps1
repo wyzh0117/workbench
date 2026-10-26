@@ -118,16 +118,27 @@ public static class WorkbenchIconResources {
     }
     $runUri = "https://api.github.com/repos/wyzh0117/workbench/actions/runs/$SourceRunId"
     $sourceRun = Invoke-RestMethod -Method Get -Uri $runUri -Headers $headers
-    if ($sourceRun.id -ne $SourceRunId -or $sourceRun.status -ne 'completed' -or $sourceRun.conclusion -ne 'success' -or
+    if ($sourceRun.id -ne $SourceRunId -or $sourceRun.repository.full_name -ne 'wyzh0117/workbench' -or
+        $sourceRun.status -notin @('in_progress', 'completed') -or
         $sourceRun.event -ne 'workflow_dispatch' -or $sourceRun.name -ne 'Release (macOS DMG + Windows NSIS)' -or
         $sourceRun.path -ne '.github/workflows/release.yml' -or $sourceRun.head_branch -ne $SourceBranch -or $sourceRun.head_sha -ne $SourceSha) {
-      throw "Candidate run provenance mismatch: id=$($sourceRun.id), status=$($sourceRun.status), conclusion=$($sourceRun.conclusion), event=$($sourceRun.event), workflow=$($sourceRun.name) [$($sourceRun.path)], branch=$($sourceRun.head_branch), sha=$($sourceRun.head_sha)."
+      throw "Candidate run provenance mismatch: id=$($sourceRun.id), repository=$($sourceRun.repository.full_name), status=$($sourceRun.status), event=$($sourceRun.event), workflow=$($sourceRun.name) [$($sourceRun.path)], branch=$($sourceRun.head_branch), sha=$($sourceRun.head_sha)."
     }
+    $runJobs = Invoke-RestMethod -Method Get -Uri "$runUri/jobs?per_page=100" -Headers $headers
+    $windowsJobs = @($runJobs.jobs | Where-Object { $_.name -eq 'Build Windows NSIS installer' })
+    if ($windowsJobs.Count -ne 1 -or $windowsJobs[0].status -ne 'completed' -or $windowsJobs[0].conclusion -ne 'success') {
+      $jobState = @($windowsJobs | ForEach-Object { "$($_.name):$($_.status)/$($_.conclusion)" }) -join ', '
+      throw "The candidate run's Windows NSIS job is not completed successfully: $jobState."
+    }
+    $windowsJob = $windowsJobs[0]
     $runArtifacts = Invoke-RestMethod -Method Get -Uri "$runUri/artifacts?per_page=100" -Headers $headers
     $sourceArtifacts = @($runArtifacts.artifacts | Where-Object { $_.name -eq $SourceArtifactName -and -not $_.expired -and $_.size_in_bytes -gt 0 })
     if ($sourceArtifacts.Count -ne 1) { throw "Expected one unexpired '$SourceArtifactName' artifact for run $SourceRunId; found $($sourceArtifacts.Count)." }
     $sourceArtifact = $sourceArtifacts[0]
-    if ($sourceArtifact.workflow_run.id -ne $SourceRunId) { throw 'Candidate artifact is not attached to the specified build run.' }
+    if ($sourceArtifact.workflow_run.id -ne $SourceRunId -or $sourceArtifact.workflow_run.head_branch -ne $SourceBranch -or
+        $sourceArtifact.workflow_run.head_sha -ne $SourceSha) {
+      throw 'Candidate artifact is not attached to the specified workflow run, branch, and commit.'
+    }
     $candidateInstaller = Join-Path $CandidateDirectory $assetName
     $candidateSidecar = "$candidateInstaller.sha256"
     if (-not (Test-Path -LiteralPath $candidateInstaller -PathType Leaf) -or -not (Test-Path -LiteralPath $candidateSidecar -PathType Leaf)) {
@@ -140,9 +151,14 @@ public static class WorkbenchIconResources {
       kind = 'workflow_artifact'
       run_id = $SourceRunId
       run_url = $sourceRun.html_url
+      parent_run_status = $sourceRun.status
+      parent_run_conclusion = $sourceRun.conclusion
       run_event = $sourceRun.event
       source_branch = $sourceRun.head_branch
       source_sha = $sourceRun.head_sha
+      windows_job_id = $windowsJob.id
+      windows_job_status = $windowsJob.status
+      windows_job_conclusion = $windowsJob.conclusion
       artifact_name = $sourceArtifact.name
       artifact_id = $sourceArtifact.id
       artifact_bytes = $sourceArtifact.size_in_bytes
