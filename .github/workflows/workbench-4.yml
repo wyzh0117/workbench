@@ -32,7 +32,16 @@ jobs:
       - run: deno task check
       - run: deno task test
       - name: Install Chromium for rendered interface checks
-        run: playwright install --with-deps chromium
+        timeout-minutes: 10
+        run: |
+          mkdir -p .qa-output
+          exec > >(tee -a .qa-output/chromium-dependencies.log) 2>&1
+          for source in /etc/apt/sources.list /etc/apt/sources.list.d/ubuntu.sources; do
+            if [ -f "$source" ]; then
+              sudo sed -i 's#http://azure.archive.ubuntu.com/ubuntu#https://archive.ubuntu.com/ubuntu#g' "$source"
+            fi
+          done
+          playwright install --with-deps chromium
       - name: Render and exercise Workbench
         run: node scripts/workbench-ui-smoke.mjs
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
