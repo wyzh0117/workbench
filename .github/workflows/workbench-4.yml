@@ -36,9 +36,10 @@ jobs:
         run: |
           mkdir -p .qa-output
           exec > >(tee -a .qa-output/chromium-dependencies.log) 2>&1
-          for source in /etc/apt/sources.list /etc/apt/sources.list.d/ubuntu.sources; do
+          for source in /etc/apt/sources.list /etc/apt/sources.list.d/ubuntu.sources /etc/apt/apt-mirrors.txt; do
             if [ -f "$source" ]; then
               sudo sed -i 's#http://azure.archive.ubuntu.com/ubuntu#https://archive.ubuntu.com/ubuntu#g' "$source"
+              grep -n 'archive.ubuntu.com' "$source" || true
             fi
           done
           playwright install --with-deps chromium
@@ -69,9 +70,10 @@ jobs:
           exec > >(tee -a .qa-output/native/dependencies.log) 2>&1
           # The runner's Azure HTTP mirror stalled below 40 KB/s in validation.
           # Use Ubuntu's official HTTPS archive; retain signed APT indexes.
-          for source in /etc/apt/sources.list /etc/apt/sources.list.d/ubuntu.sources; do
+          for source in /etc/apt/sources.list /etc/apt/sources.list.d/ubuntu.sources /etc/apt/apt-mirrors.txt; do
             if [ -f "$source" ]; then
               sudo sed -i 's#http://azure.archive.ubuntu.com/ubuntu#https://archive.ubuntu.com/ubuntu#g' "$source"
+              grep -n 'archive.ubuntu.com' "$source" || true
             fi
           done
           APT_OPTIONS=(-o DPkg::Lock::Timeout=60 -o Acquire::Retries=2 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30)
