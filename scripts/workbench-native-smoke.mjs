@@ -148,7 +148,7 @@ return true;`);
     record('Real embedded Tauri/WebKit starts in native mode with both sidebars; no browser mock bridge');
 
     await client.evaluateAsync('await globalThis.__workbench.openPath(args[0]); return true;', [sourcePath]);
-    await until(()=>client.evaluate('return document.querySelector("[aria-label=\"文档标题\"]")?.value === "Native Workbench QA";'), 'native document visible in editor');
+    await until(()=>client.evaluate('return document.querySelector(arguments[0])?.value === arguments[1];', ['[aria-label="文档标题"]', 'Native Workbench QA']), 'native document visible in editor');
     assert.equal(await client.evaluate('return document.querySelectorAll("textarea.block-text").length >= 2;'), true);
     const opened = await client.evaluateAsync('return await globalThis.__TAURI__.core.invoke("wb_document_open",{input:{path:args[0]}});',[sourcePath]);
     await assertFileHash(sourcePath, opened.hash);
