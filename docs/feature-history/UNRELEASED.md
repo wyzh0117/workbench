@@ -4,6 +4,10 @@
 
 ---
 
+## v3.1.1 补丁快照（2026-10-26）
+
+本快照记录 Windows NSIS 安装器与卸载器的四格品牌图标配置，详情见 [`v3.1.1 feature history`](./v3.1.1.md)。实际发布状态、tag、CI 结果与 Windows 产物验证以 [稳定 Release 页面](https://github.com/wyzh0117/workbench/releases/tag/v3.1.1) 为准；本文件不预告 CI 结果。
+
 ## v3.1.0 版本记录（2026-10-26）
 
 ```text

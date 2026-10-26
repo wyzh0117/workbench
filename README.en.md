@@ -12,6 +12,7 @@ AI Course Workbench is a local-first course authoring tool. Course content lives
 ## Quick start
 
 Download the Windows or macOS installer from the [latest release page](https://github.com/wyzh0117/workbench/releases/latest), open the app, then create or open a course project.
+The v3.1.1 source snapshot configures the Windows NSIS installer and uninstaller to use the same four-square brand icon as the app. The [stable release page](https://github.com/wyzh0117/workbench/releases/tag/v3.1.1) records actual publication status and Windows runner package verification.
 
 To build from source, install Deno 2.x, Rust, and the build tools for your platform:
 

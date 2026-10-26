@@ -12,6 +12,7 @@ AI Course Workbench 是一款本地优先的课程创作工具。课程内容保
 ## 快速开始
 
 从[最新版本页面](https://github.com/wyzh0117/workbench/releases/latest)下载 Windows 或 macOS 安装包，安装后打开应用并新建或打开一个课程项目。
+v3.1.1 源码快照配置 Windows NSIS 安装器与卸载器使用和应用相同的四格品牌图标；实际公开状态与 Windows runner 产物验证见 [稳定发布页](https://github.com/wyzh0117/workbench/releases/tag/v3.1.1)。
 
 从源码运行需要 Deno 2.x、Rust 和对应平台的构建工具：
 
