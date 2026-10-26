@@ -251,8 +251,10 @@ Deno.test("public resource discovery flow shares evidence and usages across revi
       url: input.url,
       title: `Riverside flood evacuation event — ${publisher}`,
       publisher,
+      text: "Mock page content describes the same flood evacuation and response timeline.",
       excerpt:
         "Mock page content describes the same flood evacuation and response timeline.",
+      truncated: false,
       evidence_access: "content_read",
       content_hash: "a".repeat(64),
       limitations: ["Explicit mock source fetch; not live web evidence."],
@@ -666,6 +668,223 @@ Deno.test("public resource discovery flow shares evidence and usages across revi
       ),
       "merged event resource should also remain in the shared library",
     );
+  } finally {
+    if (desktop) await desktop.close();
+    await Deno.remove(directory, { recursive: true });
+  }
+});
+
+Deno.test("resource discovery resumes only unfinished query indexes and retries only failed indexes", async () => {
+  const directory = await Deno.makeTempDir({ prefix: "acw-resource-resume-" });
+  let desktop: DesktopService | null = null;
+  const calls = new Map<string, number>();
+  let blockedQuery = "";
+  let failedQuery = "";
+  let lessonIds: string[] = [];
+  const configureProviders = (instance: DesktopService) => {
+    const transport = instance.resourceProviders as ResourceProviders;
+    transport.searchWeb = async (input) => {
+      input.onRequest?.();
+      const count = (calls.get(input.query) ?? 0) + 1;
+      calls.set(input.query, count);
+      if (input.query === blockedQuery && count === 1) {
+        await new Promise<never>((_resolve, reject) => {
+          const abort = () => reject(new DOMException("Cancelled", "AbortError"));
+          if (input.signal?.aborted) abort();
+          else input.signal?.addEventListener("abort", abort, { once: true });
+        });
+      }
+      if (input.query === failedQuery && count === 1) {
+        throw { error: { code: "provider_unavailable", user_message: "受控失败" } };
+      }
+      if (input.query === successQuery) {
+        const hit: WebSearchHit = {
+          provider_id: "brave_search",
+          transport: "mock",
+          request_id: `resume-search-${count}`,
+          requested_at: "2026-10-26T01:00:00.000Z",
+          fetched_at: "2026-10-26T01:00:01.000Z",
+          query: input.query,
+          title: "Mock evacuation case",
+          url: "https://example.test/resume-case",
+          description: "Explicit mock result used to verify resume retention.",
+          publisher: "Test publisher",
+          page_age: null,
+          published_at: null,
+        };
+        return [hit];
+      }
+      return [];
+    };
+    transport.fetchSource = async (input): Promise<SourceFetchResult> => {
+      input.onRequest?.();
+      return {
+        provider_id: "brave_search",
+        transport: "mock",
+        request_id: "resume-source-1",
+        requested_at: "2026-10-26T01:00:01.000Z",
+        fetched_at: "2026-10-26T01:00:02.000Z",
+        query: input.query ?? "",
+        url: input.url,
+        title: "Mock evacuation case",
+        publisher: "Test publisher",
+        text: "Explicit mock source text for resume verification.",
+        excerpt: "Explicit mock source text for resume verification.",
+        truncated: false,
+        evidence_access: "content_read",
+        content_hash: "b".repeat(64),
+        limitations: ["Explicit mock source fetch; not live web evidence."],
+      };
+    };
+  };
+  let successQuery = "";
+  const makeDesktop = () => {
+    const instance = new DesktopService(
+      directory,
+      { app_instance_id: `resource-resume-${crypto.randomUUID()}` },
+      new MemorySecretStore(),
+      {},
+      new MemorySecretStore(),
+    );
+    configureProviders(instance);
+    return instance;
+  };
+  const makePlan = async (language: string) => {
+    const result = await desktop!.commands.execute("resource.discovery.prepare", {
+      content_item_ids: lessonIds,
+      search_types: ["web"],
+      request_budget: 30,
+      preferences: {
+        per_lesson_limit: 3,
+        language,
+        target_min_sec: 240,
+        target_max_sec: 360,
+        wide_min_sec: 180,
+        wide_max_sec: 480,
+      },
+    });
+    return acceptedValue<ResourceDiscoveryPlan>(result, "prepare resume plan");
+  };
+  const waitForCount = async (query: string, expected: number) => {
+    for (let attempt = 0; attempt < 200; attempt++) {
+      if ((calls.get(query) ?? 0) >= expected) return;
+      await new Promise((resolve) => setTimeout(resolve, 5));
+    }
+    throw new Error(`query was not dispatched: ${query}`);
+  };
+
+  try {
+    desktop = makeDesktop();
+    await desktop.open();
+    const created = acceptedValue<ProjectData>(
+      await desktop.commands.execute("project.create", { title: "资源恢复合同" }),
+      "create resume project",
+    );
+    const project = structuredClone(created);
+    lessonIds = [
+      addLesson(project, "第一课：洪水预警", 0),
+      addLesson(project, "第二课：应急响应", 1),
+      addLesson(project, "第三课：社区恢复", 2),
+    ];
+    const initialState = acceptedValue<OpenState>(
+      await desktop.commands.execute("project.open_state", {}),
+      "open resume fixture",
+    );
+    acceptedValue(
+      await desktop.commands.execute("project.save", {
+        project,
+        expected_fingerprint: initialState.fingerprint,
+      }),
+      "save resume lessons",
+    );
+
+    const firstPlan = await makePlan("en");
+    const firstQueries = firstPlan.queries.flatMap((row) => row.queries.map((query) => query.query));
+    assert(firstQueries.length === 3, "fixture should generate three stable query rows");
+    successQuery = firstQueries[0]!;
+    failedQuery = firstQueries[1]!;
+    blockedQuery = firstQueries[2]!;
+    const firstStarted = acceptedValue<ResourceDiscoveryTask>(
+      await desktop.commands.execute("resource.discovery.start", {
+        plan_id: firstPlan.plan_id,
+        input_hash: firstPlan.input_hash,
+        authorized: true,
+      }),
+      "start first resume task",
+    );
+    await waitForCount(blockedQuery, 1);
+    const duplicateContinue = await desktop.commands.execute("resource.discovery.retry", {
+      task_id: firstStarted.task_id,
+    });
+    assert(duplicateContinue.error?.code === "invalid_task_state", "running task must reject a duplicate continue");
+    await desktop.commands.execute("resource.discovery.cancel", { task_id: firstStarted.task_id });
+    const stopped = await waitForTask(desktop, firstStarted.task_id);
+    assert(stopped.state === "cancelled", "stop should leave a resumable cancelled task");
+    assert(stopped.progress.completed_queries === 2, "success and failure both advance stable query progress");
+    assert(stopped.errors.some((item) => item.query_index === 1), "the completed failed row keeps its stable index");
+    assert(stopped.candidates.length === 1 && stopped.candidates[0]?.source_evidence.length === 1, "stop retains candidates and source evidence");
+
+    const continued = acceptedValue<ResourceDiscoveryTask>(
+      await desktop.commands.execute("resource.discovery.retry", { task_id: firstStarted.task_id }),
+      "continue stopped task",
+    );
+    const afterContinue = await waitForTask(desktop, continued.task_id);
+    assert(afterContinue.state === "partial", "continuing unfinished rows preserves an earlier failed row");
+    assert(afterContinue.progress.completed_queries === 3 && afterContinue.progress.total_queries === 3, "progress remains a stable query index and original total");
+    assert(calls.get(firstQueries[0]!) === 1 && calls.get(firstQueries[1]!) === 1 && calls.get(firstQueries[2]!) === 2, "continue dispatches only the unfinished row");
+    assert(afterContinue.candidates.length === 1 && afterContinue.candidates[0]?.source_evidence.length === 1, "continuation retains previously discovered evidence");
+
+    const retried = acceptedValue<ResourceDiscoveryTask>(
+      await desktop.commands.execute("resource.discovery.retry", { task_id: firstStarted.task_id }),
+      "retry failed query only",
+    );
+    const afterRetry = await waitForTask(desktop, retried.task_id);
+    assert(afterRetry.state === "completed", "successful retry clears only the failed row error");
+    assert(afterRetry.progress.completed_queries === 3 && afterRetry.progress.total_queries === 3, "retry does not inflate query progress");
+    assert(calls.get(firstQueries[0]!) === 1 && calls.get(firstQueries[1]!) === 2 && calls.get(firstQueries[2]!) === 2, "ordinary retry dispatches only the failed row");
+    const duplicateCompleted = await desktop.commands.execute("resource.discovery.retry", { task_id: firstStarted.task_id });
+    assert(duplicateCompleted.error?.code === "no_retryable_work", "completed task cannot repeat provider requests");
+
+    const secondPlan = await makePlan("fr");
+    const secondQueries = secondPlan.queries.flatMap((row) => row.queries.map((query) => query.query));
+    successQuery = secondQueries[0]!;
+    failedQuery = "";
+    blockedQuery = secondQueries[1]!;
+    const interruptedStart = acceptedValue<ResourceDiscoveryTask>(
+      await desktop.commands.execute("resource.discovery.start", {
+        plan_id: secondPlan.plan_id,
+        input_hash: secondPlan.input_hash,
+        authorized: true,
+      }),
+      "start interruption fixture",
+    );
+    await waitForCount(blockedQuery, 1);
+    const beforeClose = await desktop.queries.execute("resource.discovery.get", {
+      task_id: interruptedStart.task_id,
+    }) as ResourceDiscoveryTask | null;
+    assert(beforeClose?.progress.completed_queries === 1 && beforeClose.candidates.length === 1, "second task persists one completed row before interruption");
+    await desktop.close();
+    const cachePath = `${directory}/.workspace/resource-discovery.json`;
+    const cache = JSON.parse(await Deno.readTextFile(cachePath)) as { tasks: ResourceDiscoveryTask[] };
+    const saved = cache.tasks.find((task) => task.task_id === interruptedStart.task_id);
+    assert(saved, "interruption task must be persisted before reopen");
+    saved.state = "running";
+    await Deno.writeTextFile(cachePath, JSON.stringify(cache));
+
+    desktop = makeDesktop();
+    await desktop.open();
+    const recovered = await desktop.queries.execute("resource.discovery.get", {
+      task_id: interruptedStart.task_id,
+    }) as ResourceDiscoveryTask | null;
+    assert(recovered?.state === "interrupted", "reopening a running persisted task marks it interrupted");
+    const resumed = acceptedValue<ResourceDiscoveryTask>(
+      await desktop.commands.execute("resource.discovery.retry", { task_id: interruptedStart.task_id }),
+      "continue interrupted task",
+    );
+    const afterReopen = await waitForTask(desktop, resumed.task_id);
+    assert(afterReopen.state === "completed" && afterReopen.progress.completed_queries === 3, "reopened task completes its unfinished rows");
+    assert(calls.get(secondQueries[0]!) === 1 && calls.get(secondQueries[1]!) === 2 && calls.get(secondQueries[2]!) === 1, "reopen continues after the stable completed prefix without repeating completed queries");
+    assert(afterReopen.candidates.length === 1 && afterReopen.candidates[0]?.source_evidence.length === 1, "reopen retains candidates and evidence");
   } finally {
     if (desktop) await desktop.close();
     await Deno.remove(directory, { recursive: true });

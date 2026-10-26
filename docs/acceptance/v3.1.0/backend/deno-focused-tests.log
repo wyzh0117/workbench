@@ -1,0 +1,17 @@
+running 8 tests from ./tests/browser_session_test.ts
+browser page reload migrates legacy preview state, then saves canonical edits ... ok (1s)
+a new browser session epoch rejects a delayed save from the previous page ... ok (126ms)
+browser reload migrates a saved free-layout route to the current lesson editor ... ok (111ms)
+saved snapshot list hydrates when legacy versions route migrates to settings history ... ok (275ms)
+browser beforeunload drains the latest reader position with a keepalive request ... ok (92ms)
+browser export preflight uses the real query route ... ok (128ms)
+browser session records reject stale, corrupt, credential-shaped, missing, and inaccessible inputs ... ok (5ms)
+missing browser projects still render a usable launcher ... ok (51ms)
+running 3 tests from ./tests/resource_discovery_workflow_test.ts
+public resource discovery flow shares evidence and usages across review, reopen, and lesson deletion ... ok (364ms)
+resource discovery resumes only unfinished query indexes and retries only failed indexes ... ok (124ms)
+legacy 1.0 migration preserves layouts through public save and is idempotent after reopen ... ok (124ms)
+running 1 test from ./tests/resource_document_discovery_test.ts
+document discovery parses canonical Markdown, validates evidence, and persists editable search intent ... ok (150ms)
+
+ok | 12 passed | 0 failed (3s)

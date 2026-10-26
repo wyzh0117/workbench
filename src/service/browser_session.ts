@@ -31,6 +31,7 @@ const READER_KEYS = [
   "mode",
   "right_panel",
   "route",
+  "legacy_route_notice",
   "course_tree_filter",
   "media_filter",
   "settings_section",
@@ -48,6 +49,12 @@ const READER_KEYS = [
   "explorer_filter",
   "explorer_expanded",
   "explorer_recent",
+  "right_tab",
+  "resource_task_id",
+  "resource_selected_candidate_id",
+  "resource_document",
+  "resource_auto_start",
+  "resource_intent_overrides",
 ] as const;
 const EXPLORER_PATH_LIST_KEYS = new Set([
   "explorer_expanded",
@@ -480,9 +487,73 @@ function isProjectId(value: unknown): value is string {
   return typeof value === "string" && value.trim().length > 0 && value.length <= 256;
 }
 
+function onlyKeys(value: Record<string, unknown>, allowed: string[]): boolean {
+  return Object.keys(value).every((key) => allowed.includes(key));
+}
+
+function validStringList(value: unknown, maxItems: number, maxLength: number): value is string[] {
+  return Array.isArray(value) && value.length <= maxItems &&
+    value.every((item) => typeof item === "string" && item.trim().length > 0 && item.length <= maxLength);
+}
+
+function validResourceDocument(value: unknown): boolean {
+  if (value === null) return true;
+  if (!isRecord(value) || !onlyKeys(value, ["asset_id", "filename", "status", "readable", "truncated", "error", "context"]) ||
+    !isProjectId(value.asset_id) || typeof value.filename !== "string" || value.filename.length > 256 ||
+    !["imported", "analyzing", "parsed", "ready", "error"].includes(String(value.status)) ||
+    typeof value.readable !== "boolean" || typeof value.truncated !== "boolean" ||
+    typeof value.error !== "string" || value.error.length > 500) return false;
+  const context = value.context;
+  if (context === null) return true;
+  if (!isRecord(context) || !onlyKeys(context, [
+    "asset_id", "sha256", "title", "themes", "concepts", "objectives", "case_types", "media_types", "keywords", "language", "preferred_language", "constraints",
+  ]) || context.asset_id !== value.asset_id || typeof context.sha256 !== "string" || !/^[a-f0-9]{64}$/i.test(context.sha256) ||
+    typeof context.title !== "string" || context.title.length > 240 || typeof context.language !== "string" || context.language.length > 80 ||
+    !validStringList(context.concepts, 24, 240) || !validStringList(context.objectives, 24, 240) ||
+    !validStringList(context.case_types, 24, 240) || !validStringList(context.media_types, 24, 240) ||
+    !validStringList(context.keywords, 30, 240) || !Array.isArray(context.themes) || context.themes.length < 1 || context.themes.length > 8) return false;
+  if (context.preferred_language !== undefined && (typeof context.preferred_language !== "string" || context.preferred_language.length > 80)) return false;
+  for (const theme of context.themes) {
+    if (!isRecord(theme) || !onlyKeys(theme, ["name", "evidence"]) || typeof theme.name !== "string" ||
+      !theme.name.trim() || theme.name.length > 160 || !Array.isArray(theme.evidence) || theme.evidence.length < 1 || theme.evidence.length > 4) return false;
+    for (const item of theme.evidence) {
+      if (!isRecord(item) || !onlyKeys(item, ["text", "locator"]) || typeof item.text !== "string" ||
+        !item.text.trim() || item.text.length > 800 || !isRecord(item.locator)) return false;
+      const locator = item.locator;
+      if (!onlyKeys(locator, ["block", "section", "page", "slide"]) ||
+        !Number.isSafeInteger(locator.block) || Number(locator.block) < 0) return false;
+      if (["page", "slide"].some((key) => locator[key] !== undefined &&
+        (!Number.isSafeInteger(locator[key]) || Number(locator[key]) < 0))) return false;
+      if (locator.section !== undefined && (typeof locator.section !== "string" || locator.section.length > 240)) return false;
+    }
+  }
+  if (context.constraints !== undefined) {
+    const constraints = context.constraints;
+    if (!isRecord(constraints) || !onlyKeys(constraints, ["terms", "time_range", "regions", "industries"])) return false;
+    if (constraints.terms !== undefined && !validStringList(constraints.terms, 24, 240)) return false;
+    if (constraints.regions !== undefined && !validStringList(constraints.regions, 24, 240)) return false;
+    if (constraints.industries !== undefined && !validStringList(constraints.industries, 24, 240)) return false;
+    if (constraints.time_range !== undefined && (typeof constraints.time_range !== "string" || constraints.time_range.length > 160)) return false;
+  }
+  return true;
+}
+
+function validResourceIntentOverrides(value: unknown): boolean {
+  if (value === null) return true;
+  return isRecord(value) && onlyKeys(value, ["themes", "keywords", "case_types", "media_types", "language"]) &&
+    ["themes", "keywords", "case_types", "media_types"].every((key) =>
+      value[key] === undefined || validStringList(value[key], 20, 160)
+    ) && (value.language === undefined || (typeof value.language === "string" && value.language.length <= 80));
+}
+
 /** Keep only the shared UI reader contract; canonical and secret-shaped data is dropped. */
 function normalizeSession(value: unknown, projectId: string): BrowserReaderSession | null {
   if (!isRecord(value) || value.project_id !== projectId) return null;
+  try {
+    if (new TextEncoder().encode(JSON.stringify(value)).byteLength > MAX_BROWSER_SESSION_BYTES) return null;
+  } catch {
+    return null;
+  }
   for (const key of Object.keys(value)) {
     if (!SESSION_KEYS.has(key)) return null;
   }
@@ -490,6 +561,31 @@ function normalizeSession(value: unknown, projectId: string): BrowserReaderSessi
   for (const key of READER_KEYS) {
     if (!(key in value)) continue;
     const child = value[key];
+    if (key === "right_tab") {
+      if (!["discovery", "browser", "assistant"].includes(String(child))) return null;
+      output[key] = child;
+      continue;
+    }
+    if (key === "resource_task_id" || key === "resource_selected_candidate_id") {
+      if (child !== null && (typeof child !== "string" || !child.trim() || child.length > 256)) return null;
+      output[key] = child;
+      continue;
+    }
+    if (key === "resource_document") {
+      if (!validResourceDocument(child)) return null;
+      output[key] = child;
+      continue;
+    }
+    if (key === "resource_auto_start") {
+      if (typeof child !== "boolean") return null;
+      output[key] = child;
+      continue;
+    }
+    if (key === "resource_intent_overrides") {
+      if (!validResourceIntentOverrides(child)) return null;
+      output[key] = child;
+      continue;
+    }
     if (key === "tabs") {
       if (!Array.isArray(child) || child.length > 100) return null;
       const tabs: Record<string, unknown>[] = [];
@@ -524,6 +620,11 @@ function normalizeSession(value: unknown, projectId: string): BrowserReaderSessi
     }
     if (key === "explorer_filter") {
       if (typeof child !== "string" || child.length > 256) return null;
+      output[key] = child;
+      continue;
+    }
+    if (key === "legacy_route_notice") {
+      if (typeof child !== "string" || child.length > 500) return null;
       output[key] = child;
       continue;
     }

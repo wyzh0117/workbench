@@ -23,12 +23,15 @@
 | **v3.0.0** | **2026-10-21** | `f6bf485` | [v3.0.0](https://github.com/wyzh0117/workbench/releases/tag/v3.0.0) | **公开 / 历史 / 冻结** | [中文 feature history](./v3.0.0.md)：统一课程工作区、资源发现与显式采纳、PowerPoint 风格提取和单页补充导出；验收报告如实列出已接受的 PARTIAL / UNVERIFIED 限制。 |
 | **v3.0.1** | **2026-10-24** | `ad4c042` | [v3.0.1](https://github.com/wyzh0117/workbench/releases/tag/v3.0.1) | **公开 / 历史 / 冻结** | [中文 feature history](./v3.0.1.md)：AI 模型配置界面与逻辑按 DeepSeek Harness「设置 → 模型」重做——提供商行卡 + 行内编辑卡、分段式添加提供商、逐模型的容量 / 输入类型 / 排序编辑、「获取可用模型」勾选弹窗、推理等级按协议下发。 |
 | **v3.0.2** | **2026-10-24** | `cb58104` | [v3.0.2](https://github.com/wyzh0117/workbench/releases/tag/v3.0.2) | **公开 / Latest / 冻结** | [中文 feature history](./v3.0.2.md)：全站 UI 整改（视觉体系统一）——按钮 / 输入 / 卡片 / 徽章 / 状态点同规格、8–10.5px 中文不可读字号清零、页头行动组单行、状态列统一、设置子导航 active、加载态统一；**无功能变更**。 |
+| **v3.1.0** | **2026-10-26** | 以发布页为准 | [v3.1.0](https://github.com/wyzh0117/workbench/releases/tag/v3.1.0) | 版本快照 | [feature history](./v3.1.0.md)：课程文档驱动素材发现、右侧阅读区、四格品牌图标。全套源码测试已通过；真实模型提取与联网搜索未实测。发布与资产详情以稳定发布页及最终 HTML 报告为准。 |
 
 v3.0.2 于 2026-10-24 发布，是 v3.0.1 之上的增量（唯一用户可见变化：全站 UI 整改，视觉体系统一，**无功能变更**）。tag `v3.0.2`（tag 对象 `a7fefd2`）指向源码提交 `cb581044f635d7f4129ea1217cc36ad62d4223af`；公开安装包校验事实（Windows 安装包匿名下载实测一致；DMG 为 sidecar / 正文 / GitHub 摘要三方交叉一致，本次未完成逐字节复核）见 [`v3.0.2.md`](./v3.0.2.md) 的「发布记录」。v3.0.1 的用户可见能力仍归属 v3.0.1。
 
 v3.0.1 于 2026-10-24 发布，是 v3.0.0 之上的增量（唯一用户可见变化：AI 模型配置界面与逻辑重做）。tag `v3.0.1` 指向源码提交 `ad4c04207d8a69c6e8dd2b271c17edf12670dd53`；公开 DMG 与 Windows 安装包已匿名下载并核对 SHA-256、版本与架构，签名与公证状态以 workflow 判定为准（未签名 / 未公证），全部事实见 [`v3.0.1.md`](./v3.0.1.md) 的「发布记录」。v3.0.0 的用户可见能力仍归属 v3.0.0。
 
 v3.0.0 于 2026-10-21 发布。用户接受了验收记录中的 PARTIAL / UNVERIFIED 限制；该决定没有改变矩阵状态。详见 [`v3.0.0 feature history`](./v3.0.0.md) 和 [`32 项验收记录`](../v3.0.0-acceptance.md)。
+
+v3.1.0 的实现、源码验证结果和已知限制记载于 [`v3.1.0.md`](./v3.1.0.md)。实际公开状态、提交/tag 指向、workflow 与资产校验以 [稳定 GitHub Release 页面](https://github.com/wyzh0117/workbench/releases/tag/v3.1.0) 和最终 HTML 报告为准。
 
 ### 关于 v0.2.0
 

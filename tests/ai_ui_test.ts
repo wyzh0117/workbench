@@ -506,6 +506,76 @@ function seedCourse(store: AiStore) {
   return { first, second, block: store.blocks(first)[0]! };
 }
 
+Deno.test("rightPanelView is exported, callable, and tolerates pre-v3 resource fixtures", async () => {
+  const { store, restore } = await bootStore();
+  try {
+    store.ui.rightTab = "discovery";
+    delete store.ui.resourceSearchTypes;
+    const { createViews } = await import(`../app/views.js?right-panel-contract-${++importCounter}`);
+    const views = createViews(store as never);
+    assert(typeof views.rightPanelView === "function", "createViews must expose the partial right-panel renderer");
+    const html = views.rightPanelView();
+    assert(html.includes('data-right-tab="discovery"') && html.includes('aria-selected="true"'), "the default discovery tab must render as selected");
+    assert(html.includes('data-resource-search="web"') && html.includes('data-resource-search="video"'), "old fixtures without resourceSearchTypes must receive safe defaults");
+    store.ui.resourceDocument = { asset_id: "asset-1", filename: "lesson.md", status: "parsed", readable: true, truncated: false, error: "正文已解析。配置模型连接后可继续提取主题。", context: null };
+    store.ui.resourceTask = { task_id: "task-1", state: "interrupted", progress: { completed_queries: 1, total_queries: 3 }, budget: { completed_requests: 1, max_requests: 8 }, candidates: [], errors: [] };
+    let discovery = views.rightPanelView();
+    assert(discovery.includes("配置后继续提取主题") && discovery.includes("配置 AI 连接"), "an already parsed document must offer a configure-and-continue path");
+    assert(discovery.includes("继续查找"), "an interrupted task must offer continuation");
+    store.ui.resourceTask.state = "failed";
+    discovery = views.rightPanelView();
+    assert(discovery.includes("重试失败项"), "ordinary failed queries must retain retry wording");
+  } finally {
+    restore();
+  }
+});
+
+Deno.test("candidate reader uses the current HTTPS URL, escapes text, and reflects read state", async () => {
+  const { store, restore } = await bootStore();
+  try {
+    store.ui.rightTab = "browser";
+    store.ui.resourceTask = {
+      task_id: "task-reader-view",
+      candidates: [{
+        id: "candidate-reader-view",
+        title: "安全阅读",
+        url: "https://example.test/current",
+        source_evidence: [{ url: "https://example.test/current", excerpt: "来源摘录" }],
+      }],
+    };
+    store.ui.resourceSelectedCandidateId = "candidate-reader-view";
+    const { createViews } = await import(`../app/views.js?reader-state-${++importCounter}`);
+    const render = () => createViews(store as never).rightPanelView();
+    store.ui.resourceReading = {
+      candidateId: "candidate-reader-view",
+      url: "https://example.test/old",
+      result: { url: "https://example.test/old", text: "旧 URL 正文" },
+    };
+    let html = render();
+    assert(html.includes("来源摘录") && !html.includes("旧 URL 正文"), "a changed candidate URL must show its own evidence instead of stale body text");
+    assert(html.includes(">读取正文</button>"), "an unread current URL must offer a read action");
+
+    store.ui.resourceReading = {
+      candidateId: "candidate-reader-view",
+      url: "https://example.test/current",
+      result: { url: "https://example.test/current", text: "<script>unsafe()</script>", publisher: "来源" },
+    };
+    html = render();
+    assert(html.includes("&lt;script&gt;unsafe()&lt;/script&gt;"), "reader text must remain escaped plain text");
+    assert(html.includes(">重新读取</button>"), "a successfully read current URL must offer refresh");
+    assert(!html.includes("<script>unsafe()"), "reader text must never become executable markup");
+
+    store.ui.resourceReading = { candidateId: "candidate-reader-view", url: "https://example.test/current", loading: true };
+    html = render();
+    assert(html.includes('disabled aria-busy="true">正在读取…</button>'), "the current URL action must expose its loading state");
+    store.ui.resourceReading = { candidateId: "candidate-reader-view", url: "https://example.test/current", error: "服务不可用" };
+    html = render();
+    assert(html.includes(">重试读取</button>"), "a failed current URL must offer retry");
+  } finally {
+    restore();
+  }
+});
+
 Deno.test("an editor renders inside the card it belongs to: add card or provider row", async () => {
   const { store, state, restore } = await bootStore();
   try {
@@ -765,7 +835,7 @@ Deno.test("the default provider is the offline connector and a run only adds a s
   const { store, state, restore } = await bootStore();
   try {
     seedCourse(store);
-    store.ui.rightPanel = "assistant";
+    store.ui.rightTab = "assistant";
     const blocksBefore = JSON.stringify(store.data.blocks);
     assert(store.ui.aiProviderId === "fake", "默认服务商必须是离线确定性连接器");
     const descriptor = store.aiDescriptor();
@@ -826,7 +896,7 @@ Deno.test("a run with changes produces a reviewable ChangeDraft rendered from th
 
     const rows = aiChangeDraftDiffRows(store.data, draft.id);
     assert(rows.length === 1 && rows[0]!.op === "replace_block", "必须生成一条替换 diff 行");
-    store.ui.rightPanel = "assistant";
+    store.ui.rightTab = "assistant";
     store.notify();
     assert(
       root.innerHTML.includes(rows[0]!.label),
@@ -1109,7 +1179,7 @@ Deno.test("a shell failure carries its recommended action all the way to the pan
       "shell 给出的下一步动作必须到达面板，而不是被替换成通用文案",
     );
     assert(JSON.stringify(store.data) === before, "失败不得改动 canonical 数据");
-    store.ui.rightPanel = "assistant";
+    store.ui.rightTab = "assistant";
     store.notify();
     assert(
       root.innerHTML.includes("请在 AI 设置里为这个 Provider 填写 API Key。"),
@@ -1191,7 +1261,7 @@ Deno.test("the panel discloses that no Tool, MCP or Skill is called", async () =
         capabilities.skills.length === 0,
       "V0 的执行记录必须如实声明没有调用任何 Tool / MCP / Skill",
     );
-    store.ui.rightPanel = "assistant";
+    store.ui.rightTab = "assistant";
     store.notify();
     assert(root.innerHTML.includes("还没有可用的模型连接"), "没有模型连接时应先配置 AI，再显示运行能力信息");
   } finally {
@@ -1203,7 +1273,7 @@ Deno.test("the panel names the AI storage location of the running shell", async 
   const { store, root, restore } = await bootStore();
   try {
     seedCourse(store);
-    store.ui.rightPanel = "assistant";
+    store.ui.rightTab = "assistant";
     store.bridge.isNative = () => false;
     store.aiEditProvider("fake");
     store.notify();
@@ -1261,7 +1331,7 @@ Deno.test("the execution history only shows the current project's runs", async (
     assert(store.ui.aiExecutions.length === 1, "面板只能显示当前项目的执行记录");
     assert(store.ui.aiExecutions[0].id === "this-project-run", "必须保留本项目那条记录");
     store.ui.aiExecutionsOpen = true;
-    store.ui.rightPanel = "assistant";
+    store.ui.rightTab = "assistant";
     store.notify();
     assert(
       !root.innerHTML.includes("another-project"),
@@ -1329,7 +1399,7 @@ Deno.test("switching to another project clears the previous project's AI state",
         store.ui.aiDraftId !== null,
       "P1 的 AI 状态必须非空",
     );
-    store.ui.rightPanel = "assistant";
+    store.ui.rightTab = "assistant";
     store.notify();
     assert(root.innerHTML.includes(p1Label), "P1 的面板必须显示 P1 的范围标签");
 
@@ -1344,7 +1414,7 @@ Deno.test("switching to another project clears the previous project's AI state",
     assert(store.ui.aiDraftId === null, "切换项目必须清空 Diff 指针");
     assert(store.ui.aiResult === null, "切换项目必须清空上一次回答");
     assert(store.ui.aiError === null && store.ui.aiStatus === "idle", "切换项目必须清空状态与错误");
-    store.ui.rightPanel = "assistant";
+    store.ui.rightTab = "assistant";
     store.notify();
     assert(!root.innerHTML.includes(p1Record.id), "面板不得渲染上一个项目的执行记录 id");
     assert(!root.innerHTML.includes(p1Label), "面板不得渲染上一个项目的范围标签");
@@ -1581,7 +1651,7 @@ Deno.test("the panel never renders a provider credential value", async () => {
       !JSON.stringify(store.ui).includes(credential),
       "密钥绝不能进入 UI 状态",
     );
-    store.ui.rightPanel = "assistant";
+    store.ui.rightTab = "assistant";
     store.aiEditProvider("custom");
     assert(root.innerHTML.includes("已配置密钥"), "面板必须说明密钥已配置");
     assert(
@@ -1665,7 +1735,7 @@ Deno.test("connection management keeps provider metadata, keys, models, and sele
     };
     await store.aiLoadProviders();
     store.aiSetProvider("account-a");
-    store.ui.rightPanel = "assistant";
+    store.ui.rightTab = "assistant";
 
     // Editing B must not switch the active runtime connection away from A.
     store.aiEditProvider("account-b", { preserveSelection: true });
@@ -1764,7 +1834,7 @@ Deno.test("AI settings use one topbar modal; close clears a temporary key and pr
     const { store, root, restore } = await bootStore();
   try {
     const { block } = seedCourse(store);
-    store.ui.rightPanel = "assistant";
+    store.ui.rightTab = "assistant";
     store.ui.aiInstruction = "保留这条输入";
     store.notify();
     assert(root.innerHTML.includes("还没有可用的模型连接"), "没有模型连接时助手应显示空状态");
@@ -1773,7 +1843,8 @@ Deno.test("AI settings use one topbar modal; close clears a temporary key and pr
     store.aiCreateConnection();
     assert(root.innerHTML.includes("ai-settings-modal"), "AI 设置必须显示为独立弹窗");
     assert(root.innerHTML.includes("data-ai-api-protocol"), "设置必须支持三种协议");
-    assert(root.innerHTML.includes("连接配置尚未保存"), "连接配置保存状态应单独呈现");
+    // Audit row 91 shortens the status label while preserving its separate connection state.
+    assert(root.innerHTML.includes("连接：未保存"), "连接配置保存状态应单独呈现");
 
     const secret = { value: "temporary-unsaved-key" };
     (root as unknown as { querySelectorAll: (selector: string) => unknown[] }).querySelectorAll = (selector: string) =>
@@ -1810,7 +1881,7 @@ Deno.test("subscription login is native-only and the browser shell cannot report
     store.aiSetAddTab("subscription");
     store.notify();
     assert(
-      root.innerHTML.includes("当前浏览器服务壳不支持订阅登录"),
+      root.innerHTML.includes("此环境不支持订阅登录，请使用桌面版 Workbench。"),
       "browser shell must explain that SIWC requires the native runtime",
     );
     assert(
@@ -2242,7 +2313,7 @@ Deno.test("「＋ 添加模型」adds one expanded row and puts the caret in its
     store.aiToggleAdvanced();
     store.notify();
     assert(
-      String(root.innerHTML).includes("模型选择器中将不显示任何模型；目录外 ID 仍可直接发送。"),
+      String(root.innerHTML).includes("暂无模型，可手动添加 Model ID。"),
       "空目录必须保留 DSH 的空态文案",
     );
     store.aiAddManualModel();
@@ -2293,7 +2364,8 @@ Deno.test("「获取可用模型」opens the「选择模型」dialog whose ticks
     );
     const html = String(root.innerHTML);
     assert(html.includes("选择模型"), "弹窗标题必须逐字「选择模型」");
-    assert(html.includes("勾选的模型即为模型列表"), "弹窗描述必须逐字");
+    // Audit row 103 replaces the implementation-heavy explanation with the effect of selection.
+    assert(html.includes("仅保留勾选的模型。"), "弹窗描述 must state which models remain");
     assert(html.includes('placeholder="搜索 Model ID"'), "搜索框占位必须逐字");
     assert(html.includes(">全选<") && html.includes(">取消全选<"), "必须有全选与取消全选");
     assert(html.includes(">更新列表<"), "主按钮必须逐字「更新列表」");
@@ -2785,14 +2857,10 @@ Deno.test("推理等级：开关、「?」说明与档位行按 design §2.1 渲
         !/data-ai-tier-value[^>]*data-tier-key="tier-2"[^>]*disabled/.test(html),
       "思考档位行的参数值输入必须可编辑",
     );
-    // 「?」说明必须解释两列含义与下发规则（父阶段要求逐句在内）。
+    // Audit row 106 keeps the service-docs, default-tier and Off transmission rules concise.
     store.aiToggleReasoningHelp(row.key);
     const helped = String(root.innerHTML);
-    assert(helped.includes("档位=模型能力档，API 参数值=发送给该协议的参数值"), "说明必须解释两列含义");
-    assert(
-      helped.includes("开启后，未指定档位时使用最强档；调用时可指定档位，off 表示不下发推理参数。"),
-      "说明必须写清默认档与 off 规则",
-    );
+    assert(helped.includes("参数值以服务商文档为准。未指定档位时使用最强档；Off 不发送推理参数。"), "说明必须保留参数来源、默认档与 Off 规则");
   } finally {
     restore();
   }
@@ -3110,7 +3178,7 @@ Deno.test("「＋ 添加模型提供商」分段切换不丢草稿：切走再�
     store.aiSetAddTab("custom");
     html = String(root.innerHTML);
     assert(
-      html.includes("连接中转站、自部署服务或其他兼容 OpenAI / Anthropic 协议的接口，需填写 API 地址、协议和模型。"),
+      html.includes("支持兼容 OpenAI 或 Anthropic 协议的服务。"),
       "「自定义模型 API」段的用途说明必须逐字（design §2.2 D2）",
     );
     for (const snippet of typed) {
@@ -3129,10 +3197,9 @@ Deno.test("「＋ 添加模型提供商」分段切换不丢草稿：切走再�
     // 订阅登录 → 第三方模型提供商：切回来逐字段还原。
     store.aiSetAddTab("third-party");
     html = String(root.innerHTML);
-    assert(
-      html.includes("填写服务商的地址、协议与 API 密钥，然后获取它自己的模型列表。"),
-      "「第三方模型提供商」段的用途说明必须逐字（design §2.2 E）",
-    );
+    // Audit row 94 removes the tab's duplicate instructions; actions and fields remain visible.
+    assert(html.includes(">获取可用模型</button>"), "第三方连接仍要保留模型读取入口");
+    assert(!html.includes("填写服务商的地址、协议与 API 密钥"), "第三方表单不重复列出字段操作说明");
     for (const snippet of typed) {
       assert(html.includes(snippet), `切回「第三方模型提供商」已填字段必须仍在：${snippet}`);
     }
@@ -3248,22 +3315,22 @@ Deno.test("行卡与新增卡两个草稿槽互不丢弃：开一张编辑卡不
   }
 });
 
-/** design §2.2 B12 / §3：创建表单的三条渲染文案逐字。 */
-Deno.test("渲染文案逐字：「创建提供商」「粘贴 API Key（不会回显）」「删除本机保存的密钥」", async () => {
+/** Audit row 88 removes the duplicate key helper; the field label, placeholder and actions remain. */
+Deno.test("创建表单保留模型提供商和密钥操作入口", async () => {
   const { store, root, restore } = await bootStore();
   try {
     store.aiCreateConnection();
     const html = String(root.innerHTML);
     assert(html.includes(">创建提供商</button>"), "创建态主按钮文案必须逐字是「创建提供商」（design §2.2 B12）");
-    assert(html.includes("粘贴 API Key（不会回显）"), "密钥输入说明必须逐字（design §3）");
+    assert(html.includes('placeholder="输入 API 密钥"'), "密钥输入必须保留可用提示");
     assert(html.includes("删除本机保存的密钥"), "删除密钥按钮文案必须逐字（design §3）");
   } finally {
     restore();
   }
 });
 
-/** design §3：读取模型失败前缀与离线连接器凭据状态逐字（原因动态部分不锁）。 */
-Deno.test("渲染文案逐字：「读取模型失败：」与「不需要密钥（离线连接器）。」", async () => {
+/** Audit rows 92 and 100 shorten status while preserving the error and credential state. */
+Deno.test("模型目录错误和离线连接器状态保留恢复信息", async () => {
   const { store, state, root, restore } = await bootStore();
   try {
     state.providers.push({
@@ -3295,18 +3362,18 @@ Deno.test("渲染文案逐字：「读取模型失败：」与「不需要密钥
       bridge.command = realCommand;
     }
     const failed = String(root.innerHTML);
-    assert(failed.includes("读取模型失败："), "读取失败提示前缀必须逐字（design §3）");
+    assert(failed.includes("读取失败："), "读取失败原因必须可见");
     assert(
-      failed.includes("可以直接在下面手动填写 Model ID，不影响保存"),
-      "读取失败提示的兜底句必须逐字（design §3）",
+      failed.includes("可手动添加 Model ID"),
+      "读取失败提示必须保留手动添加模型的路径",
     );
     // 离线连接器的凭据状态文案：新增卡 Provider ID 命中离线连接器时逐字渲染。
     store.aiCreateConnection();
     store.aiSetProviderId("fake");
     store.notify();
     assert(
-      String(root.innerHTML).includes("不需要密钥（离线连接器）。"),
-      "离线连接器的凭据状态必须逐字（design §2.1/§3）",
+      String(root.innerHTML).includes("无需密钥（离线连接器）。"),
+      "离线连接器的凭据状态必须清楚",
     );
   } finally {
     restore();

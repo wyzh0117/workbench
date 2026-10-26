@@ -17,7 +17,9 @@ import type {
   PresentationSlideProposeInput,
   PresentationStyleSaveInput,
   ResourceCandidateAcceptInput,
+  ResourceDiscoveryDocumentParseInput,
   ResourceDiscoveryPrepareInput,
+  ResourceSourceReadInput,
 } from "../ui/contracts.ts";
 import { addAssetUsage } from "../domain/assets.ts";
 import {
@@ -3145,6 +3147,19 @@ export class DesktopService {
     this.commands.register("resource.discovery.prepare", async (input) => {
       const plan = await this.resourceDiscovery.prepare(input as ResourceDiscoveryPrepareInput);
       return { value: plan };
+    });
+    this.commands.register("resource.discovery.document.parse", async (input) => {
+      return { value: await this.resourceDiscovery.parseDocument(input as ResourceDiscoveryDocumentParseInput) };
+    });
+    this.commands.register("resource.source.read", async (input) => {
+      if (!input || typeof input !== "object" || typeof (input as ResourceSourceReadInput).url !== "string") {
+        throw error("invalid_input", "来源 URL 无效。", "resource.source.read requires a URL");
+      }
+      const request = input as ResourceSourceReadInput;
+      if (request.url.length > 4_096 || (request.query !== undefined && (typeof request.query !== "string" || request.query.length > 600))) {
+        throw error("invalid_input", "来源 URL 或查询词过长。", "resource.source.read input exceeds its size limit");
+      }
+      return { value: await this.resourceProviders.fetchSource(request) };
     });
     this.commands.register("resource.discovery.start", async (input) => {
       return { value: await this.resourceDiscovery.start(input as { plan_id: string; input_hash: string; authorized: true }) };

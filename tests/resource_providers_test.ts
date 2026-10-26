@@ -301,7 +301,7 @@ Deno.test("source fetch blocks SSRF redirects and oversized responses, and hashe
     maxResponseBytes: 500,
     fetchImpl: mockedFetch(() => {
       calls++;
-      return new Response("<!doctype html><html><head><title>Example &amp; Evidence</title><meta property='og:site_name' content='Example'></head><body><main>Primary source body with evidence.</main></body></html>", {
+      return new Response("<!doctype html><html><head><title>Example &amp; Evidence</title><meta property='og:site_name' content='Example'></head><body><script>unsafePageCode()</script><main>Primary source body with evidence.</main></body></html>", {
         headers: { "content-type": "text/html; charset=utf-8" },
       });
     }),
@@ -325,6 +325,8 @@ Deno.test("source fetch blocks SSRF redirects and oversized responses, and hashe
   assertEquals(source.title, "Example & Evidence", "HTML title is decoded from source bytes");
   assertEquals(source.publisher, "Example", "publisher comes from page metadata");
   assert(source.excerpt?.includes("Primary source body with evidence"), "excerpt comes from fetched body text");
+  assert(source.text?.includes("Primary source body with evidence") && !source.text.includes("unsafePageCode"), "reader returns extracted text without page scripts");
+  assertEquals(source.truncated, false, "short readable pages are not marked truncated");
   assertEquals(source.evidence_access, "content_read", "body text is marked as read");
   assertEquals(source.query, "policy case", "source retrieval preserves originating query when supplied");
   assert(source.content_hash?.length === 64, "source bytes receive a SHA-256 hash");

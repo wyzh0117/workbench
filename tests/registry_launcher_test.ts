@@ -262,7 +262,8 @@ Deno.test("the start page lists every project this install has opened", async ()
       4,
       "every available row gets its own open button",
     );
-    assertContains(markup, "不会删除或改写磁盘上的课程文件", "the removal promise is stated where it is offered");
+    // Audit copy shortens the tooltip but keeps the important promise explicit.
+    assertContains(markup, 'title="仅从列表移除，项目文件会保留"', "removing a row keeps the project files");
   } finally {
     restore();
   }

@@ -43,7 +43,7 @@ function byRelative(entries: ScanResult[]): Map<string, ScanResult> {
   return new Map(entries.map((entry) => [entry.relative_path.replaceAll("\\", "/"), entry]));
 }
 
-Deno.test("launcher exposes three distinct project-entry actions including 导入已有文件夹", async () => {
+Deno.test("launcher exposes distinct create, open, and folder-import actions", async () => {
   const views = await Deno.readTextFile(new URL("../app/views.js", import.meta.url));
   const main = await Deno.readTextFile(new URL("../app/main.js", import.meta.url));
   const launcher = views.slice(
@@ -56,9 +56,10 @@ Deno.test("launcher exposes three distinct project-entry actions including 导�
     "launcher must keep open-project path",
   );
   assert(
-    launcher.includes("导入已有文件夹") &&
+    launcher.includes("从文件夹开始") &&
+      launcher.includes("选择资料文件夹") &&
       launcher.includes('data-action="import-folder"'),
-    "launcher must expose a distinct 导入已有文件夹 action",
+    "launcher must expose a distinct folder-import action",
   );
   assert(
     launcher.includes('data-action="new-project"') &&

@@ -392,6 +392,304 @@ fn project_directory(input: &Map<String, Value>) -> Result<PathBuf, String> {
     explicit_project_dir(&raw, false)
 }
 
+#[tauri::command]
+pub(crate) fn resource_discovery_document_parse(
+    request: tauri::ipc::Request<'_>,
+) -> Result<Value, String> {
+    let input = payload(&request, "resource_discovery_document_parse")?;
+    let project_dir = project_directory(&input)?;
+    let asset_id = required_string(&input, &["asset_id", "assetId"], "素材 ID")?;
+    let project = read_project_value(&project_dir)?;
+    parse_asset_for_discovery(&project_dir, &project, &asset_id)
+}
+
+#[tauri::command]
+pub(crate) async fn resource_source_read(
+    request: tauri::ipc::Request<'_>,
+) -> Result<Value, String> {
+    let input = payload(&request, "resource_source_read")?;
+    let url = required_string(&input, &["url"], "来源 URL")?;
+    if url.len() > 4_096 {
+        return Err("invalid_input: 来源 URL 过长。".into());
+    }
+    let query = match input.get("query") {
+        Some(Value::String(query)) => query.as_str(),
+        Some(_) => return Err("invalid_input: 查询词必须是文本。".into()),
+        None => "",
+    };
+    if query.len() > 600 {
+        return Err("invalid_input: 查询词过长。".into());
+    }
+    let request_id = uuid_v4()?;
+    let fetched = fetch_source(
+        &url,
+        query,
+        &request_id,
+        &rfc3339_now(),
+        Arc::new(AtomicBool::new(false)),
+        Arc::new(|| Ok(())),
+    )
+    .await?;
+    serde_json::to_value(fetched).map_err(|error| format!("source_read_failed: {error}"))
+}
+
+fn parse_asset_for_discovery(
+    project_dir: &Path,
+    project: &Value,
+    asset_id: &str,
+) -> Result<Value, String> {
+    if asset_id.trim().is_empty() || asset_id.len() > 256 {
+        return Err("invalid_input: 素材 ID 无效。".into());
+    }
+    let file = resolve_asset_preview_file(project_dir, project, asset_id)
+        .map_err(|problem| format!("{}: {}", problem.code, problem.message))?;
+    if file.size > crate::documents::MAX_SOURCE_BYTES as u64 {
+        return Err(format!(
+            "document_too_large: 文档超过 {} MiB 的读取上限。",
+            crate::documents::MAX_SOURCE_BYTES / (1024 * 1024)
+        ));
+    }
+    let extension = crate::documents::extension_of(&file.filename);
+    if !matches!(
+        extension.as_str(),
+        "docx" | "pdf" | "pptx" | "txt" | "text" | "md" | "markdown"
+    ) {
+        return Err("unsupported_document: 支持 DOCX、PDF、PPTX、TXT 和 Markdown。".into());
+    }
+    let bytes = read_asset_preview_file(&file.path, crate::documents::MAX_SOURCE_BYTES as u64)?;
+    if bytes.len() > crate::documents::MAX_SOURCE_BYTES {
+        return Err("document_too_large: 文档超过安全读取上限。".into());
+    }
+    let mut result = crate::documents::parse_for_discovery(&file.filename, &bytes)?;
+    result["asset_id"] = json!(asset_id);
+    Ok(result)
+}
+
+fn bounded_text_list(
+    context: &Map<String, Value>,
+    key: &str,
+    max_items: usize,
+) -> Result<Vec<String>, String> {
+    let values = context
+        .get(key)
+        .and_then(Value::as_array)
+        .ok_or_else(|| format!("invalid_input: document_context.{key} 必须是数组。"))?;
+    if values.len() > max_items {
+        return Err(format!("invalid_input: document_context.{key} 项数超限。"));
+    }
+    let mut result = Vec::new();
+    for value in values {
+        let text = value
+            .as_str()
+            .map(str::trim)
+            .filter(|text| !text.is_empty() && text.chars().count() <= 160)
+            .ok_or_else(|| format!("invalid_input: document_context.{key} 含无效文本。"))?;
+        if !result.iter().any(|existing| existing == text) {
+            result.push(text.to_owned());
+        }
+    }
+    Ok(result)
+}
+
+fn validate_document_context(raw: &Value, parsed: &Value) -> Result<Value, String> {
+    let context = raw
+        .as_object()
+        .ok_or("invalid_input: document_context 必须是对象。")?;
+    let asset_id = context
+        .get("asset_id")
+        .and_then(Value::as_str)
+        .filter(|value| !value.trim().is_empty() && value.len() <= 256)
+        .ok_or("invalid_input: document_context.asset_id 无效。")?;
+    let sha256 = context
+        .get("sha256")
+        .and_then(Value::as_str)
+        .filter(|value| value.len() == 64 && value.bytes().all(|byte| byte.is_ascii_hexdigit()))
+        .ok_or("invalid_input: document_context.sha256 无效。")?;
+    if parsed["asset_id"].as_str() != Some(asset_id) || parsed["sha256"].as_str() != Some(sha256) {
+        return Err("stale_input: 文档素材已变化，请重新解析。".into());
+    }
+    let themes = context
+        .get("themes")
+        .and_then(Value::as_array)
+        .filter(|themes| !themes.is_empty() && themes.len() <= 8)
+        .ok_or("invalid_input: document_context.themes 需要 1 到 8 个主题。")?;
+    let parsed_blocks = parsed["blocks"]
+        .as_array()
+        .ok_or("document_parse_failed: 文档区块不可用。")?;
+    let mut validated_themes = Vec::new();
+    for theme in themes {
+        let theme_object = theme
+            .as_object()
+            .ok_or("invalid_input: document_context 中的主题必须是对象。")?;
+        let name = theme_object
+            .get("name")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|name| !name.is_empty() && name.chars().count() <= 160)
+            .ok_or("invalid_input: 主题名称无效。")?;
+        let evidence = theme_object
+            .get("evidence")
+            .and_then(Value::as_array)
+            .filter(|rows| !rows.is_empty() && rows.len() <= 4)
+            .ok_or("invalid_input: 每个主题必须有 1 到 4 条原文依据。")?;
+        let mut validated_evidence = Vec::new();
+        for row in evidence {
+            let evidence_object = row
+                .as_object()
+                .ok_or("invalid_input: 主题依据必须是对象。")?;
+            let text = evidence_object
+                .get("text")
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|text| !text.is_empty() && text.chars().count() <= 800)
+                .ok_or("invalid_input: 主题依据文本无效。")?;
+            let locator = evidence_object
+                .get("locator")
+                .and_then(Value::as_object)
+                .ok_or("invalid_input: 主题依据缺少来源定位。")?;
+            if locator
+                .keys()
+                .any(|key| !["block", "section", "page", "slide"].contains(&key.as_str()))
+            {
+                return Err("invalid_input: 主题依据包含未知定位字段。".into());
+            }
+            let block_index = locator
+                .get("block")
+                .and_then(Value::as_u64)
+                .and_then(|index| usize::try_from(index).ok())
+                .ok_or("invalid_input: 主题依据区块编号无效。")?;
+            let block = parsed_blocks
+                .get(block_index)
+                .filter(|block| block["index"].as_u64() == Some(block_index as u64))
+                .ok_or("invalid_input: 主题依据引用了不存在的区块。")?;
+            let actual_text = block["text"]
+                .as_str()
+                .ok_or("document_parse_failed: 文档区块正文缺失。")?;
+            let normalize = |value: &str| value.split_whitespace().collect::<Vec<_>>().join(" ");
+            if !normalize(actual_text).contains(&normalize(text)) {
+                return Err("invalid_input: 主题依据文本与文档原文不匹配。".into());
+            }
+            let actual_locator = block["locator"]
+                .as_object()
+                .ok_or("document_parse_failed: 文档区块定位缺失。")?;
+            for key in ["section", "page", "slide"] {
+                if let Some(claimed) = locator.get(key) {
+                    if actual_locator.get(key) != Some(claimed) {
+                        return Err(format!(
+                            "invalid_input: 主题依据的 {key} 定位与文档不匹配。"
+                        ));
+                    }
+                }
+            }
+            validated_evidence.push(json!({
+                "text": text,
+                "locator": actual_locator,
+            }));
+        }
+        validated_themes.push(json!({ "name": name, "evidence": validated_evidence }));
+    }
+    let concepts = bounded_text_list(context, "concepts", 20)?;
+    let objectives = bounded_text_list(context, "objectives", 20)?;
+    let case_types = bounded_text_list(context, "case_types", 20)?;
+    let media_types = bounded_text_list(context, "media_types", 20)?;
+    let keywords = bounded_text_list(context, "keywords", 30)?;
+    let language = context
+        .get("language")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| value.chars().count() <= 80)
+        .ok_or("invalid_input: document_context.language 无效。")?;
+    let preferred_language = context
+        .get("preferred_language")
+        .map(|value| {
+            value
+                .as_str()
+                .map(str::trim)
+                .filter(|value| value.chars().count() <= 80)
+                .map(str::to_owned)
+                .ok_or("invalid_input: document_context.preferred_language 无效。")
+        })
+        .transpose()?;
+    let constraints = context
+        .get("constraints")
+        .map(|raw| {
+            let source = raw
+                .as_object()
+                .ok_or("invalid_input: document_context.constraints 必须是对象。")?;
+            if source.keys().any(|key| {
+                !["terms", "time_range", "regions", "industries"].contains(&key.as_str())
+            }) {
+                return Err("invalid_input: document_context.constraints 含未知字段。".to_owned());
+            }
+            let mut normalized = Map::new();
+            for (key, max_items) in [("terms", 20), ("regions", 20), ("industries", 20)] {
+                if source.contains_key(key) {
+                    normalized.insert(
+                        key.to_owned(),
+                        json!(bounded_text_list(source, key, max_items)?),
+                    );
+                }
+            }
+            if let Some(time_range) = source.get("time_range") {
+                let time_range = time_range
+                    .as_str()
+                    .map(str::trim)
+                    .filter(|value| value.chars().count() <= 160)
+                    .ok_or("invalid_input: document_context.constraints.time_range 无效。")?;
+                normalized.insert("time_range".to_owned(), json!(time_range));
+            }
+            Ok::<Value, String>(Value::Object(normalized))
+        })
+        .transpose()?;
+    let mut normalized = json!({
+        "asset_id": asset_id,
+        "sha256": sha256,
+        "title": parsed["title"],
+        "themes": validated_themes,
+        "concepts": concepts,
+        "objectives": objectives,
+        "case_types": case_types,
+        "media_types": media_types,
+        "keywords": keywords,
+        "language": language,
+    });
+    if let Some(preferred_language) = preferred_language {
+        normalized["preferred_language"] = json!(preferred_language);
+    }
+    if let Some(constraints) = constraints {
+        normalized["constraints"] = constraints;
+    }
+    Ok(normalized)
+}
+
+fn validate_intent_overrides(raw: Option<&Value>) -> Result<Value, String> {
+    let Some(raw) = raw else {
+        return Ok(Value::Null);
+    };
+    let overrides = raw
+        .as_object()
+        .ok_or("invalid_input: intent_overrides 必须是对象。")?;
+    let mut result = Map::new();
+    for key in ["themes", "keywords", "case_types", "media_types"] {
+        if overrides.contains_key(key) {
+            let values = bounded_text_list(overrides, key, 20)?;
+            if key == "themes" && values.is_empty() {
+                return Err("invalid_input: intent_overrides.themes 不能为空。".into());
+            }
+            result.insert(key.to_owned(), json!(values));
+        }
+    }
+    if let Some(language) = overrides.get("language") {
+        let language = language
+            .as_str()
+            .map(str::trim)
+            .filter(|value| value.chars().count() <= 80)
+            .ok_or("invalid_input: intent_overrides.language 无效。")?;
+        result.insert("language".to_owned(), json!(language));
+    }
+    Ok(Value::Object(result))
+}
+
 fn hydrate_project_from_input(input: &Map<String, Value>) -> Result<PathBuf, String> {
     let project_dir = project_directory(input)?;
     let (project, _) = read_project_state(&project_dir)?;
@@ -597,6 +895,18 @@ fn build_plan(
         .and_then(Value::as_u64)
         .filter(|value| (1..=200).contains(value))
         .ok_or("invalid_input: 网络请求预算需为 1 到 200。")?;
+    let raw_document_context = input.get("document_context");
+    let document_context = if let Some(raw) = raw_document_context {
+        let asset_id = raw
+            .get("asset_id")
+            .and_then(Value::as_str)
+            .ok_or("invalid_input: document_context.asset_id 缺失。")?;
+        let parsed = parse_asset_for_discovery(&project_dir, project, asset_id)?;
+        validate_document_context(raw, &parsed)?
+    } else {
+        Value::Null
+    };
+    let intent_overrides = validate_intent_overrides(input.get("intent_overrides"))?;
     if items.is_empty() || items.len() > 20 || search_types.is_empty() {
         return Err("invalid_input: 请至少选择一节课和一种资源类型。".into());
     }
@@ -635,21 +945,107 @@ fn build_plan(
     for lesson_id in &item_ids {
         let (context, excerpt) = build_context(project, lesson_id)?;
         let title = context["title"].as_str().unwrap_or_default();
-        let base = if excerpt.is_empty() {
+        let lesson_base = if excerpt.is_empty() {
             title.to_owned()
         } else {
             excerpt.clone()
         };
+        let selected_themes = intent_overrides["themes"]
+            .as_array()
+            .or_else(|| document_context["themes"].as_array())
+            .into_iter()
+            .flatten()
+            .filter_map(|value| {
+                value
+                    .as_str()
+                    .or_else(|| value["name"].as_str())
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty())
+                    .map(str::to_owned)
+            })
+            .collect::<Vec<_>>();
+        let selected_keywords = intent_overrides["keywords"]
+            .as_array()
+            .or_else(|| document_context["keywords"].as_array())
+            .into_iter()
+            .flatten()
+            .filter_map(Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .take(8)
+            .collect::<Vec<_>>();
+        let selected_concepts = document_context["concepts"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(Value::as_str)
+            .take(4)
+            .collect::<Vec<_>>();
+        let selected_objectives = document_context["objectives"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(Value::as_str)
+            .take(2)
+            .collect::<Vec<_>>();
+        let document_case_types = intent_overrides["case_types"]
+            .as_array()
+            .or_else(|| document_context["case_types"].as_array())
+            .into_iter()
+            .flatten()
+            .filter_map(Value::as_str)
+            .collect::<Vec<_>>();
+        let document_constraints = document_context["constraints"]
+            .as_object()
+            .map(|constraints| {
+                ["terms", "time_range", "regions", "industries"]
+                    .into_iter()
+                    .filter_map(|key| constraints.get(key))
+                    .flat_map(|value| match value {
+                        Value::Array(values) => {
+                            values.iter().filter_map(Value::as_str).collect::<Vec<_>>()
+                        }
+                        Value::String(value) => vec![value.as_str()],
+                        _ => Vec::new(),
+                    })
+                    .collect::<Vec<_>>()
+                    .join(" ")
+            })
+            .unwrap_or_default();
+        let topics = if selected_themes.is_empty() {
+            vec![lesson_base.clone()]
+        } else {
+            selected_themes.clone()
+        };
+        let has_document_topics = !selected_themes.is_empty();
         let suffix = ["language", "learner_level"]
             .into_iter()
-            .filter_map(|key| preferences.get(key).and_then(Value::as_str))
+            .filter_map(|key| {
+                if key == "language" {
+                    intent_overrides["language"]
+                        .as_str()
+                        .or_else(|| preferences.get(key).and_then(Value::as_str))
+                        .or_else(|| document_context["preferred_language"].as_str())
+                } else {
+                    preferences.get(key).and_then(Value::as_str)
+                }
+            })
             .map(str::trim)
             .filter(|value| !value.is_empty())
             .collect::<Vec<_>>()
             .join(" ");
-        let case_types = preferences
+        let preference_case_types = preferences
             .get("case_types")
             .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .filter_map(Value::as_str)
+            .collect::<Vec<_>>()
+            .join(" ");
+        let case_types = document_case_types.join(" ");
+        let document_media_types = intent_overrides["media_types"]
+            .as_array()
+            .or_else(|| document_context["media_types"].as_array())
             .into_iter()
             .flatten()
             .filter_map(Value::as_str)
@@ -677,21 +1073,34 @@ fn build_plan(
         .flatten()
         .collect::<Vec<_>>()
         .join(" ");
-        let query = format!("{base} {suffix} {case_types} {source_preferences} {date_terms}")
-            .split_whitespace()
-            .collect::<Vec<_>>()
-            .join(" ");
-        let query = query.chars().take(500).collect::<String>();
-        let query_rows = kinds
+        let query_rows = topics
             .iter()
-            .map(|kind| {
-                json!({
-                    "kind": kind,
-                    "query": query,
-                    "request_budget_upper_bound": if kind == "web" { 1 + per_lesson_limit.min(3) } else { 4 },
+            .flat_map(|topic| {
+                let query = format!(
+                    "{topic} {} {} {} {document_constraints} {suffix} {case_types} {document_media_types} {preference_case_types} {source_preferences} {date_terms}",
+                    selected_keywords.join(" "),
+                    selected_concepts.join(" "),
+                    selected_objectives.join(" "),
+                )
+                .split_whitespace()
+                .collect::<Vec<_>>()
+                .join(" ");
+                let query = query.chars().take(500).collect::<String>();
+                kinds.iter().map(move |kind| {
+                    json!({
+                        "kind": kind,
+                        "topic": has_document_topics.then_some(topic),
+                        "query": query,
+                        "request_budget_upper_bound": if kind == "web" { 1 + per_lesson_limit.min(3) } else { 4 },
+                    })
                 })
             })
             .collect::<Vec<_>>();
+        let base = if selected_themes.is_empty() {
+            lesson_base
+        } else {
+            topics.join(" · ")
+        };
         lesson_revisions.insert(lesson_id.clone(), context["revision"].clone());
         previews.push(json!({ "content_item_id": lesson_id, "title": title, "excerpt": excerpt }));
         queries.push(json!({
@@ -712,6 +1121,8 @@ fn build_plan(
         "search_types": kinds,
         "request_budget": request_budget,
         "preferences": preferences,
+        "document_context": document_context,
+        "intent_overrides": intent_overrides,
         "queries": queries,
     });
     let input_hash =
@@ -735,6 +1146,8 @@ fn build_plan(
         },
         "content_item_ids": item_ids,
         "preferences": preferences,
+        "document_context": document_context,
+        "intent_overrides": intent_overrides,
         "queries": queries,
         "context_preview": {
             "items": previews,
@@ -873,6 +1286,26 @@ fn add_candidate_with_check(
                         existing["source_evidence"]
                             .as_array_mut()
                             .map(|items| items.push(evidence.clone()));
+                    }
+                }
+                for theme in candidate["matched_themes"].as_array().into_iter().flatten() {
+                    if !existing["matched_themes"]
+                        .as_array()
+                        .is_some_and(|themes| themes.contains(theme))
+                    {
+                        existing["matched_themes"]
+                            .as_array_mut()
+                            .map(|themes| themes.push(theme.clone()));
+                    }
+                }
+                for limitation in candidate["limitations"].as_array().into_iter().flatten() {
+                    if !existing["limitations"]
+                        .as_array()
+                        .is_some_and(|items| items.contains(limitation))
+                    {
+                        existing["limitations"]
+                            .as_array_mut()
+                            .map(|items| items.push(limitation.clone()));
                     }
                 }
             } else if candidates.len() < 200 {
@@ -1045,8 +1478,8 @@ fn video_candidate(task_id: &str, lesson_id: &str, hit: &VideoHit) -> Value {
     })
 }
 
-fn add_task_error(task_id: &str, expected: &NativeResourceTask, query: &Value, error: &str) {
-    add_task_error_with_check(task_id, expected, query, error, || {
+fn add_task_error(task_id: &str, expected: &NativeResourceTask, row: &Value, error: &str) {
+    add_task_error_with_check(task_id, expected, row, error, || {
         project_still_matches(expected)
     });
 }
@@ -1054,7 +1487,7 @@ fn add_task_error(task_id: &str, expected: &NativeResourceTask, query: &Value, e
 fn add_task_error_with_check(
     task_id: &str,
     expected: &NativeResourceTask,
-    query: &Value,
+    row: &Value,
     error: &str,
     project_matches: impl FnOnce() -> bool,
 ) {
@@ -1062,14 +1495,21 @@ fn add_task_error_with_check(
     let Ok(mut all) = tasks().lock() else { return };
     if let Some(task) = current_result_task(&mut all, task_id, expected, project_matches) {
         let mut value = json!({ "code": code, "message": message });
+        let query = row["queries"]
+            .as_array()
+            .and_then(|queries| queries.first())
+            .unwrap_or(row);
         if let Some(query) = query["query"].as_str() {
             value["query"] = json!(query);
+        }
+        if let Some(query_index) = row["query_index"].as_u64() {
+            value["query_index"] = json!(query_index);
         }
         task.value["errors"]
             .as_array_mut()
             .map(|errors| errors.push(value));
-        if !task.failed_queries.iter().any(|row| row == query) {
-            task.failed_queries.push(query.clone());
+        if !task.failed_queries.iter().any(|failed| failed == row) {
+            task.failed_queries.push(row.clone());
         }
         task.value["updated_at"] = json!(rfc3339_now());
     }
@@ -1183,7 +1623,7 @@ fn all_request_count(task: &Value) -> u64 {
     task["budget"]["completed_requests"].as_u64().unwrap_or(0)
 }
 
-fn update_progress(task_id: &str, expected: &NativeResourceTask, query_complete: bool) {
+fn update_progress(task_id: &str, expected: &NativeResourceTask, query_index: usize) {
     let updated_task = if let Ok(mut all) = tasks().lock() {
         if let Some(task) = all.get_mut(task_id) {
             if !Arc::ptr_eq(&task.cancel, &expected.cancel)
@@ -1192,14 +1632,10 @@ fn update_progress(task_id: &str, expected: &NativeResourceTask, query_complete:
             {
                 None
             } else {
-                if query_complete {
-                    task.value["progress"]["completed_queries"] = json!(
-                        task.value["progress"]["completed_queries"]
-                            .as_u64()
-                            .unwrap_or(0)
-                            + 1
-                    );
-                }
+                let completed = task.value["progress"]["completed_queries"]
+                    .as_u64()
+                    .unwrap_or(0) as usize;
+                task.value["progress"]["completed_queries"] = json!(completed.max(query_index + 1));
                 task.value["updated_at"] = json!(rfc3339_now());
                 Some(task.clone())
             }
@@ -1212,6 +1648,73 @@ fn update_progress(task_id: &str, expected: &NativeResourceTask, query_complete:
     if let Some(task) = updated_task {
         let _ = persist_task(&task);
     }
+}
+
+fn flatten_plan_queries(rows: &[Value]) -> Vec<Value> {
+    let mut query_index = 0usize;
+    rows.iter()
+        .flat_map(|row| {
+            row["queries"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .map(|query| {
+                    let flattened = json!({
+                        "lesson_id": row["lesson_id"],
+                        "queries": [query],
+                        "query_index": query_index,
+                    });
+                    query_index += 1;
+                    flattened
+                })
+                .collect::<Vec<_>>()
+        })
+        .collect()
+}
+
+fn failed_query_rows(task: &NativeResourceTask) -> Vec<Value> {
+    let rows = flatten_plan_queries(&task.plan.queries);
+    let mut indices = Vec::new();
+    let mut saved = task.failed_queries.clone();
+    saved.extend(
+        task.value["errors"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .cloned(),
+    );
+    for failure in saved {
+        let query_index = failure["query_index"].as_u64().map(|index| index as usize);
+        let query = failure["queries"]
+            .as_array()
+            .and_then(|queries| queries.first())
+            .unwrap_or(&failure);
+        let query_text = query["query"]
+            .as_str()
+            .or_else(|| failure["query"].as_str());
+        let lesson_id = failure["lesson_id"].as_str();
+        if let Some(index) = query_index.filter(|index| *index < rows.len()) {
+            if !indices.contains(&index) {
+                indices.push(index);
+            }
+            continue;
+        }
+        if let Some(index) = rows.iter().position(|row| {
+            !indices.contains(&(row["query_index"].as_u64().unwrap_or(u64::MAX) as usize))
+                && lesson_id.is_none_or(|lesson| row["lesson_id"].as_str() == Some(lesson))
+                && query_text.is_some_and(|text| {
+                    row["queries"][0]["query"].as_str() == Some(text)
+                        && query["kind"]
+                            .as_str()
+                            .is_none_or(|kind| row["queries"][0]["kind"] == kind)
+                })
+        }) {
+            indices.push(index);
+        }
+    }
+    rows.into_iter()
+        .filter(|row| indices.contains(&(row["query_index"].as_u64().unwrap_or(u64::MAX) as usize)))
+        .collect()
 }
 
 async fn run_queries(task_id: String, rows: Vec<Value>) {
@@ -1282,6 +1785,7 @@ async fn run_queries(task_id: String, rows: Vec<Value>) {
             .and_then(|values| values.first())
             .cloned()
             .unwrap_or(Value::Null);
+        let query_index = row["query_index"].as_u64().unwrap_or(0) as usize;
         let query_text = query["query"].as_str().unwrap_or_default();
         let kind = query["kind"].as_str().unwrap_or_default();
         let prefs = task.plan.value["preferences"]
@@ -1296,13 +1800,13 @@ async fn run_queries(task_id: String, rows: Vec<Value>) {
             let key = match resource_credential_store().get("brave_search") {
                 Ok(Some(value)) if !value.trim().is_empty() => value,
                 Ok(_) => {
-                    add_task_error(&task_id, &task, &query, &serde_json::json!({"code":"auth_required","message":"请先配置此资源服务的专用 API Key。"}).to_string());
-                    update_progress(&task_id, &task, true);
+                    add_task_error(&task_id, &task, &row, &serde_json::json!({"code":"auth_required","message":"请先配置此资源服务的专用 API Key。"}).to_string());
+                    update_progress(&task_id, &task, query_index);
                     continue;
                 }
                 Err(_) => {
-                    add_task_error(&task_id, &task, &query, &serde_json::json!({"code":"keychain_unavailable","message":"无法读取资源服务凭据。"}).to_string());
-                    update_progress(&task_id, &task, true);
+                    add_task_error(&task_id, &task, &row, &serde_json::json!({"code":"keychain_unavailable","message":"无法读取资源服务凭据。"}).to_string());
+                    update_progress(&task_id, &task, query_index);
                     continue;
                 }
             };
@@ -1312,7 +1816,10 @@ async fn run_queries(task_id: String, rows: Vec<Value>) {
                 .unwrap_or(3)
                 .min(3) as usize;
             let country = prefs.get("country").and_then(Value::as_str);
-            let language = prefs.get("language").and_then(Value::as_str);
+            let language = task.plan.value["intent_overrides"]["language"]
+                .as_str()
+                .or_else(|| prefs.get("language").and_then(Value::as_str))
+                .or_else(|| task.plan.value["document_context"]["preferred_language"].as_str());
             match search_web(
                 &key,
                 query_text,
@@ -1349,29 +1856,32 @@ async fn run_queries(task_id: String, rows: Vec<Value>) {
                             Ok(value) => (Some(value), None),
                             Err(error) => (None, Some(error)),
                         };
-                        let candidate = web_candidate(
+                        let mut candidate = web_candidate(
                             &task_id,
                             row["lesson_id"].as_str().unwrap_or_default(),
                             &hit,
                             fetched.as_ref(),
                             failure.as_deref(),
                         );
+                        if let Some(topic) = query["topic"].as_str() {
+                            candidate["matched_themes"] = json!([topic]);
+                        }
                         add_candidate(&task_id, &task, candidate);
                     }
                 }
-                Err(error) => add_task_error(&task_id, &task, &query, &error),
+                Err(error) => add_task_error(&task_id, &task, &row, &error),
             }
         } else if kind == "video" {
             let key = match resource_credential_store().get("youtube_data_api") {
                 Ok(Some(value)) if !value.trim().is_empty() => value,
                 Ok(_) => {
-                    add_task_error(&task_id, &task, &query, &serde_json::json!({"code":"auth_required","message":"请先配置此资源服务的专用 API Key。"}).to_string());
-                    update_progress(&task_id, &task, true);
+                    add_task_error(&task_id, &task, &row, &serde_json::json!({"code":"auth_required","message":"请先配置此资源服务的专用 API Key。"}).to_string());
+                    update_progress(&task_id, &task, query_index);
                     continue;
                 }
                 Err(_) => {
-                    add_task_error(&task_id, &task, &query, &serde_json::json!({"code":"keychain_unavailable","message":"无法读取资源服务凭据。"}).to_string());
-                    update_progress(&task_id, &task, true);
+                    add_task_error(&task_id, &task, &row, &serde_json::json!({"code":"keychain_unavailable","message":"无法读取资源服务凭据。"}).to_string());
+                    update_progress(&task_id, &task, query_index);
                     continue;
                 }
             };
@@ -1381,7 +1891,10 @@ async fn run_queries(task_id: String, rows: Vec<Value>) {
                 .unwrap_or(5)
                 .min(10) as usize;
             let country = prefs.get("country").and_then(Value::as_str);
-            let language = prefs.get("language").and_then(Value::as_str);
+            let language = task.plan.value["intent_overrides"]["language"]
+                .as_str()
+                .or_else(|| prefs.get("language").and_then(Value::as_str))
+                .or_else(|| task.plan.value["document_context"]["preferred_language"].as_str());
             let after = prefs.get("published_after").and_then(Value::as_str);
             let before = prefs.get("published_before").and_then(Value::as_str);
             let first = search_videos(
@@ -1419,36 +1932,36 @@ async fn run_queries(task_id: String, rows: Vec<Value>) {
                         .await
                         {
                             Ok(fallback) => hits.extend(fallback),
-                            Err(error) => add_task_error(&task_id, &task, &query, &error),
+                            Err(error) => add_task_error(&task_id, &task, &row, &error),
                         }
                     }
                     for hit in hits {
                         if !date_in_range(hit.published_at.as_deref(), &prefs) {
                             continue;
                         }
-                        add_candidate(
+                        let mut candidate = video_candidate(
                             &task_id,
-                            &task,
-                            video_candidate(
-                                &task_id,
-                                row["lesson_id"].as_str().unwrap_or_default(),
-                                &hit,
-                            ),
+                            row["lesson_id"].as_str().unwrap_or_default(),
+                            &hit,
                         );
+                        if let Some(topic) = query["topic"].as_str() {
+                            candidate["matched_themes"] = json!([topic]);
+                        }
+                        add_candidate(&task_id, &task, candidate);
                     }
                 }
-                Err(error) => add_task_error(&task_id, &task, &query, &error),
+                Err(error) => add_task_error(&task_id, &task, &row, &error),
             }
         } else {
             add_task_error(
                 &task_id,
                 &task,
-                &query,
+                &row,
                 &serde_json::json!({"code":"invalid_input","message":"不支持的资源类型。"})
                     .to_string(),
             );
         }
-        update_progress(&task_id, &task, true);
+        update_progress(&task_id, &task, query_index);
     }
     if let Ok(mut all) = tasks().lock() {
         if let Some(task) = all.get_mut(&task_id) {
@@ -1551,6 +2064,22 @@ pub(crate) async fn resource_discovery_start(
     }) {
         return Err("stale_input: 课程已切换或修改，请重新准备资源发现。".into());
     }
+    if let Some(raw_context) = plan
+        .value
+        .get("document_context")
+        .filter(|value| value.is_object())
+    {
+        let asset_id = raw_context["asset_id"]
+            .as_str()
+            .ok_or("resource_state_invalid: document asset id is missing")?;
+        let parsed = parse_asset_for_discovery(&project_dir, &project, asset_id)
+            .map_err(|_| "stale_input: 文档素材已变化，请重新解析并准备搜索。")?;
+        let fresh_context = validate_document_context(raw_context, &parsed)
+            .map_err(|_| "stale_input: 文档素材已变化，请重新解析并准备搜索。")?;
+        if fresh_context != *raw_context {
+            return Err("stale_input: 文档素材或搜索主题已变化，请重新准备。".into());
+        }
+    }
     if plan.value["expires_at"].as_str().unwrap_or_default() <= rfc3339_now().as_str() {
         return Err("plan_expired: 资源计划已过期，请重新准备。".into());
     }
@@ -1614,17 +2143,7 @@ pub(crate) async fn resource_discovery_start(
             return Err(error);
         }
     };
-    let rows = plan
-        .queries
-        .iter()
-        .flat_map(|row| {
-            row["queries"]
-                .as_array()
-                .into_iter()
-                .flatten()
-                .map(move |query| json!({ "lesson_id": row["lesson_id"], "queries": [query] }))
-        })
-        .collect::<Vec<_>>();
+    let rows = flatten_plan_queries(&plan.queries);
     tokio::spawn(run_queries(task_id, rows));
     let mut response = value;
     if let Some(warning) = warning {
@@ -1672,27 +2191,44 @@ pub(crate) async fn resource_discovery_retry(
             .get_mut(&task_id)
             .filter(|task| task.plan.project_dir == project_dir)
             .ok_or("task_missing: 资源发现任务已不存在。")?;
-        if !matches!(
+        let continuing = matches!(
             task.value["state"].as_str(),
-            Some("partial" | "failed" | "completed")
-        ) {
+            Some("cancelled" | "interrupted")
+        );
+        if !continuing
+            && !matches!(
+                task.value["state"].as_str(),
+                Some("partial" | "failed" | "completed")
+            )
+        {
             return Err("invalid_task_state: 当前任务还不能重试。".into());
         }
-        let selected = if let Some(candidate_id) = candidate_id {
-            let lesson_id = task.value["candidates"]
-                .as_array()
+        let selected = if continuing {
+            let completed = task.value["progress"]["completed_queries"]
+                .as_u64()
+                .unwrap_or(0);
+            flatten_plan_queries(&task.plan.queries)
                 .into_iter()
-                .flatten()
-                .find(|candidate| candidate["id"] == candidate_id)
-                .and_then(|candidate| candidate["lesson_id"].as_str())
-                .unwrap_or_default();
-            task.failed_queries
-                .iter()
-                .filter(|row| row["lesson_id"].as_str() == Some(lesson_id))
-                .cloned()
+                .filter(|row| row["query_index"].as_u64().unwrap_or(0) >= completed)
                 .collect::<Vec<_>>()
         } else {
-            task.failed_queries.clone()
+            let failed = failed_query_rows(task);
+            if let Some(candidate_id) = candidate_id {
+                let lesson_id = task.value["candidates"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .find(|candidate| candidate["id"] == candidate_id)
+                    .and_then(|candidate| candidate["lesson_id"].as_str())
+                    .unwrap_or_default();
+                failed
+                    .iter()
+                    .filter(|row| row["lesson_id"].as_str() == Some(lesson_id))
+                    .cloned()
+                    .collect::<Vec<_>>()
+            } else {
+                failed
+            }
         };
         if selected.is_empty() {
             return Err("no_retryable_work: 没有可重试的失败请求。".into());
@@ -1719,22 +2255,44 @@ pub(crate) async fn resource_discovery_retry(
                 .as_array_mut()
                 .map(|items| items.retain(|candidate| candidate["id"] != candidate_id));
         }
-        task.value["errors"]
-            .as_array_mut()
-            .map(|items| items.clear());
-        task.failed_queries.clear();
-        task.value["progress"]["total_queries"] = json!(
-            task.value["progress"]["total_queries"]
-                .as_u64()
-                .unwrap_or(0)
-                + selected.len() as u64
-        );
-        task.value["budget"]["reserved_requests"] = json!(
-            task.value["budget"]["reserved_requests"]
-                .as_u64()
-                .unwrap_or(0)
-                + upper_bound
-        );
+        if !continuing {
+            let selected_indices = selected
+                .iter()
+                .filter_map(|row| row["query_index"].as_u64())
+                .collect::<Vec<_>>();
+            task.value["errors"].as_array_mut().map(|items| {
+                items.retain(|item| {
+                    if let Some(index) = item["query_index"].as_u64() {
+                        !selected_indices.contains(&index)
+                    } else {
+                        selected
+                            .iter()
+                            .all(|row| row["queries"][0]["query"] != item["query"])
+                    }
+                })
+            });
+            task.failed_queries.retain(|row| {
+                if let Some(index) = row["query_index"].as_u64() {
+                    !selected_indices.contains(&index)
+                } else {
+                    let query = row["queries"]
+                        .as_array()
+                        .and_then(|queries| queries.first())
+                        .unwrap_or(row);
+                    selected.iter().all(|selected| {
+                        selected["queries"][0]["query"] != query["query"]
+                            || (row["lesson_id"].as_str().is_some()
+                                && row["lesson_id"] != selected["lesson_id"])
+                    })
+                }
+            });
+            task.value["budget"]["reserved_requests"] = json!(
+                task.value["budget"]["reserved_requests"]
+                    .as_u64()
+                    .unwrap_or(0)
+                    + upper_bound
+            );
+        }
         task.value["state"] = json!("queued");
         task.value["updated_at"] = json!(rfc3339_now());
         task.cancel = Arc::new(AtomicBool::new(false));
@@ -2585,6 +3143,81 @@ mod tests {
                 "url": "https://example.test/case"
             }]
         })
+    }
+
+    #[test]
+    fn document_context_keeps_only_parser_verified_evidence_and_bounded_constraints() {
+        let parsed = json!({
+            "asset_id": "asset-source",
+            "sha256": "a".repeat(64),
+            "title": "Actual outline title",
+            "blocks": [{
+                "index": 0,
+                "type": "paragraph",
+                "text": "Heat illness warning signs require public health action.",
+                "locator": { "block": 0, "section": "Response" }
+            }]
+        });
+        let context = json!({
+            "asset_id": "asset-source",
+            "sha256": "a".repeat(64),
+            "title": "Model supplied title is ignored",
+            "themes": [{
+                "name": "Heat safety",
+                "evidence": [{ "text": "Heat illness warning signs", "locator": { "block": 0, "section": "Response" } }]
+            }],
+            "concepts": ["heat illness"],
+            "objectives": ["recognize warning signs"],
+            "case_types": ["community response"],
+            "media_types": ["interview"],
+            "keywords": ["heat safety"],
+            "language": "en",
+            "preferred_language": "zh",
+            "constraints": { "terms": ["cooling center"], "time_range": "2020 onward", "regions": ["Phoenix"], "industries": ["public health"] }
+        });
+        let validated = validate_document_context(&context, &parsed).expect("verified context");
+        assert_eq!(validated["title"], "Actual outline title");
+        assert_eq!(validated["language"], "en");
+        assert_eq!(validated["preferred_language"], "zh");
+        assert_eq!(validated["constraints"]["regions"][0], "Phoenix");
+
+        let mut forged_text = context.clone();
+        forged_text["themes"][0]["evidence"][0]["text"] = json!("invented statement");
+        assert!(validate_document_context(&forged_text, &parsed).is_err());
+        let mut forged_locator = context;
+        forged_locator["themes"][0]["evidence"][0]["locator"]["page"] = json!(9);
+        assert!(validate_document_context(&forged_locator, &parsed).is_err());
+    }
+
+    #[test]
+    fn interrupted_and_failed_rows_keep_stable_query_indexes() {
+        let rows = vec![
+            json!({"lesson_id":"lesson-a","queries":[{"kind":"web","query":"first","request_budget_upper_bound":1}]}),
+            json!({"lesson_id":"lesson-b","queries":[{"kind":"web","query":"failed","request_budget_upper_bound":1}]}),
+            json!({"lesson_id":"lesson-c","queries":[{"kind":"web","query":"not-started","request_budget_upper_bound":1}]}),
+        ];
+        let flattened = flatten_plan_queries(&rows);
+        assert_eq!(
+            flattened
+                .iter()
+                .map(|row| row["query_index"].as_u64().unwrap())
+                .collect::<Vec<_>>(),
+            vec![0, 1, 2]
+        );
+        let mut task = test_task();
+        task.plan.queries = rows;
+        task.value["progress"] = json!({"completed_queries":2,"total_queries":3});
+        task.value["errors"] = json!([{"query":"failed","query_index":1}]);
+        task.failed_queries = vec![flattened[1].clone()];
+        let failed = failed_query_rows(&task);
+        let continuation = flatten_plan_queries(&task.plan.queries)
+            .into_iter()
+            .filter(|row| row["query_index"].as_u64().unwrap() >= 2)
+            .collect::<Vec<_>>();
+        assert_eq!(failed.len(), 1);
+        assert_eq!(failed[0]["query_index"], json!(1));
+        assert_eq!(continuation.len(), 1);
+        assert_eq!(continuation[0]["query_index"], json!(2));
     }
 
     #[test]

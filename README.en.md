@@ -31,10 +31,12 @@ Create course stages and lessons, then edit lesson content, arrange materials, a
 - Plan and reorder course stages and lessons.
 - Edit lesson notes and page layouts, then preview them.
 - Organize images, video, PDF, DOCX, EPUB, LaTeX, and Markdown files.
-- Find teaching cases and videos from selected course materials, review their sources, then save or cite them explicitly.
+- Import a course outline or lesson plan to parse its text and extract structured themes; after configuring an AI model and search providers, find cases and teaching videos, read their sources in the side panel, then save or cite them explicitly.
 - Extract an editable style from an existing PowerPoint and export a supplemental slide as a single-slide file or an appended copy.
 - Track missing content and course completion.
 - Review AI suggestions and export Markdown, HTML, PDF, PPTX, or a full project package.
+
+Document parsing and online search report separate states. If a model or search provider is not configured, parsed content is kept and the app points to setup. The desktop app parses TXT, Markdown, DOCX, PDF, and PPTX; the browser shell currently parses TXT and Markdown only. Online searches use configured provider APIs over HTTPS. Source reading fetches only public HTTPS URLs and rejects private addresses and redirects.
 
 ## Example
 

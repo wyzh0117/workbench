@@ -70,6 +70,8 @@ pub(crate) const MAX_TOTAL_IMAGE_BYTES: usize = 96 * 1024 * 1024;
 pub(crate) const MAX_IMAGES: usize = 400;
 /// 用户提示条数上限，避免畸形文件把提示刷爆。
 const MAX_WARNINGS: usize = 200;
+const MAX_DISCOVERY_BLOCKS: usize = 500;
+const MAX_DISCOVERY_TEXT_CHARS: usize = 120_000;
 
 /// 内嵌图片：解码后可直接被对接层写入受管理素材目录。
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -129,6 +131,218 @@ pub fn parse_document(name: &str, bytes: &[u8]) -> Result<ParsedDocument, String
         other => return Err(format!("不支持的文档类型：{other}")),
     }
     Ok(collector.finish())
+}
+
+/// Extract bounded, source-addressable text for document-driven resource discovery.
+/// The original asset remains canonical; this view is only a search/AI context.
+pub(crate) fn parse_for_discovery(name: &str, bytes: &[u8]) -> Result<Value, String> {
+    let extension = extension_of(name);
+    if !matches!(
+        extension.as_str(),
+        "docx" | "pdf" | "pptx" | "txt" | "text" | "md" | "markdown"
+    ) {
+        return Err(format!("资源发现暂不支持读取该文档类型：{name}"));
+    }
+    if bytes.len() > MAX_SOURCE_BYTES {
+        return Err(format!(
+            "文档超过 {} MiB 的读取上限。",
+            MAX_SOURCE_BYTES / (1024 * 1024)
+        ));
+    }
+
+    let mut warnings = Vec::new();
+    let mut degraded = false;
+    let mut raw_blocks = Vec::<(String, String, Option<usize>)>::new();
+    match extension.as_str() {
+        "txt" | "text" | "md" | "markdown" => {
+            let decoded = plaintext::decode_text_bytes(bytes)?;
+            if decoded.label == "empty" {
+                warnings.push("文档为空，没有可用于搜索的正文。".to_owned());
+            } else if decoded.label != "UTF-8" {
+                warnings.push(format!(
+                    "文档编码识别为 {}，已转换为 UTF-8。",
+                    decoded.label
+                ));
+            }
+            if decoded.lossy {
+                degraded = true;
+                warnings.push("文档含无法配对的字符，个别字符已用占位符替代。".to_owned());
+            }
+            let normalized = decoded.text.replace("\r\n", "\n").replace('\r', "\n");
+            for paragraph in normalized.split("\n\n") {
+                let text = paragraph.trim().to_owned();
+                if text.is_empty() {
+                    continue;
+                }
+                let kind = if extension == "md" || extension == "markdown" {
+                    if text.lines().next().is_some_and(|line| {
+                        let trimmed = line.trim_start();
+                        trimmed.starts_with('#')
+                            && trimmed.chars().take_while(|ch| *ch == '#').count() <= 6
+                    }) {
+                        "heading"
+                    } else {
+                        "paragraph"
+                    }
+                } else {
+                    "paragraph"
+                };
+                raw_blocks.push((kind.to_owned(), text, None));
+            }
+        }
+        "pptx" => {
+            for (slide, text) in crate::presentation_import::extract_slide_text(bytes)? {
+                if !text.trim().is_empty() {
+                    raw_blocks.push(("paragraph".to_owned(), text, Some(slide)));
+                }
+            }
+            if raw_blocks.is_empty() {
+                warnings.push("PowerPoint 中没有可读取的幻灯片文字。".to_owned());
+            }
+        }
+        _ => {
+            let parsed = parse_document(name, bytes)?;
+            warnings = parsed.warnings;
+            degraded = parsed.degraded;
+            for block in parsed.blocks {
+                let text = block
+                    .get("text")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default()
+                    .trim()
+                    .to_owned();
+                if text.is_empty() {
+                    continue;
+                }
+                let kind = block
+                    .get("type")
+                    .and_then(Value::as_str)
+                    .unwrap_or("paragraph")
+                    .to_owned();
+                raw_blocks.push((kind, text, None));
+            }
+            if !parsed.usable_text {
+                warnings.push("文档没有可读取的文字层。".to_owned());
+            }
+        }
+    }
+
+    let source_text_chars = raw_blocks
+        .iter()
+        .map(|(_, text, _)| text.chars().count())
+        .sum::<usize>();
+    let title = raw_blocks
+        .iter()
+        .find(|(kind, text, _)| kind == "heading" && !text.trim().is_empty())
+        .or_else(|| {
+            raw_blocks
+                .iter()
+                .find(|(_, text, _)| !text.trim().is_empty())
+        })
+        .map(|(_, text, _)| discovery_title(text))
+        .unwrap_or_else(|| {
+            name.rsplit(['/', '\\'])
+                .next()
+                .unwrap_or(name)
+                .rsplit_once('.')
+                .map(|(stem, _)| stem)
+                .unwrap_or(name)
+                .trim()
+                .to_owned()
+        });
+
+    let mut blocks = Vec::new();
+    let mut text = String::new();
+    let mut section: Option<String> = None;
+    let mut truncated = false;
+    for (index, (kind, source, slide)) in raw_blocks.into_iter().enumerate() {
+        if index >= MAX_DISCOVERY_BLOCKS || text.chars().count() >= MAX_DISCOVERY_TEXT_CHARS {
+            truncated = true;
+            break;
+        }
+        let separator_chars = usize::from(!text.is_empty()) * 2;
+        let remaining = MAX_DISCOVERY_TEXT_CHARS
+            .saturating_sub(text.chars().count())
+            .saturating_sub(separator_chars);
+        if remaining == 0 {
+            truncated = true;
+            break;
+        }
+        let block_text = take_chars(&source, remaining);
+        if block_text.chars().count() < source.chars().count() {
+            truncated = true;
+        }
+        let heading = if kind == "heading" {
+            Some(discovery_title(&block_text))
+        } else {
+            None
+        };
+        if heading.is_some() {
+            section = heading;
+        }
+        if !text.is_empty() {
+            text.push_str("\n\n");
+        }
+        text.push_str(&block_text);
+        let mut locator = serde_json::Map::new();
+        locator.insert("block".to_owned(), json!(index));
+        if let Some(section) = &section {
+            locator.insert("section".to_owned(), json!(section));
+        }
+        if let Some(slide) = slide {
+            locator.insert("slide".to_owned(), json!(slide));
+        }
+        blocks.push(json!({
+            "index": index,
+            "type": kind,
+            "text": block_text,
+            "locator": Value::Object(locator),
+        }));
+        if truncated {
+            break;
+        }
+    }
+    if truncated {
+        warnings.push(format!(
+            "供 AI 提取的正文最多保留 {MAX_DISCOVERY_TEXT_CHARS} 个字符和 {MAX_DISCOVERY_BLOCKS} 个段落；原始文档仍保留在素材库中。"
+        ));
+    }
+    let digest = Sha256::digest(bytes);
+    let sha256 = digest
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect::<String>();
+    let readable = !text.trim().is_empty();
+    Ok(json!({
+        "filename": name.rsplit(['/', '\\']).next().unwrap_or(name),
+        "file_type": extension,
+        "sha256": sha256,
+        "title": title,
+        "text": text,
+        "source_text_chars": source_text_chars,
+        "readable": readable,
+        "blocks": blocks,
+        "warnings": warnings,
+        "degraded": degraded,
+        "truncated": truncated,
+    }))
+}
+
+fn take_chars(value: &str, limit: usize) -> String {
+    value.chars().take(limit).collect()
+}
+
+fn discovery_title(value: &str) -> String {
+    value
+        .lines()
+        .next()
+        .unwrap_or_default()
+        .trim()
+        .trim_start_matches('#')
+        .trim()
+        .chars()
+        .take(300)
+        .collect()
 }
 
 pub(crate) fn extension_of(name: &str) -> String {
@@ -1025,6 +1239,53 @@ pub(crate) fn find_zip_entry<R: std::io::Read + std::io::Seek>(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn discovery_parse_returns_bounded_addressable_markdown_and_text() {
+        let markdown = parse_for_discovery(
+            "lesson.md",
+            "# Supply chains\n\nTrade routes and container logistics.".as_bytes(),
+        )
+        .expect("markdown should be readable");
+        assert_eq!(markdown["title"], "Supply chains");
+        assert_eq!(markdown["blocks"][0]["type"], "heading");
+        assert_eq!(markdown["blocks"][0]["locator"]["block"], 0);
+        assert_eq!(
+            markdown["blocks"][1]["text"],
+            "Trade routes and container logistics."
+        );
+
+        let text = parse_for_discovery(
+            "notes.txt",
+            "First paragraph\n\nSecond paragraph".as_bytes(),
+        )
+        .expect("plain text should be readable");
+        assert_eq!(text["blocks"].as_array().unwrap().len(), 2);
+        assert!(text["readable"].as_bool().unwrap());
+        assert_eq!(text["sha256"].as_str().unwrap().len(), 64);
+        assert!(parse_for_discovery("notes.doc", b"unsupported").is_err());
+    }
+
+    #[test]
+    fn discovery_parser_reuses_docx_and_pdf_text_extractors() {
+        let paragraph = fixtures::docx_paragraph("", &fixtures::docx_run("Course objectives", ""));
+        let document = fixtures::docx_document(&paragraph);
+        let docx_bytes = fixtures::docx_build(&document, "", &[]);
+        let docx = parse_for_discovery("outline.docx", &docx_bytes)
+            .expect("DOCX discovery should reuse the canonical reader");
+        assert_eq!(docx["blocks"][0]["text"], "Course objectives");
+        assert_eq!(docx["blocks"][0]["locator"]["block"], 0);
+
+        let pdf_bytes = fixtures::pdf_text_document(&[fixtures::page(&[
+            ("Chapter One", 20.0),
+            ("Students model supply chains", 11.0),
+        ])]);
+        let pdf = parse_for_discovery("outline.pdf", &pdf_bytes)
+            .expect("PDF discovery should reuse the canonical reader");
+        assert_eq!(pdf["blocks"][0]["text"], "Chapter One");
+        assert_eq!(pdf["blocks"][1]["text"], "Students model supply chains");
+        assert_eq!(pdf["blocks"][1]["locator"]["block"], 1);
+    }
 
     #[test]
     fn extension_and_support_are_case_insensitive() {

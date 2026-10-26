@@ -61,7 +61,9 @@ Deno.test("Workbench shell keeps one collapse control per local sidebar", async 
   );
 
   assert(count(source, 'data-action="toggle-left"') === 1, "left collapse must have one control");
-  assert(count(source, 'data-action="toggle-right"') === 1, "right collapse must have one control");
+  // The mobile drawer mask shares the collapse action but is not a second visible control.
+  assert(count(source, 'class="icon-button collapse-right"') === 1, "right collapse must have one visible control");
+  assert(count(source, 'class="mobile-right-panel-mask"') === 1, "mobile drawer must close from its mask");
   assert(count(source, 'data-action="return-launcher"') === 1, "launcher return must have one control");
   assert(topbar.includes('data-action="return-launcher"'), "topbar must own the launcher return action");
   assert(topbar.includes('class="secondary launcher-return"'), "launcher return must be a named secondary action");
@@ -76,7 +78,9 @@ Deno.test("Workbench shell keeps one collapse control per local sidebar", async 
   // all ran "新建课程".  The real course-input entrances live in 课程地图 now,
   // and the launcher must point there instead of pretending.
   assert(!launcher.includes('class="seed-choices"'), "the launcher must not fake nine different entrances");
-  assert(launcher.includes("课程地图"), "the launcher must say where existing material is turned into a course map");
+  // Audit row 8 removes the duplicated seed tutorial from the launcher; the
+  // real source-specific entrance remains in the course-map seed card below.
+  assert(!launcher.includes("手上已经有课程概论"), "the launcher must not repeat the course-map seed tutorial");
   assert(source.includes("function seedCard()"), "课程地图 must own the course-input card");
   const seedCard = between(source, "function seedCard()", "function mapView()");
   assert(
@@ -100,14 +104,18 @@ Deno.test("Workbench shell keeps one collapse control per local sidebar", async 
   assert(left.includes('data-action="toggle-left"'), "left panel must keep its local collapse action");
   assert(right.includes('class="right-tabs"'), "right collapse must stay in the right panel tabs");
   assert(right.includes('data-action="toggle-right"'), "right panel must keep its local collapse action");
-  assert(styles.includes(".workspace { display: grid; grid-template-columns: 228px minmax(430px, 1fr) 286px;"), "normal workspace columns must stay unchanged");
-  assert(styles.includes(".shell.left-collapsed .workspace { grid-template-columns: 30px minmax(430px, 1fr) 286px; }"), "left collapse must leave a local rail");
-  assert(styles.includes(".shell.right-collapsed .workspace { grid-template-columns: 228px minmax(430px, 1fr) 30px; }"), "right collapse must leave a local rail");
-  assert(styles.includes(".shell.left-collapsed.right-collapsed .workspace { grid-template-columns: 30px minmax(430px, 1fr) 30px; }"), "both collapsed rails must leave the center usable");
+  // v3.1 keeps enough width for the discovery controls and candidate actions
+  // while reserving a 360px minimum center for the editor canvas.
+  assert(styles.includes(".workspace { grid-template-columns: minmax(188px, 228px) minmax(360px, 1fr) minmax(300px, 342px); }"), "three-column layout must give the canvas and discovery rail usable minimum widths");
+  // The old 30px rails clipped the collapse control at native scaling; 42px
+  // keeps the local control accessible while preserving the center minimum.
+  assert(styles.includes(".shell.left-collapsed .workspace { grid-template-columns: 42px minmax(360px, 1fr) minmax(300px, 342px); }"), "left collapse must leave a reachable rail");
+  assert(styles.includes(".shell.right-collapsed .workspace { grid-template-columns: minmax(188px, 228px) minmax(360px, 1fr) 42px; }"), "right collapse must leave a reachable rail");
+  assert(styles.includes(".shell.left-collapsed.right-collapsed .workspace { grid-template-columns: 42px minmax(360px, 1fr) 42px; }"), "both collapsed rails must leave the canvas minimum usable");
   assert(styles.includes(".left-collapsed .left-panel, .right-collapsed .right-panel { visibility: visible; }"), "collapsed sidebars must keep their local expand controls visible");
   assert(styles.includes(".left-collapsed .left-panel nav") && styles.includes(".right-collapsed .right-panel .right-content"), "collapsed rails must hide content without hiding controls");
   assert(styles.includes("@media (max-width: 1150px)"), "narrow workspace rules must remain present");
-  assert(30 + 420 + 30 <= 960, "both narrow collapsed rails must not cover the main work area");
+  assert(42 + 360 + 42 <= 960, "both narrow collapsed rails must not cover the main work area");
 });
 
 Deno.test("top navigation exposes the six project destinations without a duplicate left route list", async () => {
@@ -285,11 +293,12 @@ Deno.test("user-facing copy explains safety, continuation, and next actions", as
   const errors = await Deno.readTextFile(new URL("../src/service/errors.ts", import.meta.url));
 
   assert(views.includes("保存已暂停") && views.includes("磁盘版本没有改变"), "conflict copy must explain the safety stop");
-  assert(views.includes("请选择重新载入、自动合并，或在确认后保留本地版本"), "conflict copy must name the next actions");
+  // Audit row 160 keeps the recovery choices while shortening the modal copy.
+  assert(views.includes("请选择重新载入、自动合并或确认后保留本地版本"), "conflict copy must name the next actions");
   assert(!views.includes("EXTERNAL MODIFICATION CONFLICT") && !views.includes("BLOCKING") && !views.includes("WARNING"), "technical conflict/preflight labels must stay out of primary copy");
   assert(views.includes("显示技术信息") && views.includes("必须修复") && views.includes("确认提示并导出"), "preflight must separate repair blockers from confirmable notices");
   assert(views.includes('preview.error || "素材不可读"') && views.includes("重试预览") && views.includes("没有找到匹配的素材。换一个文件名继续搜索"), "asset preview must show its error, offer retry, and explain search next steps");
-  assert(views.includes("课程内容没有改动，你可以检查设置后重试"), "AI failure copy must state that canonical content is safe");
+  assert(views.includes("课程内容未改动。"), "AI failure copy must state that canonical content is safe");
   assert(main.includes("const userFacingError") && main.includes("external_modification_conflict") && main.includes("keychain_unavailable") && main.includes("当前操作没有写入"), "save/open/AI failures must map technical causes to safe user copy");
   assert(main.includes("发现未完成的保存；磁盘版本没有改变") && main.includes("暂存内容"), "startup recovery copy must explain the available choices");
   assert(boot.includes("createElement(\"details\")") && boot.includes("显示技术信息") && boot.includes("项目文件没有被改动"), "startup failure details must be expandable and safe");

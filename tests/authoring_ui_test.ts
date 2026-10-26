@@ -3617,7 +3617,8 @@ Deno.test("renaming an asset renames the managed file and stays reversible", asy
     assert(
       renameDialog.includes('role="dialog"') &&
         renameDialog.includes('data-action="confirm-rename-asset"') &&
-        renameDialog.includes("托管文件") &&
+        renameDialog.includes("重命名素材文件并更新正文引用") &&
+        renameDialog.includes("素材内容不变，扩展名保留") &&
         renameDialog.includes("data-asset-title"),
       "renaming uses an accessible dialog that explains the managed-file change",
     );
@@ -4070,7 +4071,7 @@ Deno.test("a locked project offers safe retry and return without taking its lock
       lockMarkup.includes("项目正在使用") &&
         lockMarkup.includes('data-action="retry-locked-project"') &&
         lockMarkup.includes('data-action="dismiss-project-problem"') &&
-        lockMarkup.includes("没有接管项目锁"),
+        lockMarkup.includes("关闭其他窗口后重试；如仍占用，请返回项目列表。"),
       "the lock dialog explains the conflict and offers only retry or return",
     );
     await store.retryLockedProjectOpen();

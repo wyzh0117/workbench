@@ -277,7 +277,7 @@ export interface AssetUsage {
 export type EvidenceAccess = "metadata_only" | "content_read" | "timed_transcript" | "unavailable";
 export type FactCheck = "unchecked" | "supported" | "disputed";
 export type ResourceMedium = "text" | "video" | "image" | "audio" | "document" | "presentation";
-export type ResourceTaskState = "queued" | "running" | "partial" | "completed" | "cancel_requested" | "cancelled" | "failed" | "stale";
+export type ResourceTaskState = "queued" | "running" | "partial" | "completed" | "cancel_requested" | "cancelled" | "interrupted" | "failed" | "stale";
 
 export interface SourceEvidence {
   id: UUID;

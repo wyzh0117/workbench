@@ -161,6 +161,49 @@ async function bootDom() {
   let activeDialog: any = null;
   let dialogRendered = false;
   let currentHtml = "";
+  let rightPanelRegion: any = null;
+
+  const rightPanelFromMarkup = (markup: string) => {
+    dialogRendered = markup.includes('role="dialog" aria-modal="true"');
+    const tabs = new Map<string, FakeNode>();
+    for (const match of markup.matchAll(/data-right-tab="([^"]+)"/g)) {
+      const tab = match[1] || "";
+      tabs.set(tab, createNode({ action: "right-tab", rightTab: tab }));
+    }
+    const content = createNode();
+    const readerMatch = markup.match(/data-reader-url="([^"]*)"/);
+    const reader = readerMatch ? createNode({ readerUrl: readerMatch[1] || "" }) : null;
+    const expand = createNode({ action: "resource-reader-expand" });
+    const close = createNode({ action: "resource-reader-collapse" });
+    const collapse = createNode({ action: "toggle-right", focusKey: "right-panel-toggle" });
+    const focusable = [createNode(), createNode()];
+    const expanded = markup.includes('class="right-panel panel is-expanded"');
+    return {
+      querySelector(selector: string) {
+        if (selector === ".right-panel") return this;
+        if (selector === '[role="dialog"][aria-modal="true"]') {
+          return markup.includes('role="dialog" aria-modal="true"') ? this : null;
+        }
+        if (selector === ".right-content") return content;
+        if (selector === ".resource-reader-body") return reader;
+        if (selector === ".resource-reader-expand") return expand;
+        if (selector === ".resource-reader-close") return close;
+        if (selector === ".collapse-right" || selector === '[data-focus-key="right-panel-toggle"]') return collapse;
+        const tab = selector.match(/^\[data-right-tab="([^"]+)"\]$/)?.[1];
+        return tab ? tabs.get(tab) || null : null;
+      },
+      querySelectorAll(selector: string) {
+        if (selector === "[data-action]") return [...tabs.values(), collapse];
+        if (selector.startsWith("button:not([disabled])")) return focusable;
+        return [];
+      },
+      contains(node: FakeNode | null) {
+        return Boolean(node && [...tabs.values(), collapse, content, reader, expand, close, ...focusable].includes(node));
+      },
+      replaceWith(replacement: unknown) { rightPanelRegion = replacement; },
+      expanded,
+    };
+  };
 
   const root: any = {
     get innerHTML() {
@@ -200,8 +243,15 @@ async function bootDom() {
     },
     contains: (node: FakeNode | null) => Boolean(node && node.inRoot),
     querySelector: (selector: string) => {
+      if (selector === ".right-panel-region") return rightPanelRegion;
+      if (selector === ".right-panel") return rightPanelRegion;
+      if (selector === ".right-panel.is-expanded") return rightPanelRegion?.expanded ? rightPanelRegion : null;
+      if (selector === ".resource-reader-expand") return rightPanelRegion?.querySelector(".resource-reader-expand") || null;
+      if (selector === ".collapse-right" || selector === '[data-focus-key="right-panel-toggle"]') {
+        return rightPanelRegion?.querySelector(selector) || null;
+      }
       if (selector === '[role="dialog"][aria-modal="true"]') {
-        return dialogRendered ? activeDialog : null;
+        return dialogRendered ? activeDialog || rightPanelRegion : null;
       }
       if (selector === ".center") {
         return currentHtml.includes('class="center"')
@@ -211,6 +261,10 @@ async function bootDom() {
       return registered.get(selector) ?? null;
     },
     querySelectorAll: (selector: string) => {
+      if (selector === '[role="dialog"][aria-modal="true"]') {
+        const dialog = dialogRendered ? activeDialog || rightPanelRegion : null;
+        return dialog ? [dialog] : [];
+      }
       if (selector === "[data-action]") return actionNodes;
       if (selector === "textarea[data-block-id]") {
         return textEditors;
@@ -234,6 +288,13 @@ async function bootDom() {
       const list = documentListeners.get(type) ?? [];
       list.push(handler);
       documentListeners.set(type, list);
+    },
+    createElement: () => {
+      let region: any = null;
+      return {
+        set innerHTML(value: string) { region = rightPanelFromMarkup(value); },
+        querySelector(selector: string) { return selector === ".right-panel-region" ? region : null; },
+      };
     },
   };
 
@@ -307,6 +368,8 @@ async function bootDom() {
       nextCenterOnRender = node;
     },
     renderProject,
+    setRightPanel: (markup: string) => { rightPanelRegion = rightPanelFromMarkup(markup); },
+    rightPanel: () => rightPanelRegion,
     fireDocument,
     fireRoot,
     setActiveDialog: (dialog: unknown) => { activeDialog = dialog; },
@@ -911,6 +974,123 @@ Deno.test("reader center scroll persists and restores only for its rendered tab"
       "late events from the previous project must not mutate the new project's session",
     );
   } finally {
+    dom.restore();
+  }
+});
+
+Deno.test("right tabs and reader overlay preserve the live canvas, selection, focus and body scroll", async () => {
+  const dom = await bootDom();
+  const runtime = globalThis as typeof globalThis & { matchMedia?: (query: string) => { matches: boolean } };
+  const previousMatchMedia = runtime.matchMedia;
+  try {
+    const data = projectWith("右栏切换");
+    const center = dom.createNode();
+    dom.scrollNodes.set(".center", [center]);
+    dom.renderProject(data);
+    dom.store.ui.resourceDocument = {
+      asset_id: "asset-parsed",
+      filename: "lesson.md",
+      status: "parsed",
+      readable: true,
+      truncated: false,
+      error: "正文已解析。配置模型连接后可继续提取主题。",
+      context: null,
+      sha256: "a".repeat(64),
+      title: "Lesson",
+    };
+    const savedDocument = dom.store.session().resource_document;
+    assert(savedDocument.status === "parsed" && savedDocument.context === null,
+      "a parsed document without AI context must survive a reader snapshot");
+    assert(!("sha256" in savedDocument) && !("title" in savedDocument),
+      "reader snapshots must match the strict resource_document session schema");
+    const block = data.blocks[0]!;
+    dom.store.ui.selectedBlockId = block.id;
+    dom.store.ui.resourceTask = {
+      task_id: "task-reader-state",
+      state: "completed",
+      candidates: [{
+        id: "candidate-reader-state",
+        title: "候选正文",
+        url: "https://example.test/article",
+        source_evidence: [],
+      }],
+    };
+    dom.store.ui.resourceSelectedCandidateId = "candidate-reader-state";
+    dom.store.ui.rightTab = "browser";
+    dom.setRightPanel(createViews(dom.store).rightPanelView());
+    dom.store.notifyRightPanel(); // Bind controls as the initial full-shell render does.
+    const initialRegion = dom.rightPanel();
+    initialRegion.querySelector(".right-content").scrollTop = 84;
+    initialRegion.querySelector(".resource-reader-body").scrollTop = 270;
+    center.selectionStart = 3;
+    center.selectionEnd = 8;
+    dom.document.activeElement = center;
+
+    initialRegion.querySelector('[data-right-tab="assistant"]').fire("click");
+    assert(dom.store.ui.rightTab === "assistant", "a real bound tab click must update the active tab state");
+    const assistantRegion = dom.rightPanel();
+    assert(assistantRegion !== initialRegion, "switching tabs should replace only the right-panel subtree");
+    assert(dom.root.querySelector(".center") === center, "the center canvas DOM node must keep its identity");
+    assert(dom.store.ui.selectedBlockId === block.id, "the selected canvas block must remain selected");
+    assert(center.selectionStart === 3 && center.selectionEnd === 8, "canvas text selection must stay intact");
+    assert(assistantRegion.querySelector(".right-content").scrollTop === 84, "the right pane scroll should survive a tab change");
+    assert(dom.store.ui.resourceReaderScrollTop === 270, "switching away must remember the reader body scroll");
+
+    dom.store.setRightTab("browser");
+    let browserRegion = dom.rightPanel();
+    assert(browserRegion.querySelector(".resource-reader-body").scrollTop === 270, "returning to the browser tab must restore its body scroll");
+    browserRegion.querySelector(".resource-reader-body").scrollTop = 390;
+    dom.store.ui.resourceReaderExpanded = true;
+    dom.store.notifyRightPanel();
+    browserRegion = dom.rightPanel();
+    assert(browserRegion.expanded, "the reader control must expand the overlay state");
+    assert(browserRegion.querySelector(".resource-reader-body").scrollTop === 390, "expanding must retain the reader position");
+    const focusable = browserRegion.querySelectorAll('button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), a[href], [tabindex]:not([tabindex="-1"])');
+    let tabPrevented = false;
+    dom.document.activeElement = focusable[0];
+    dom.fireRoot("keydown", { key: "Tab", shiftKey: true, preventDefault: () => { tabPrevented = true; } });
+    assert(tabPrevented && dom.document.activeElement === focusable.at(-1), "Shift+Tab at the first overlay control must wrap to the last");
+    tabPrevented = false;
+    dom.document.activeElement = focusable.at(-1);
+    dom.fireRoot("keydown", { key: "Tab", shiftKey: false, preventDefault: () => { tabPrevented = true; } });
+    assert(tabPrevented && dom.document.activeElement === focusable[0], "Tab at the last overlay control must wrap to the first");
+    dom.document.activeElement = browserRegion.querySelector(".resource-reader-body");
+    let escapePrevented = false;
+    dom.fireRoot("keydown", { key: "Escape", preventDefault: () => { escapePrevented = true; } });
+    await Promise.resolve();
+    browserRegion = dom.rightPanel();
+    assert(escapePrevented && !browserRegion.expanded, "Escape must close the expanded reader");
+    assert(browserRegion.querySelector(".resource-reader-body").scrollTop === 390, "Escape must retain the reader position");
+    assert(dom.document.activeElement === browserRegion.querySelector(".resource-reader-expand"), "Escape must return focus to the expand control");
+    assert(dom.root.querySelector(".center") === center, "overlay changes must not remount the canvas");
+
+    const oldFocusedTab = browserRegion.querySelector('[data-right-tab="browser"]');
+    dom.document.activeElement = oldFocusedTab;
+    dom.store.setRightTab("assistant");
+    const focusedTab = dom.rightPanel().querySelector('[data-right-tab="browser"]');
+    assert(dom.document.activeElement === focusedTab, "focus must move to the corresponding tab in the replacement panel");
+    assert(dom.rightPanel().contains(dom.document.activeElement), "restored focus must remain inside the right tab set");
+
+    runtime.matchMedia = (query) => ({ matches: query === "(max-width: 680px)" });
+    dom.store.notifyRightPanel();
+    assert(dom.rightPanel().expanded === false, "the narrow right panel opens as a drawer");
+    let drawerEscapePrevented = false;
+    dom.fireRoot("keydown", { key: "Escape", preventDefault: () => { drawerEscapePrevented = true; } });
+    await Promise.resolve();
+    assert(drawerEscapePrevented && dom.store.ui.rightCollapsed, "Escape must close the mobile drawer itself");
+    assert(dom.document.activeElement === dom.rightPanel().querySelector(".collapse-right"), "closing the mobile drawer must return focus to its collapsed rail control");
+
+    dom.store.ui.rightCollapsed = false;
+    dom.store.notifyRightPanel();
+    const drawer = dom.rightPanel();
+    const drawerClose = drawer.querySelector(".collapse-right");
+    dom.document.activeElement = drawerClose;
+    drawerClose.fire("click");
+    assert(dom.store.ui.rightCollapsed, "the mobile close control must close the drawer");
+    assert(dom.document.activeElement === dom.rightPanel().querySelector(".collapse-right"), "the close control must restore focus to the collapsed rail");
+  } finally {
+    if (previousMatchMedia) runtime.matchMedia = previousMatchMedia;
+    else delete runtime.matchMedia;
     dom.restore();
   }
 });

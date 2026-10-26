@@ -22,6 +22,7 @@ const CANCEL_POLL: Duration = Duration::from_millis(15);
 const API_RESPONSE_LIMIT: usize = 2 * 1024 * 1024;
 const SOURCE_RESPONSE_LIMIT: usize = 2 * 1024 * 1024;
 const SOURCE_TEXT_LIMIT: usize = 1_200;
+const SOURCE_READ_TEXT_LIMIT: usize = 50_000;
 
 pub type RequestPermit = Arc<dyn Fn() -> Result<(), String> + Send + Sync>;
 
@@ -76,7 +77,9 @@ pub struct SourceFetchResult {
     pub url: String,
     pub title: String,
     pub publisher: Option<String>,
+    pub text: Option<String>,
     pub excerpt: Option<String>,
+    pub truncated: bool,
     pub evidence_access: String,
     pub content_hash: Option<String>,
     pub limitations: Vec<String>,
@@ -520,6 +523,8 @@ pub async fn fetch_source(
     } else {
         normalize_space(&raw)
     };
+    let truncated = body_text.chars().count() > SOURCE_READ_TEXT_LIMIT;
+    let text = (!body_text.is_empty()).then(|| truncate_chars(&body_text, SOURCE_READ_TEXT_LIMIT));
     let excerpt = if body_text.is_empty() {
         html.then(|| html_meta(&raw, "description")).flatten()
     } else {
@@ -536,7 +541,9 @@ pub async fn fetch_source(
         url: url.to_string(),
         title,
         publisher,
+        text,
         excerpt,
+        truncated,
         evidence_access: if body_text.is_empty() {
             "metadata_only"
         } else {

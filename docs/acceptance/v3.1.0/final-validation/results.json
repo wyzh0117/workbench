@@ -1,0 +1,35 @@
+{
+  "date": "2026-10-26",
+  "branch": "codex/v3.1.0",
+  "baseline_cargo_test": { "passed": 298, "failed": 0, "ignored": 2 },
+  "cargo_ignored_tests": [
+    {
+      "name": "tests::manual_native_project_save_warm_metrics",
+      "reason": "Manual warm benchmark; requires WORKBENCH_NATIVE_IO_FIXTURE to point to a valid large project.json."
+    },
+    {
+      "name": "generate_office_review_samples",
+      "reason": "Writes temporary PPTX packages for manual Office inspection."
+    }
+  ],
+  "checks": [
+    { "command": "git diff --check", "exit_code": 0, "log": "git-diff-check.log" },
+    { "command": "deno task check", "exit_code": 0, "log": "deno-task-check.log" },
+    { "command": "deno task test", "exit_code": 0, "passed": 778, "failed": 0, "log": "deno-task-test.log" },
+    { "command": "cargo fmt --manifest-path src-tauri/Cargo.toml --all --check", "exit_code": 0, "log": "cargo-fmt-check.log" },
+    { "command": "cargo test --manifest-path src-tauri/Cargo.toml", "exit_code": 0, "passed": 304, "failed": 0, "ignored": 2, "log": "cargo-test.log" }
+  ],
+  "ui_copy_audit": { "rows": 202, "unique_ids": 202, "undecided": 0 },
+  "native_gui": {
+    "markdown_parse_ipc": "passed",
+    "project_session_reopen": "passed",
+    "debug_process_exit_and_fresh_launch": "passed: PIDs 77090 and 79751 exited; PID 79835 relaunched the same debug bundle and restored the isolated project session",
+    "public_https_source_read": "passed: https://example.com/",
+    "private_loopback_rejected": "passed: HTTP and HTTPS loopback",
+    "live_model_extraction_and_search_provider_workflow": "not tested; no provider credentials or model connection configured"
+  },
+  "limits": [
+    "Signed/package installers and Windows/macOS system icon presentation were not tested.",
+    "The source.read check does not establish live AI extraction or search-provider discovery."
+  ]
+}

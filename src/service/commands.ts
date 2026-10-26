@@ -94,6 +94,8 @@ export const HIGH_LEVEL_COMMANDS = [
   "ai.execution.append",
   "ai.execution.list",
   "resource.discovery.prepare",
+  "resource.discovery.document.parse",
+  "resource.source.read",
   "resource.providers.secret.set",
   "resource.providers.secret.delete",
   "resource.discovery.start",

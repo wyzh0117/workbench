@@ -59,7 +59,9 @@ export interface SourceFetchResult {
   url: string;
   title: string;
   publisher: string | null;
+  text: string | null;
   excerpt: string | null;
+  truncated: boolean;
   evidence_access: "metadata_only" | "content_read" | "unavailable";
   content_hash: string | null;
   limitations: string[];
@@ -121,6 +123,7 @@ const YOUTUBE_VIDEOS_ENDPOINT = "https://www.googleapis.com/youtube/v3/videos";
 const DEFAULT_TIMEOUT_MS = 12_000;
 const DEFAULT_MAX_RESPONSE_BYTES = 2 * 1024 * 1024;
 const SOURCE_TEXT_LIMIT = 4_000;
+const SOURCE_READ_TEXT_LIMIT = 50_000;
 const STATUS: ResourceProviderStatus[] = [
   {
     id: "brave_search",
@@ -717,6 +720,7 @@ export function createResourceProviders(deps: Deps): ResourceProviders {
         const bodyText = html ? htmlText(sourceText) : normalizeSpace(sourceText);
         const excerpt = bodyText.slice(0, SOURCE_TEXT_LIMIT).trim() ||
           (html ? extractMeta(sourceText, "description") : null);
+        const textChars = Array.from(bodyText);
         const hashBuffer = new ArrayBuffer(bytes.byteLength);
         new Uint8Array(hashBuffer).set(bytes);
         const digest = await crypto.subtle.digest("SHA-256", hashBuffer);
@@ -733,7 +737,9 @@ export function createResourceProviders(deps: Deps): ResourceProviders {
           url: url.href,
           title,
           publisher,
+          text: textChars.length ? textChars.slice(0, SOURCE_READ_TEXT_LIMIT).join("") : null,
           excerpt: excerpt || null,
+          truncated: textChars.length > SOURCE_READ_TEXT_LIMIT,
           evidence_access: bodyText ? "content_read" : "metadata_only",
           content_hash: contentHash,
           limitations: bodyText

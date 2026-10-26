@@ -228,7 +228,7 @@ export function createViews(store) {
     if (preview?.released) {
       // Memory budget took this settled thumbnail back. It is not "coming soon",
       // so offer the one thing that is true: load it again on request.
-      return `<span class="asset-thumb" title="为了控制内存，这张缩略图已释放" style="flex-direction:column;gap:3px;padding:6px">${esc(label)}<small>缩略图已释放</small>${retryAssetPreviewButton(asset, true)}</span>`;
+      return `<span class="asset-thumb" title="缩略图已释放，点击重新加载" style="flex-direction:column;gap:3px;padding:6px">${esc(label)}<small>缩略图已释放</small>${retryAssetPreviewButton(asset, true)}</span>`;
     }
     if (!preview || preview.loading) {
       const pending = Boolean(preview?.pending);
@@ -330,31 +330,31 @@ export function createViews(store) {
       }</pre>`;
     }
     if (preview && preview.failed) {
-      return `<div class="media-slot failed"><b>${esc(asset.filename)} · ${esc(assetLabel(asset.type))} 预览失败</b><small>${esc(preview.error || "素材不可读")}</small><small>请检查文件内容，或在媒体库替换为可读取的文件。</small>${retryAssetPreviewButton(asset)}</div>`;
+      return `<div class="media-slot failed"><b>${esc(asset.filename)} · ${esc(assetLabel(asset.type))} 预览失败</b><small>${esc(preview.error || "素材不可读")}</small><small>请检查文件，或重新导入。</small>${retryAssetPreviewButton(asset)}</div>`;
     }
     if (preview?.loaded) {
       // This file is readable, but the current WebView has no renderer.
       return `<div class="media-slot attachment">▤ ${
         esc(asset.title || asset.filename)
-      }（${esc(assetLabel(asset.type))} · ${esc(asset.type === "other" ? "当前格式不支持内嵌预览" : "参考文件，当前没有正文解析")})</div>`;
+      }（${esc(assetLabel(asset.type))} · ${esc(asset.type === "other" ? "当前格式不支持内嵌预览" : "仅显示文件信息")})</div>`;
     }
     if (preview?.released) {
-      return `<div class="media-slot loading">缩略图已释放${retryAssetPreviewButton(asset)}</div>`;
+      return `<div class="media-slot loading">缩略图已释放，点击重新加载${retryAssetPreviewButton(asset)}</div>`;
     }
     if (preview?.loading) {
       return `<div class="media-slot loading">${preview.pending ? "正在读取素材预览…" : "靠近素材时加载预览…"}</div>`;
     }
-    return `<div class="media-slot failed"><b>${esc(asset.filename)} 暂不可用</b><small>${asset.archived ? "素材已归档" : "找不到可读取的素材预览"}；请在媒体库检查或重新添加。</small></div>`;
+    return `<div class="media-slot failed"><b>${esc(asset.filename)} 暂不可用</b><small>${asset.archived ? "素材已归档" : "素材不可用，请检查文件或重新添加。"}</small></div>`;
   };
 
   const previewMediaBody = (asset, block = null) => {
     const preview = assetPreview(asset);
     const url = preview?.url || "";
     if (preview?.failed) {
-      return `<div class="preview-media-failed"><b>${esc(asset.filename)} · ${esc(assetLabel(asset.type))} 预览失败</b><p>${esc(preview.error || "素材不可读")}</p><p class="muted">请检查文件内容，或在媒体库替换为可读取的文件。</p>${retryAssetPreviewButton(asset)}</div>`;
+      return `<div class="preview-media-failed"><b>${esc(asset.filename)} · ${esc(assetLabel(asset.type))} 预览失败</b><p>${esc(preview.error || "素材不可读")}</p><p class="muted">请检查文件，或重新导入。</p>${retryAssetPreviewButton(asset)}</div>`;
     }
     if (preview?.released) {
-      return `<div class="preview-placeholder">缩略图已释放，可重新读取 ${esc(asset.filename)}${retryAssetPreviewButton(asset)}</div>`;
+      return `<div class="preview-placeholder">缩略图已释放，点击重新加载 ${esc(asset.filename)}${retryAssetPreviewButton(asset)}</div>`;
     }
     if (preview?.loading) {
       return `<div class="preview-placeholder">${preview.pending ? "正在读取" : "等待加载"} ${esc(asset.filename)}…</div>`;
@@ -390,8 +390,8 @@ export function createViews(store) {
     }
     if (preview?.loaded) return `<p class="preview-attachment">▤ ${
       esc(asset.title || asset.filename)
-    }（${esc(assetLabel(asset.type))} · ${esc(asset.type === "other" ? "当前格式不支持内嵌预览" : "参考文件，当前没有正文解析")})</p>`;
-    return `<div class="preview-media-failed"><b>${esc(asset.filename)} 暂不可用</b><p>${asset.archived ? "素材已归档" : "找不到可读取的素材预览"}；请在媒体库检查或重新添加。</p></div>`;
+    }（${esc(assetLabel(asset.type))} · ${esc(asset.type === "other" ? "当前格式不支持内嵌预览" : "仅显示文件信息")})</p>`;
+    return `<div class="preview-media-failed"><b>${esc(asset.filename)} 暂不可用</b><p>${asset.archived ? "素材已归档" : "素材不可用，请检查文件或重新添加。"}</p></div>`;
   };
 
   /**
@@ -507,7 +507,7 @@ export function createViews(store) {
     const currentId = store.data.project?.id || "";
     if (!rows.length) {
       return `<section class="project-library"><div class="library-head"><div><span class="eyebrow">项目库</span><h2>最近打开</h2></div><span class="muted small">本机项目</span></div>
-        <div class="library-empty"><span class="empty-icon" aria-hidden="true">⌂</span><div><b>还没有最近项目</b><p class="small muted">新建课程，或打开一个已有的 Workbench 项目文件夹。项目文件始终保存在本机。</p></div></div>
+      <div class="library-empty"><span class="empty-icon" aria-hidden="true">⌂</span><div><b>还没有最近项目</b><p class="small muted">新建课程，或打开项目文件夹。</p></div></div>
       </section>`;
     }
     return `<section class="project-library">
@@ -535,12 +535,12 @@ export function createViews(store) {
               }">重新定位</button>`
         }<button class="text-button" data-action="remove-registry-project" data-project-id="${
           esc(row.project_id)
-        }" data-project-path="${esc(path)}">从列表移除</button></div>
+        }" data-project-path="${esc(path)}" title="仅从列表移除，项目文件会保留">从列表移除</button></div>
         </li>`;
       }).join("")
     }
       </ul>
-      <p class="small muted">「从列表移除」只是把这一条从启动页去掉，不会删除或改写磁盘上的课程文件。</p>
+
     </section>`;
   }
 
@@ -557,7 +557,7 @@ export function createViews(store) {
     if (!copy) return "";
     return `<div class="overlay"><div class="conflict-modal modal" role="dialog" aria-modal="true" aria-labelledby="registry-copy-title" tabindex="-1" data-stop-click="true">
       <div class="modal-head"><div><span class="eyebrow">项目身份检查</span><h2 id="registry-copy-title">检测到同一个 Workbench 项目的两个副本</h2></div></div>
-      <p class="muted">同一个项目标识出现在两个文件夹，登记表不会替你决定哪一个才是你要用的那个。</p>
+      <p class="muted">发现同一项目的两个位置，请选择保留方式。</p>
       <p class="small muted"><b>${esc(copy.project_title || copy.project_id || "")}</b></p>
       <ul class="library-copy-paths">
         <li><span>登记表里记录的位置</span><code title="${esc(copy.existing_path || "")}">${esc(shortRegistryPath(copy.existing_path))}</code></li>
@@ -583,7 +583,7 @@ export function createViews(store) {
     const resume = map.lessons.find((lesson) => lesson.id === resumeId) || null;
     const native = store.bridge.isNative();
     return `<section class="launcher">
-      <header class="launcher-intro"><div class="launcher-orb" aria-hidden="true">✦</div><div><p class="eyebrow latin">AI COURSE WORKBENCH</p><h1>把一套课程，从想法做到发布</h1><p class="muted launcher-copy">课程内容保存在本机；正文、待补、素材、排版和版本都在同一个工作台里。</p></div></header>
+      <header class="launcher-intro"><div class="launcher-orb" aria-hidden="true">✦</div><div><p class="eyebrow latin">AI COURSE WORKBENCH</p><h1>把一套课程，从想法做到发布</h1></div></header>
       <section class="launcher-resume" aria-labelledby="launcher-resume-title"><div class="launcher-section-head"><div><span class="eyebrow">当前项目</span><h2 id="launcher-resume-title">继续你上次的工作</h2></div></div><div class="recent-card"><div><span class="eyebrow">${esc(project.title)}</span><h3>${resume ? `${esc(resume.code)}｜${esc(resume.title)}` : "课程内容尚未开始"}</h3><p class="muted">${
       resume
         ? `${resume.progress.complete
@@ -592,13 +592,8 @@ export function createViews(store) {
         }`
         : "新建课程或导入资料后，当前工作会显示在这里。"
     }</p>${map.lesson_count ? `<div class="progress-track"><span style="width:${map.progress}%"></span></div><small class="muted">整门课程 ${map.complete_count}/${map.lesson_count} 课完成 · 待补 ${map.open_requirements} 项</small>` : ""}</div><button class="primary" data-action="enter-project">继续工作 <span aria-hidden="true">→</span></button></div></section>
-      <section class="launcher-start" aria-labelledby="launcher-start-title"><div class="launcher-section-head"><div><span class="eyebrow">项目入口</span><h2 id="launcher-start-title">新建、打开或导入</h2><p class="muted">先选项目入口，再决定要继续编辑的课程内容。</p></div></div><div class="launcher-choice-grid"><article class="launcher-choice"><span class="launcher-choice-index">01 · 从头开始</span><h3>新建课程</h3><p class="muted">创建一个本机 Workbench 项目，再从课程地图搭建结构。</p><button class="primary big" data-action="new-project">新建课程</button></article><article class="launcher-choice"><span class="launcher-choice-index">02 · 已有项目</span><h3>${native ? "打开项目文件夹" : "打开现有项目"}</h3><p class="muted">继续一个已经创建的 Workbench 项目；不会覆盖其他项目。</p><button class="secondary big" data-action="${native ? "open-project-dir" : "open-file"}">${native ? "选择项目文件夹" : "打开项目文件"}</button>${native ? "" : PROJECT_FILE_PICKER}</article><article class="launcher-choice"><span class="launcher-choice-index">03 · 导入资料</span><h3>从文件夹开始</h3><p class="muted">只读扫描原始资料，确认映射后才会导入选中的内容。</p><button class="secondary big" data-action="import-folder">选择资料文件夹</button></article></div></section>
+      <section class="launcher-start" aria-labelledby="launcher-start-title"><div class="launcher-section-head"><div><span class="eyebrow">项目入口</span><h2 id="launcher-start-title">新建、打开或导入</h2></div></div><div class="launcher-choice-grid"><article class="launcher-choice"><span class="launcher-choice-index">01 · 从头开始</span><h3>新建课程</h3><p class="muted">创建课程项目。</p><button class="primary big" data-action="new-project">新建课程</button></article><article class="launcher-choice"><span class="launcher-choice-index">02 · 已有项目</span><h3>${native ? "打开项目文件夹" : "打开现有项目"}</h3><p class="muted">打开已有课程项目。</p><button class="secondary big" data-action="${native ? "open-project-dir" : "open-file"}">${native ? "选择项目文件夹" : "打开项目文件"}</button>${native ? "" : PROJECT_FILE_PICKER}</article><article class="launcher-choice"><span class="launcher-choice-index">03 · 导入资料</span><h3>从文件夹开始</h3><p class="muted">预览资料，选择后导入。</p>${native ? `<button class="secondary big" data-action="import-folder">选择资料文件夹</button>` : `<p class="small muted">导入文件夹请使用桌面应用。</p><button class="secondary big" data-action="import-folder">选择资料文件夹</button>`}</article></div></section>
       ${registryListView(esc)}
-      <p class="small muted launcher-footnote">${
-      native
-        ? "可以选择新建课程、打开已有 Workbench 项目，或导入已有文件夹（只读扫描，确认前不会改写原文件）。"
-        : "可以打开现有课程，也可以先新建一门课程。导入已有文件夹请使用桌面应用。"
-    } 手上已经有课程概论、大纲、教材目录、文章、表格或 AI 对话时：进入课程后打开「课程地图」，粘贴进去先生成课程地图草稿，确认后才创建正式内容。</p>
     </section>${overlay()}<div class="toast-slot" data-chrome-toast>${toast()}</div>`;
   }
 
@@ -619,6 +614,7 @@ export function createViews(store) {
         ${rightPanelView()}
       </div>
       ${statusbarView(item)}
+      ${PROJECT_FILE_PICKER}
     </div>${overlay()}<div class="toast-slot" data-chrome-toast>${toast()}</div>`;
   }
 
@@ -663,7 +659,7 @@ export function createViews(store) {
     const editLessonInWorkbench = item &&
       store.ui.editingLessonTitleId === item.id &&
       store.ui.editingLessonTitleSurface === "workbench";
-    return `<header class="topbar"><div class="brand"><details class="project-picker"><summary class="secondary launcher-return" aria-label="选择项目" title="选择项目">⌂ <span>项目选择</span></summary><div class="project-picker-menu"><b>当前项目</b><span class="project-picker-current">${esc(store.data.project.title)}</span><button class="text-button" data-action="return-launcher" title="返回启动页；当前项目保持打开">返回启动页</button><div class="project-picker-actions"><button class="secondary" data-action="${native ? "open-project-dir" : "open-file"}">打开项目</button><button class="secondary" data-action="new-project">新建项目</button></div>${registryProjects.length ? `<hr /><b>最近打开</b><ul>${registryProjects.map((row) => `<li>${row.available ? `<button class="text-button" data-action="open-registry-project" data-project-path="${esc(row.project_path || "")}">${esc(row.project_title || shortRegistryPath(row.project_path || ""))}</button>` : `<button class="text-button" data-action="relocate-registry-project" data-project-id="${esc(row.project_id || "")}">重新定位 · ${esc(row.project_title || shortRegistryPath(row.project_path || ""))}</button>`}</li>`).join("")}</ul>` : `<small class="muted">最近打开的项目会显示在这里。</small>`}</div></details><span class="brand-mark" aria-hidden="true">✦</span><span class="brand-title">AI Course Workbench</span></div>${
+    return `<header class="topbar"><div class="brand"><details class="project-picker"><summary class="secondary launcher-return" aria-label="选择项目" title="选择项目">⌂ <span>项目选择</span></summary><div class="project-picker-menu"><b>当前项目</b><span class="project-picker-current">${esc(store.data.project.title)}</span><button class="text-button" data-action="return-launcher" title="返回启动页；当前项目保持打开">返回启动页</button><div class="project-picker-actions"><button class="secondary" data-action="${native ? "open-project-dir" : "open-file"}">打开项目</button><button class="secondary" data-action="new-project">新建项目</button></div>${registryProjects.length ? `<hr /><b>最近打开</b><ul>${registryProjects.map((row) => `<li>${row.available ? `<button class="text-button" data-action="open-registry-project" data-project-path="${esc(row.project_path || "")}">${esc(row.project_title || shortRegistryPath(row.project_path || ""))}</button>` : `<button class="text-button" data-action="relocate-registry-project" data-project-id="${esc(row.project_id || "")}">重新定位 · ${esc(row.project_title || shortRegistryPath(row.project_path || ""))}</button>`}</li>`).join("")}</ul>` : ``}</div></details><span class="brand-mark" aria-hidden="true"><svg viewBox="0 0 24 24" width="18" height="18" focusable="false"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></svg></span><span class="brand-title">AI Course Workbench</span></div>${
       `<button class="project-name" data-action="select-project-properties" title="打开项目设置"><span class="dot"></span><span class="project-title-text">${
         esc(store.data.project.title)
       }</span></button>`
@@ -728,7 +724,7 @@ export function createViews(store) {
   function seedCard() {
     const active = store.ui.seedType;
     const hint = active ? SEED_SOURCE_HINTS[active] : null;
-    return `<div class="card seed-card"><span class="eyebrow">你现在有什么？</span><h2>把已有的内容变成课程地图</h2><p class="muted">选中一类你手上已有的内容，粘贴进来，先生成一份课程地图草稿。确认草稿前不会创建正式阶段与内容。</p><div class="seed-grid">${
+    return `<div class="card seed-card"><span class="eyebrow">你现在有什么？</span><h2>把已有的内容变成课程地图</h2><p class="muted">粘贴已有内容，生成课程地图草稿。确认后创建课程。</p><div class="seed-grid">${
       SEED_TEXT_SOURCES.map((type) => {
         const entry = SEED_SOURCE_HINTS[type];
         return `<button class="${
@@ -764,7 +760,7 @@ export function createViews(store) {
     const draftCard = draft
       ? `<div class="card blueprint-confirm"><span class="eyebrow">待确认的课程地图</span><h2>${
         esc(draft.title)
-      }</h2><p class="muted">确认前只保存课程输入和草稿，确认后才创建正式阶段与内容。</p><div class="blueprint-nodes">${
+      }</h2><p class="muted">确认后创建阶段和课时。</p><div class="blueprint-nodes">${
         draftNodes.map((node) =>
           `<div class="structure-row"><span class="order">${
             node.node_type === "stage" ? "阶段" : "内容"
@@ -784,11 +780,11 @@ export function createViews(store) {
       ? `<input class="project-title-input map-project-title-input" data-project-title data-focus-key="project-title" value="${esc(store.data.project.title)}" aria-label="课程标题" />`
       : `<button class="inline-title-button map-project-title" data-action="edit-project-title" data-title-surface="map" title="点击修改课程标题">${esc(map.project_title)}</button>`;
     if (map.lesson_count === 0 && realStages.length === 0 && !draft) {
-      return `<section class="page course-map-page is-empty map-empty-page"><div class="page-head"><div><span class="eyebrow">项目概览</span><h1>${mapProjectTitle}</h1><p class="muted">从当前课程结构查看进度、待补和素材需求。</p></div><div class="map-actions"><button class="secondary" data-action="select-project-properties">项目设置</button><button class="secondary" data-action="add-stage">＋ 新阶段</button><button class="primary" data-action="add-map-item">＋ 新建第一课</button></div></div>${seedCard()}</section>`;
+      return `<section class="page course-map-page is-empty map-empty-page"><div class="page-head"><div><span class="eyebrow">项目概览</span><h1>${mapProjectTitle}</h1></div><div class="map-actions"><button class="secondary" data-action="select-project-properties">项目设置</button><button class="secondary" data-action="add-stage">＋ 新阶段</button><button class="primary" data-action="add-map-item">＋ 新建第一课</button></div></div>${seedCard()}</section>`;
     }
     const filter = store.ui.courseTreeFilter || "all";
     const filters = [["all", "全部"], ["open", "进行中"], ["requirements", "待补"], ["missing_media", "缺素材"], ["complete", "已完成"]];
-    return `<section class="page course-map-page"><div class="page-head map-page-head"><div class="map-page-title"><span class="eyebrow">项目概览 · 课程结构</span><h1>${mapProjectTitle}</h1><p class="muted">课时、状态、待补和素材需求使用同一课程记录；拖动课时可调整顺序或归属。</p></div><div class="map-actions"><button class="secondary" data-action="select-project-properties">项目设置</button>${store.currentItem() ? `<button class="secondary" data-action="locate-current-lesson">定位当前课</button>` : ""}<button class="secondary" data-action="add-stage">＋ 新阶段</button><button class="primary" data-action="add-map-item">＋ 新建课程内容</button></div></div>${draftCard}<div class="course-tree-toolbar"><span>${map.lesson_count} 课 · ${map.open_requirements} 项待补 · ${map.missing_media} 处缺素材</span><div class="course-tree-tools"><label class="course-tree-search"><span class="sr-only">搜索课程</span><input type="search" data-action="course-tree-search" value="${esc(store.ui.courseTreeQuery || "")}" placeholder="搜索课程" /></label><div role="group" aria-label="课程筛选">${filters.map(([key,label]) => `<button class="filter ${filter === key ? "active" : ""}" data-action="course-tree-filter" data-filter="${key}" aria-pressed="${filter === key}">${label}</button>`).join("")}</div></div></div><div class="course-tree-scroll" tabindex="0" role="region" aria-label="课程表，可横向滚动查看完整列"><table class="course-tree-table"><thead><tr><th scope="col">课程</th><th scope="col">状态</th><th scope="col">待补</th><th scope="col">素材</th><th scope="col">操作</th></tr></thead>${map.stages.map((stage, stageIndex) => stageCard(stage, stageIndex, realStages.length, requirementsByLesson)).join("")}</table></div><p class="course-tree-scroll-hint">窗口较窄时，可用 Tab 聚焦课程表，再用左右方向键查看全部列。</p></section>`;
+    return `<section class="page course-map-page"><div class="page-head map-page-head"><div class="map-page-title"><span class="eyebrow">项目概览 · 课程结构</span><h1>${mapProjectTitle}</h1><p class="muted">拖动课时可调整顺序或阶段。</p></div><div class="map-actions"><button class="secondary" data-action="select-project-properties">项目设置</button>${store.currentItem() ? `<button class="secondary" data-action="locate-current-lesson">定位当前课</button>` : ""}<button class="secondary" data-action="add-stage">＋ 新阶段</button><button class="primary" data-action="add-map-item">＋ 新建课程内容</button></div></div>${draftCard}<div class="course-tree-toolbar"><span>${map.lesson_count} 课 · ${map.open_requirements} 项待补 · ${map.missing_media} 处缺素材</span><div class="course-tree-tools"><label class="course-tree-search"><span class="sr-only">搜索课程</span><input type="search" data-action="course-tree-search" value="${esc(store.ui.courseTreeQuery || "")}" placeholder="搜索课程" /></label><div role="group" aria-label="课程筛选">${filters.map(([key,label]) => `<button class="filter ${filter === key ? "active" : ""}" data-action="course-tree-filter" data-filter="${key}" aria-pressed="${filter === key}">${label}</button>`).join("")}</div></div></div><div class="course-tree-scroll" tabindex="0" role="region" aria-label="课程表，可横向滚动查看完整列"><table class="course-tree-table"><thead><tr><th scope="col">课程</th><th scope="col">状态</th><th scope="col">待补</th><th scope="col">素材</th><th scope="col">操作</th></tr></thead>${map.stages.map((stage, stageIndex) => stageCard(stage, stageIndex, realStages.length, requirementsByLesson)).join("")}</table></div><p class="course-tree-scroll-hint">聚焦表格后，可用左右键横向浏览。</p></section>`;
   }
 
   function stageCard(stage, stageIndex, stageCount, requirementsByLesson) {
@@ -837,7 +833,7 @@ export function createViews(store) {
       ? `<details class="course-tree-requirements"><summary>${lesson.open_requirements} 项待补</summary><ul>${requirements.map((entry) => `<li><span><b>${esc(requirementTypeLabel(entry.type))}</b> · ${esc(entry.note || "尚未添加备注")}</span><button class="text-button" data-action="focus-requirement" data-id="${esc(entry.id)}">定位</button></li>`).join("")}</ul></details>`
       : `<span class="cell-state">无待补</span>`;
     const mediaSummary = lesson.missing_media
-      ? `<details class="course-tree-requirements"><summary><span class="badge warning">缺 ${lesson.missing_media}</span></summary><p>此课有 ${lesson.missing_media} 处素材引用未解析。进入工作台后可在对应正文区块查看。</p><button class="text-button" data-action="open-item" data-id="${esc(lesson.id)}">打开工作台</button></details>`
+      ? `<details class="course-tree-requirements"><summary><span class="badge warning">缺 ${lesson.missing_media}</span></summary><p>${lesson.missing_media} 处素材不可用。</p><button class="text-button" data-action="open-item" data-id="${esc(lesson.id)}">打开工作台</button></details>`
       : `<span class="cell-state">齐全</span>`;
     return `<tr class="map-item ${lesson.current ? "current" : ""}" data-map-lesson="${esc(lesson.id)}"><td class="course-tree-lesson"><button type="button" class="lesson-drag-handle" data-lesson-drag-handle="${esc(lesson.id)}" aria-label="拖动${esc(lesson.title)}" title="拖动调整顺序">⠿</button><span class="course-tree-code">${esc(lesson.code)}</span>${editing ? `<input class="lesson-title-inline" data-lesson-title-inline data-id="${esc(lesson.id)}" data-focus-key="lesson-title-inline" aria-label="课程标题" value="${esc(lesson.title)}" />` : `<button class="course-tree-open" data-action="open-item" data-id="${esc(lesson.id)}"><b>${esc(lesson.title)}</b><small>${esc(lesson.summary)}</small></button>`}</td><td><span class="badge ${progress.complete ? "done" : "open"}">${esc(lesson.content_status || (progress.complete ? "已完成" : "进行中"))}</span><details class="course-tree-status"><summary>状态</summary>${statusControls}</details></td><td>${requirementList}</td><td>${mediaSummary}</td><td class="course-tree-tools"><button class="icon-button" data-action="rename-lesson" data-title-surface="map" data-id="${esc(lesson.id)}" aria-label="重命名课程：${esc(lesson.title)}" title="重命名课程">✎</button><button class="icon-button" data-action="move-lesson" data-id="${esc(lesson.id)}" data-direction="up" aria-label="上移课程" title="上移课程" ${lesson.order_index === 0 ? "disabled" : ""}>↑</button><button class="icon-button" data-action="move-lesson" data-id="${esc(lesson.id)}" data-direction="down" aria-label="下移课程" title="下移课程">↓</button><button class="icon-button danger" data-action="delete-lesson" data-id="${esc(lesson.id)}" aria-label="删除课程：${esc(lesson.title)}" title="删除课程">${TRASH_ICON}</button></td></tr>`;
   }
@@ -849,7 +845,7 @@ export function createViews(store) {
     if (!item) {
       return emptyState(
         "还没有课程内容",
-        "课程还没有可编辑的内容。打开课程地图新建一项，就可以继续。",
+        "在课程地图创建第一课。",
         "map",
         "打开课程地图",
       );
@@ -861,8 +857,8 @@ export function createViews(store) {
     );
     return `<section class="editor-page workbench-page mode-writing"><div class="breadcrumbs"><button class="text-button" data-action="route" data-route="overview">课程概览</button><b>/</b><span>${
       esc(stage ? stage.title : "未分组")
-    }</span><b>/</b><strong>${esc(item.code)} ${esc(item.title)}</strong></div><div class="workbench-head"><div class="workbench-heading"><span class="eyebrow">工作台 · ${esc(item.code)}</span><h1>${esc(item.title)}</h1><p class="muted">在正文中编写课程内容；右侧 AI 助手提供可审核建议。</p></div></div><div class="editor-body">${
-      writingView(item, view) + resourceDiscoveryView(item)
+    }</span><b>/</b><strong>${esc(item.code)} ${esc(item.title)}</strong></div><div class="workbench-head"><div class="workbench-heading"><span class="eyebrow">工作台 · ${esc(item.code)}</span><h1>${esc(item.title)}</h1></div></div><div class="editor-body">${
+      writingView(item, view)
     }</div><div class="lesson-nav"><button class="secondary" data-action="prev-lesson" ${
       map.previous_id ? "" : "disabled"
     }>← 上一课</button><span class="muted small">${
@@ -915,7 +911,7 @@ export function createViews(store) {
 
   function writingView(item, view) {
     if (!view || view.blocks.length === 0) {
-      return `${blockToolbar()}<div class="empty-state inline"><div class="empty-icon">✎</div><h2>这一课还没有正文</h2><p class="muted">课程内容还可以继续编辑。先写一段正文，也可以先加标题或留下待补项。</p><div class="modal-actions"><button class="primary" data-action="add-block">＋ 正文</button><button class="secondary" data-action="add-heading">＋ 标题</button><button class="secondary" data-action="add-placeholder">＋ 占位符</button></div></div>`;
+      return `${blockToolbar()}<div class="empty-state inline"><div class="empty-icon">✎</div><h2>这一课还没有正文</h2><div class="modal-actions"><button class="primary" data-action="add-block">＋ 正文</button><button class="secondary" data-action="add-heading">＋ 标题</button><button class="secondary" data-action="add-placeholder">＋ 占位符</button></div></div>`;
     }
     return `${blockToolbar()}<div class="block-list">${
       view.blocks.map((block, index) => blockCard(block, index)).join("")
@@ -929,7 +925,7 @@ export function createViews(store) {
       BLOCK_PALETTE.map(([type, label]) =>
         `<button class="secondary" data-action="insert-block" data-type="${type}">＋ ${label}</button>`
       ).join("")
-    }<span class="toolbar-hint">正文顺序决定语义；排版只负责空间位置</span></div></details>`;
+    }</div></details>`;
   }
 
   function blockCard(block, index) {
@@ -1070,7 +1066,7 @@ export function createViews(store) {
     if (!asset) {
       return `<div class="media-slot empty"><span class="media-slot-icon">▧</span><div><b>${
         esc(block.label)
-      }还没有指向素材</b><small class="muted">选择或拖入素材后，这里会建立真实引用。</small></div><button class="secondary" data-action="pick-asset-for-block" data-id="${
+      }还没有指向素材</b><small class="muted">选择或拖入素材。</small></div><button class="secondary" data-action="pick-asset-for-block" data-id="${
         block.id
       }">选择素材</button></div>`;
     }
@@ -1840,7 +1836,7 @@ export function createViews(store) {
           esc(candidate.id) + '"><option value="">新建资源</option>' + reuseOptions +
           '</select></label><label><input type="checkbox" data-resource-merge-confirm="' + esc(candidate.id) +
           '" />我已核对候选与所选资源属于同一事件，并确认合并来源</label></fieldset>'
-        : '<p class="muted small">当前项目没有同类已接受资源；本候选将作为新资源保存。</p>';
+        : '<p class="muted small">将保存为新资源。</p>';
       const clip = candidate.medium === "video" && !acceptedResource && timingEvidence.length
         ? '<label>视频范围<select data-resource-video-mode="' + esc(candidate.id) +
           '"><option value="full">整段视频</option><option value="clip">按时间证据引用片段</option></select></label>' +
@@ -1871,14 +1867,14 @@ export function createViews(store) {
           '</b> · 已用于：' + esc(usageLessonNames.join("、") || "媒体库") + "</p>"
         : "";
       const acceptedWarning = candidate.status === "accepted" && !acceptedResource
-        ? '<p class="error-text">候选已标记保存，但没有对应的资源绑定；请刷新任务结果后再操作。</p>'
+        ? '<p class="error-text">无法确认已保存资源，请刷新结果后重试。</p>'
         : "";
       const currentLessonNotice = acceptedResource && !reuseAllowed
         ? '<p class="muted">当前选中的课不在这次搜索计划中，无法添加。</p>'
         : acceptedResource && targetLessonAlreadyHasUsage
         ? '<p class="muted">' + esc(targetLesson ? `${targetLesson.code} ${targetLesson.title}` : "当前课") + "已使用这项资源。</p>"
         : "";
-      return '<article class="resource-candidate card" data-resource-candidate="' + esc(candidate.id) +
+      return '<article class="resource-candidate card' + (store.ui.resourceSelectedCandidateId === candidate.id ? ' is-selected' : '') + '" data-resource-candidate="' + esc(candidate.id) +
         '"><div class="resource-candidate-head"><div><span class="eyebrow">' +
         (candidate.medium === "video" ? "教学视频" : "案例 / 网页") +
         (candidate.narrative_case_type ? " · " + esc(candidate.narrative_case_type) : "") +
@@ -1886,7 +1882,7 @@ export function createViews(store) {
         status + "</span></div><p>" + esc(candidate.factual_summary || "候选未提供事实摘要") + "</p>" +
         (candidate.event_subject || candidate.event_date || candidate.publisher
           ? '<p class="muted small">' + [candidate.event_subject, candidate.event_date, candidate.publisher].filter(Boolean).map(esc).join(" · ") + "</p>" : "") +
-        (safeUrl(candidate.url) ? '<p><a href="' + esc(candidate.url) + '" target="_blank" rel="noopener noreferrer">打开候选来源</a></p>' : "") +
+        '<div class="resource-candidate-links"><button class="text-button" data-action="resource-open-candidate" data-id="' + esc(candidate.id) + '">在浏览器阅读</button>' + (safeUrl(candidate.url) ? '<a href="' + esc(candidate.url) + '" target="_blank" rel="noopener noreferrer">打开原网页 ↗</a>' : "") + '</div>' +
         (candidate.medium === "video"
           ? '<p class="resource-duration">' + durationLabel +
             (!durationKnown ? "" : " · " + mediaDuration(duration)) +
@@ -1919,7 +1915,7 @@ export function createViews(store) {
     }).join("");
     return '<section class="page-section card resource-candidates" aria-labelledby="resource-candidates-heading">' +
       '<div class="publish-section-heading"><div><h2 id="resource-candidates-heading">搜索候选</h2>' +
-      '<p class="muted">来源仍需审阅。只有选择保留或插入引用后，候选才会写入课程。</p></div><span class="status-pill">' +
+      '<p class="muted">审核来源后，选择保留或插入。</p></div><span class="status-pill">' +
       candidates.length + "</span></div><div class=\"resource-candidate-list\">" + rows + "</div></section>";
   }
 
@@ -1931,6 +1927,7 @@ export function createViews(store) {
   function resourceDiscoveryView(item) {
     const plan = store.ui.resourcePlan;
     const task = store.ui.resourceTask;
+    const searchTypes = Array.isArray(store.ui.resourceSearchTypes) ? store.ui.resourceSearchTypes : ["web", "video"];
     const context = plan && plan.context_preview && plan.context_preview.items || [];
     const queries = (plan && plan.queries || []).flatMap((entry) =>
       (entry.queries || []).map((query) => ({ ...query, lesson_id: entry.lesson_id, need: entry.need }))
@@ -1948,16 +1945,46 @@ export function createViews(store) {
       task && task.resource_recovery_warning,
     ].filter((warning) => typeof warning === "string" && warning.trim()))];
     const active = task && ["queued", "running", "cancel_requested"].includes(task.state);
-    return '<section class="page-section card resource-discovery" aria-labelledby="resource-discovery-heading">' +
-      '<div class="publish-section-heading"><div><span class="eyebrow">素材发现</span><h2 id="resource-discovery-heading">为本课查找真实案例与教学视频</h2>' +
-      '<p class="muted">先预览课程摘录、实际查询词与请求预算；确认开始后才会访问已配置的搜索服务。</p></div></div>' +
+    const document = store.ui.resourceDocument;
+    const targetId = store.ui.resourceTargetLessonId || item?.id || "";
+    const lessons = courseMap(store.data, targetId || null).lessons;
+    const themes = store.ui.resourceIntentOverrides?.themes || document?.context?.themes?.map((theme) => theme.name) || [];
+    const keywords = store.ui.resourceIntentOverrides?.keywords || document?.context?.keywords || [];
+    const searchLanguage = store.ui.resourceIntentOverrides?.language || "";
+    const documentContext = document?.context;
+    const themeEvidenceRows = (document?.context?.themes || []).map((theme) =>
+      '<li><b>' + esc(theme.name) + '</b>' + (theme.evidence || []).map((evidence) =>
+        '<p>' + esc(evidence.text) + ' <small>区块 ' + esc(evidence.locator?.block ?? "") + '</small></p>'
+      ).join("") + '</li>'
+    ).join("");
+    const documentRows = document
+      ? '<div class="resource-document-state" role="status"><b>' + esc(document.filename || document.title || "课程文档") + '</b><span>' +
+        esc(document.status === "analyzing" ? "正在读取正文并提取主题…" : document.status === "parsed" ? "正文已解析" : document.status === "ready" ? "主题已提取" : document.status === "error" ? "处理未完成" : "已导入") +
+        (document.readable === false ? " · 正文不可读取" : document.truncated ? " · 正文较长，已截取" : "") +
+        '</span>' + (document.error ? '<p class="error-text" role="alert">' + esc(document.error) + '</p>' : "") +
+        (document.context ? '<label class="field-label">主题（可编辑，用逗号分隔）<input class="select" data-resource-themes value="' + esc(themes.join("，")) + '" /></label><label class="field-label">关键词（可编辑，用逗号分隔）<input class="select" data-resource-keywords value="' + esc(keywords.join("，")) + '" /></label><label class="field-label">搜索语言偏好<input class="select" data-resource-language value="' + esc(searchLanguage || documentContext.preferred_language || "") + '" placeholder="留空使用项目语言" /></label>' +
+          '<details><summary>来源语言与其他结构化字段</summary><p>来源语言：' + esc(documentContext.language || "未识别") + (documentContext.preferred_language ? ' · 文档偏好：' + esc(documentContext.preferred_language) : "") + '</p>' +
+          [['关键概念', documentContext.concepts], ['教学目标', documentContext.objectives], ['案例类型', documentContext.case_types], ['素材类型', documentContext.media_types], ['关键词', documentContext.keywords]].map(([label, rows]) => rows?.length ? '<p><b>' + label + '</b> · ' + esc(rows.join("、")) + '</p>' : '').join("") +
+          (documentContext.constraints && Object.keys(documentContext.constraints).length ? '<p><b>文档限制</b> · ' + esc([...(documentContext.constraints.terms || []), ...(documentContext.constraints.regions || []), ...(documentContext.constraints.industries || []), documentContext.constraints.time_range].filter(Boolean).join("、")) + '</p>' : '') +
+          '<ul>' + themeEvidenceRows + '</ul></details>' : "") +
+        (document.status === "error" || document.status === "parsed" && !document.context
+          ? '<div class="action-row"><button class="secondary" data-action="route" data-route="settings">配置 AI 连接</button><button class="secondary" data-action="resource-document-retry" data-id="' + esc(document.asset_id || "") + '">配置后继续提取主题</button></div>'
+          : "") +
+        '</div>'
+      : '<p class="muted small">导入课程文档后，会从正文提取可追溯主题。</p>';
+    const lessonsOptions = lessons.map((lesson) => '<option value="' + esc(lesson.id) + '" ' + (lesson.id === targetId ? "selected" : "") + '>' + esc(lesson.code + " " + lesson.title) + '</option>').join("");
+    return '<section class="resource-discovery" aria-labelledby="resource-discovery-heading">' +
+      '<div class="side-head"><div><span class="eyebrow">发现素材</span><h2 id="resource-discovery-heading">课程素材</h2></div><button class="secondary" data-action="open-file">导入文档</button></div>' +
+      '<p class="side-note">搜索结果会分批显示；收藏和插入课程分别确认。</p>' + documentRows +
+      (lessonsOptions ? '<label class="field-label">关联课程<select class="select" data-resource-lesson-target>' + lessonsOptions + '</select></label>' : '<p class="error-text">先在课程地图新建课程内容，再开始搜索。</p>') +
+      '<label class="resource-auto-start"><input type="checkbox" data-resource-auto-start ' + (store.ui.resourceAutoStart === false ? "" : "checked") + ' />解析后自动开始搜索</label>' +
       '<div class="resource-discovery-controls"><fieldset><legend>搜索类型</legend>' +
-      '<label><input type="checkbox" data-resource-search="web" checked />网页案例</label>' +
-      '<label><input type="checkbox" data-resource-search="video" checked />教学视频</label></fieldset>' +
-      '<label>最多请求数<input class="select" type="number" min="1" max="50" value="8" data-resource-budget /></label>' +
-      '<button class="primary" data-action="resource-prepare" data-id="' + esc(item.id) + '" ' +
-      (store.ui.resourceBusy ? "disabled" : "") + ">" +
-      (store.ui.resourceBusy === "prepare" ? "正在预览计划…" : "预览本地搜索计划") + "</button></div>" +
+      '<label><input type="checkbox" data-resource-search="web" ' + (searchTypes.includes("web") ? "checked" : "") + ' />网页案例</label>' +
+      '<label><input type="checkbox" data-resource-search="video" ' + (searchTypes.includes("video") ? "checked" : "") + ' />教学视频</label></fieldset>' +
+      '<label>请求上限<input class="select" type="number" min="1" max="50" value="' + esc(store.ui.resourceRequestBudget) + '" data-resource-budget /></label>' +
+      '<button class="secondary" data-action="resource-prepare" data-id="' + esc(targetId) + '" ' +
+      (store.ui.resourceBusy || !targetId ? "disabled" : "") + ">" +
+      (store.ui.resourceBusy === "prepare" ? "正在生成计划…" : document?.context ? "更新搜索计划" : "生成搜索计划") + "</button></div>" +
       (store.ui.resourceError ? '<p class="error-text" role="alert">' + esc(store.ui.resourceError) +
         (store.ui.resourceError.includes("auth_required")
           ? ' <button class="text-button" data-action="route" data-route="settings">配置资源搜索服务</button>' : "") + "</p>" : "") +
@@ -1980,12 +2007,36 @@ export function createViews(store) {
         (task.budget && task.budget.max_requests || 0) + ' 次请求</span><div class="action-row">' +
         '<button class="secondary" data-action="resource-refresh">刷新结果</button>' +
         (active ? '<button class="secondary" data-action="resource-cancel">取消搜索</button>' :
+          task.state === "interrupted" || task.state === "cancelled" ? '<button class="secondary" data-action="resource-retry">继续查找</button>' :
           task.state === "failed" || task.state === "partial" ? '<button class="secondary" data-action="resource-retry">重试失败项</button>' : "") +
         '<button class="text-button" data-action="route" data-route="inbox">在收件箱审阅候选</button></div>' +
         (task.errors && task.errors.length ? '<ul class="resource-errors" role="alert">' +
           task.errors.map((error) => "<li><b>" + esc(error.code) + "</b> · " + esc(error.message) +
             (error.query ? " · " + esc(error.query) : "") + "</li>").join("") + "</ul>" : "") + "</div>" : "") +
       (task ? resourceCandidateCards(task) : "") + "</section>";
+  }
+
+  function resourceBrowserView() {
+    const task = store.ui.resourceTask;
+    const candidate = task?.candidates?.find((entry) => entry.id === store.ui.resourceSelectedCandidateId) || null;
+    const reading = store.ui.resourceReading;
+    if (!candidate) return '<section class="resource-browser"><div class="side-head"><div><span class="eyebrow">浏览器</span><h2>阅读候选</h2></div></div><p class="side-empty">在“发现素材”中选择一项候选后，这里会读取安全的正文摘要。</p><button class="text-button" data-action="right-tab" data-right-tab="discovery">返回发现素材</button></section>';
+    const evidence = Array.isArray(candidate.source_evidence) ? candidate.source_evidence : [];
+    const excerpt = evidence.find((entry) => entry.excerpt)?.excerpt || "";
+    const url = /^https:\/\//i.test(String(candidate.url || "")) ? candidate.url : "";
+    const content = reading?.candidateId === candidate.id && reading.url === candidate.url ? reading : null;
+    let hostname = "来源不可用";
+    try { if (url) hostname = new URL(url).hostname || hostname; } catch { /* show the validated evidence excerpt instead */ }
+    const body = content?.loading
+      ? '<p class="muted" role="status">正在安全读取网页正文…</p>'
+      : content?.error
+      ? '<div class="resource-read-error"><p class="error-text" role="alert">' + esc(content.error) + '</p>' + (excerpt ? '<p>' + esc(excerpt) + '</p>' : '<p class="muted">没有可显示的来源摘录。</p>') + '</div>'
+      : content?.result?.text
+      ? '<pre class="resource-reader-text">' + esc(content.result.text) + '</pre><p class="muted small">' + esc(content.result.publisher || content.result.provider_id || "来源") + ' · 获取 ' + esc(content.result.fetched_at || "时间未知") + (content.result.truncated ? " · 内容已截取" : "") + '</p>'
+      : excerpt ? '<p>' + esc(excerpt) + '</p><p class="muted small">当前展示来源记录中的摘录。</p>' : '<p class="muted">此候选暂时没有可读取的正文摘录。</p>';
+    const lessonId = store.ui.resourceTargetLessonId || candidate.lesson_id || store.currentItem()?.id || "";
+    const readLabel = content?.loading ? "正在读取…" : content?.result ? "重新读取" : content?.error ? "重试读取" : "读取正文";
+    return '<section class="resource-browser"><div class="side-head"><div><span class="eyebrow">浏览器 · ' + esc(hostname) + '</span><h2>' + esc(candidate.title || "未命名候选") + '</h2></div><button class="icon-button resource-reader-expand" data-action="resource-reader-expand" aria-label="扩大阅读" title="扩大阅读">⤢</button></div><div class="resource-reader-toolbar"><button class="text-button" data-action="right-tab" data-right-tab="discovery">← 返回候选</button>' + (url ? '<a href="' + esc(url) + '" target="_blank" rel="noopener noreferrer">打开原网页 ↗</a>' : '') + '<button class="text-button" data-action="resource-read" data-id="' + esc(candidate.id) + '" ' + (content?.loading ? 'disabled aria-busy="true"' : '') + '>' + readLabel + '</button></div><div class="resource-reader-body" data-reader-url="' + esc(url) + '" tabindex="0" role="region" aria-label="候选正文">' + body + '</div><div class="resource-reader-actions" data-resource-candidate="' + esc(candidate.id) + '"><label class="field-label">教学用途<textarea rows="2" data-resource-use="' + esc(candidate.id) + '" placeholder="说明如何用于课程"></textarea></label><label class="field-label">讨论问题<textarea rows="2" data-resource-questions="' + esc(candidate.id) + '" placeholder="每行一个问题"></textarea></label><div class="action-row"><button class="secondary" data-action="resource-accept" data-task="' + esc(task?.task_id || "") + '" data-id="' + esc(candidate.id) + '" data-lesson="' + esc(lessonId) + '" data-accept-action="keep">收藏到媒体库</button><button class="primary" data-action="resource-accept" data-task="' + esc(task?.task_id || "") + '" data-id="' + esc(candidate.id) + '" data-lesson="' + esc(lessonId) + '" data-accept-action="insert_citation">放入画布</button></div></div></section>';
   }
 
   function inboxView() {
@@ -2020,17 +2071,17 @@ export function createViews(store) {
             esc(item.id)
           }">忽略</button></div></article>`;
     };
-    const section = (id, title, description, rows, empty) => `<section class="page-section inbox-section" aria-labelledby="${id}"><div class="inbox-section-head"><div><h2 id="${id}">${title}</h2><p class="muted">${description}</p></div><span class="status-pill">${rows.length}</span></div>${rows.length ? `<div class="inbox-list" role="list">${rows.map((item) => cardView(item)).join("")}</div>` : `<p class="inbox-section-empty">${empty}</p>`}</section>`;
+    const section = (id, title, description, rows, empty) => `<section class="page-section inbox-section" aria-labelledby="${id}"><div class="inbox-section-head"><div><h2 id="${id}">${title}</h2>${description ? `<p class="muted">${description}</p>` : ""}</div><span class="status-pill">${rows.length}</span></div>${rows.length ? `<div class="inbox-list" role="list">${rows.map((item) => cardView(item)).join("")}</div>` : `<p class="inbox-section-empty">${empty}</p>`}</section>`;
     return `<section class="page inbox-page"><div class="page-head"><div><span class="eyebrow">项目级输入</span><h1>收件箱 <sup>${
       items.length
-    }</sup></h1><p class="muted">先收集，再分配到课程或保存为素材。每条输入都保留自己的处理状态。</p></div><div class="page-head-actions"><button class="primary" data-action="capture">＋ 快速收集</button></div></div><div class="summary-grid inbox-summary" aria-label="收件箱状态"><article class="summary-card ${pending.length ? "warning" : ""}"><span>待决定</span><strong>${pending.length}</strong><small>尚未分配用途</small></article><article class="summary-card"><span>已分配</span><strong>${assigned.length}</strong><small>已加入课程</small></article><article class="summary-card"><span>已保存素材</span><strong>${assetized.length}</strong><small>可在媒体库查看</small></article></div>${
+    }</sup></h1></div><div class="page-head-actions"><button class="primary" data-action="capture">＋ 快速收集</button></div></div><div class="summary-grid inbox-summary" aria-label="收件箱状态"><article class="summary-card ${pending.length ? "warning" : ""}"><span>待决定</span><strong>${pending.length}</strong><small>尚未分配用途</small></article><article class="summary-card"><span>已分配</span><strong>${assigned.length}</strong><small>已加入课程</small></article><article class="summary-card"><span>已保存素材</span><strong>${assetized.length}</strong><small>可在媒体库查看</small></article></div>${
       !store.ui.activeId && pending.length
-        ? `<p class="inbox-context-note" role="status">选择一课后即可将待处理输入加入正文；保存为素材和忽略操作不受影响。</p>`
+        ? `<p class="inbox-context-note" role="status">选择一课后可加入正文。</p>`
         : ""
     }${
       items.length
-        ? `${section("inbox-pending", "待决定", "选择加入当前课程、保存为素材，或忽略。", pending, "没有等待分配的输入。")}${section("inbox-assets", "已保存为素材", "这些输入已进入媒体库，可继续在课程中引用。", savedAsAsset, "还没有从收件箱保存素材。")}${section("inbox-assigned", "已分配到课程", "已经加入课程的输入仍保留在这里，便于回看来源。", assigned, "还没有分配到课程的输入。")}`
-        : `<div class="empty-state inbox-empty"><span class="empty-icon" aria-hidden="true">↓</span><h2>收件箱是空的</h2><p class="muted">快速收集一句话、网页或截图，稍后再决定怎么处理。</p><button class="secondary" data-action="capture">快速收集</button></div>`
+        ? `${section("inbox-pending", "待决定", "", pending, "没有等待分配的输入。")}${section("inbox-assets", "已保存为素材", "", savedAsAsset, "还没有从收件箱保存素材。")}${section("inbox-assigned", "已分配到课程", "", assigned, "还没有分配到课程的输入。")}`
+        : `<div class="empty-state inbox-empty"><span class="empty-icon" aria-hidden="true">↓</span><h2>收件箱是空的</h2><p class="muted">收集文字、网页或截图。</p><button class="secondary" data-action="capture">快速收集</button></div>`
     }</section>`;
   }
 
@@ -2140,7 +2191,7 @@ export function createViews(store) {
 
     const previewPane = () => {
       if (!selected || !preview) {
-        return `<div class="explorer-preview-empty"><div class="empty-icon" aria-hidden="true">▤</div><span class="eyebrow">只读预览</span><h2>从资料列表选择一项</h2><p class="muted">支持 Markdown、TXT、图片、视频、音频与 PDF 预览；DOCX 显示文件信息。浏览不会导入素材或改写项目。</p></div>`;
+        return `<div class="explorer-preview-empty"><div class="empty-icon" aria-hidden="true">▤</div><span class="eyebrow">只读预览</span><h2>从资料列表选择一项</h2><p class="muted">选择文件预览。</p></div>`;
       }
       const name = explorerEntryName(preview.relative_path || selected);
       const meta = [
@@ -2181,7 +2232,7 @@ export function createViews(store) {
       if (preview.preview_kind === "video" && preview.url) {
         return `${head}<div class="explorer-preview-body media"><div class="explorer-media-card" style="display:grid;place-items:center;position:relative"><video class="explorer-video" src="${
           esc(preview.url)
-        }" poster="${esc(preview.posterUrl || "")}" controls preload="none" playsinline></video><button class="asset-video-play" type="button" data-action="play-explorer-video" aria-label="播放视频" title="播放视频" style="align-items:center;background:#111b;border:0;border-radius:50%;color:white;cursor:pointer;font-size:28px;height:64px;left:50%;position:absolute;top:50%;transform:translate(-50%,-50%);width:64px">▶</button><small>视频预览 · 播放前不会启动</small></div></div>`;
+        }" poster="${esc(preview.posterUrl || "")}" controls preload="none" playsinline></video><button class="asset-video-play" type="button" data-action="play-explorer-video" aria-label="播放视频" title="播放视频" style="align-items:center;background:#111b;border:0;border-radius:50%;color:white;cursor:pointer;font-size:28px;height:64px;left:50%;position:absolute;top:50%;transform:translate(-50%,-50%);width:64px">▶</button></div></div>`;
       }
       if (preview.preview_kind === "audio" && preview.url) {
         return `${head}<div class="explorer-preview-body media"><div class="explorer-media-card"><audio class="explorer-audio" src="${
@@ -2196,10 +2247,10 @@ export function createViews(store) {
           esc(name)
         }</b><p class="muted">文件信息 · ${
           esc(meta || "参考文件")
-        }</p><p><strong>参考文件 · 仅显示文件信息</strong></p><p class="muted">当前版本不解析 DOCX 正文；浏览不会导入素材或改写原文件。</p></div></div></div>`;
+        }</p><p><strong>参考文件 · 仅显示文件信息</strong></p><p class="muted">暂不支持 DOCX 正文预览；不会改写原文件。</p></div></div></div>`;
       }
       if (preview.preview_kind === "directory") {
-        return `${head}<div class="explorer-preview-body"><p class="muted">这是一个文件夹。展开左侧树可浏览其中的文件。</p></div>`;
+        return `${head}<div class="explorer-preview-body"><p class="muted">展开文件夹查看文件。</p></div>`;
       }
       return `${head}<div class="explorer-preview-body"><p class="muted">${
         esc(preview.note || "当前版本暂不支持预览此类型")
@@ -2207,10 +2258,10 @@ export function createViews(store) {
     };
 
     if (!report) {
-      return `<section class="page explorer-page"><div class="page-head explorer-page-head"><div><span class="eyebrow">项目资料</span><h1>文件浏览</h1><p class="muted">先选择一个资料文件夹，再预览内容并挑选要导入的材料。</p></div><button class="secondary" data-action="import-folder-again">选择资料文件夹</button></div><div class="explorer-empty-state empty-state"><div class="empty-icon" aria-hidden="true">▤</div><h2>尚未连接资料文件夹</h2><p class="muted">扫描只读访问所选文件夹。确认导入前，原始文件不会移动或改写。</p><button class="primary" data-action="import-folder-again">浏览本机文件夹</button></div></section>`;
+      return `<section class="page explorer-page"><div class="page-head explorer-page-head"><div><span class="eyebrow">项目资料</span><h1>文件浏览</h1></div><button class="secondary" data-action="import-folder-again">选择资料文件夹</button></div><div class="explorer-empty-state empty-state"><div class="empty-icon" aria-hidden="true">▤</div><h2>尚未连接资料文件夹</h2><p class="muted">先预览，确认后导入；原文件保留。</p><button class="primary" data-action="import-folder-again">浏览本机文件夹</button></div></section>`;
     }
 
-    return `<section class="page explorer-page"><div class="page-head explorer-page-head"><div><span class="eyebrow">项目资料</span><h1>文件浏览</h1><p class="muted">只读浏览本机资料；选择文件即可预览，再进入映射预览决定导入内容。</p></div><div class="page-head-actions"><button class="secondary" data-action="import-folder-again">更换资料文件夹</button><button class="primary" data-action="open-import-mapping">继续：预览导入</button></div></div><div class="explorer-source-summary"><div><small>资料位置</small><b title="${esc(rootLabel || "已扫描文件夹")}">${esc(rootLabel || "已扫描文件夹")}</b></div><span><b>${folderCount}</b> 个文件夹</span><span><b>${fileCount}</b> 个文件</span></div><div class="explorer-layout"><div class="explorer-tree-pane"><div class="explorer-list-head"><div><span class="eyebrow">资料列表</span><b>浏览文件与文件夹</b></div><label class="explorer-search"><span>筛选</span><input class="select" data-explorer-filter data-focus-key="explorer-filter" placeholder="查找文件名" value="${
+    return `<section class="page explorer-page"><div class="page-head explorer-page-head"><div><span class="eyebrow">项目资料</span><h1>文件浏览</h1></div><div class="page-head-actions"><button class="secondary" data-action="import-folder-again">更换资料文件夹</button><button class="primary" data-action="open-import-mapping">继续：预览导入</button></div></div><div class="explorer-source-summary"><div><small>资料位置</small><b title="${esc(rootLabel || "已扫描文件夹")}">${esc(rootLabel || "已扫描文件夹")}</b></div><span><b>${folderCount}</b> 个文件夹</span><span><b>${fileCount}</b> 个文件</span></div><div class="explorer-layout"><div class="explorer-tree-pane"><div class="explorer-list-head"><div><span class="eyebrow">资料列表</span><b>浏览文件与文件夹</b></div><label class="explorer-search"><span>筛选</span><input class="select" data-explorer-filter data-focus-key="explorer-filter" placeholder="查找文件名" value="${
       esc(filter)
     }" /></label></div><div class="explorer-columns"><span></span><span>名称</span><span>格式</span><span>识别与大小</span></div><div class="explorer-tree" role="list" aria-label="扫描到的资料">${
       tree.length
@@ -2238,7 +2289,7 @@ export function createViews(store) {
     ).join("");
     return `<div class="document-import-result" role="status"><div class="document-import-result-head"><b>正文导入结果</b><span class="document-import-tally">${
       esc(documentImportTallyText(report))
-    }</span></div><ul>${rows || `<li class="muted">这次没有逐文件明细，请按上方数量核对正文。</li>`}</ul><p class="muted">未进入正文的文件仍留在原处；源文件没有被移动、重命名、删除或覆盖。</p></div>`;
+    }</span></div><ul>${rows || `<li class="muted">这次没有逐文件明细，请按上方数量核对正文。</li>`}</ul><p class="muted">原文件保留。</p></div>`;
   }
 
   /** §18.3 `类型` — the format name, not a MIME string. */
@@ -2333,11 +2384,11 @@ export function createViews(store) {
     const empty = !loading && !items.length
       ? `<div class="document-import-empty">没有可选的正文文档。继续后只会导入已选媒体素材。</div>`
       : "";
-    return `<div class="overlay" data-action="document-import-cancel"><div class="document-import-modal modal" role="dialog" aria-modal="true" aria-labelledby="document-import-title" data-stop-click="true"><div class="modal-head"><div><span class="eyebrow">导入正文</span><h2 id="document-import-title">选择要导入为正文的文档</h2></div><button type="button" class="icon-button" data-action="document-import-cancel" aria-label="取消正文选择" title="取消">×</button></div><p class="muted">媒体素材会按已确认映射自动进入媒体库；这里只决定哪些文档写入课文正文。${
+    return `<div class="overlay" data-action="document-import-cancel"><div class="document-import-modal modal" role="dialog" aria-modal="true" aria-labelledby="document-import-title" data-stop-click="true"><div class="modal-head"><div><span class="eyebrow">导入正文</span><h2 id="document-import-title">选择要导入为正文的文档</h2></div><button type="button" class="icon-button" data-action="document-import-cancel" aria-label="取消正文选择" title="取消">×</button></div><p class="muted">勾选要写入正文的文档；媒体按映射导入。${
       dialog.appending ? `导入到：${esc(store.data?.project?.title || "当前课程")}。` : ""
     }取消不会写入任何课程内容。</p><div class="document-import-tools"><button class="secondary" data-action="document-import-all" ${loading || !items.length ? "disabled" : ""}>全选</button><button class="secondary" data-action="document-import-none" ${loading || !items.length ? "disabled" : ""}>取消全选</button><span class="document-import-count" data-document-import-count>已选 ${
       selectedCount
-    } / ${items.length} 项</span></div>${feedback}<div class="document-import-groups">${groups}</div>${empty}<p class="document-import-foot">未勾选的文件不会被导入，会原样留在所选文件夹里；源文件不会被移动、重命名、删除或覆盖。</p><div class="modal-actions"><button class="secondary" data-action="document-import-cancel">取消</button><button class="primary" data-action="document-import-confirm" ${loading || scanErrors.length ? "disabled" : ""}>${items.length ? "导入所选正文" : "继续导入已选内容"}</button></div></div></div>`;
+    } / ${items.length} 项</span></div>${feedback}<div class="document-import-groups">${groups}</div>${empty}<p class="document-import-foot">仅导入勾选项，原文件保留。</p><div class="modal-actions"><button class="secondary" data-action="document-import-cancel">取消</button><button class="primary" data-action="document-import-confirm" ${loading || scanErrors.length ? "disabled" : ""}>${items.length ? "导入所选正文" : "继续导入已选内容"}</button></div></div></div>`;
   }
 
   function mappingRowView(relativePath) {
@@ -2381,7 +2432,7 @@ export function createViews(store) {
     const report = store.ui.folderScan;
     const appending = store.ui.importMode === "append";
     const rootLabel = store.ui.importFolderRoot || plan?.root || report?.root || "";
-    if (!report && !plan) return `<section class="page mapping-page"><div class="page-head"><div><span class="eyebrow">导入映射</span><h1>映射预览</h1><p class="muted">选择根目录中的对象并确认导入目标。</p></div><button class="primary" data-action="${appending ? "append-folder" : "import-folder-again"}">${appending ? "选择文件夹" : "导入已有文件夹"}</button></div><div class="empty-state mapping-empty"><h2>还没有扫描快照</h2><p class="muted">请先选择文件夹并完成一次只读扫描。</p></div></section>`;
+    if (!report && !plan) return `<section class="page mapping-page"><div class="page-head"><div><span class="eyebrow">导入映射</span><h1>映射预览</h1></div><button class="primary" data-action="${appending ? "append-folder" : "import-folder-again"}">${appending ? "选择文件夹" : "导入已有文件夹"}</button></div><div class="empty-state mapping-empty"><h2>还没有扫描快照</h2><p class="muted">选择资料文件夹。</p></div></section>`;
     const items = Array.isArray(plan?.items) ? plan.items : [];
     const selectedCount = items.filter((item) => item.selected).length;
     const importing = store.ui.importingMapping === true;
@@ -2450,7 +2501,7 @@ export function createViews(store) {
       const date = new Date(time);
       return Number.isFinite(date.getTime()) ? date.toLocaleString("zh-CN") : "保存时间未知";
     };
-    return `<section class="page versions-page"><div class="page-head"><div><span class="eyebrow">安全恢复</span><h1>版本历史</h1><p class="muted">版本记录保存课程正文、排版与引用关系，不复制素材文件；恢复不会找回已删除或改写的素材，也不会还原素材文件名。</p></div><div class="page-head-actions"><button class="primary" data-action="save-version">保存当前版本</button><button class="secondary" data-action="refresh-snapshots" ${store.snapshotLoading ? "disabled" : ""}>刷新</button></div></div><div class="summary-grid versions-summary" aria-label="版本概况"><article class="summary-card"><span>已保存版本</span><strong>${available.length}</strong><small>可随时恢复</small></article><article class="summary-card"><span>自动保存</span><strong>开启</strong><small>编辑内容持续保存</small></article><article class="summary-card"><span>恢复保护</span><strong>启用</strong><small>恢复前备份会先持久保存</small></article></div>${store.snapshotLoadError ? `<p class="error-text" role="alert">${esc(store.snapshotLoadError)}</p>` : ""}${store.snapshotLoading ? `<p class="muted" role="status">正在读取已保存版本…</p>` : ""}<section class="page-section versions-section"><div class="versions-section-head"><div><h2>命名版本</h2><p class="muted">为发布、审核或大幅修改前保存一个清楚的回退点。</p></div><span class="status-pill">${available.length}</span></div>${
+    return `<section class="page versions-page"><div class="page-head"><div><span class="eyebrow">安全恢复</span><h1>版本历史</h1><p class="muted">版本包含正文、排版与引用；素材文件和文件名不会随版本恢复。</p></div><div class="page-head-actions"><button class="primary" data-action="save-version">保存当前版本</button><button class="secondary" data-action="refresh-snapshots" ${store.snapshotLoading ? "disabled" : ""}>刷新</button></div></div><div class="summary-grid versions-summary" aria-label="版本概况"><article class="summary-card"><span>已保存版本</span><strong>${available.length}</strong><small>可随时恢复</small></article><article class="summary-card"><span>自动保存</span><strong>开启</strong><small>编辑内容持续保存</small></article><article class="summary-card"><span>恢复保护</span><strong>启用</strong><small>恢复前备份会先持久保存</small></article></div>${store.snapshotLoadError ? `<p class="error-text" role="alert">${esc(store.snapshotLoadError)}</p>` : ""}${store.snapshotLoading ? `<p class="muted" role="status">正在读取已保存版本…</p>` : ""}<section class="page-section versions-section"><div class="versions-section-head"><div><h2>命名版本</h2></div><span class="status-pill">${available.length}</span></div>${
       snapshots.length
         ? `<div class="version-list" role="list">${snapshots.map((snapshot) =>
           `<article class="version-card list-row surface-card ${snapshot.status === "error" ? "degraded" : ""}" role="listitem"><span class="version-icon" aria-hidden="true">◷</span><div class="version-main"><div class="version-row-title"><h3>${
@@ -2461,7 +2512,7 @@ export function createViews(store) {
             esc(snapshot.id || "")
           }" ${snapshot.status !== "available" || !snapshot.id || store.snapshotRestoringId ? "disabled" : ""}>${store.snapshotRestoringId === snapshot.id ? "正在恢复…" : "恢复此版本"}</button></div></article>`
         ).join("")}</div>`
-        : `<div class="empty-state versions-empty"><span class="empty-icon" aria-hidden="true">◷</span><h2>${store.snapshotLoading ? "正在读取版本" : "还没有命名版本"}</h2><p class="muted">保存确认成功的版本才会显示在这里。</p><button class="primary" data-action="save-version">保存第一个版本</button></div>`
+        : `<div class="empty-state versions-empty"><span class="empty-icon" aria-hidden="true">◷</span><h2>${store.snapshotLoading ? "正在读取版本" : "还没有命名版本"}</h2><button class="primary" data-action="save-version">保存第一个版本</button></div>`
     }</section></section>`;
   }
 
@@ -2506,7 +2557,7 @@ export function createViews(store) {
       store.publicationCapability(format, projection).code === "explicit_target_page_size_required"
     );
     const targetSizeNotice = requiresTargetSize
-      ? `<p class="publish-size-warning" role="status">全课程页面尺寸不同。PDF 和 PowerPoint 需要统一目标尺寸；请选择输出尺寸后查看逐页适配预览。</p>`
+      ? `<p class="publish-size-warning" role="status">页面尺寸不一致，请选择统一输出尺寸。</p>`
       : "";
     const originalSizeLabel = requiresTargetSize
       ? "页面尺寸不同，需选择统一尺寸"
@@ -2525,13 +2576,13 @@ export function createViews(store) {
     const pageRange = layout?.pagination_mode === "paged" && view && supportsLayout
       ? `<div class="publish-layout-controls"><b>页面范围</b><div class="publish-page-options">${[
         ["all", "全部页面"], ["current", "当前页"], ["selected", "选定页面"],
-      ].map(([mode, label]) => `<button class="secondary ${store.ui.publishPageMode === mode ? "active-tool" : ""}" data-action="publish-page-mode" data-mode="${mode}" aria-pressed="${store.ui.publishPageMode === mode}">${label}</button>`).join("")}</div>${store.ui.publishPageMode === "selected" ? `<div class="publish-page-options">${view.pages.map((page, index) => `<label><input type="checkbox" data-action="publish-page-toggle" data-id="${page.id}" ${store.ui.publishSelectedPageIds.includes(page.id) ? "checked" : ""}/>第 ${index + 1} 页 · ${esc(page.title)}</label>`).join("")}</div>` : ""}<small class="muted">导出页序遵循排版页面顺序；不改变课程内容。</small></div>`
+      ].map(([mode, label]) => `<button class="secondary ${store.ui.publishPageMode === mode ? "active-tool" : ""}" data-action="publish-page-mode" data-mode="${mode}" aria-pressed="${store.ui.publishPageMode === mode}">${label}</button>`).join("")}</div>${store.ui.publishPageMode === "selected" ? `<div class="publish-page-options">${view.pages.map((page, index) => `<label><input type="checkbox" data-action="publish-page-toggle" data-id="${page.id}" ${store.ui.publishSelectedPageIds.includes(page.id) ? "checked" : ""}/>第 ${index + 1} 页 · ${esc(page.title)}</label>`).join("")}</div>` : ""}<small class="muted">按排版页序导出。</small></div>`
       : "";
     const targetSizeControl = canChooseTargetSize
       ? `<label class="page-size-control">输出页面尺寸<select class="select" data-action="publish-target-size"><option value="original" ${!targetSize ? "selected" : ""}>${originalSizeLabel}</option>${[["16:9", "16:9 横向"], ["a4-portrait", "A4 纵向"], ["a4-landscape", "A4 横向"], ["custom", "自定义尺寸"]].map(([preset, label]) => `<option value="${preset}" ${targetSize?.preset === preset ? "selected" : ""}>${label}</option>`).join("")}</select></label>${targetSize?.preset === "custom" ? `<div class="publish-page-options"><label>宽度 (pt)<input class="select" type="number" min="1" max="100000" step="1" data-action="publish-target-size-value" data-axis="width_pt" value="${targetSize.width_pt}"/></label><label>高度 (pt)<input class="select" type="number" min="1" max="100000" step="1" data-action="publish-target-size-value" data-axis="height_pt" value="${targetSize.height_pt}"/></label></div>` : ""}`
       : `<span class="muted small">当前格式不保留页面尺寸或位置。</span>`;
     const fitPreview = canChooseTargetSize && targetSize && fitPages.length
-      ? `<div class="publish-fit-preview"><b>等比适配预览</b><div class="publish-fit-pages">${fitPages.slice(0, 8).map(({ lesson, page, fit }) => `<div class="publish-fit-page-card"><div class="fit-target-page" style="aspect-ratio:${targetSize.width_pt}/${targetSize.height_pt}"><div class="fit-source-page" style="left:${fit.x_pt / targetSize.width_pt * 100}%;top:${fit.y_pt / targetSize.height_pt * 100}%;width:${fit.width_pt / targetSize.width_pt * 100}%;height:${fit.height_pt / targetSize.height_pt * 100}%"></div></div><small>${esc(lesson.code)} · ${esc(page.title || `第 ${page.order + 1} 页`)} · ${fit.scale.toFixed(3)}×</small></div>`).join("")}</div><span>整页等比缩放并居中，不裁切；目标尺寸只用于本次输出。${fitPages.length > 8 ? `显示前 8 页，共 ${fitPages.length} 页。` : ""}</span></div>`
+      ? `<div class="publish-fit-preview"><b>等比适配预览</b><div class="publish-fit-pages">${fitPages.slice(0, 8).map(({ lesson, page, fit }) => `<div class="publish-fit-page-card"><div class="fit-target-page" style="aspect-ratio:${targetSize.width_pt}/${targetSize.height_pt}"><div class="fit-source-page" style="left:${fit.x_pt / targetSize.width_pt * 100}%;top:${fit.y_pt / targetSize.height_pt * 100}%;width:${fit.width_pt / targetSize.width_pt * 100}%;height:${fit.height_pt / targetSize.height_pt * 100}%"></div></div><small>${esc(lesson.code)} · ${esc(page.title || `第 ${page.order + 1} 页`)} · ${fit.scale.toFixed(3)}×</small></div>`).join("")}</div><span>等比缩放、居中，不裁切。${fitPages.length > 8 ? `显示前 8 页，共 ${fitPages.length} 页。` : ""}</span></div>`
       : canChooseTargetSize && targetSize
       ? `<div class="publish-fit-preview">所选范围没有已排版页面可供尺寸适配预览。</div>`
       : canChooseTargetSize && projection?.lessons.some((lesson) => lesson.layout?.pages?.length > 1)
@@ -2557,19 +2608,19 @@ export function createViews(store) {
     const projectionFeedback = !projection
       ? `<div class="publish-feedback is-error" role="alert"><b>无法生成发布预览</b><p>请先打开课程项目并检查内容，再运行导出前检查获取具体原因。</p></div>`
       : selectedCapability.status === "lossy"
-      ? `<div class="publish-feedback is-warning" role="status"><b>${esc(selectedFormatLabel)} 会调整页面布局</b><p>预检会列出降级项目；确认后再继续导出。</p></div>`
+      ? `<div class="publish-feedback is-warning" role="status"><b>${esc(selectedFormatLabel)} 会调整页面布局</b><p>检查并确认布局变化后导出。</p></div>`
       : "";
     const courseCount = store.data.content_items.filter((candidate) => !candidate.archived).length;
-    return `<section class="page publish-page"><div class="page-head"><div><span class="eyebrow">交付课程内容</span><h1>发布中心</h1><p class="muted">确认输出范围、页面适配和格式兼容性，再检查并导出课程内容。</p></div><div class="page-head-actions">${store.ui.publishReturnContext ? `<button class="secondary" data-action="return-publish-source">返回来源页面</button>` : ""}<button class="primary" data-action="preflight">运行导出前检查</button></div></div>
+    return `<section class="page publish-page"><div class="page-head"><div><span class="eyebrow">交付课程内容</span><h1>发布中心</h1></div><div class="page-head-actions">${store.ui.publishReturnContext ? `<button class="secondary" data-action="return-publish-source">返回来源页面</button>` : ""}<button class="primary" data-action="preflight">运行导出前检查</button></div></div>
       <div class="publish-status-strip page-toolbar" aria-label="当前发布设置"><span><small>输出范围</small><b>${courseScope ? `整门课程 · ${courseCount} 课` : item ? `当前课 · ${esc(item.code)}` : "当前课 · 尚未选择"}</b></span><span><small>输出格式</small><b>${esc(selectedFormatLabel)}</b></span><span><small>兼容性</small><b class="status-pill ${selectedCapabilityClass}">${esc(selectedCapabilityLabel)}</b></span></div>
       ${!courseScope && !item ? `<div class="publish-context-empty" role="status"><div><b>当前没有选中的课时</b><p class="muted">可以先选择整门课程，或打开课程地图选择一课。</p></div><button class="secondary" data-action="route" data-route="map">打开课程地图</button></div>` : ""}
       ${projectionFeedback}
-      <section class="page-section card publish-card publish-section" aria-labelledby="publish-scope-heading"><div class="publish-section-heading"><span class="publish-step">01</span><div><h2 id="publish-scope-heading">选择输出范围</h2><p class="muted">决定导出当前课，还是整门课程。</p></div></div><div class="segmented" role="group" aria-label="选择发布范围"><button class="${courseScope ? "" : "active"}" data-action="publish-scope" data-scope="lesson" aria-pressed="${!courseScope}">当前课${item ? ` · ${esc(item.code)}` : ""}</button><button class="${courseScope ? "active" : ""}" data-action="publish-scope" data-scope="course" aria-pressed="${courseScope}">整门课程</button></div><p class="publish-scope-detail">${courseScope ? `整门课程 · ${courseCount} 课` : view ? `${esc(item.title)} · 完成 ${view.progress.percentage}% · 待补 ${view.progress.open_requirements} 项` : "尚未选择课程"}</p></section>
-      ${showLayoutControls ? `<section class="page-section card publish-card publish-section" aria-labelledby="publish-layout-heading"><div class="publish-section-heading"><span class="publish-step">02</span><div><h2 id="publish-layout-heading">输出布局与页面</h2><p class="muted">页码范围与目标尺寸只影响本次输出。</p></div></div><div class="publish-layout-controls">${pageRange}${layout?.pagination_mode === "paged" && !supportsLayout ? `<p class="muted publish-format-note">当前格式不会保留页面布局，因此无法按页筛选。</p>` : ""}<div class="page-action-row">${targetSizeControl}</div>${targetSizeNotice}${fitPreview}</div><p class="publish-layout-note">页面筛选与目标尺寸仅影响本次导出；尺寸不同的课时会按同一比例居中适配，不裁掉页面内容。</p></section>` : ""}
-      <section class="page-section card publish-card publish-section" aria-labelledby="publish-format-heading"><div class="publish-section-heading"><span class="publish-step">03</span><div><h2 id="publish-format-heading">选择格式</h2><p class="muted">每种格式都会说明可用性和布局处理方式。</p></div></div><div class="format-grid">${formats.map(([key, label, detail]) => { let capability = { status: "unavailable" }; try { capability = store.publicationCapability(key); } catch { /* selection validation is shown in preflight */ } const unavailable = ["unavailable", "unsupported"].includes(capability.status); const capabilityLabel = capability.code === "explicit_target_page_size_required" ? "请先选择统一尺寸" : capability.status === "available" ? (adapters[key]?.layout ? "页面布局保留" : "可用") : capability.status === "lossy" ? "页面布局会线性化" : capability.status === "unsupported" ? "当前排版不支持" : "此环境不可用"; return `<button class="format-card ${store.ui.publishFormat === key ? "active" : ""}" data-action="publish-format" data-format="${key}" aria-pressed="${store.ui.publishFormat === key}" ${unavailable ? "disabled" : ""}><b>${label}</b><small>${detail}</small><small class="format-capability">${capabilityLabel}</small></button>`; }).join("")}</div><div class="action-row publish-preflight-action"><button class="secondary" data-action="preflight">运行导出前检查</button></div></section>
+      <section class="page-section card publish-card publish-section" aria-labelledby="publish-scope-heading"><div class="publish-section-heading"><span class="publish-step">01</span><div><h2 id="publish-scope-heading">选择输出范围</h2></div></div><div class="segmented" role="group" aria-label="选择发布范围"><button class="${courseScope ? "" : "active"}" data-action="publish-scope" data-scope="lesson" aria-pressed="${!courseScope}">当前课${item ? ` · ${esc(item.code)}` : ""}</button><button class="${courseScope ? "active" : ""}" data-action="publish-scope" data-scope="course" aria-pressed="${courseScope}">整门课程</button></div><p class="publish-scope-detail">${courseScope ? `整门课程 · ${courseCount} 课` : view ? `${esc(item.title)} · 完成 ${view.progress.percentage}% · 待补 ${view.progress.open_requirements} 项` : "尚未选择课程"}</p></section>
+      ${showLayoutControls ? `<section class="page-section card publish-card publish-section" aria-labelledby="publish-layout-heading"><div class="publish-section-heading"><span class="publish-step">02</span><div><h2 id="publish-layout-heading">输出布局与页面</h2><p class="muted">页码范围与目标尺寸只影响本次输出。</p></div></div><div class="publish-layout-controls">${pageRange}${layout?.pagination_mode === "paged" && !supportsLayout ? `<p class="muted publish-format-note">当前格式不会保留页面布局，因此无法按页筛选。</p>` : ""}<div class="page-action-row">${targetSizeControl}</div>${targetSizeNotice}${fitPreview}</div></section>` : ""}
+      <section class="page-section card publish-card publish-section" aria-labelledby="publish-format-heading"><div class="publish-section-heading"><span class="publish-step">03</span><div><h2 id="publish-format-heading">选择格式</h2></div></div><div class="format-grid">${formats.map(([key, label, detail]) => { let capability = { status: "unavailable" }; try { capability = store.publicationCapability(key); } catch { /* selection validation is shown in preflight */ } const unavailable = ["unavailable", "unsupported"].includes(capability.status); const capabilityLabel = capability.code === "explicit_target_page_size_required" ? "请先选择统一尺寸" : capability.status === "available" ? (adapters[key]?.layout ? "页面布局保留" : "可用") : capability.status === "lossy" ? "页面布局会线性化" : capability.status === "unsupported" ? "当前排版不支持" : "此环境不可用"; return `<button class="format-card ${store.ui.publishFormat === key ? "active" : ""}" data-action="publish-format" data-format="${key}" aria-pressed="${store.ui.publishFormat === key}" ${unavailable ? "disabled" : ""}><b>${label}</b><small>${detail}</small><small class="format-capability">${capabilityLabel}</small></button>`; }).join("")}</div><div class="action-row publish-preflight-action"><button class="secondary" data-action="preflight">运行导出前检查</button></div></section>
       ${store.ui.preflight ? publishPreflightView() : ""}
-      ${last ? `<section class="page-section card publish-card publish-last-export"><div class="publish-section-heading"><span class="publish-step" aria-hidden="true">✓</span><div><h2>最近一次导出</h2><p class="muted">${store.bridge.isNative() ? "导出已经完成，以下是实际保存位置。" : "文件已交给浏览器下载；完成情况请查看浏览器下载列表。"}</p></div><span class="status-pill is-done">${store.bridge.isNative() ? "已完成" : "已交给浏览器"}</span></div><p><b>${esc(last.format)}</b> · ${last.scope === "course" ? "整门课程" : "当前课"} · ${last.files} 个文件</p><p class="muted">${store.bridge.isNative() ? "实际位置" : "交付方式"}：<code>${esc(last.path)}</code></p>${store.bridge.isNative() ? `<p class="muted">输出不依赖 Workbench 运行。</p><div class="action-row"><button class="secondary" data-action="reveal-export">在${fileManagerLabel()}中显示</button></div>` : ""}</section>` : ""}
-      <section class="page-section card publish-card publish-history" aria-labelledby="publish-history-heading"><div class="publish-section-heading"><div><h2 id="publish-history-heading">发布记录</h2><p class="muted">只记录你确认过的发布节点，不会改变课程内容。</p></div><button class="secondary" data-action="record-publication">记录已发布</button></div>${publications.length ? `<div class="version-list" role="list">${publications.map((publication) => `<article class="version-card list-row" role="listitem"><span class="version-icon" aria-hidden="true">↗</span><div><b>${esc(publication.version_label)}</b><p>${esc(publication.platform)} · ${esc(publication.status)}</p><small>${esc(publication.published_at || "")}</small></div></article>`).join("")}</div>` : `<div class="empty-state publish-history-empty"><h3>还没有发布记录</h3><p class="muted">导出并实际迁移后，可以记录这个发布节点；课程内容不会因此改变。</p></div>`}</section></section>`;
+      ${last ? `<section class="page-section card publish-card publish-last-export"><div class="publish-section-heading"><span class="publish-step" aria-hidden="true">✓</span><div><h2>最近一次导出</h2><p class="muted">${store.bridge.isNative() ? "导出完成，保存位置如下。" : "文件已交给浏览器下载；完成情况请查看浏览器下载列表。"}</p></div><span class="status-pill is-done">${store.bridge.isNative() ? "已完成" : "已交给浏览器"}</span></div><p><b>${esc(last.format)}</b> · ${last.scope === "course" ? "整门课程" : "当前课"} · ${last.files} 个文件</p><p class="muted">${store.bridge.isNative() ? "实际位置" : "交付方式"}：<code>${esc(last.path)}</code></p>${store.bridge.isNative() ? `<div class="action-row"><button class="secondary" data-action="reveal-export">在${fileManagerLabel()}中显示</button></div>` : ""}</section>` : ""}
+      <section class="page-section card publish-card publish-history" aria-labelledby="publish-history-heading"><div class="publish-section-heading"><div><h2 id="publish-history-heading">发布记录</h2><p class="muted">记录实际发布节点；课程内容不变。</p></div><button class="secondary" data-action="record-publication">记录已发布</button></div>${publications.length ? `<div class="version-list" role="list">${publications.map((publication) => `<article class="version-card list-row" role="listitem"><span class="version-icon" aria-hidden="true">↗</span><div><b>${esc(publication.version_label)}</b><p>${esc(publication.platform)} · ${esc(publication.status)}</p><small>${esc(publication.published_at || "")}</small></div></article>`).join("")}</div>` : `<div class="empty-state publish-history-empty"><h3>还没有发布记录</h3></div>`}</section></section>`;
   }
 
   function publishPreflightView() {
@@ -2590,7 +2641,7 @@ export function createViews(store) {
       store.ui.preflightRevision === store.data.project.updated_at &&
       store.ui.preflightFormat === store.ui.publishFormat
     );
-    return `<div class="card publish-card publish-preflight" aria-live="polite"><h2>4. 导出前检查</h2><p class="muted">先检查课程内容与素材。必须修复的问题会阻止导出；逐项确认提示后才会生成文件。此检查不会修改课程，也不会调用 AI。</p>${store.ui.preflightPending ? `<p class="preflight-pending" role="status">正在检查当前课程快照…</p>` : ""}<div class="check-list">${[
+    return `<div class="card publish-card publish-preflight" aria-live="polite"><h2>4. 导出前检查</h2><p class="muted">检查课程内容与素材，修复阻断项并确认提示后导出。检查不会修改课程或调用 AI。</p>${store.ui.preflightPending ? `<p class="preflight-pending" role="status">正在检查当前课程快照…</p>` : ""}<div class="check-list">${[
       ["内容级待补", report.content, false],
       ["当前排版待补", report.layout, false],
       ["缺失素材文件", report.missingAssets, true],
@@ -2599,7 +2650,7 @@ export function createViews(store) {
       ["未加载字体", report.fonts, false],
       ["外部引用", report.external, false],
       ["媒体降级", report.mediaDowngrades || 0, false],
-    ].map(([label, count, blocking]) => `<div><span class="check ${count ? blocking ? "danger" : "warning" : "ok"}">${count || "✓"}</span><span>${label}</span><b>${count}</b></div>`).join("")}</div>${issues.length ? `<div class="issue-list">${issues.map((issue) => `<article class="${issue.severity === "blocking" ? "issue-blocking" : "issue-warning"}"><b>${issue.severity === "blocking" ? "必须修复" : "提示"}</b><span>${esc(issueMessage(issue))}</span>${issueDiagnostics(issue)}</article>`).join("")}</div>` : ""}${warningIssues.length ? `<div class="warning-ack-list"><b>逐项确认本次输出提示</b>${warningIssues.map((issue) => `<label><input type="checkbox" data-action="acknowledge-export-warning" data-code="${esc(issue.code)}" ${acknowledged.has(issue.code) ? "checked" : ""}/><span>${esc(issueMessage(issue))}${issue.count > 1 ? `（${issue.count} 项）` : ""}</span></label>`).join("")}</div>` : ""}<div class="preflight-total">必须修复 <strong>${report.blocking}</strong> · 提示 <strong>${report.warnings}</strong></div>${!current && !store.ui.preflightPending ? `<p class="warning-text">课程或输出范围在检查后发生变化，请重新运行检查后再导出。</p>` : ""}${report.blocking ? `<p class="error-text">当前不能导出：请先修复上面标为“必须修复”的问题。不会生成半成品，也不会修改源课程。</p>` : report.warnings ? `<p class="muted">未放置正文、线性化或媒体降级会按上方说明处理；确认提示后才会继续生成。</p>` : `<p class="success-text">检查通过，可以生成输出；源课程不会被修改。</p>`}<div class="modal-actions"><button class="secondary" data-action="preflight" ${store.ui.preflightPending ? "disabled" : ""}>重新运行检查</button><button class="primary" data-action="export-format" data-format="${esc(store.ui.publishFormat)}" ${!current || store.ui.preflightPending || report.blocking || !allWarningsAcknowledged ? "disabled" : ""}>${report.warnings ? "确认提示并导出" : "开始导出"}</button></div></div>`;
+    ].map(([label, count, blocking]) => `<div><span class="check ${count ? blocking ? "danger" : "warning" : "ok"}">${count || "✓"}</span><span>${label}</span><b>${count}</b></div>`).join("")}</div>${issues.length ? `<div class="issue-list">${issues.map((issue) => `<article class="${issue.severity === "blocking" ? "issue-blocking" : "issue-warning"}"><b>${issue.severity === "blocking" ? "必须修复" : "提示"}</b><span>${esc(issueMessage(issue))}</span>${issueDiagnostics(issue)}</article>`).join("")}</div>` : ""}${warningIssues.length ? `<div class="warning-ack-list"><b>逐项确认本次输出提示</b>${warningIssues.map((issue) => `<label><input type="checkbox" data-action="acknowledge-export-warning" data-code="${esc(issue.code)}" ${acknowledged.has(issue.code) ? "checked" : ""}/><span>${esc(issueMessage(issue))}${issue.count > 1 ? `（${issue.count} 项）` : ""}</span></label>`).join("")}</div>` : ""}<div class="preflight-total">必须修复 <strong>${report.blocking}</strong> · 提示 <strong>${report.warnings}</strong></div>${!current && !store.ui.preflightPending ? `<p class="warning-text">课程或输出范围在检查后发生变化，请重新运行检查后再导出。</p>` : ""}${report.blocking ? `<p class="error-text">请先修复标为“必须修复”的问题；未生成文件，源课程未改动。</p>` : report.warnings ? `<p class="muted">未放置正文、线性化或媒体降级会按上方说明处理；确认提示后才会继续生成。</p>` : `<p class="success-text">检查通过，可以导出；源课程不会被修改。</p>`}<div class="modal-actions"><button class="secondary" data-action="preflight" ${store.ui.preflightPending ? "disabled" : ""}>重新运行检查</button><button class="primary" data-action="export-format" data-format="${esc(store.ui.publishFormat)}" ${!current || store.ui.preflightPending || report.blocking || !allWarningsAcknowledged ? "disabled" : ""}>${report.warnings ? "确认提示并导出" : "开始导出"}</button></div></div>`;
   }
 
   function simplePage(title, description, icon) {
@@ -2646,7 +2697,7 @@ export function createViews(store) {
     }).join("");
     return '<section class="page-section card resource-library" aria-labelledby="resource-library-heading">' +
       '<div class="publish-section-heading"><div><h2 id="resource-library-heading">已接受的资源</h2>' +
-      '<p class="muted">媒体库与收件箱使用同一资源 ID；接受后保留来源证据和课程用途。</p></div>' +
+      '</div>' +
       '<span class="status-pill">' + resources.length + "</span></div>" + rows + "</section>";
   }
 
@@ -2672,11 +2723,11 @@ export function createViews(store) {
     }).join("");
     return '<section class="settings-section resource-provider-settings" id="settings-resource-providers">' +
       '<div class="settings-section-head"><span class="settings-index">08</span><div><h2>资源搜索服务</h2>' +
-      '<p class="muted">Brave 与 YouTube 使用独立密钥槽；不会读取或发送 AI 服务商密钥。</p></div>' +
+      '<p class="muted">Brave 与 YouTube 需分别配置专用密钥。</p></div>' +
       '<button class="secondary" data-action="resource-provider-refresh" ' +
       (store.ui.resourceProvidersLoading ? "disabled" : "") + ">刷新状态</button></div>" +
       (store.ui.resourceProvidersError ? '<p class="error-text" role="alert">' + esc(store.ui.resourceProvidersError) + "</p>" : "") +
-      '<div class="settings-cards">' + rows + '</div><p class="settings-security-note">密钥只在提交时发送到对应资源 provider 的系统钥匙串接口，界面不回显，也不保存到课程或 AI 设置。</p></section>';
+      '<div class="settings-cards">' + rows + '</div><p class="settings-security-note">密钥保存在本机系统凭据存储，不写入课程文件或 AI 设置。</p></section>';
   }
 
   function presentationWorkflowView() {
@@ -2697,7 +2748,7 @@ export function createViews(store) {
         '</small></div><details><summary>结构事实（' + (profile.extraction_facts || []).length + "）</summary><ul>" + facts +
         "</ul></details>" + (inferences ? '<details><summary>视觉推断（需人工复核）</summary><ul>' + inferences + "</ul></details>" : "") +
         (limits ? '<details><summary>限制</summary><ul>' + limits + "</ul></details>" : "") +
-        '<p class="muted small"><code>workbench-style</code> fenced JSON 是可执行机器规则；其余说明与视觉推断需要人工复核。</p>' +
+        '<details class="muted small"><summary>版式规则说明</summary><p>高级规则会影响生成；视觉推断需人工复核。</p></details>' +
         '<label>可编辑 style.md<textarea rows="8" data-presentation-profile="' + esc(profile.id) + '">' +
         esc(profile.markdown || "") + '</textarea></label><button class="secondary" data-action="presentation-style-update" data-id="' +
         esc(profile.id) + '" data-revision="' + profile.revision + '" ' +
@@ -2748,7 +2799,7 @@ export function createViews(store) {
     return '<section class="page-section card presentation-workflow" aria-labelledby="presentation-workflow-heading">' +
       '<div class="publish-section-heading"><div><span class="eyebrow">PowerPoint 工作流</span>' +
       '<h2 id="presentation-workflow-heading">提取可编辑版式，并补充单页</h2>' +
-      '<p class="muted">保留原始 PPTX；输出为新文件，并记录源文件和工作副本的关系。</p></div></div>' +
+      '<p class="muted">保留原始 PPTX，输出为新文件。</p></div></div>' +
       '<div class="presentation-extract-controls"><label>源 PowerPoint<select class="select" data-presentation-source>' +
       (pptAssets.length ? pptAssets.map((asset) => '<option value="' + esc(asset.id) + '">' +
         esc(asset.title || asset.filename) + "</option>").join("") : '<option value="">先将 .pptx 添加到媒体库</option>') +
@@ -2762,7 +2813,7 @@ export function createViews(store) {
         (reportInferences ? '<h4>视觉推断 · 需要人工复核</h4><ul>' + reportInferences + "</ul>" : "") +
         (reportLimits ? "<h4>提取限制</h4><ul>" + reportLimits + "</ul>" : "") +
         (previews ? '<div class="presentation-representatives">' + previews + "</div>" : "") +
-        '<p class="muted small"><code>workbench-style</code> fenced JSON 是可执行机器规则；其他说明是编辑参考，视觉推断需人工复核。</p>' +
+        '<details class="muted small"><summary>版式规则说明</summary><p>高级规则会影响生成；视觉推断需人工复核。</p></details>' +
         '<label>编辑版式说明 <textarea rows="12" data-presentation-style-draft>' + esc(draft.markdown_draft || "") +
         '</textarea></label><button class="primary" data-action="presentation-style-save" ' +
         (store.ui.presentationBusy ? "disabled" : "") + ">保存版式并创建工作副本</button></section>" : "") +
@@ -2786,8 +2837,8 @@ export function createViews(store) {
           insertChoices + '</select></label><button class="secondary" data-action="presentation-target-inspect" ' +
           (store.ui.presentationTargetInspectingAssetId || !selectedDocument ? "disabled" : "") + '>重新读取当前工作副本页序</button>' +
           (targetReportMatches
-            ? '<p class="muted small">页序来自当前工作副本真实结构；可选择末尾或指定页之后。</p>'
-            : '<p class="muted small">尚未取得当前工作副本真实页序，只能追加到末尾。' +
+            ? ""
+            : '<p class="muted small">未读取页序，暂只能追加到末尾。' +
               esc(store.ui.presentationTargetInspectError || "正在读取页序，或需在桌面版检查 PPTX。") + "</p>") + "</div>" +
           (presentationMode === "manual"
             ? '<label>标题<input class="select" data-presentation-slide-title value="' + esc(store.ui.presentationSlideTitle) + '" placeholder="补充页标题"></label>' +
@@ -2799,7 +2850,7 @@ export function createViews(store) {
             : '<label>补充页目标<textarea rows="3" data-presentation-slide-instruction placeholder="描述这页要解决的教学目标">' +
               esc(store.ui.presentationSlideInstruction) + '</textarea></label>' +
               '<p class="muted">AI 连接：' + esc(aiConnection?.label || aiConnection?.id || "未配置") + " · 模型：" +
-              esc(aiModel || "未选择") + "。请求使用现有 AI 连接发送，密钥不会放入页面。" +
+              esc(aiModel || "未选择") + "。请求通过所选连接发送，页面不显示密钥。" +
               '</p><div class="action-row"><button class="primary" data-action="presentation-slide-ai-prepare" ' +
               (store.ui.presentationBusy ? "disabled" : "") + ">准备并预览 AI 上下文</button>" +
               (aiBusy ? '<button class="secondary" data-action="presentation-slide-ai-cancel">取消</button>' : "") + "</div>" +
@@ -2857,7 +2908,7 @@ export function createViews(store) {
     const projectTitle = store.ui.editingProjectTitle && store.ui.editingProjectTitleSurface === "settings"
       ? `<input class="project-title-input" data-project-title data-focus-key="project-title" value="${esc(project.title)}" aria-label="课程标题" />`
       : `<button class="text-button" data-action="edit-project-title" data-title-surface="settings">${esc(project.title)} · 编辑名称</button>`;
-    return `<section class="page settings-page"><div class="page-head"><div><span class="eyebrow">项目偏好与账户</span><h1>项目设置</h1><p class="muted">在一个页面查看常用配置；密钥仍由现有连接管理器安全保存。</p></div></div><nav class="settings-nav" aria-label="设置分类">${[["general", "常规"], ["history", "保存与版本"], ["ai", "AI 连接"], ["models", "模型"], ["accounts", "账户"], ["project", "项目"]].map(([key, label]) => { const active = (store.ui.settingsSection || "general") === key; return `<a href="#settings-${key}"${active ? ' class="active" aria-current="true"' : ""}>${label}</a>`; }).join("")}</nav><section class="settings-section" id="settings-general"><div class="settings-section-head"><span class="settings-index">01</span><div><h2>常规</h2><p class="muted">保存行为与当前工作环境</p></div></div><div class="settings-cards"><article class="settings-card"><span class="eyebrow">保存方式</span><b>本地优先 · 自动保存</b><p class="muted">课程数据保存在当前项目中。保存状态显示在顶部。</p></article><article class="settings-card"><span class="eyebrow">当前界面</span><b>${store.bridge.isNative() ? "桌面应用" : "浏览器服务壳"}</b><p class="muted">应用布局会适配窗口宽度和系统缩放。</p></article></div></section><section class="settings-section" id="settings-save"><div class="settings-section-head"><span class="settings-index">02</span><div><h2>保存</h2><p class="muted">普通保存写入当前项目；保存版本创建可恢复的历史点。</p></div></div><article class="settings-card settings-save-card"><div>${saveStateView()}</div><div class="settings-card-actions"><button class="primary" data-action="save-project">保存项目</button><button class="secondary" data-action="save-version">保存当前版本</button></div></article></section><section class="settings-section" id="settings-history"><div class="settings-section-head"><span class="settings-index">03</span><div><h2>版本历史</h2><p class="muted">查看已保存版本，并在需要时恢复。</p></div></div>${versionsView()}</section><section class="settings-section" id="settings-ai"><div class="settings-section-head"><span class="settings-index">04</span><div><h2>AI 连接</h2><p class="muted">管理服务商、连接状态和凭据</p></div></div><article class="settings-card settings-ai-card"><div><span class="eyebrow">当前选择</span><b>${esc(selected?.label || selected?.id || "尚未选择服务商")}</b><p class="muted">模型：${esc(selectedModel)} · ${selected && configured[selected.id] ? "凭据已保存在本机" : "连接尚未配置"}</p></div><div class="settings-card-actions"><button class="secondary" data-focus-key="settings-ai-connections" data-action="ai-toggle-settings" aria-haspopup="dialog">管理连接</button><button class="text-button" data-action="right-panel" data-panel="assistant">打开 AI 助手</button></div></article></section><section class="settings-section" id="settings-models"><div class="settings-section-head"><span class="settings-index">05</span><div><h2>模型</h2><p class="muted">当前连接提供的可用模型</p></div><button class="secondary" data-focus-key="settings-ai-models" data-action="ai-toggle-settings" aria-haspopup="dialog">发现或选择模型</button></div><article class="settings-card">${modelList}</article></section><section class="settings-section" id="settings-accounts"><div class="settings-section-head"><span class="settings-index">06</span><div><h2>账户</h2><p class="muted">订阅授权与 API Key 彼此独立</p></div></div><article class="settings-card settings-account-card">${aiSubscriptionSettingsView(store, configured)}</article><p class="settings-security-note">Access Token 与 Refresh Token 只保存在本机系统钥匙串；API Key 仅通过已配置的连接管理器保存，页面不会显示密钥。</p></section><section class="settings-section" id="settings-project"><div class="settings-section-head"><span class="settings-index">07</span><div><h2>项目</h2><p class="muted">当前课程项目的本地身份</p></div></div><article class="settings-card settings-project-card"><dl><dt>项目名称</dt><dd>${projectTitle}</dd><dt>项目编号</dt><dd><code>${esc(project.id)}</code></dd><dt>数据格式</dt><dd>${esc(String(project.schema_version))}</dd><dt>课程语言</dt><dd>${esc(project.language || "未设置")}</dd></dl></article></section></section>`;
+    return `<section class="page settings-page"><div class="page-head"><div><span class="eyebrow">项目偏好与账户</span><h1>项目设置</h1></div></div><nav class="settings-nav" aria-label="设置分类">${[["general", "常规"], ["history", "保存与版本"], ["ai", "AI 连接"], ["models", "模型"], ["accounts", "账户"], ["project", "项目"]].map(([key, label]) => { const active = (store.ui.settingsSection || "general") === key; return `<a href="#settings-${key}"${active ? ' class="active" aria-current="true"' : ""}>${label}</a>`; }).join("")}</nav><section class="settings-section" id="settings-general"><div class="settings-section-head"><span class="settings-index">01</span><div><h2>常规</h2><p class="muted">保存行为与当前工作环境</p></div></div><div class="settings-cards"><article class="settings-card"><span class="eyebrow">保存方式</span><b>本地优先 · 自动保存</b></article><article class="settings-card"><span class="eyebrow">当前界面</span><b>${store.bridge.isNative() ? "桌面应用" : "浏览器服务壳"}</b></article></div></section><section class="settings-section" id="settings-save"><div class="settings-section-head"><span class="settings-index">02</span><div><h2>保存</h2><p class="muted">保存版本可创建恢复点。</p></div></div><article class="settings-card settings-save-card"><div>${saveStateView()}</div><div class="settings-card-actions"><button class="primary" data-action="save-project">保存项目</button><button class="secondary" data-action="save-version">保存当前版本</button></div></article></section><section class="settings-section" id="settings-history"><div class="settings-section-head"><span class="settings-index">03</span><div><h2>版本历史</h2></div></div>${versionsView()}</section><section class="settings-section" id="settings-ai"><div class="settings-section-head"><span class="settings-index">04</span><div><h2>AI 连接</h2><p class="muted">管理服务商、连接状态和凭据</p></div></div><article class="settings-card settings-ai-card"><div><span class="eyebrow">当前选择</span><b>${esc(selected?.label || selected?.id || "尚未选择服务商")}</b><p class="muted">模型：${esc(selectedModel)} · ${selected && configured[selected.id] ? "凭据已保存在本机" : "连接尚未配置"}</p></div><div class="settings-card-actions"><button class="secondary" data-focus-key="settings-ai-connections" data-action="ai-toggle-settings" aria-haspopup="dialog">管理连接</button><button class="text-button" data-action="right-panel" data-panel="assistant">打开 AI 助手</button></div></article></section><section class="settings-section" id="settings-models"><div class="settings-section-head"><span class="settings-index">05</span><div><h2>模型</h2><p class="muted">当前连接提供的可用模型</p></div><button class="secondary" data-focus-key="settings-ai-models" data-action="ai-toggle-settings" aria-haspopup="dialog">发现或选择模型</button></div><article class="settings-card">${modelList}</article></section><section class="settings-section" id="settings-accounts"><div class="settings-section-head"><span class="settings-index">06</span><div><h2>账户</h2><p class="muted">订阅授权与 API Key 彼此独立</p></div></div><article class="settings-card settings-account-card">${aiSubscriptionSettingsView(store, configured)}</article><p class="settings-security-note">Access Token 与 Refresh Token 只保存在本机系统钥匙串；API Key 仅通过已配置的连接管理器保存，页面不会显示密钥。</p></section><section class="settings-section" id="settings-project"><div class="settings-section-head"><span class="settings-index">07</span><div><h2>项目</h2><p class="muted">当前课程项目的本地身份</p></div></div><article class="settings-card settings-project-card"><dl><dt>项目名称</dt><dd>${projectTitle}</dd><dt>项目编号</dt><dd><code>${esc(project.id)}</code></dd><dt>数据格式</dt><dd>${esc(String(project.schema_version))}</dd><dt>课程语言</dt><dd>${esc(project.language || "未设置")}</dd></dl></article></section></section>`;
   }
 
   function emptyState(title, description, action, label) {
@@ -2896,7 +2947,13 @@ export function createViews(store) {
 
   function rightPanelView() {
     const item = store.currentItem();
-    return `<aside class="right-panel panel"><div class="right-tabs"><span class="right-tab active">AI 助手</span><button class="icon-button collapse-right" data-action="toggle-right" aria-label="${store.ui.rightCollapsed ? "展开右栏" : "收起右栏"}" title="${store.ui.rightCollapsed ? "展开右栏" : "收起右栏"}">${store.ui.rightCollapsed ? "☰" : "›"}</button></div><div class="right-content" data-panel-scope="${esc(item ? `${item.code}｜${item.title}` : "项目范围")}">${assistantPanel()}</div></aside>`;
+    const current = store.ui.rightTab || "discovery";
+    const mobileDrawer = Boolean(globalThis.matchMedia?.("(max-width: 680px)")?.matches) &&
+      !store.ui.rightCollapsed && !store.ui.resourceReaderExpanded;
+    const tabs = [["discovery", "发现素材"], ["browser", "浏览器"], ["assistant", "AI 助手"]];
+    const body = current === "assistant" ? assistantPanel() : current === "browser" ? resourceBrowserView() : resourceDiscoveryView(item);
+    const modalAttrs = mobileDrawer || store.ui.resourceReaderExpanded ? 'role="dialog" aria-modal="true"' : 'role="complementary"';
+    return `<div class="right-panel-region">${mobileDrawer ? '<button class="mobile-right-panel-mask" data-action="toggle-right" tabindex="-1" aria-hidden="true"></button>' : ""}${store.ui.resourceReaderExpanded ? '<button class="resource-reader-mask" data-action="resource-reader-collapse" aria-label="关闭扩大阅读"></button>' : ""}<aside class="right-panel panel${store.ui.resourceReaderExpanded ? " is-expanded" : ""}" ${modalAttrs} aria-label="右侧工作区"><div class="right-tabs" role="tablist" aria-label="右侧工作区标签">${tabs.map(([id, label]) => `<button class="right-tab ${current === id ? "active" : ""}" type="button" role="tab" id="right-tab-${id}" aria-controls="right-panel-content" aria-selected="${current === id}" tabindex="${current === id ? "0" : "-1"}" data-action="right-tab" data-right-tab="${id}">${label}</button>`).join("")}<button class="icon-button collapse-right" data-action="toggle-right" data-focus-key="right-panel-toggle" aria-label="${store.ui.rightCollapsed ? "展开右栏" : "收起右栏"}" title="${store.ui.rightCollapsed ? "展开右栏" : "收起右栏"}">${store.ui.rightCollapsed ? "☰" : "›"}</button></div><div class="right-content" id="right-panel-content" role="tabpanel" aria-labelledby="right-tab-${current}" data-panel-scope="${esc(item ? `${item.code}｜${item.title}` : "项目范围")}">${body}</div>${store.ui.resourceReaderExpanded ? '<button class="resource-reader-close" data-action="resource-reader-collapse" aria-label="收回阅读区">收回阅读区 ×</button>' : ""}</aside></div>`;
   }
 
   function mediaPanel(view) {
@@ -3244,7 +3301,7 @@ export function createViews(store) {
             }</li>`
           ).join("")
         }</ul>`
-        : `<p class="ai-hint">没有需要排除的内容。</p>`
+        : ""
     }</div>
     </div>`;
   }
@@ -3291,7 +3348,7 @@ export function createViews(store) {
             ${editing && draft ? aiProviderEditorView(draft, "row") : ""}
           </article>`;
         }).join("")
-        : `<p class="ai-hint">还没有 API 连接。点「＋ 添加模型提供商」新建一个，填写 Provider ID、API 地址、协议与模型即可。</p>`}
+        : `<p class="ai-hint">暂无模型连接。</p>`}
     </section>`;
   }
 
@@ -3303,12 +3360,12 @@ export function createViews(store) {
     const pending = attempt?.status === "pending";
     const statusLine = attempt?.message
       ? `<p class="ai-subscription-status ${esc(attempt.status || "")}" aria-live="polite">${esc(attempt.message)}</p>`
-      : `<p class="ai-hint">授权由你在系统浏览器中完成；Access/Refresh Token 只保存在本机系统凭据存储。</p>`;
+      : `<p class="ai-hint">将在系统浏览器中授权。</p>`;
     return `<section class="ai-subscription-settings">
       <div class="ai-block-head"><div><b>ChatGPT 订阅登录</b><small>OpenAI SIWC · 独立于 API Key</small></div></div>
       ${native
         ? `<p class="ai-hint">首次登录会为 Workbench 动态注册独立客户端身份。Workbench 不读取其他应用的会话，也不会用环境 API Key 代替订阅授权。</p><div class="ai-run-row"><button class="secondary" data-action="ai-subscription-start" ${pending ? "disabled" : ""}>Continue with ChatGPT</button>${pending ? `<button class="text-button" data-action="ai-subscription-cancel">取消登录</button>` : ""}</div>${statusLine}`
-        : `<p class="ai-hint">当前浏览器服务壳不支持订阅登录；请在${desktopShellLabel()}使用系统浏览器回调与系统凭据存储。这里不会模拟成功状态。</p>`}
+        : `<p class="ai-hint">此环境不支持订阅登录，请使用桌面版 Workbench。</p>`}
       <div class="ai-subscription-list">${accounts.length
         ? accounts.map((provider) => {
           const id = String(provider.id || "");
@@ -3344,19 +3401,18 @@ export function createViews(store) {
     const secretPlaceholder = configuredKey ? "留空使用已保存凭据" : "输入 API 密钥";
     const protocolSelect = `<select class="select ai-protocol-select" data-ai-api-protocol data-focus-key="ai-api-protocol">${protocolChoices.map((choice) => `<option value="${esc(choice.id)}" ${String(form.api_protocol || "openai-completions") === choice.id ? "selected" : ""}>${esc(choice.label)}</option>`).join("")}</select>`;
     const secretBlock = isFake
-      ? `<p class="ai-hint">「本地确定性连接器」是完全离线的自动化测试通道，不需要地址或密钥，也没有可保存的配置；它不会出现在连接列表里。</p>`
+      ? `<p class="ai-hint">离线测试连接，无需密钥。</p>`
       : `<label class="field-label">API 密钥</label>
       <div class="ai-secret-row">
         <input class="select" type="${form.secret_visible === true ? "text" : "password"}" data-ai-secret data-provider-id="${esc(providerId)}" data-focus-key="ai-secret" autocomplete="new-password" placeholder="${secretPlaceholder}" /><button class="icon-button ai-secret-eye" data-action="ai-toggle-secret-visible" aria-pressed="${form.secret_visible === true}" aria-label="${form.secret_visible === true ? "隐藏密钥" : "显示密钥"}" title="${form.secret_visible === true ? "隐藏密钥" : "显示密钥"}"${form.secret_visible === true ? "" : " hidden"}>◉</button>
       </div>
-      <p class="ai-hint" data-ai-auth-hint>粘贴 API Key（不会回显）</p>
       <div class="ai-run-row"><button class="secondary" data-action="ai-save-secret" data-provider-id="${esc(providerId)}">保存密钥</button><button class="text-button danger" data-action="ai-delete-secret" data-provider-id="${esc(providerId)}" ${configuredKey ? "" : "disabled"}>删除本机保存的密钥</button></div>`;
     const nameField = `<label class="field-label">显示名称<input class="select" data-ai-provider-label data-focus-key="ai-provider-label" placeholder="显示名称" value="${esc(form.label || "")}" /></label>`;
     const addressField = `<label class="field-label">API 地址<input class="select" data-ai-base-url data-focus-key="ai-base-url" placeholder="https://gateway.example/v1" value="${esc(form.base_url || "")}" ${isFake ? "disabled" : ""} /></label>`;
     const protocolField = `<label class="field-label">API 协议${isFake ? "" : protocolSelect}</label>`;
     const advanced = `<button class="ai-collapse-toggle" data-action="ai-toggle-advanced" aria-expanded="${form.advanced_open === true}">${form.advanced_open === true ? "▾" : "›"} 自定义设置</button>${form.advanced_open === true ? `<div class="ai-advanced">${nameField}${addressField}${protocolField}${aiModelCatalogView(form, addTab)}</div>` : ""}`;
     const createFields = `<label class="field-label">Provider ID<input class="select" data-ai-provider-id data-focus-key="ai-provider-id" placeholder="acme-gateway" value="${esc(providerId)}" ${isFake ? "disabled" : ""} autocomplete="off" /></label>
-      <p class="ai-hint">以小写字母开头的标识，在请求中唯一标识该提供商，并用于派生凭据名。</p>
+      <p class="ai-hint">以小写字母开头，创建后不可修改。</p>
       ${nameField}
       ${addressField}
       ${protocolField}
@@ -3368,11 +3424,11 @@ export function createViews(store) {
       <div class="ai-editor-divider"></div>
       ${advanced}`}
       <div class="ai-run-row ai-editor-actions">
-        <button class="secondary" data-action="ai-test-connection" ${store.ui.aiConnectionTestStatus?.state === "busy" ? "disabled" : ""}>${store.ui.aiConnectionTestStatus?.state === "busy" ? "正在测试…" : "测试连接"}</button><span class="ai-connection-test ${esc(store.ui.aiConnectionTestStatus?.state || "")}" data-ai-connection-test>${esc(store.ui.aiConnectionTestStatus?.message || "测试使用固定短提示，不会读取课程内容。")}</span><button class="secondary" data-action="ai-cancel-provider">取消</button><button class="primary ai-save-button" data-action="ai-save-provider" ${isFake ? "disabled" : ""}>${isAdd ? "创建提供商" : "保存"}</button>
+        <button class="secondary" data-action="ai-test-connection" ${store.ui.aiConnectionTestStatus?.state === "busy" ? "disabled" : ""}>${store.ui.aiConnectionTestStatus?.state === "busy" ? "正在测试…" : "测试连接"}</button><span class="ai-connection-test ${esc(store.ui.aiConnectionTestStatus?.state || "")}" data-ai-connection-test>${esc(store.ui.aiConnectionTestStatus?.message || "测试不发送课程内容。")}</span><button class="secondary" data-action="ai-cancel-provider">取消</button><button class="primary ai-save-button" data-action="ai-save-provider" ${isFake ? "disabled" : ""}>${isAdd ? "创建提供商" : "保存"}</button>
       </div>
       <div class="ai-editor-status">
-        <p class="ai-hint">配置状态：${configSaved ? "连接配置已保存" : "连接配置尚未保存"}</p>
-        <p class="ai-hint">凭据状态：${isFake ? "不需要密钥（离线连接器）。" : configuredKey ? "已配置密钥。" : "未配置密钥；运行时会以「缺少密钥」提示，不会伪造回答。"}</p>
+        <p class="ai-hint">连接：${configSaved ? "已保存" : "未保存"}</p>
+        <p class="ai-hint">${isFake ? "无需密钥（离线连接器）。" : configuredKey ? "已配置密钥。" : "未保存密钥"}</p>
       </div>
     </div>`;
   }
@@ -3483,12 +3539,12 @@ export function createViews(store) {
         <b>模型目录</b>
         <div class="ai-model-head-actions"><button class="text-button" data-action="ai-reset-models">恢复默认模型</button><button class="${discoverFirst ? "secondary" : "text-button"}" data-action="ai-discover-models" data-focus-key="ai-discover" ${busy ? "disabled" : ""}>${busy ? "正在获取…" : "获取可用模型"}</button></div>
       </div>
-      ${failure ? `<p class="ai-hint warning" data-ai-models-error>读取模型失败：${esc(failure)}。可以直接在下面手动填写 Model ID，不影响保存。</p>` : ""}
+      ${failure ? `<p class="ai-hint warning" data-ai-models-error>读取失败：${esc(failure)}。可手动添加 Model ID。</p>` : ""}
       ${rows.length
         ? `<div class="ai-model-rows" data-ai-model-rows>${rows.map((row) => aiModelRowView(row, protocol)).join("")}</div>`
-        : `<div class="ai-model-empty">模型选择器中将不显示任何模型；目录外 ID 仍可直接发送。</div>`}
+        : `<div class="ai-model-empty">暂无模型，可手动添加 Model ID。</div>`}
       <div class="ai-run-row"><button class="${discoverFirst ? "text-button" : "secondary"}" data-action="ai-add-manual-model" data-focus-key="ai-add-model">＋ 添加模型</button></div>
-      <p class="ai-hint">仅声明上游模型实际能够处理的输入类型与推理能力。</p>
+      <p class="ai-hint">按模型实际能力填写。</p>
     </div>`;
   }
 
@@ -3516,7 +3572,7 @@ export function createViews(store) {
     return `<div class="overlay ai-picker-overlay" data-action="ai-picker-close" data-stop-click="true">
       <section class="modal ai-model-picker" role="dialog" aria-modal="true" aria-labelledby="ai-model-picker-title" data-stop-click="true">
         <header class="modal-head"><div><span class="eyebrow">模型目录</span><h2 id="ai-model-picker-title">选择模型</h2></div><button class="icon-button" data-action="ai-picker-close" aria-label="关闭选择模型" title="关闭">×</button></header>
-        <p class="muted">勾选的模型即为模型列表</p>
+        <p class="muted">仅保留勾选的模型。</p>
         <label class="field-label">搜索<input class="select" data-ai-picker-search data-focus-key="ai-picker-search" placeholder="搜索 Model ID" value="${esc(search)}" /></label>
         <div class="ai-run-row"><button class="text-button" data-action="ai-picker-select-all">全选</button><button class="text-button" data-action="ai-picker-clear-all">取消全选</button></div>
         ${candidates.length
@@ -3560,14 +3616,14 @@ export function createViews(store) {
       ["subscription", "订阅登录"],
     ];
     const hints = {
-      "third-party": "填写服务商的地址、协议与 API 密钥，然后获取它自己的模型列表。",
-      "custom": "连接中转站、自部署服务或其他兼容 OpenAI / Anthropic 协议的接口，需填写 API 地址、协议和模型。",
-      "subscription": "使用服务商的订阅账号授权，不使用 API 密钥。",
+      "third-party": "",
+      "custom": "支持兼容 OpenAI 或 Anthropic 协议的服务。",
+      "subscription": "",
     };
     return `<section class="ai-add-card">
       <div class="ai-add-card-body">
         <div class="ai-segmented" role="tablist" data-ai-add-tabs>${tabs.map(([id, label]) => `<button class="ai-segment${tab === id ? " active" : ""}" role="tab" aria-selected="${tab === id}" data-action="ai-add-tab" data-tab="${id}">${label}</button>`).join("")}</div>
-        <p class="ai-hint" data-ai-add-tab-hint>${hints[tab]}</p>
+        ${hints[tab] ? `<p class="ai-hint" data-ai-add-tab-hint>${hints[tab]}</p>` : ""}
         <div class="ai-add-panel" role="tabpanel">${tab === "subscription" ? aiSubscriptionSettingsView(store, configured) : aiProviderEditorView(store.ui.aiAddDraft, "add", tab)}</div>
         <button class="ai-add-trigger" data-action="ai-create-connection">收起</button>
       </div>
@@ -3598,7 +3654,7 @@ export function createViews(store) {
     }
       <p class="ai-hint">${
       result.change_draft_id
-        ? "这次回答带有可审核的修改，下面会显示修改前后；确认前课程内容不会改变。"
+      ? "修改需审核；确认前不会改变课程内容。"
         : result.suggestion_id
         ? "这次回答已保存为建议，正文没有改动。"
         : "这次没有生成可保存的建议；你仍可继续编辑。"
@@ -3624,7 +3680,7 @@ export function createViews(store) {
       <div class="ai-block-head"><b>修改草稿 · 修改对照</b><span class="badge ${
       draft.status === "applied" ? "done" : draft.status === "discarded" ? "warning" : "open"
     }">${esc(AI_DRAFT_STATUS_LABELS[draft.status] || draft.status)}</span></div>
-      <p class="ai-hint">下面列出修改前后内容。逐条看过后再决定；应用后可以用“撤销”回到应用前。</p>
+      <p class="ai-hint">应用后可撤销。</p>
       ${
       rows.map((row, index) => {
         const reason = operations[index] ? String(operations[index].reason || "") : "";
@@ -3726,7 +3782,7 @@ export function createViews(store) {
       open
         ? records.length
           ? `<div class="ai-execution-list">${records.map(row).join("")}</div>`
-          : `<p class="side-note">还没有这门课程的执行记录。运行一次 AI 后，这里会显示时间、范围、服务商和结果；这些记录不属于课程内容。</p>`
+          : `<p class="side-note">暂无执行记录。</p>`
         : ""
     }
     </div>`;
@@ -3761,10 +3817,10 @@ export function createViews(store) {
       ? "本机尚未保存 API Key"
       : "这次 AI 没有完成";
     const errorHint = errorCode === "authentication_failed"
-      ? "本机已取到这条连接的凭据，但服务商拒绝了认证。请检查 Base URL、认证头和方案，确认后再更新密钥。"
+      ? "服务商拒绝认证。请检查 API 地址、认证配置和密钥。"
       : errorCode === "missing_credential"
-      ? "本机没有这条连接的凭据。请在连接管理中单独保存 API Key。"
-      : "课程内容没有改动，你可以检查设置后重试。";
+      ? "请在模型设置中保存此连接的 API 密钥。"
+      : "课程内容未改动。";
     const running = status === "running";
     const form = store.ui.aiProviderForm;
     const formDescriptor = form
@@ -3779,21 +3835,21 @@ export function createViews(store) {
     // `document` item per lesson), so the summary has to say that instead of
     // claiming the opposite.
     const scopeHint = lessons.length === 0
-      ? "这门课程还没有课次：先建一课，AI 才能读到上下文。"
+      ? "先创建一课。"
       : store.ui.aiScope === "block" && !blockUsable
-      ? "先在正文或结构里点选一个区块，才能使用「当前区块」范围。"
+      ? "先选择正文区块。"
       : store.ui.aiScope === "block" && targetBlock
-      ? `区块范围只发送本课结构摘要与这一段的全文：${esc(targetBlock.label)}。`
+      ? `发送本课结构摘要和所选区块全文：${esc(targetBlock.label)}。`
       : store.ui.aiScope === "course"
-      ? "课程范围会发送整门课程：课程地图、各课结构摘要与各课正文全文。只想改一段时请切换到「当前区块」，或关掉不需要的类别后先预览。"
-      : "课级范围只发送当前课的结构、正文与待补、素材元数据，不发送其他课次的正文。";
+      ? "发送课程地图、各课结构摘要和全部正文；可取消不需要的类别并预览。"
+      : "发送当前课结构、正文、待补和素材信息；不发送其他课正文。";
     const capabilities = store.aiCapabilities ? store.aiCapabilities() : null;
     const noExtraCapabilities = capabilities &&
       (capabilities.tools || []).length === 0 &&
       (capabilities.mcp || []).length === 0 &&
       (capabilities.skills || []).length === 0;
     const capabilityLine = noExtraCapabilities
-      ? "本次只调用所选服务商的对话接口：不会调用任何 Tool、MCP 或 Skill。"
+      ? "仅调用对话接口，不使用 Tool、MCP 或 Skill。"
       : capabilities
       ? `本次会调用：Tool ${(capabilities.tools || []).length} 个、MCP ${(capabilities.mcp || []).length} 个、Skill ${(capabilities.skills || []).length} 个。`
       : "";
@@ -3808,10 +3864,10 @@ export function createViews(store) {
         : configured[providerId] === true && model),
     );
     if (!hasUsableConnection) {
-      return `<div class="side-head"><div><span class="eyebrow">本地优先 · 只生成可审核建议</span><h2>AI 助手</h2></div></div><div class="ai-empty-state">${error ? `<div class="ai-error"><b>${esc(errorTitle)}</b><p>${esc(error.message || "请求没有完成。")}</p>${error.recommended_action ? `<p>${esc(error.recommended_action)}</p>` : ""}</div>` : ""}<b>还没有可用的模型连接</b><p>在设置中添加 API 连接或订阅账户，并保存至少一个可用模型后即可开始。</p><button class="primary" data-action="ai-toggle-settings">配置 AI</button><small>右上角“设置”也可随时打开模型管理。</small></div>`;
+      return `<div class="side-head"><div><span class="eyebrow">建议需审核</span><h2>AI 助手</h2></div></div><div class="ai-empty-state">${error ? `<div class="ai-error"><b>${esc(errorTitle)}</b><p>${esc(error.message || "请求没有完成。")}</p>${error.recommended_action ? `<p>${esc(error.recommended_action)}</p>` : ""}</div>` : ""}<b>还没有可用的模型连接</b><p>添加模型连接以开始使用。</p><button class="primary" data-action="ai-toggle-settings">配置 AI</button></div>`;
     }
 
-    return `<div class="side-head"><div><span class="eyebrow">本地优先 · 只生成可审核建议</span><h2>AI 助手</h2></div><button class="icon-button" data-action="ai-refresh-executions" aria-label="重新读取 AI 执行记录" title="重新读取执行记录">↻</button></div>
+    return `<div class="side-head"><div><span class="eyebrow">建议需审核</span><h2>AI 助手</h2></div><button class="icon-button" data-action="ai-refresh-executions" aria-label="重新读取 AI 执行记录" title="重新读取执行记录">↻</button></div>
 
     <div class="ai-block">
       <span class="field-label">上下文范围</span>
@@ -3858,7 +3914,7 @@ export function createViews(store) {
         : `<option value="">${esc(model || "还没有可用模型，请先在设置中添加")}</option>`
     }</select></label>
       <div class="ai-provider-state"><span class="ai-key-state ${configured[providerId] ? "set" : "unset"}">${descriptor?.kind === "openai_chatgpt_subscription" ? (configured[providerId] ? "ChatGPT 订阅已授权" : "ChatGPT 订阅未登录") : (configured[providerId] ? "已保存 API Key" : "未保存 API Key")}</span><span class="ai-current-model">${esc(descriptor?.label || providerId)} · ${esc(model || "未设置模型")}</span></div>
-      <p class="side-note">连接与模型在右上角“设置”中管理。API Key 与订阅令牌保存在本机系统凭据存储，不写入课程文件。</p>
+      <p class="side-note">连接与模型在设置中管理；凭据保存在本机，不写入课程文件。</p>
     </div>
 
     <div class="ai-block">
@@ -3870,8 +3926,8 @@ export function createViews(store) {
     }">${store.ui.aiWantsChanges === true ? "✓" : "○"} 要求修改课程内容</button>
       <p class="ai-hint">${
       store.ui.aiWantsChanges === true
-        ? "会要求模型给出可审核的修改；仍然只会生成修改对照，确认后才写入正文。"
-        : "默认只让模型解释、提问或给建议，不要求它改正文。"
+        ? "生成修改对照，确认后应用。"
+        : "只生成解释、问题或建议，不改正文。"
     }</p>
       <div class="ai-run-row">
         <button class="primary" data-action="ai-run" ${running ? "disabled" : ""}>${
@@ -3884,7 +3940,7 @@ export function createViews(store) {
       <p class="ai-hint" data-ai-capabilities="true">${esc(capabilityLine)}</p>
       ${
       running
-        ? `<p class="ai-hint">请求已经发出。取消只会通知本机服务停止这次请求；在它结束前界面不会改动课程内容。</p>`
+        ? `<p class="ai-hint">请求已发出；取消不一定能中止服务商处理，结果不会自动改动课程。</p>`
         : ""
     }
     </div>
@@ -3908,11 +3964,9 @@ export function createViews(store) {
             ? `<p class="muted">下一步：${esc(error.recommended_action)}</p>`
             : ""
         }</div>`
-        : `<p class="ai-hint">${
-          status === "idle"
-            ? "还没有运行过。开始运行后，结果会显示在这里；课程内容不会自动改动。"
-            : "当前没有错误，可以继续。"
-        }</p>`
+        : status === "idle"
+        ? `<p class="ai-hint">运行后结果会显示在这里，课程不会自动改动。</p>`
+        : ""
     }
     </div>
 
@@ -3927,14 +3981,14 @@ export function createViews(store) {
       const project = target.project;
       const activeStages = store.data.stages.filter((stage) => !stage.archived);
       const activeLessons = store.data.content_items.filter((lesson) => !lesson.archived);
-      return `<div class="side-head"><div><span class="eyebrow">当前选择</span><h2>${esc(project.title || "课程项目")}</h2></div></div><dl class="properties"><dt>对象</dt><dd>课程项目</dd><dt>阶段</dt><dd>${activeStages.length}</dd><dt>课程内容</dt><dd>${activeLessons.length}</dd></dl><p class="side-note">选择一个课时或正文区块后，可以查看它的详细属性。</p>`;
+      return `<div class="side-head"><div><span class="eyebrow">当前选择</span><h2>${esc(project.title || "课程项目")}</h2></div></div><dl class="properties"><dt>对象</dt><dd>课程项目</dd><dt>阶段</dt><dd>${activeStages.length}</dd><dt>课程内容</dt><dd>${activeLessons.length}</dd></dl>`;
     }
     if (target.kind === "stage") {
       const stage = target.stage;
       const lessons = store.data.content_items.filter((lesson) =>
         !lesson.archived && lesson.stage_id === stage.id
       );
-      return `<div class="side-head"><div><span class="eyebrow">当前阶段</span><h2>${esc(stage.code)}｜${esc(stage.title)}</h2></div></div><dl class="properties"><dt>对象</dt><dd>阶段</dd><dt>编号</dt><dd>${esc(stage.code)}</dd><dt>标题</dt><dd>${esc(stage.title)}</dd><dt>课程内容</dt><dd>${lessons.length}</dd></dl><p class="side-note">在课程地图中可以重命名阶段，或把课时拖入此阶段。</p>`;
+      return `<div class="side-head"><div><span class="eyebrow">当前阶段</span><h2>${esc(stage.code)}｜${esc(stage.title)}</h2></div></div><dl class="properties"><dt>对象</dt><dd>阶段</dd><dt>编号</dt><dd>${esc(stage.code)}</dd><dt>标题</dt><dd>${esc(stage.title)}</dd><dt>课程内容</dt><dd>${lessons.length}</dd></dl><p class="side-note">在课程地图中编辑阶段。</p>`;
     }
     if (!view) return "";
     const lesson = view.lesson;
@@ -4018,14 +4072,14 @@ export function createViews(store) {
         }</dd><dt>待补</dt><dd>${
           lesson.gaps.total ? `${lesson.gaps.total} 项` : "无"
         }</dd><dt>缺素材</dt><dd>${
-          lesson.progress.missing_media || 0
-        } 项</dd></dl><p class="side-note">点选一个正文区块后可以在这里改类型和内容。</p>`
+        lesson.progress.missing_media || 0
+        } 项</dd></dl><p class="side-note">选择正文区块以查看属性。</p>`
     }`;
   }
 
   function versionsPanel() {
     const snapshots = (store.snapshotRows || []).filter((snapshot) => snapshot.status === "available");
-    return `<div class="side-head"><div><span class="eyebrow">安全恢复</span><h2>版本历史</h2></div><button class="icon-button" data-action="save-version" aria-label="保存版本" title="保存版本">＋</button></div><p class="side-note">恢复旧版本前会自动保留“恢复前备份”。</p>${
+    return `<div class="side-head"><div><span class="eyebrow">安全恢复</span><h2>版本历史</h2></div><button class="icon-button" data-action="save-version" aria-label="保存版本" title="保存版本">＋</button></div><p class="side-note">恢复前会自动备份当前版本。</p>${
       snapshots.slice(0, 4).map((snapshot) =>
         `<button class="side-item" data-action="restore-version" data-id="${
           snapshot.id
@@ -4053,7 +4107,7 @@ export function createViews(store) {
     if (!problem) return "";
     const detail = problem.problem || {};
     if (problem.status === "locked" || detail.code === "project_locked") {
-      return `<div class="overlay"><section class="conflict-modal modal project-problem-modal project-lock-modal" role="dialog" aria-modal="true" aria-labelledby="project-lock-title" aria-describedby="project-lock-description" tabindex="-1" data-stop-click="true"><div class="modal-head"><div><span class="eyebrow">项目正在使用</span><h2 id="project-lock-title">这个项目暂时无法打开</h2></div></div><p class="muted" id="project-lock-description">${esc(detail.message || "该项目已在另一窗口或进程中编辑。为避免覆盖，Workbench 没有接管项目锁，也没有修改项目内容。")}</p><div class="project-lock-details"><span>项目文件夹</span><code title="${esc(problem.dir || "")}">${esc(problem.dir || "未知位置")}</code></div><p class="small muted">关闭正在编辑这个项目的其他窗口后，可以安全重试；如果它仍在使用，请返回当前项目或项目列表。</p><div class="modal-actions"><button class="secondary" data-action="dismiss-project-problem">返回</button><button class="primary" data-action="retry-locked-project">重试打开</button></div></section></div>`;
+      return `<div class="overlay"><section class="conflict-modal modal project-problem-modal project-lock-modal" role="dialog" aria-modal="true" aria-labelledby="project-lock-title" aria-describedby="project-lock-description" tabindex="-1" data-stop-click="true"><div class="modal-head"><div><span class="eyebrow">项目正在使用</span><h2 id="project-lock-title">这个项目暂时无法打开</h2></div></div><p class="muted" id="project-lock-description">${esc(detail.message || "项目正由其他窗口编辑；课程内容未改动。")}</p><div class="project-lock-details"><span>项目文件夹</span><code title="${esc(problem.dir || "")}">${esc(problem.dir || "未知位置")}</code></div><p class="small muted">关闭其他窗口后重试；如仍占用，请返回项目列表。</p><div class="modal-actions"><button class="secondary" data-action="dismiss-project-problem">返回</button><button class="primary" data-action="retry-locked-project">重试打开</button></div></section></div>`;
     }
     const headline = detail.code === "unsupported_schema"
       ? "这个项目由更高版本的 Workbench 创建。"
@@ -4076,8 +4130,8 @@ export function createViews(store) {
       <p class="small muted">${tooNew
         ? "当前版本不会改写这个文件。请使用创建该项目的 Workbench 版本打开。"
         : confirm
-        ? "导入会把原来的 project.json 完整保留为一个带时间戳的备份文件（不会删除），然后按普通资料文件夹重新扫描、映射。"
-        : "你可以返回并修改这个文件，也可以把它当作普通资料文件夹重新导入。重新导入不会覆盖原来的 project.json。"}</p>
+        ? "原 project.json 将备份，再按资料文件夹重新导入。"
+        : "可返回修复，或按资料文件夹重新导入；原项目文件保留。"}</p>
       <details class="diagnostic"><summary>查看具体问题</summary><div class="project-problem-detail">
         <p><b>${esc(detail.path || "project.json")}</b></p>
         <p>期望：${esc(detail.expected || "可载入的课程项目")}</p>
@@ -4109,7 +4163,7 @@ export function createViews(store) {
       const externalEntries = conflict.external_diff?.entries || [];
       const localEntries = conflict.local_diff?.entries || [];
       const mergeConflicts = conflict.merge?.conflicts || [];
-      return `<div class="overlay"><div class="conflict-modal modal" role="dialog" aria-modal="true" aria-labelledby="external-conflict-title" tabindex="-1" data-stop-click="true"><div class="modal-head"><div><span class="eyebrow">保存已暂停</span><h2 id="external-conflict-title">课程文件与当前编辑内容存在差异</h2></div></div><p class="muted">为避免覆盖，手动保存和自动保存都已暂停。你可以继续查看；下一步请选择重新载入、自动合并，或在确认后保留本地版本。</p>${
+      return `<div class="overlay"><div class="conflict-modal modal" role="dialog" aria-modal="true" aria-labelledby="external-conflict-title" tabindex="-1" data-stop-click="true"><div class="modal-head"><div><span class="eyebrow">保存已暂停</span><h2 id="external-conflict-title">课程文件与当前编辑内容存在差异</h2></div></div><p class="muted">保存已暂停。请选择重新载入、自动合并或确认后保留本地版本。</p>${
         conflict.inspection_error
           ? `<p class="conflict-error">暂时无法读取磁盘差异。你仍可重新载入，或明确保留本地版本。</p><details class="diagnostic"><summary>显示技术信息</summary><code>${esc(conflict.inspection_error)}</code></details>`
           : ""
@@ -4151,7 +4205,7 @@ export function createViews(store) {
       if (asset) {
         const value = store.ui.assetRenameValue ?? asset.filename;
         const error = String(store.ui.assetRenameError || "");
-        return `<div class="overlay"><section class="conflict-modal modal asset-rename-modal" role="dialog" aria-modal="true" aria-labelledby="asset-rename-title" aria-describedby="asset-rename-description${error ? " asset-rename-error" : ""}" tabindex="-1" data-stop-click="true"><div class="modal-head"><div><span class="eyebrow">媒体库 · ${esc(assetLabel(asset.type))}</span><h2 id="asset-rename-title">重命名素材文件</h2></div></div><p class="small muted">当前文件：<b>${esc(asset.filename)}</b></p><label class="field-label" for="asset-rename-input">新文件名<input id="asset-rename-input" class="select asset-rename-input" data-asset-title data-focus-key="asset-title" data-id="${asset.id}" aria-describedby="asset-rename-description${error ? " asset-rename-error" : ""}" value="${esc(value)}" autocomplete="off" /></label><p class="small muted" id="asset-rename-description">这会重命名项目 assets 文件夹里的托管文件，并同步更新正文引用；素材内容与身份保持不变。原有扩展名会保留。</p>${error ? `<p class="form-error" id="asset-rename-error" role="alert">${esc(error)}</p>` : ""}${store.uncertainMutation ? `<div class="modal-actions"><button class="secondary" data-action="verify-save-result" ${store.uncertainMutationPending ? "disabled" : ""}>${store.uncertainMutationPending ? "正在核验…" : "核验磁盘结果"}</button></div>` : ""}<div class="modal-actions"><button class="secondary" data-action="cancel-rename-asset">取消</button><button class="primary" data-action="confirm-rename-asset" data-id="${asset.id}">保存新文件名</button></div></section></div>`;
+        return `<div class="overlay"><section class="conflict-modal modal asset-rename-modal" role="dialog" aria-modal="true" aria-labelledby="asset-rename-title" aria-describedby="asset-rename-description${error ? " asset-rename-error" : ""}" tabindex="-1" data-stop-click="true"><div class="modal-head"><div><span class="eyebrow">媒体库 · ${esc(assetLabel(asset.type))}</span><h2 id="asset-rename-title">重命名素材文件</h2></div></div><p class="small muted">当前文件：<b>${esc(asset.filename)}</b></p><label class="field-label" for="asset-rename-input">新文件名<input id="asset-rename-input" class="select asset-rename-input" data-asset-title data-focus-key="asset-title" data-id="${asset.id}" aria-describedby="asset-rename-description${error ? " asset-rename-error" : ""}" value="${esc(value)}" autocomplete="off" /></label><p class="small muted" id="asset-rename-description">重命名素材文件并更新正文引用；素材内容不变，扩展名保留。</p>${error ? `<p class="form-error" id="asset-rename-error" role="alert">${esc(error)}</p>` : ""}${store.uncertainMutation ? `<div class="modal-actions"><button class="secondary" data-action="verify-save-result" ${store.uncertainMutationPending ? "disabled" : ""}>${store.uncertainMutationPending ? "正在核验…" : "核验磁盘结果"}</button></div>` : ""}<div class="modal-actions"><button class="secondary" data-action="cancel-rename-asset">取消</button><button class="primary" data-action="confirm-rename-asset" data-id="${asset.id}">保存新文件名</button></div></section></div>`;
       }
     }
     if (store.ui.assetImagePreviewId) {
@@ -4180,7 +4234,7 @@ export function createViews(store) {
         : store.ui.selectedBlockId
         ? "插入到当前选中区块之后"
         : "追加到当前课末尾";
-      return `<div class="overlay" data-action="close-overlay"><div class="asset-picker modal" role="dialog" aria-modal="true" aria-labelledby="asset-picker-title" data-stop-click="true"><div class="modal-head"><div><span class="eyebrow latin">MEDIA PICKER</span><h2 id="asset-picker-title">选择素材</h2></div><button class="icon-button" data-action="close-overlay" aria-label="关闭素材选择" title="关闭素材选择">×</button></div><p class="muted">${context}。选择后会建立真实引用，可以在媒体库看到使用位置。</p>${
+      return `<div class="overlay" data-action="close-overlay"><div class="asset-picker modal" role="dialog" aria-modal="true" aria-labelledby="asset-picker-title" data-stop-click="true"><div class="modal-head"><div><span class="eyebrow latin">MEDIA PICKER</span><h2 id="asset-picker-title">选择素材</h2></div><button class="icon-button" data-action="close-overlay" aria-label="关闭素材选择" title="关闭素材选择">×</button></div><p class="muted">${context}。选择后建立课程引用。</p>${
         assets.length
           ? `<div class="picker-grid">${
             assets.map((asset) =>
@@ -4214,7 +4268,7 @@ export function createViews(store) {
       const requiredCodes = new Set(warningIssues.map((issue) => issue.code));
       const acknowledged = new Set(store.ui.acknowledgedWarnings || []);
       const allWarningsAcknowledged = [...requiredCodes].every((code) => acknowledged.has(code)) && !(report.warnings > 0 && !requiredCodes.size);
-      return `<div class="overlay" data-action="close-overlay"><div class="preflight modal" role="dialog" aria-modal="true" aria-labelledby="publish-preflight-title" data-stop-click="true"><div class="modal-head"><div><span class="eyebrow">导出前检查</span><h2 id="publish-preflight-title">导出前检查</h2></div><button class="icon-button" data-action="close-overlay" aria-label="关闭导出前检查" title="关闭导出前检查">×</button></div><p><b>${store.ui.publishScope === "course" ? "整门课程" : "当前课"}</b> → <b>${esc(formatNames[store.ui.publishFormat] || store.ui.publishFormat)}</b></p><p class="muted">先检查课程内容和素材。标为“必须修复”的问题会阻止导出；每项提示都需要你明确确认。检查不会修改课程，也不会调用 AI。</p><div class="check-list">${[
+      return `<div class="overlay" data-action="close-overlay"><div class="preflight modal" role="dialog" aria-modal="true" aria-labelledby="publish-preflight-title" data-stop-click="true"><div class="modal-head"><div><span class="eyebrow">导出前检查</span><h2 id="publish-preflight-title">导出前检查</h2></div><button class="icon-button" data-action="close-overlay" aria-label="关闭导出前检查" title="关闭导出前检查">×</button></div><p><b>${store.ui.publishScope === "course" ? "整门课程" : "当前课"}</b> → <b>${esc(formatNames[store.ui.publishFormat] || store.ui.publishFormat)}</b></p><p class="muted">修复阻断项并逐项确认提示后导出。检查不会修改课程或调用 AI。</p><div class="check-list">${[
         ["内容级待补", report.content, false],
         ["当前排版待补", report.layout, false],
         ["缺失素材文件", report.missingAssets, true],
@@ -4223,7 +4277,7 @@ export function createViews(store) {
         ["未加载字体", report.fonts, false],
         ["外部引用", report.external, false],
         ["媒体降级", report.mediaDowngrades || 0, false],
-      ].map(([label, count, blocking]) => `<div><span class="check ${count ? blocking ? "danger" : "warning" : "ok"}">${count || "✓"}</span><span>${label}</span><b>${count}</b></div>`).join("")}</div>${issues.length ? `<div class="issue-list">${issues.map((issue) => `<article class="${issue.severity === "blocking" ? "issue-blocking" : "issue-warning"}"><b>${issue.severity === "blocking" ? "必须修复" : "提示"}</b><span>${esc(issueMessage(issue))}</span>${issueDiagnostics(issue)}</article>`).join("")}</div>` : ""}${warningIssues.length ? `<div class="warning-ack-list"><b>逐项确认本次输出提示</b>${warningIssues.map((issue) => `<label><input type="checkbox" data-action="acknowledge-export-warning" data-code="${esc(issue.code)}" ${acknowledged.has(issue.code) ? "checked" : ""}/><span>${esc(issueMessage(issue))}${issue.count > 1 ? `（${issue.count} 项）` : ""}</span></label>`).join("")}</div>` : ""}<div class="preflight-total">必须修复 <strong>${report.blocking}</strong> · 提示 <strong>${report.warnings}</strong></div>${report.blocking ? `<p class="error-text">当前不能导出：请先修复上面标为“必须修复”的问题。不会生成半成品，也不会修改源课程。</p>` : report.warnings ? `<p class="muted">仅在勾选确认全部提示后才会继续生成；未放置正文、线性化或媒体降级会按上方说明处理。</p>` : `<p class="success-text">检查通过，可以生成输出；源课程不会被修改。</p>`}<div class="modal-actions"><button class="secondary" data-action="close-overlay">返回继续修复</button><button class="primary" data-action="export-format" data-format="${esc(store.ui.publishFormat)}" ${report.blocking || !allWarningsAcknowledged ? "disabled" : ""}>${report.warnings ? "确认提示并导出" : "开始导出"}</button></div></div></div>`;
+      ].map(([label, count, blocking]) => `<div><span class="check ${count ? blocking ? "danger" : "warning" : "ok"}">${count || "✓"}</span><span>${label}</span><b>${count}</b></div>`).join("")}</div>${issues.length ? `<div class="issue-list">${issues.map((issue) => `<article class="${issue.severity === "blocking" ? "issue-blocking" : "issue-warning"}"><b>${issue.severity === "blocking" ? "必须修复" : "提示"}</b><span>${esc(issueMessage(issue))}</span>${issueDiagnostics(issue)}</article>`).join("")}</div>` : ""}${warningIssues.length ? `<div class="warning-ack-list"><b>逐项确认本次输出提示</b>${warningIssues.map((issue) => `<label><input type="checkbox" data-action="acknowledge-export-warning" data-code="${esc(issue.code)}" ${acknowledged.has(issue.code) ? "checked" : ""}/><span>${esc(issueMessage(issue))}${issue.count > 1 ? `（${issue.count} 项）` : ""}</span></label>`).join("")}</div>` : ""}<div class="preflight-total">必须修复 <strong>${report.blocking}</strong> · 提示 <strong>${report.warnings}</strong></div>${report.blocking ? `<p class="error-text">请先修复标为“必须修复”的问题；未生成文件，源课程未改动。</p>` : report.warnings ? `<p class="muted">仅在勾选确认全部提示后才会继续生成；未放置正文、线性化或媒体降级会按上方说明处理。</p>` : `<p class="success-text">检查通过，可以导出；源课程不会被修改。</p>`}<div class="modal-actions"><button class="secondary" data-action="close-overlay">返回继续修复</button><button class="primary" data-action="export-format" data-format="${esc(store.ui.publishFormat)}" ${report.blocking || !allWarningsAcknowledged ? "disabled" : ""}>${report.warnings ? "确认提示并导出" : "开始导出"}</button></div></div></div>`;
     }
     if (store.ui.snapshot) {
       return `<div class="overlay" data-action="close-overlay"><div class="capture modal" role="dialog" aria-modal="true" aria-labelledby="save-version-title" aria-busy="${store.snapshotSaving}" data-stop-click="true"><div class="modal-head"><div><span class="eyebrow">长期历史</span><h2 id="save-version-title">保存版本</h2></div><button class="icon-button" data-action="close-overlay" aria-label="关闭保存版本" title="关闭保存版本">×</button></div><label class="field-label">版本名称<input data-snapshot-name data-focus-key="snapshot-name" value="${esc(store.snapshotName)}" placeholder="例如：第一课正文定稿" /></label><label class="field-label">备注<textarea data-snapshot-note data-focus-key="snapshot-note" placeholder="记录这个节点为什么重要">${esc(store.snapshotNote)}</textarea></label>${store.snapshotError ? `<p class="error-text" role="alert">${esc(store.snapshotError)}</p>` : store.snapshotSaving ? `<p class="muted" role="status">正在写入并确认历史版本…</p>` : ""}<div class="modal-actions"><button class="secondary" data-action="close-overlay">取消</button><button class="primary" data-action="submit-snapshot" ${store.snapshotSaving ? "disabled" : ""}>${store.snapshotSaving ? "正在保存…" : store.snapshotError ? "重试保存" : "保存版本"}</button></div></div></div>`;
@@ -4234,7 +4288,7 @@ export function createViews(store) {
       // The modal shell, its dialog a11y contract and the footer note are
       // unchanged; nothing here renders a credential value.
       const configured = aiConfiguredMap();
-      return `<div class="overlay ai-settings-overlay" data-action="ai-settings-backdrop"><section class="modal ai-settings-modal" role="dialog" aria-modal="true" aria-labelledby="ai-settings-title" data-stop-click="true"><header class="modal-head"><div><span class="eyebrow">应用设置 · 模型</span><h2 id="ai-settings-title">模型</h2></div><button class="icon-button" data-action="ai-close-settings" aria-label="关闭设置" title="关闭设置">×</button></header><p class="muted">填入各提供商的 API 密钥即可使用其模型。</p>${store.ui.aiSaveStatus ? `<p class="ai-save-status" role="status" aria-live="polite">${esc(store.ui.aiSaveStatus)}</p>` : ""}${aiProviderRowsView(configured)}${aiAddCardView(configured)}<div class="ai-settings-foot"><span>AI 配置仅保存连接元数据；密钥和订阅令牌写入${esc(store.aiStorageLabel ? store.aiStorageLabel() : "本机系统钥匙串")}，课程文件不含凭据。</span><button class="secondary" data-action="ai-close-settings">完成</button></div></section>${aiModelPickerView()}</div>`;
+      return `<div class="overlay ai-settings-overlay" data-action="ai-settings-backdrop"><section class="modal ai-settings-modal" role="dialog" aria-modal="true" aria-labelledby="ai-settings-title" data-stop-click="true"><header class="modal-head"><div><span class="eyebrow">应用设置 · 模型</span><h2 id="ai-settings-title">模型</h2></div><button class="icon-button" data-action="ai-close-settings" aria-label="关闭设置" title="关闭设置">×</button></header>${store.ui.aiSaveStatus ? `<p class="ai-save-status" role="status" aria-live="polite">${esc(store.ui.aiSaveStatus)}</p>` : ""}${aiProviderRowsView(configured)}${aiAddCardView(configured)}<div class="ai-settings-foot"><span>密钥和订阅令牌保存在${esc(store.aiStorageLabel ? store.aiStorageLabel() : "本机系统钥匙串")}，课程文件不含凭据。</span><button class="secondary" data-action="ai-close-settings">完成</button></div></section>${aiModelPickerView()}</div>`;
     }
     if (store.ui.blockPropertiesOpen && store.ui.route === "editor") {
       const item = store.currentItem();
@@ -4343,6 +4397,7 @@ export function createViews(store) {
   return {
     launcherView: launcher,
     shellView,
+    rightPanelView,
     overlayView: overlay,
     toastView: toast,
     statusbarView: () => statusbarView(store.currentItem()),

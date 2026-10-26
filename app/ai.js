@@ -729,7 +729,7 @@ const AI_FAILURE_DEFAULTS = {
       "请检查 Base URL、认证头、认证方案和已保存凭据是否匹配；确认后再更新密钥并重试。",
   },
   timeout: {
-    message: "AI 请求超时了（默认 60 秒内没有响应），课程内容没有改动。",
+    message: "AI 请求超时，课程内容未改动。",
     action: "可以稍后重试；也可以先缩小上下文范围（改成课级或区块级）再重试。",
   },
   cancelled: {
@@ -746,7 +746,7 @@ const AI_FAILURE_DEFAULTS = {
       "可以稍后重试；如果一直失败，请检查 AI 设置里的模型名与 Base URL 是否正确。",
   },
   malformed_response: {
-    message: "模型的回复无法解析成可审核的建议，课程内容没有改动。",
+    message: "无法生成修改建议，课程内容未改动。",
     action:
       "可以重试一次；如果仍然失败，请换一个模型，或在指令里说明要改哪个区块。",
   },
@@ -2081,7 +2081,7 @@ export const AI_REASONING_VALUE_REQUIRED_MESSAGE = "每个思考档位都要填�
  * rule the parent asked for, and what off means on the wire.
  */
 export const AI_REASONING_HELP_TEXT =
-  "档位=模型能力档，API 参数值=发送给该协议的参数值，默认与档位名相同；如有不同，以模型提供商的 API 文档为准。开启后，未指定档位时使用最强档；调用时可指定档位，off 表示不下发推理参数。Off 行只表示关闭思考，已写入的参数值会保留但不发送。";
+  "参数值以服务商文档为准。未指定档位时使用最强档；Off 不发送推理参数。";
 
 /**
  * design §4.4: an Anthropic budget must be a plain number.  Anything else is

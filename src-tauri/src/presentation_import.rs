@@ -272,6 +272,32 @@ pub fn inspect_pptx(bytes: &[u8]) -> Result<StyleExtractionReport, String> {
     inspect_package(&package, bytes)
 }
 
+/// Extract source-addressable text in presentation order for discovery.
+/// Each returned row maps to one slide and one editable text shape.
+pub(crate) fn extract_slide_text(bytes: &[u8]) -> Result<Vec<(usize, String)>, String> {
+    let package = read_package(bytes)?;
+    let presentation = read_presentation(&package)?;
+    let mut blocks = Vec::new();
+    let mut total_chars = 0usize;
+    for (index, slide) in presentation.slides.iter().enumerate() {
+        let xml = package
+            .get(&slide.part)
+            .ok_or_else(|| format!("PPTX 缺少幻灯片部件：{}", slide.part))?;
+        for shape in parse_shapes(xml)? {
+            let text = shape.text.trim();
+            if text.is_empty() {
+                continue;
+            }
+            total_chars = total_chars.saturating_add(text.chars().count());
+            if total_chars > 8_000_000 || blocks.len() >= 20_000 {
+                return Err("PPTX 正文超过资源发现读取上限。".to_owned());
+            }
+            blocks.push((index + 1, text.to_owned()));
+        }
+    }
+    Ok(blocks)
+}
+
 /// Copy an existing representative slide, replace its supported editable
 /// title/body text and image slots, then append it to the same OPC package.
 /// `template_slide_part` must be a slide part selected from the matching
@@ -3305,6 +3331,18 @@ mod tests {
             .limitations
             .iter()
             .any(|text| text.contains("视觉检查")));
+    }
+
+    #[test]
+    fn discovery_text_uses_actual_slide_order_and_text_shapes() {
+        let rows = extract_slide_text(COURSE_FIXTURE).expect("fixture text should be readable");
+        assert!(!rows.is_empty());
+        assert!(rows
+            .iter()
+            .all(|(slide, text)| (1..=3).contains(slide) && !text.is_empty()));
+        assert!(rows
+            .iter()
+            .any(|(slide, text)| *slide == 1 && text.contains("双语城市导览")));
     }
 
     #[test]

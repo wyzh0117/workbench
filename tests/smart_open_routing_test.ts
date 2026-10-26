@@ -339,7 +339,8 @@ Deno.test("the diagnosis overlay offers 查看具体问题, 返回 and a confirm
     assertContains(html, "/tmp/broken", "the detail shows which folder");
     assertContains(html, 'data-action="dismiss-project-problem"', "返回");
     assertContains(html, 'data-action="reimport-project-folder"', "作为普通资料文件夹重新导入");
-    assertContains(html, "不会覆盖原来的 project.json", "the promise not to overwrite");
+    // The short copy keeps the source project intact while naming the re-import path.
+    assertContains(html, "可返回修复，或按资料文件夹重新导入；原项目文件保留。", "the original project stays in place");
     assertLacks(html, "没有找到有效的 project.json", "§3.4: no generic message in markup");
     assertLacks(html, 'data-action="confirm-reimport-project-folder"', "confirmation is a second step");
   } finally {
@@ -356,8 +357,7 @@ Deno.test("re-importing asks for confirmation before the existing file is touche
     assertEqual(store.ui.replaceInvalidProject, false, "nothing may be replaced yet");
     assertEqual(folderCalls(calls).length, 0, "the folder is untouched");
     const html = launcherMarkup(store);
-    assertContains(html, "完整保留为一个带时间戳的备份文件", "the confirmation says the file survives");
-    assertContains(html, "不会删除", "and is never deleted");
+    assertContains(html, "原 project.json 将备份，再按资料文件夹重新导入。", "the confirmation explains the backup step");
     assertContains(html, 'data-action="confirm-reimport-project-folder"', "explicit confirm control");
   } finally {
     restore();

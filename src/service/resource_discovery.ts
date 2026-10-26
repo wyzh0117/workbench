@@ -11,6 +11,10 @@ import { id, now } from "../domain/util.ts";
 import type {
   ResourceCandidate,
   ResourceCandidateAcceptInput,
+  ResourceDiscoveryDocumentContext,
+  ResourceDiscoveryDocumentParseInput,
+  ResourceDiscoveryDocumentParseResult,
+  ResourceDiscoveryIntentOverrides,
   ResourceDiscoveryPlan,
   ResourceDiscoveryPreferences,
   ResourceDiscoveryPrepareInput,
@@ -35,13 +39,111 @@ const PARAGRAPH_CONTEXT_LIMIT = 240;
 const DATE_RE = /^\d{4}-\d{2}-\d{2}(?:T.*)?$/;
 
 type AcceptedCandidate = { resource_id: string; usages: Record<string, string> };
+type IndexedQuery = ResourceDiscoveryQueryPlan & { query_index: number };
 type PersistedCache = {
   version: number;
   plans: ResourceDiscoveryPlan[];
   tasks: ResourceDiscoveryTask[];
   accepted: Record<string, AcceptedCandidate>;
-  retry_queries: Record<string, ResourceDiscoveryQueryPlan[]>;
+  retry_queries: Record<string, IndexedQuery[]>;
 };
+
+const DOCUMENT_READ_LIMIT = 8 * 1024 * 1024;
+const DOCUMENT_BLOCK_LIMIT = 500;
+const DOCUMENT_TEXT_LIMIT = 120_000;
+
+function safeAssetStoragePath(path: unknown): path is string {
+  if (typeof path !== "string" || !path.startsWith("assets/") || path.includes("\\") || path.includes("\0")) return false;
+  const parts = path.split("/");
+  return parts.every((part) => part && part !== "." && part !== "..");
+}
+
+async function assertRegularAssetPath(root: string, relativePath: string) {
+  let path = root;
+  const parts = relativePath.split("/");
+  let stat: Deno.FileInfo | null = null;
+  for (let index = 0; index < parts.length; index += 1) {
+    path = join(path, parts[index]!);
+    stat = await Deno.lstat(path);
+    if (stat.isSymlink || (index === parts.length - 1 ? !stat.isFile : !stat.isDirectory)) {
+      throw error("unsafe_asset_path", "文档素材路径无效，无法安全读取。", "Document asset path is not a regular in-project file");
+    }
+  }
+  if (!stat) throw error("unsafe_asset_path", "文档素材路径无效，无法安全读取。", "Document asset path is empty");
+  return { path, stat };
+}
+
+function sameAssetFile(left: Deno.FileInfo, right: Deno.FileInfo): boolean {
+  return left.dev === right.dev && left.ino === right.ino && left.size === right.size && left.mtime?.getTime() === right.mtime?.getTime();
+}
+
+function decodeDiscoveryText(bytes: Uint8Array): { text: string; encoding: string } {
+  if (bytes[0] === 0xff && bytes[1] === 0xfe) {
+    return { text: new TextDecoder("utf-16le", { fatal: true }).decode(bytes.subarray(2)), encoding: "UTF-16LE" };
+  }
+  if (bytes[0] === 0xfe && bytes[1] === 0xff) {
+    const body = bytes.subarray(2);
+    if (body.length % 2 !== 0) throw error("document_parse_failed", "文档编码不完整，无法读取。", "Odd byte count in UTF-16BE document");
+    const swapped = new Uint8Array(body.length);
+    for (let index = 0; index < body.length; index += 2) {
+      swapped[index] = body[index + 1]!;
+      swapped[index + 1] = body[index]!;
+    }
+    return { text: new TextDecoder("utf-16le", { fatal: true }).decode(swapped), encoding: "UTF-16BE" };
+  }
+  const utf8 = bytes[0] === 0xef && bytes[1] === 0xbb && bytes[2] === 0xbf ? bytes.subarray(3) : bytes;
+  return { text: new TextDecoder("utf-8", { fatal: true }).decode(utf8), encoding: "UTF-8" };
+}
+
+function sha256Bytes(bytes: Uint8Array): Promise<string> {
+  const buffer = new ArrayBuffer(bytes.byteLength);
+  new Uint8Array(buffer).set(bytes);
+  return crypto.subtle.digest("SHA-256", buffer).then((digest) =>
+    [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, "0")).join("")
+  );
+}
+
+function takeCodePoints(value: string, limit: number): string {
+  return Array.from(value).slice(0, limit).join("");
+}
+
+function boundedStringArray(value: unknown, label: string, maxItems: number): string[] {
+  if (!Array.isArray(value) || value.length > maxItems) {
+    throw error("invalid_input", `文档搜索 ${label} 无效。`, `${label} must be a bounded string array`);
+  }
+  const result: string[] = [];
+  for (const item of value) {
+    if (typeof item !== "string" || !item.trim() || Array.from(item.trim()).length > 160) {
+      throw error("invalid_input", `文档搜索 ${label} 含无效内容。`, `${label} contains invalid text`);
+    }
+    if (!result.includes(item.trim())) result.push(item.trim());
+  }
+  return result;
+}
+
+function validIntentOverrides(raw: unknown): ResourceDiscoveryIntentOverrides | undefined {
+  if (raw === undefined) return undefined;
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+    throw error("invalid_input", "搜索意图修改格式无效。", "intent_overrides must be an object");
+  }
+  const value = raw as Record<string, unknown>;
+  const result: ResourceDiscoveryIntentOverrides = {};
+  for (const key of ["themes", "keywords", "case_types", "media_types"] as const) {
+    if (value[key] === undefined) continue;
+    const list = boundedStringArray(value[key], key, 20);
+    if (key === "themes" && !list.length) {
+      throw error("invalid_input", "搜索主题不能为空。", "intent_overrides.themes must not be empty");
+    }
+    result[key] = list;
+  }
+  if (value.language !== undefined) {
+    if (typeof value.language !== "string" || Array.from(value.language.trim()).length > 80) {
+      throw error("invalid_input", "搜索语言无效。", "intent_overrides.language is invalid");
+    }
+    result.language = value.language.trim();
+  }
+  return result;
+}
 
 function isoNow(): string {
   return now();
@@ -49,6 +151,15 @@ function isoNow(): string {
 
 function taskStopped(task: ResourceDiscoveryTask): boolean {
   return task.state === "cancel_requested" || task.state === "cancelled" || task.state === "stale";
+}
+
+function indexedQueries(plan: ResourceDiscoveryPlan): IndexedQuery[] {
+  let query_index = 0;
+  return plan.queries.flatMap((lesson) => lesson.queries.map((query) => ({
+    ...lesson,
+    queries: [query],
+    query_index: query_index++,
+  })));
 }
 
 function safeError(caught: unknown): { code: string; message: string } {
@@ -192,6 +303,8 @@ function buildQueries(
   contentItemIds: string[],
   searchTypes: ResourceSearchType[],
   preferences: ResourceDiscoveryPreferences,
+  documentContext?: ResourceDiscoveryDocumentContext,
+  intentOverrides?: ResourceDiscoveryIntentOverrides,
 ): { queries: ResourceDiscoveryQueryPlan[]; preview: ResourceDiscoveryPlan["context_preview"]; lessonRevisions: Record<string, string> } {
   const queries: ResourceDiscoveryQueryPlan[] = [];
   const items: ResourceDiscoveryPlan["context_preview"]["items"] = [];
@@ -205,28 +318,44 @@ function buildQueries(
       excerpt: context.excerpt,
     });
     const suffix = [
-      preferences.language,
+      intentOverrides?.language || preferences.language || documentContext?.preferred_language,
       preferences.learner_level,
-      preferences.case_types?.join(" "),
+      (intentOverrides?.case_types ?? documentContext?.case_types ?? preferences.case_types)?.join(" "),
+      (intentOverrides?.media_types ?? documentContext?.media_types)?.join(" "),
       preferences.source_preference?.join(" "),
     ].map(normalizeText).filter(Boolean).join(" ");
     const dateTerms = [
       preferences.published_after ? `after:${preferences.published_after.slice(0, 10)}` : "",
       preferences.published_before ? `before:${preferences.published_before.slice(0, 10)}` : "",
     ].filter(Boolean).join(" ");
-    const query = normalizeText(`${context.queryBase} ${suffix} ${dateTerms}`).slice(0, 500);
+    const topics = documentContext
+      ? (intentOverrides?.themes ?? documentContext.themes.map((theme) => theme.name))
+      : [context.queryBase];
+    const documentTerms = documentContext
+      ? [
+        (intentOverrides?.keywords ?? documentContext.keywords).join(" "),
+        documentContext.concepts.slice(0, 4).join(" "),
+        documentContext.objectives.slice(0, 2).join(" "),
+        documentContext.constraints?.terms?.join(" "),
+        documentContext.constraints?.time_range,
+        documentContext.constraints?.regions?.join(" "),
+        documentContext.constraints?.industries?.join(" "),
+      ].join(" ")
+      : "";
+    const queryRows = topics.flatMap((topic) => searchTypes.map((kind) => ({
+      kind,
+      ...(documentContext ? { topic } : {}),
+      query: normalizeText(`${topic} ${documentTerms} ${suffix} ${dateTerms}`).slice(0, 500),
+      request_budget_upper_bound: kind === "web"
+        ? 1 + Math.min(preferences.per_lesson_limit, MAX_CASE_RESULTS_PER_QUERY)
+        : 4,
+    })));
     queries.push({
       lesson_id: itemId,
-      need: context.queryBase,
+      need: documentContext ? topics.join(" · ") : context.queryBase,
       existing_resource_ids: context.existingResourceIds,
       source_locators: context.sourceLocators,
-      queries: searchTypes.map((kind) => ({
-        kind,
-        query,
-        request_budget_upper_bound: kind === "web"
-          ? 1 + Math.min(preferences.per_lesson_limit, MAX_CASE_RESULTS_PER_QUERY)
-          : 4,
-      })),
+      queries: queryRows,
     });
   }
   return {
@@ -247,6 +376,8 @@ async function candidateInputHash(input: {
   search_types: ResourceSearchType[];
   request_budget: number;
   preferences: ResourceDiscoveryPreferences;
+  document_context?: ResourceDiscoveryDocumentContext;
+  intent_overrides?: ResourceDiscoveryIntentOverrides;
   queries: ResourceDiscoveryQueryPlan[];
 }): Promise<string> {
   return await sha256(JSON.stringify(input));
@@ -483,7 +614,7 @@ export class ResourceDiscoveryService {
   private readonly plans = new Map<string, ResourceDiscoveryPlan>();
   private readonly tasks = new Map<string, ResourceDiscoveryTask>();
   private readonly accepted = new Map<string, AcceptedCandidate>();
-  private readonly retryQueries = new Map<string, ResourceDiscoveryQueryPlan[]>();
+  private readonly retryQueries = new Map<string, IndexedQuery[]>();
   private readonly controllers = new Map<string, AbortController>();
   private readonly runs = new Map<string, Promise<void>>();
   private readonly timers = new Set<ReturnType<typeof setTimeout>>();
@@ -492,7 +623,7 @@ export class ResourceDiscoveryService {
   private closed = false;
 
   constructor(
-    directory: string,
+    private readonly directory: string,
     private readonly providers: ResourceProviders,
     private readonly getProject: () => ProjectData | null,
     private readonly getGeneration: () => number,
@@ -503,6 +634,186 @@ export class ResourceDiscoveryService {
 
   async listProviders() {
     return await this.providers.listProviders();
+  }
+
+  async parseDocument(input: ResourceDiscoveryDocumentParseInput): Promise<ResourceDiscoveryDocumentParseResult> {
+    const project = this.requireProject();
+    const assetId = typeof input?.asset_id === "string" ? input.asset_id.trim() : "";
+    if (!assetId || assetId.length > 256) {
+      throw error("invalid_input", "素材 ID 无效。", "Document discovery requires an asset_id");
+    }
+    const asset = project.assets.find((candidate) => candidate.id === assetId && !candidate.archived);
+    if (!asset || asset.project_id !== project.project.id) {
+      throw error("asset_not_found", "找不到可读取的文档素材。", "Document asset is missing, archived or belongs to another project");
+    }
+    const extension = asset.filename.split(".").pop()?.toLowerCase() ?? "";
+    if (!["txt", "text", "md", "markdown"].includes(extension)) {
+      throw error("unsupported_platform", "DOCX、PDF 和 PPTX 正文读取需要 Tauri 桌面版。", "This shell only parses canonical TXT and Markdown assets");
+    }
+    if (!safeAssetStoragePath(asset.storage_path)) {
+      throw error("unsafe_asset_path", "文档素材路径无效，无法安全读取。", "Document asset storage_path is not a safe assets/ path");
+    }
+    const before = await assertRegularAssetPath(this.directory, asset.storage_path);
+    if (before.stat.size > DOCUMENT_READ_LIMIT) {
+      throw error("document_too_large", "文档超过 8 MiB 的浏览器壳读取上限。", "TXT/Markdown asset exceeds the browser-shell read limit");
+    }
+    const bytes = await Deno.readFile(before.path);
+    const after = await assertRegularAssetPath(this.directory, asset.storage_path);
+    if (!sameAssetFile(before.stat, after.stat) || bytes.byteLength !== after.stat.size) {
+      throw error("stale_input", "文档素材读取期间发生变化，请重新导入。", "Document asset changed while being read");
+    }
+    const decoded = decodeDiscoveryText(bytes);
+    const source = decoded.text.replace(/\r\n?/g, "\n");
+    const paragraphs = source.split(/\n\s*\n/).map((text) => text.trim()).filter(Boolean);
+    const markdown = extension === "md" || extension === "markdown";
+    const rawBlocks = paragraphs.map((text) => ({
+      text,
+      type: markdown && /^#{1,6}\s/.test(text.split("\n", 1)[0]!) ? "heading" : "paragraph",
+    }));
+    const sourceTextChars = Array.from(source).length;
+    const firstHeading = rawBlocks.find((block) => block.type === "heading")?.text;
+    const firstBlock = rawBlocks[0]?.text;
+    const title = takeCodePoints((firstHeading ?? firstBlock ?? asset.title ?? asset.filename).split("\n", 1)[0]!.replace(/^#{1,6}\s*/, "").trim(), 300) || asset.filename.replace(/\.[^.]+$/, "");
+    const warnings: string[] = [];
+    if (decoded.encoding !== "UTF-8") warnings.push(`文档编码识别为 ${decoded.encoding}，已转换为 UTF-8。`);
+    if (!paragraphs.length) warnings.push("文档为空，没有可用于搜索的正文。");
+    const blocks: ResourceDiscoveryDocumentParseResult["blocks"] = [];
+    const textParts: string[] = [];
+    let section: string | undefined;
+    let textChars = 0;
+    let truncated = false;
+    for (const raw of rawBlocks) {
+      const separator = textParts.length ? 2 : 0;
+      const remaining = DOCUMENT_TEXT_LIMIT - textChars - separator;
+      if (blocks.length >= DOCUMENT_BLOCK_LIMIT || remaining <= 0) {
+        truncated = true;
+        break;
+      }
+      const bounded = takeCodePoints(raw.text, remaining);
+      if (bounded.length !== raw.text.length) truncated = true;
+      if (raw.type === "heading") section = takeCodePoints(raw.text.replace(/^#{1,6}\s*/, ""), 300);
+      textParts.push(bounded);
+      textChars += Array.from(bounded).length + separator;
+      const locator = { block: blocks.length, ...(section ? { section } : {}) };
+      blocks.push({ index: blocks.length, type: raw.type, text: bounded, locator });
+      if (truncated) break;
+    }
+    if (truncated) warnings.push(`供 AI 提取的正文最多保留 ${DOCUMENT_TEXT_LIMIT} 个字符和 ${DOCUMENT_BLOCK_LIMIT} 个段落。`);
+    return {
+      asset_id: assetId,
+      filename: asset.filename,
+      file_type: extension,
+      sha256: await sha256Bytes(bytes),
+      title,
+      text: textParts.join("\n\n"),
+      source_text_chars: sourceTextChars,
+      readable: textParts.some((part) => part.trim()),
+      blocks,
+      warnings,
+      degraded: false,
+      truncated,
+    };
+  }
+
+  private async validateDocumentContext(raw: unknown): Promise<ResourceDiscoveryDocumentContext> {
+    if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+      throw error("invalid_input", "文档主题数据无效。", "document_context must be an object");
+    }
+    const candidate = raw as Record<string, unknown>;
+    const assetId = typeof candidate.asset_id === "string" ? candidate.asset_id.trim() : "";
+    const digest = typeof candidate.sha256 === "string" ? candidate.sha256 : "";
+    if (!assetId || assetId.length > 256 || !/^[a-f0-9]{64}$/.test(digest)) {
+      throw error("invalid_input", "文档主题数据缺少素材或校验信息。", "document_context asset_id or sha256 is invalid");
+    }
+    const parsed = await this.parseDocument({ asset_id: assetId });
+    if (parsed.sha256 !== digest) {
+      throw error("stale_input", "文档素材已变化，请重新解析。", "Document context digest does not match the canonical imported asset");
+    }
+    if (!Array.isArray(candidate.themes) || candidate.themes.length < 1 || candidate.themes.length > 8) {
+      throw error("invalid_input", "文档至少需要一个可追溯主题。", "document_context must have 1–8 themes");
+    }
+    const themes = candidate.themes.map((rawTheme) => {
+      if (!rawTheme || typeof rawTheme !== "object" || Array.isArray(rawTheme)) {
+        throw error("invalid_input", "文档主题格式无效。", "A document theme must be an object");
+      }
+      const theme = rawTheme as Record<string, unknown>;
+      const name = typeof theme.name === "string" ? theme.name.trim() : "";
+      if (!name || Array.from(name).length > 160 || !Array.isArray(theme.evidence) || theme.evidence.length < 1 || theme.evidence.length > 4) {
+        throw error("invalid_input", "文档主题或原文依据无效。", "A theme needs a bounded name and 1–4 evidence rows");
+      }
+      const evidence = theme.evidence.map((rawEvidence) => {
+        if (!rawEvidence || typeof rawEvidence !== "object" || Array.isArray(rawEvidence)) {
+          throw error("invalid_input", "文档主题依据格式无效。", "Document evidence must be an object");
+        }
+        const row = rawEvidence as Record<string, unknown>;
+        const text = typeof row.text === "string" ? row.text.trim() : "";
+        const locator = row.locator && typeof row.locator === "object" && !Array.isArray(row.locator)
+          ? row.locator as Record<string, unknown>
+          : null;
+        if (!text || Array.from(text).length > 800 || !locator || Object.keys(locator).some((key) => !["block", "section", "page", "slide"].includes(key))) {
+          throw error("invalid_input", "文档主题依据缺少有效原文定位。", "Document evidence text or locator is invalid");
+        }
+        const index = locator.block;
+        const block = Number.isInteger(index) && (index as number) >= 0
+          ? parsed.blocks[index as number]
+          : undefined;
+        if (!block || block.index !== index || !normalizeText(block.text).includes(normalizeText(text))) {
+          throw error("invalid_input", "主题依据与文档实际区块不匹配。", "Document evidence text does not occur in its cited parsed block");
+        }
+        for (const key of ["section", "page", "slide"] as const) {
+          if (locator[key] !== undefined && block.locator[key] !== locator[key]) {
+            throw error("invalid_input", "主题依据页码或章节与文档不匹配。", `Document evidence ${key} locator is not present on the cited block`);
+          }
+        }
+        return { text, locator: structuredClone(block.locator) };
+      });
+      return { name, evidence };
+    });
+    const language = typeof candidate.language === "string" && Array.from(candidate.language).length <= 80
+      ? candidate.language.trim()
+      : null;
+    if (language === null) {
+      throw error("invalid_input", "文档来源语言字段无效。", "document_context.language must be a string of at most 80 characters");
+    }
+    const preferredLanguage = candidate.preferred_language;
+    if (preferredLanguage !== undefined && (typeof preferredLanguage !== "string" || Array.from(preferredLanguage.trim()).length > 80)) {
+      throw error("invalid_input", "搜索偏好语言无效。", "document_context.preferred_language is invalid");
+    }
+    let constraints: ResourceDiscoveryDocumentContext["constraints"];
+    if (candidate.constraints !== undefined) {
+      if (!candidate.constraints || typeof candidate.constraints !== "object" || Array.isArray(candidate.constraints)) {
+        throw error("invalid_input", "文档限定条件格式无效。", "document_context.constraints must be an object");
+      }
+      const rawConstraints = candidate.constraints as Record<string, unknown>;
+      if (Object.keys(rawConstraints).some((key) => !["terms", "time_range", "regions", "industries"].includes(key))) {
+        throw error("invalid_input", "文档限定条件含未知字段。", "document_context.constraints contains an unknown field");
+      }
+      constraints = {
+        ...(rawConstraints.terms === undefined ? {} : { terms: boundedStringArray(rawConstraints.terms, "限制术语", 20) }),
+        ...(rawConstraints.regions === undefined ? {} : { regions: boundedStringArray(rawConstraints.regions, "地区", 20) }),
+        ...(rawConstraints.industries === undefined ? {} : { industries: boundedStringArray(rawConstraints.industries, "行业", 20) }),
+      };
+      if (rawConstraints.time_range !== undefined) {
+        if (typeof rawConstraints.time_range !== "string" || Array.from(rawConstraints.time_range.trim()).length > 160) {
+          throw error("invalid_input", "文档时间范围无效。", "document_context.constraints.time_range is invalid");
+        }
+        constraints.time_range = rawConstraints.time_range.trim();
+      }
+    }
+    return {
+      asset_id: assetId,
+      sha256: digest,
+      title: parsed.title,
+      themes,
+      concepts: boundedStringArray(candidate.concepts, "概念", 20),
+      objectives: boundedStringArray(candidate.objectives, "教学目标", 20),
+      case_types: boundedStringArray(candidate.case_types, "案例类型", 20),
+      media_types: boundedStringArray(candidate.media_types, "媒体类型", 20),
+      keywords: boundedStringArray(candidate.keywords, "关键词", 30),
+      language,
+      ...(preferredLanguage === undefined ? {} : { preferred_language: preferredLanguage.trim() }),
+      ...(constraints === undefined ? {} : { constraints }),
+    };
   }
 
   async prepare(input: ResourceDiscoveryPrepareInput): Promise<ResourceDiscoveryPlan> {
@@ -524,7 +835,11 @@ export class ResourceDiscoveryService {
       throw error("invalid_input", "网络请求预算需为 1 到 200。", "request_budget must be between 1 and 200");
     }
     const preferences = validPreferences(input.preferences);
-    const built = buildQueries(project, contentItemIds, searchTypes, preferences);
+    const documentContext = input.document_context === undefined
+      ? undefined
+      : await this.validateDocumentContext(input.document_context);
+    const intentOverrides = validIntentOverrides(input.intent_overrides);
+    const built = buildQueries(project, contentItemIds, searchTypes, preferences, documentContext, intentOverrides);
     const requiredUpperBound = built.queries.reduce((sum, lesson) =>
       sum + lesson.queries.reduce((subtotal, query) => subtotal + query.request_budget_upper_bound, 0), 0);
     const createdAt = isoNow();
@@ -536,6 +851,8 @@ export class ResourceDiscoveryService {
       search_types: searchTypes,
       request_budget: requestBudget,
       preferences,
+      ...(documentContext ? { document_context: documentContext } : {}),
+      ...(intentOverrides ? { intent_overrides: intentOverrides } : {}),
       queries: built.queries,
     };
     const inputHash = await candidateInputHash(base);
@@ -551,6 +868,8 @@ export class ResourceDiscoveryService {
       },
       content_item_ids: contentItemIds,
       preferences,
+      ...(documentContext ? { document_context: documentContext } : {}),
+      ...(intentOverrides ? { intent_overrides: intentOverrides } : {}),
       queries: built.queries,
       context_preview: built.preview,
       budget: { max_requests: requestBudget, required_upper_bound: requiredUpperBound },
@@ -582,7 +901,7 @@ export class ResourceDiscoveryService {
       throw error("budget_exhausted", `当前预算不足；最多需要 ${plan.budget.required_upper_bound} 次网络请求。`, "Prepared request budget is below the conservative HTTP upper bound");
     }
     const project = this.requireProject();
-    await this.assertPlanFresh(plan, project);
+    await this.assertPlanFresh(plan, project, true);
     const task: ResourceDiscoveryTask = {
       task_id: id(),
       state: "queued",
@@ -601,10 +920,7 @@ export class ResourceDiscoveryService {
       updated_at: isoNow(),
     };
     this.tasks.set(task.task_id, task);
-    this.retryQueries.set(task.task_id, plan.queries.flatMap((lesson) => lesson.queries.map((query) => ({
-      ...lesson,
-      queries: [query],
-    }))));
+    this.retryQueries.set(task.task_id, indexedQueries(plan));
     this.trim();
     await this.persist();
     this.schedule(task.task_id, () => this.runTask(task.task_id));
@@ -615,7 +931,7 @@ export class ResourceDiscoveryService {
     await this.ensureLoaded();
     const task = this.tasks.get(taskId);
     const plan = task && this.plans.get(task.plan_id);
-    if (task && plan && !["cancelled", "failed", "stale"].includes(task.state)) {
+    if (task && plan && !["cancelled", "failed", "stale", "interrupted"].includes(task.state)) {
       try {
         await this.assertPlanFresh(plan, this.requireProject());
       } catch {
@@ -644,13 +960,18 @@ export class ResourceDiscoveryService {
   async retry(taskId: string, candidateId?: string): Promise<ResourceDiscoveryTask> {
     await this.ensureLoaded();
     const task = this.requireTask(taskId);
-    if (!["partial", "failed", "completed"].includes(task.state)) {
+    const continuing = task.state === "cancelled" || task.state === "interrupted";
+    if (!continuing && !["partial", "failed", "completed"].includes(task.state)) {
       throw error("invalid_task_state", "当前任务还不能重试。", `Cannot retry task in state ${task.state}`);
     }
     const pending = this.retryQueries.get(taskId) ?? [];
-    const selected = candidateId
+    const selected = continuing
+      ? pending.filter((query) => query.query_index >= task.progress.completed_queries)
+      : candidateId
       ? pending.filter((query) => task.candidates.some((candidate) => candidate.id === candidateId && candidate.lesson_id === query.lesson_id))
-      : pending.filter((query) => task.errors.some((item) => item.query === query.queries[0]?.query));
+      : pending.filter((query) => task.errors.some((item) =>
+        item.query_index === query.query_index || (item.query_index === undefined && item.query === query.queries[0]?.query)
+      ));
     if (selected.length === 0) {
       throw error("no_retryable_work", "没有可重试的失败请求。", "No failed query is available to retry");
     }
@@ -659,15 +980,19 @@ export class ResourceDiscoveryService {
       throw error("budget_exhausted", "剩余请求预算不足，无法重试。", "No request budget remains for retry");
     }
     const project = this.requireProject();
-    await this.assertPlanFresh(plan, project);
+    if (continuing) await this.rebindInterruptedTask(task, plan, project);
+    await this.assertPlanFresh(plan, project, continuing);
     const reservedRetryRequests = selected.reduce((total, row) =>
       total + (row.queries[0]?.request_budget_upper_bound ?? 0), 0);
     if (reservedRetryRequests > task.budget.remaining_requests) {
       throw error("budget_exhausted", "剩余预算不足以完成所选重试。", "Remaining request budget is below the retry upper bound");
     }
     if (candidateId) task.candidates = task.candidates.filter((candidate) => candidate.id !== candidateId);
-    task.errors = task.errors.filter((item) => !selected.some((query) => query.queries[0]?.query === item.query));
-    task.progress.total_queries += selected.length;
+    if (!continuing) {
+      task.errors = task.errors.filter((item) => !selected.some((query) =>
+        item.query_index === query.query_index || (item.query_index === undefined && item.query === query.queries[0]?.query)
+      ));
+    }
     task.state = "running";
     task.updated_at = isoNow();
     await this.persist();
@@ -959,6 +1284,8 @@ export class ResourceDiscoveryService {
         search_types: searchTypes,
         request_budget: plan.budget.max_requests,
         preferences: plan.preferences,
+        ...(plan.document_context ? { document_context: plan.document_context } : {}),
+        ...(plan.intent_overrides ? { intent_overrides: plan.intent_overrides } : {}),
       });
       plan.input_hash = refreshed.hash;
       plan.snapshot = {
@@ -988,7 +1315,14 @@ export class ResourceDiscoveryService {
     data: ProjectData,
     input: ResourceDiscoveryPrepareInput,
   ): Promise<{ hash: string; queries: ResourceDiscoveryQueryPlan[]; lessonRevisions: Record<string, string> }> {
-    const built = buildQueries(data, input.content_item_ids, input.search_types, input.preferences);
+    const built = buildQueries(
+      data,
+      input.content_item_ids,
+      input.search_types,
+      input.preferences,
+      input.document_context,
+      input.intent_overrides,
+    );
     const hash = await candidateInputHash({
       project_id: data.project.id,
       generation: this.getGeneration(),
@@ -997,15 +1331,70 @@ export class ResourceDiscoveryService {
       search_types: input.search_types,
       request_budget: input.request_budget,
       preferences: input.preferences,
+      ...(input.document_context ? { document_context: input.document_context } : {}),
+      ...(input.intent_overrides ? { intent_overrides: input.intent_overrides } : {}),
       queries: built.queries,
     });
     return { hash, queries: built.queries, lessonRevisions: built.lessonRevisions };
   }
 
-  private async assertPlanFresh(plan: ResourceDiscoveryPlan, data: ProjectData): Promise<void> {
+  private async rebindInterruptedTask(
+    task: ResourceDiscoveryTask,
+    plan: ResourceDiscoveryPlan,
+    project: ProjectData,
+  ): Promise<void> {
+    const generation = this.getGeneration();
+    if (project.project.id !== plan.project_id) {
+      throw error("stale_input", "课程已切换，请重新准备资源发现。", "Interrupted resource task belongs to another project");
+    }
+    if (generation === plan.snapshot.generation) return;
+    const searchTypes = [...new Set(plan.queries.flatMap((row) => row.queries.map((query) => query.kind)))];
+    const fresh = await this.buildPlan(project, {
+      content_item_ids: plan.content_item_ids,
+      search_types: searchTypes,
+      request_budget: plan.budget.max_requests,
+      preferences: plan.preferences,
+      ...(plan.document_context ? { document_context: plan.document_context } : {}),
+      ...(plan.intent_overrides ? { intent_overrides: plan.intent_overrides } : {}),
+    });
+    if (JSON.stringify(fresh.queries) !== JSON.stringify(plan.queries) ||
+      JSON.stringify(fresh.lessonRevisions) !== JSON.stringify(plan.snapshot.lesson_revisions)) {
+      throw error("stale_input", "课程内容已变化，请重新准备资源发现。", "Interrupted resource task inputs changed while the app was closed");
+    }
+    if (plan.document_context) {
+      const current = await this.validateDocumentContext(plan.document_context);
+      if (JSON.stringify(current) !== JSON.stringify(plan.document_context)) {
+        throw error("stale_input", "文档素材或主题依据已变化，请重新准备资源发现。", "Interrupted resource task document evidence changed while the app was closed");
+      }
+    }
+    plan.input_hash = fresh.hash;
+    plan.snapshot = {
+      project_id: plan.project_id,
+      generation,
+      input_hash: fresh.hash,
+      lesson_revisions: fresh.lessonRevisions,
+    };
+    task.snapshot = structuredClone(plan.snapshot);
+    task.updated_at = isoNow();
+    await this.persist();
+  }
+
+  private async assertPlanFresh(plan: ResourceDiscoveryPlan, data: ProjectData, verifyDocument = false): Promise<void> {
     const generation = this.getGeneration();
     if (data.project.id !== plan.project_id || generation !== plan.snapshot.generation) {
       throw error("stale_input", "课程已切换，请重新准备资源发现。", "Resource discovery project generation changed");
+    }
+    if (plan.document_context) {
+      const asset = data.assets.find((candidate) => candidate.id === plan.document_context!.asset_id && !candidate.archived);
+      if (!asset || asset.project_id !== plan.project_id || asset.checksum !== plan.document_context.sha256) {
+        throw error("stale_input", "文档素材已变化，请重新准备资源发现。", "Resource discovery document asset metadata changed");
+      }
+      if (verifyDocument) {
+        const fresh = await this.validateDocumentContext(plan.document_context);
+        if (JSON.stringify(fresh) !== JSON.stringify(plan.document_context)) {
+          throw error("stale_input", "文档素材或主题依据已变化，请重新准备资源发现。", "Resource discovery document context changed after preparation");
+        }
+      }
     }
     const searchTypes = [...new Set(plan.queries.flatMap((lesson) => lesson.queries.map((query) => query.kind)))];
     const input: ResourceDiscoveryPrepareInput = {
@@ -1013,6 +1402,8 @@ export class ResourceDiscoveryService {
       search_types: searchTypes,
       request_budget: plan.budget.max_requests,
       preferences: plan.preferences,
+      ...(plan.document_context ? { document_context: plan.document_context } : {}),
+      ...(plan.intent_overrides ? { intent_overrides: plan.intent_overrides } : {}),
     };
     const fresh = await this.buildPlan(data, input);
     if (fresh.hash !== plan.input_hash || fresh.hash !== plan.snapshot.input_hash) {
@@ -1039,13 +1430,13 @@ export class ResourceDiscoveryService {
     task.state = "running";
     task.updated_at = isoNow();
     await this.persist();
-    const queries = plan.queries.flatMap((lesson) => lesson.queries.map((query) => ({ ...lesson, queries: [query] })));
+    const queries = indexedQueries(plan);
     await this.runQueries(taskId, queries, plan, controller);
   }
 
   private async runQueries(
     taskId: string,
-    queries: ResourceDiscoveryQueryPlan[],
+    queries: IndexedQuery[],
     plan: ResourceDiscoveryPlan,
     controller = this.controllers.get(taskId) ?? new AbortController(),
   ): Promise<void> {
@@ -1103,10 +1494,11 @@ export class ResourceDiscoveryService {
               } catch (caught) {
                 if (controller.signal.aborted) throw caught;
                 failure = safeError(caught);
-                task.errors.push({ code: failure.code, message: failure.message, query: queryPlan.query });
+                task.errors.push({ code: failure.code, message: failure.message, query: queryPlan.query, query_index: row.query_index });
               }
               const evidence = makeEvidenceFromWeb(hit, fetched, failure);
               const candidate = candidateFromWeb(task.task_id, row.lesson_id, hit, evidence, plan.preferences);
+              if (queryPlan.topic) candidate.matched_themes = [queryPlan.topic];
               addProjectId(candidate, plan.project_id);
               this.addCandidate(task, candidate);
             }
@@ -1115,7 +1507,7 @@ export class ResourceDiscoveryService {
               query: queryPlan.query,
               count: Math.min(plan.preferences.per_lesson_limit, 10),
               country: plan.preferences.country,
-              relevance_language: plan.preferences.language,
+              relevance_language: plan.intent_overrides?.language || plan.preferences.language || plan.document_context?.preferred_language,
               published_after: plan.preferences.published_after ?? undefined,
               published_before: plan.preferences.published_before ?? undefined,
               signal: controller.signal,
@@ -1136,11 +1528,12 @@ export class ResourceDiscoveryService {
               if (seen.has(hit.provider_video_id) || !inPublishedRange(hit.published_at, plan.preferences)) continue;
               seen.add(hit.provider_video_id);
               const candidate = candidateFromVideo(task.task_id, row.lesson_id, hit);
+              if (queryPlan.topic) candidate.matched_themes = [queryPlan.topic];
               addProjectId(candidate, plan.project_id);
               this.addCandidate(task, candidate);
             }
           }
-          task.progress.completed_queries += 1;
+          task.progress.completed_queries = Math.max(task.progress.completed_queries, row.query_index + 1);
         } catch (caught) {
           const failure = safeError(caught);
           if (failure.code === "stale_input") {
@@ -1149,8 +1542,8 @@ export class ResourceDiscoveryService {
             break;
           }
           if (controller.signal.aborted || failure.code === "cancelled") break;
-          task.errors.push({ code: failure.code, message: failure.message, query: queryPlan.query });
-          task.progress.completed_queries += 1;
+          task.errors.push({ code: failure.code, message: failure.message, query: queryPlan.query, query_index: row.query_index });
+          task.progress.completed_queries = Math.max(task.progress.completed_queries, row.query_index + 1);
         }
         task.updated_at = isoNow();
         await this.persist();
@@ -1184,6 +1577,7 @@ export class ResourceDiscoveryService {
         if (!known.has(key)) duplicate.source_evidence.push(evidence);
       }
       duplicate.limitations = [...new Set([...duplicate.limitations, ...candidate.limitations])];
+      duplicate.matched_themes = [...new Set([...(duplicate.matched_themes ?? []), ...(candidate.matched_themes ?? [])])];
       return;
     }
     if (task.candidates.length < MAX_CANDIDATES_PER_TASK) task.candidates.push(candidate);
@@ -1243,14 +1637,25 @@ export class ResourceDiscoveryService {
       for (const task of parsed.tasks ?? []) {
         if (!task?.task_id) continue;
         if (["queued", "running", "cancel_requested"].includes(task.state)) {
-          task.state = "failed";
-          task.errors.push({ code: "interrupted", message: "应用关闭时任务已停止，可重新检索。" });
+          task.state = "interrupted";
           task.updated_at = isoNow();
         }
         this.tasks.set(task.task_id, task);
       }
       for (const [key, value] of Object.entries(parsed.accepted ?? {})) this.accepted.set(key, value);
-      for (const [key, value] of Object.entries(parsed.retry_queries ?? {})) this.retryQueries.set(key, value);
+      for (const [key, value] of Object.entries(parsed.retry_queries ?? {})) {
+        const normalized = value.map((row, index) => ({
+          ...row,
+          query_index: Number.isSafeInteger(row.query_index) ? row.query_index : index,
+        }));
+        this.retryQueries.set(key, normalized);
+      }
+      for (const task of this.tasks.values()) {
+        if (!this.retryQueries.has(task.task_id)) {
+          const plan = this.plans.get(task.plan_id);
+          if (plan) this.retryQueries.set(task.task_id, indexedQueries(plan));
+        }
+      }
       this.trim();
     } catch (caught) {
       if (!(caught instanceof Deno.errors.NotFound)) {

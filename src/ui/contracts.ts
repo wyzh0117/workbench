@@ -385,6 +385,8 @@ export type BridgeCommandName =
   | "ai.execution.append"
   | "ai.execution.list"
   | "resource.discovery.prepare"
+  | "resource.discovery.document.parse"
+  | "resource.source.read"
   | "resource.providers.secret.set"
   | "resource.providers.secret.delete"
   | "resource.discovery.start"
@@ -452,6 +454,92 @@ export interface ResourceDiscoveryPrepareInput {
   search_types: ResourceSearchType[];
   request_budget: number;
   preferences: ResourceDiscoveryPreferences;
+  document_context?: ResourceDiscoveryDocumentContext;
+  intent_overrides?: ResourceDiscoveryIntentOverrides;
+}
+
+export interface ResourceDiscoveryDocumentLocator {
+  block: number;
+  section?: string;
+  page?: number;
+  slide?: number;
+}
+
+export interface ResourceDiscoveryDocumentContext {
+  asset_id: string;
+  sha256: string;
+  title: string;
+  themes: Array<{
+    name: string;
+    evidence: Array<{ text: string; locator: ResourceDiscoveryDocumentLocator }>;
+  }>;
+  concepts: string[];
+  objectives: string[];
+  case_types: string[];
+  media_types: string[];
+  keywords: string[];
+  /** Language found in the imported document, not the user's search preference. */
+  language: string;
+  preferred_language?: string;
+  constraints?: {
+    terms?: string[];
+    time_range?: string;
+    regions?: string[];
+    industries?: string[];
+  };
+}
+
+export interface ResourceDiscoveryIntentOverrides {
+  themes?: string[];
+  keywords?: string[];
+  case_types?: string[];
+  media_types?: string[];
+  language?: string;
+}
+
+export interface ResourceDiscoveryDocumentParseInput {
+  asset_id: string;
+}
+
+export interface ResourceDiscoveryDocumentParseResult {
+  asset_id: string;
+  filename: string;
+  file_type: string;
+  sha256: string;
+  title: string;
+  text: string;
+  source_text_chars: number;
+  readable: boolean;
+  blocks: Array<{
+    index: number;
+    type: string;
+    text: string;
+    locator: ResourceDiscoveryDocumentLocator;
+  }>;
+  warnings: string[];
+  degraded: boolean;
+  truncated: boolean;
+}
+
+export interface ResourceSourceReadInput {
+  url: string;
+  query?: string;
+}
+
+export interface ResourceSourceReadResult {
+  provider_id: string;
+  request_id: string;
+  requested_at: string;
+  fetched_at: string;
+  url: string;
+  title: string;
+  publisher: string | null;
+  text: string | null;
+  excerpt: string | null;
+  content_hash: string | null;
+  evidence_access: "metadata_only" | "content_read";
+  truncated: boolean;
+  limitations: string[];
 }
 
 export interface ResourceDiscoveryQueryPlan {
@@ -461,6 +549,7 @@ export interface ResourceDiscoveryQueryPlan {
   source_locators: Array<{ block_id: string; section: string | null; paragraph: string | null }>;
   queries: Array<{
     kind: ResourceSearchType;
+    topic?: string;
     query: string;
     request_budget_upper_bound: number;
   }>;
@@ -478,6 +567,8 @@ export interface ResourceDiscoveryPlan {
   };
   content_item_ids: string[];
   preferences: ResourceDiscoveryPreferences;
+  document_context?: ResourceDiscoveryDocumentContext;
+  intent_overrides?: ResourceDiscoveryIntentOverrides;
   queries: ResourceDiscoveryQueryPlan[];
   context_preview: {
     items: Array<{ content_item_id: string; title: string; excerpt: string }>;
@@ -492,6 +583,7 @@ export interface ResourceCandidate {
   id: string;
   task_id: string;
   lesson_id: string;
+  matched_themes?: string[];
   medium: "text" | "video";
   narrative_case_type: string | null;
   title: string;
@@ -524,7 +616,7 @@ export interface ResourceDiscoveryTask {
     remaining_requests: number;
   };
   candidates: ResourceCandidate[];
-  errors: Array<{ code: string; message: string; query?: string }>;
+  errors: Array<{ code: string; message: string; query?: string; query_index?: number }>;
   resource_recovery_warning?: string | null;
   created_at: string;
   updated_at: string;
@@ -747,6 +839,14 @@ export interface PresentationSlideExportResult {
 }
 
 export interface BridgeCommandContracts {
+  "resource.discovery.document.parse": {
+    input: ResourceDiscoveryDocumentParseInput;
+    output: ResourceDiscoveryDocumentParseResult;
+  };
+  "resource.source.read": {
+    input: ResourceSourceReadInput;
+    output: ResourceSourceReadResult;
+  };
   "resource.providers.secret.set": {
     input: { provider_id: ResourceProviderId; value: string };
     output: { provider_id: ResourceProviderId; credential_present: true };

@@ -12091,6 +12091,225 @@ fn session_target_guard(target: &Path) -> Result<File, String> {
 
 const SESSION_SAVE_SIZE_LIMIT: usize = 64 * 1024;
 
+fn validate_session_text_list(
+    value: &Value,
+    max_items: usize,
+    max_chars: usize,
+) -> Result<(), String> {
+    let items = value.as_array().ok_or("会话中的文本列表格式无效")?;
+    if items.len() > max_items
+        || items.iter().any(|item| {
+            !item
+                .as_str()
+                .is_some_and(|text| !text.trim().is_empty() && text.chars().count() <= max_chars)
+        })
+    {
+        return Err("会话中的文本列表超出限制".into());
+    }
+    Ok(())
+}
+
+fn validate_resource_document_session(value: &Value) -> Result<(), String> {
+    if value.is_null() {
+        return Ok(());
+    }
+    let document = require_object(value, "session.resource_document")?;
+    if document.keys().any(|key| {
+        !matches!(
+            key.as_str(),
+            "asset_id" | "filename" | "status" | "readable" | "truncated" | "error" | "context"
+        )
+    }) || !document
+        .get("asset_id")
+        .and_then(Value::as_str)
+        .is_some_and(|id| !id.trim().is_empty() && id.len() <= 256)
+        || !document
+            .get("filename")
+            .and_then(Value::as_str)
+            .is_some_and(|name| name.len() <= 256)
+        || !matches!(
+            document.get("status").and_then(Value::as_str),
+            Some("imported" | "analyzing" | "parsed" | "ready" | "error")
+        )
+        || !document.get("readable").is_some_and(Value::is_boolean)
+        || !document.get("truncated").is_some_and(Value::is_boolean)
+        || !document
+            .get("error")
+            .and_then(Value::as_str)
+            .is_some_and(|error| error.chars().count() <= 500)
+    {
+        return Err("会话字段 resource_document 格式无效".into());
+    }
+    let Some(context) = document.get("context").filter(|value| !value.is_null()) else {
+        return Ok(());
+    };
+    let context = require_object(context, "session.resource_document.context")?;
+    if context.keys().any(|key| {
+        !matches!(
+            key.as_str(),
+            "asset_id"
+                | "sha256"
+                | "title"
+                | "themes"
+                | "concepts"
+                | "objectives"
+                | "case_types"
+                | "media_types"
+                | "keywords"
+                | "language"
+                | "preferred_language"
+                | "constraints"
+        )
+    }) || context.get("asset_id").and_then(Value::as_str)
+        != document.get("asset_id").and_then(Value::as_str)
+        || !context
+            .get("sha256")
+            .and_then(Value::as_str)
+            .is_some_and(|hash| {
+                hash.len() == 64 && hash.bytes().all(|byte| byte.is_ascii_hexdigit())
+            })
+        || !context
+            .get("title")
+            .and_then(Value::as_str)
+            .is_some_and(|title| title.chars().count() <= 240)
+        || !context
+            .get("language")
+            .and_then(Value::as_str)
+            .is_some_and(|language| language.chars().count() <= 80)
+    {
+        return Err("会话字段 resource_document.context 格式无效".into());
+    }
+    for (key, limit) in [
+        ("concepts", 24),
+        ("objectives", 24),
+        ("case_types", 24),
+        ("media_types", 24),
+        ("keywords", 30),
+    ] {
+        validate_session_text_list(
+            context.get(key).ok_or("文档搜索上下文缺少文本列表")?,
+            limit,
+            240,
+        )?;
+    }
+    if context.get("preferred_language").is_some_and(|value| {
+        !value
+            .as_str()
+            .is_some_and(|text| text.chars().count() <= 80)
+    }) {
+        return Err("会话字段 preferred_language 格式无效".into());
+    }
+    let themes = context
+        .get("themes")
+        .and_then(Value::as_array)
+        .filter(|themes| !themes.is_empty() && themes.len() <= 8)
+        .ok_or("文档搜索主题超出限制")?;
+    for theme in themes {
+        let theme = require_object(theme, "session.resource_document.theme")?;
+        if theme
+            .keys()
+            .any(|key| !matches!(key.as_str(), "name" | "evidence"))
+            || !theme
+                .get("name")
+                .and_then(Value::as_str)
+                .is_some_and(|name| !name.trim().is_empty() && name.chars().count() <= 160)
+        {
+            return Err("文档搜索主题格式无效".into());
+        }
+        let evidence = theme
+            .get("evidence")
+            .and_then(Value::as_array)
+            .filter(|rows| !rows.is_empty() && rows.len() <= 4)
+            .ok_or("主题依据超出限制")?;
+        for row in evidence {
+            let row = require_object(row, "session.resource_document.evidence")?;
+            if row
+                .keys()
+                .any(|key| !matches!(key.as_str(), "text" | "locator"))
+                || !row
+                    .get("text")
+                    .and_then(Value::as_str)
+                    .is_some_and(|text| !text.trim().is_empty() && text.chars().count() <= 800)
+            {
+                return Err("主题依据格式无效".into());
+            }
+            let locator = require_object(
+                row.get("locator").ok_or("主题依据缺少 locator")?,
+                "session.resource_document.locator",
+            )?;
+            if locator
+                .keys()
+                .any(|key| !matches!(key.as_str(), "block" | "section" | "page" | "slide"))
+                || !locator.get("block").and_then(Value::as_u64).is_some()
+                || ["page", "slide"].iter().any(|key| {
+                    locator
+                        .get(*key)
+                        .is_some_and(|value| value.as_u64().is_none())
+                })
+                || locator.get("section").is_some_and(|value| {
+                    !value
+                        .as_str()
+                        .is_some_and(|text| text.chars().count() <= 240)
+                })
+            {
+                return Err("主题依据位置格式无效".into());
+            }
+        }
+    }
+    if let Some(constraints) = context.get("constraints") {
+        let constraints = require_object(constraints, "session.resource_document.constraints")?;
+        if constraints.keys().any(|key| {
+            !matches!(
+                key.as_str(),
+                "terms" | "time_range" | "regions" | "industries"
+            )
+        }) {
+            return Err("搜索限定字段无效".into());
+        }
+        for key in ["terms", "regions", "industries"] {
+            if let Some(value) = constraints.get(key) {
+                validate_session_text_list(value, 24, 240)?;
+            }
+        }
+        if constraints.get("time_range").is_some_and(|value| {
+            !value
+                .as_str()
+                .is_some_and(|text| text.chars().count() <= 160)
+        }) {
+            return Err("搜索时间限定格式无效".into());
+        }
+    }
+    Ok(())
+}
+
+fn validate_resource_intent_session(value: &Value) -> Result<(), String> {
+    if value.is_null() {
+        return Ok(());
+    }
+    let overrides = require_object(value, "session.resource_intent_overrides")?;
+    if overrides.keys().any(|key| {
+        !matches!(
+            key.as_str(),
+            "themes" | "keywords" | "case_types" | "media_types" | "language"
+        )
+    }) {
+        return Err("会话字段 resource_intent_overrides 包含不允许的键".into());
+    }
+    for key in ["themes", "keywords", "case_types", "media_types"] {
+        if let Some(value) = overrides.get(key) {
+            validate_session_text_list(value, 20, 160)?;
+        }
+    }
+    if overrides.get("language").is_some_and(|value| {
+        !value
+            .as_str()
+            .is_some_and(|text| text.chars().count() <= 80)
+    }) {
+        return Err("会话字段 resource_intent_overrides.language 格式无效".into());
+    }
+    Ok(())
+}
+
 fn validate_session_record(
     value: &Value,
     expected_id: Option<&str>,
@@ -12131,6 +12350,30 @@ fn validate_session_record(
                     return Err(format!("会话字段 {key} 格式无效"));
                 }
             }
+            "course_tree_filter" => {
+                if !matches!(
+                    child.as_str(),
+                    Some("all" | "open" | "requirements" | "missing_media" | "complete")
+                ) {
+                    return Err("会话字段 course_tree_filter 格式无效".into());
+                }
+            }
+            "media_filter" => {
+                if !matches!(
+                    child.as_str(),
+                    Some("all" | "cases" | "videos" | "images" | "documents" | "slides")
+                ) {
+                    return Err("会话字段 media_filter 格式无效".into());
+                }
+            }
+            "settings_section" => {
+                if !matches!(
+                    child.as_str(),
+                    Some("general" | "history" | "ai" | "models" | "accounts" | "project")
+                ) {
+                    return Err("会话字段 settings_section 格式无效".into());
+                }
+            }
             "left_collapsed" | "right_collapsed" => {
                 if !child.is_boolean() {
                     return Err(format!("会话字段 {key} 格式无效"));
@@ -12141,6 +12384,35 @@ fn validate_session_record(
                     return Err("会话字段 layout_zoom 格式无效".into());
                 }
             }
+            "right_tab" => {
+                if !matches!(child.as_str(), Some("discovery" | "browser" | "assistant")) {
+                    return Err("会话字段 right_tab 格式无效".into());
+                }
+            }
+            "legacy_route_notice" => {
+                if !child
+                    .as_str()
+                    .is_some_and(|notice| notice.chars().count() <= 500)
+                {
+                    return Err("会话字段 legacy_route_notice 格式无效".into());
+                }
+            }
+            "resource_task_id" | "resource_selected_candidate_id" => {
+                if !child.is_null()
+                    && !child
+                        .as_str()
+                        .is_some_and(|id| !id.trim().is_empty() && id.len() <= 256)
+                {
+                    return Err(format!("会话字段 {key} 格式无效"));
+                }
+            }
+            "resource_document" => validate_resource_document_session(child)?,
+            "resource_auto_start" => {
+                if !child.is_boolean() {
+                    return Err("会话字段 resource_auto_start 格式无效".into());
+                }
+            }
+            "resource_intent_overrides" => validate_resource_intent_session(child)?,
             "explorer_filter" => {
                 if !child.as_str().is_some_and(|value| value.len() <= 256) {
                     return Err("会话字段 explorer_filter 格式无效".into());
@@ -23198,6 +23470,85 @@ mod tests {
             "tabs": [{ "content_item_id": "c1", "mode": "writing", "pinned": false, "scroll_top": 0 }]
         });
         reject_sensitive(&session).expect("a reader position contains no credentials");
+        let mut discovery_session = json!({
+            "project_id": "p1",
+            "project_dir": "/tmp/example-project"
+        });
+        discovery_session.as_object_mut().unwrap().extend(
+            json!({
+                "active_content_item_id": "c1",
+                "mode": "writing",
+                "right_panel": "requirements",
+                "route": "editor",
+                "course_tree_filter": "missing_media",
+                "media_filter": "videos",
+                "settings_section": "history",
+                "legacy_route_notice": "旧页面已转到当前课程编辑器。",
+                "selected_block_id": "b1",
+                "layout_page_id": "page-1",
+                "layout_zoom": "fit",
+                "ai_scope": "current_block",
+                "ai_provider_id": "provider-1",
+                "ai_model": "model-1",
+                "left_collapsed": false,
+                "right_collapsed": false,
+                "right_tab": "discovery",
+                "resource_task_id": null,
+                "resource_selected_candidate_id": "candidate-1",
+                "resource_auto_start": true,
+                "resource_intent_overrides": {"themes": ["heat safety"]}
+            })
+            .as_object()
+            .unwrap()
+            .clone(),
+        );
+        discovery_session["resource_document"] = json!({
+            "asset_id": "asset-1",
+            "filename": "outline.md",
+            "status": "ready",
+            "readable": true,
+            "truncated": false,
+            "error": "",
+            "context": {
+                "asset_id": "asset-1",
+                "sha256": "a".repeat(64),
+                "title": "Heat response",
+                "themes": [{"name":"Heat safety","evidence":[{"text":"warning signs","locator":{"block":0,"section":"Response"}}]}],
+                "concepts": [],
+                "objectives": [],
+                "case_types": [],
+                "media_types": [],
+                "keywords": [],
+                "language": "en"
+            }
+        });
+        discovery_session.as_object_mut().unwrap().extend(
+            json!({
+            "collapsed_stage_ids": ["stage-1"],
+            "tabs": [{"content_item_id":"c1","mode":"writing","pinned":false,"scroll_top":0}],
+            "explorer_filter": "",
+            "explorer_expanded": [],
+            "explorer_recent": []
+            })
+            .as_object()
+            .unwrap()
+            .clone(),
+        );
+        validate_session_record(&discovery_session, None, false)
+            .expect("the normalized targetSession() payload must accept readerState and bounded v3.1 fields");
+        for (key, invalid) in [
+            ("course_tree_filter", json!("secret")),
+            ("media_filter", json!("secret")),
+            ("settings_section", json!("secret")),
+            ("legacy_route_notice", json!("x".repeat(501))),
+        ] {
+            let mut invalid_session = discovery_session.clone();
+            invalid_session[key] = invalid;
+            assert!(
+                validate_session_record(&invalid_session, None, false).is_err(),
+                "unexpected reader field value should be rejected: {key}"
+            );
+        }
         assert_eq!(
             session
                 .get("active_content_item_id")
@@ -30141,6 +30492,8 @@ pub fn run() {
             resource_providers_list,
             resource_secret_set,
             resource_secret_delete,
+            resource_workflows::resource_discovery_document_parse,
+            resource_workflows::resource_source_read,
             resource_workflows::resource_discovery_prepare,
             resource_workflows::resource_discovery_start,
             resource_workflows::resource_discovery_cancel,

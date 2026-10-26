@@ -526,11 +526,37 @@ Deno.test("browser session records reject stale, corrupt, credential-shaped, mis
     mode: "preview",
     right_panel: "status",
     route: "media",
+    legacy_route_notice: "旧页面已转到当前课程编辑器。",
     course_tree_filter: "missing_media",
     media_filter: "videos",
     settings_section: "history",
     left_collapsed: false,
     right_collapsed: true,
+    right_tab: "discovery",
+    resource_task_id: "task-1",
+    resource_selected_candidate_id: "candidate-1",
+    resource_document: {
+      asset_id: "asset-1",
+      filename: "outline.md",
+      status: "ready",
+      readable: true,
+      truncated: false,
+      error: "",
+      context: {
+        asset_id: "asset-1",
+        sha256: "a".repeat(64),
+        title: "Heat response",
+        themes: [{ name: "Heat safety", evidence: [{ text: "warning signs", locator: { block: 0, section: "Response" } }] }],
+        concepts: [],
+        objectives: [],
+        case_types: [],
+        media_types: [],
+        keywords: [],
+        language: "en",
+      },
+    },
+    resource_auto_start: true,
+    resource_intent_overrides: { themes: ["Heat safety"], language: "en" },
     tabs: [{ content_item_id: "lesson-1", mode: "preview", pinned: false, scroll_top: 12 }],
   };
   const store = new BrowserSessionStore(directory);
@@ -539,6 +565,8 @@ Deno.test("browser session records reject stale, corrupt, credential-shaped, mis
     const loaded = await store.load(projectId);
     assert(loaded?.active_content_item_id === "lesson-1", "valid session should round-trip");
     assert(loaded?.course_tree_filter === "missing_media" && loaded.media_filter === "videos" && loaded.settings_section === "history", "reader subview filters should round-trip");
+    assert(loaded?.legacy_route_notice === session.legacy_route_notice, "normalized route notice should survive browser session validation");
+    assert(loaded?.right_tab === "discovery" && loaded.resource_document !== null, "v3.1 discovery reader state should round-trip without search credentials");
 
     await Deno.writeTextFile(store.path, "{not-json");
     assert(await store.load(projectId) === null, "corrupt sessions must degrade to no session");
@@ -577,6 +605,15 @@ Deno.test("browser session records reject stale, corrupt, credential-shaped, mis
         (caught as { error?: { code?: string } }).error?.code === "invalid_browser_session";
     }
     assert(invalidFilterRejected, "reader filter fields must stay allowlisted at the service boundary");
+
+    let invalidNoticeRejected = false;
+    try {
+      await store.save({ ...session, legacy_route_notice: "x".repeat(501) }, projectId);
+    } catch (caught) {
+      invalidNoticeRejected = caught instanceof Error &&
+        (caught as { error?: { code?: string } }).error?.code === "invalid_browser_session";
+    }
+    assert(invalidNoticeRejected, "derived route notices must stay bounded in the session sidecar");
 
     const missing = new BrowserSessionStore(`${directory}/missing-project`);
     assert(await missing.load(projectId) === null, "missing project roots must degrade to no session");
