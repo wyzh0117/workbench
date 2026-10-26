@@ -58,6 +58,13 @@ jobs:
         run: |
           mkdir -p .qa-output/native
           exec > >(tee -a .qa-output/native/dependencies.log) 2>&1
+          # The runner's Azure HTTP mirror stalled below 40 KB/s in validation.
+          # Use Ubuntu's official HTTPS archive; retain signed APT indexes.
+          for source in /etc/apt/sources.list /etc/apt/sources.list.d/ubuntu.sources; do
+            if [ -f "$source" ]; then
+              sudo sed -i 's#http://azure.archive.ubuntu.com/ubuntu#https://archive.ubuntu.com/ubuntu#g' "$source"
+            fi
+          done
           APT_OPTIONS=(-o DPkg::Lock::Timeout=60 -o Acquire::Retries=2 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30)
           sudo env DEBIAN_FRONTEND=noninteractive apt-get "${APT_OPTIONS[@]}" update
           sudo env DEBIAN_FRONTEND=noninteractive apt-get "${APT_OPTIONS[@]}" install -y --no-install-recommends libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev webkit2gtk-driver xvfb dbus-x11
