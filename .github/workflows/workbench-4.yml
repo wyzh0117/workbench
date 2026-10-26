@@ -14,7 +14,9 @@ permissions:
 
 concurrency:
   group: workbench-4-release
-  cancel-in-progress: false
+  # Only this authorized delivery workflow uses this group. Superseded build
+  # attempts must not hold corrected code behind a stalled dependency mirror.
+  cancel-in-progress: true
 
 jobs:
   verify:
@@ -52,9 +54,13 @@ jobs:
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
       - name: Install native WebKit prerequisites
+        timeout-minutes: 10
         run: |
-          sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev webkit2gtk-driver xvfb dbus-x11
+          mkdir -p .qa-output/native
+          exec > >(tee -a .qa-output/native/dependencies.log) 2>&1
+          APT_OPTIONS=(-o DPkg::Lock::Timeout=60 -o Acquire::Retries=2 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30)
+          sudo env DEBIAN_FRONTEND=noninteractive apt-get "${APT_OPTIONS[@]}" update
+          sudo env DEBIAN_FRONTEND=noninteractive apt-get "${APT_OPTIONS[@]}" install -y --no-install-recommends libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev webkit2gtk-driver xvfb dbus-x11
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6
         with:
           workspaces: src-tauri
